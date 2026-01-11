@@ -1,0 +1,503 @@
+{
+  "info": {
+    "name": "MMFF94 Force Field Parameters",
+    "source": "Halgren, T.A. J. Comput. Chem. 17, 490-519 (1996)",
+    "description": "Sample parameter subset for drug-like molecules. Full MMFF94 parameter set is extensive (~100+ atom types, ~1000+ parameters total). This file contains representative parameters for common atom types and interactions.",
+    "note": "For production use, extract complete parameter tables from RDKit C++ source or use RDKit Python API."
+  },
+  "atom_types": {
+    "C_3": {
+      "atomic_number": 6,
+      "description": "sp3 aliphatic carbon",
+      "mass": 12.011,
+      "vdw_radius": 1.70,
+      "base_charge": 0.0
+    },
+    "C_2": {
+      "atomic_number": 6,
+      "description": "sp2 aliphatic carbon",
+      "mass": 12.011,
+      "vdw_radius": 1.70,
+      "base_charge": 0.0
+    },
+    "C_1": {
+      "atomic_number": 6,
+      "description": "sp1 aliphatic carbon",
+      "mass": 12.011,
+      "vdw_radius": 1.70,
+      "base_charge": 0.0
+    },
+    "C_AR": {
+      "atomic_number": 6,
+      "description": "aromatic carbon",
+      "mass": 12.011,
+      "vdw_radius": 1.70,
+      "base_charge": 0.0
+    },
+    "C_CAT": {
+      "atomic_number": 6,
+      "description": "cationic carbon",
+      "mass": 12.011,
+      "vdw_radius": 1.70,
+      "base_charge": 1.0
+    },
+    "N_3": {
+      "atomic_number": 7,
+      "description": "sp3 nitrogen",
+      "mass": 14.007,
+      "vdw_radius": 1.55,
+      "base_charge": -0.8
+    },
+    "N_2": {
+      "atomic_number": 7,
+      "description": "sp2 nitrogen",
+      "mass": 14.007,
+      "vdw_radius": 1.55,
+      "base_charge": -0.8
+    },
+    "N_1": {
+      "atomic_number": 7,
+      "description": "sp1 nitrogen",
+      "mass": 14.007,
+      "vdw_radius": 1.55,
+      "base_charge": 0.0
+    },
+    "N_AR": {
+      "atomic_number": 7,
+      "description": "aromatic nitrogen",
+      "mass": 14.007,
+      "vdw_radius": 1.55,
+      "base_charge": -0.8
+    },
+    "N_PL3": {
+      "atomic_number": 7,
+      "description": "planar sp3 nitrogen (amide)",
+      "mass": 14.007,
+      "vdw_radius": 1.55,
+      "base_charge": -0.8
+    },
+    "N_AM": {
+      "atomic_number": 7,
+      "description": "amide nitrogen",
+      "mass": 14.007,
+      "vdw_radius": 1.55,
+      "base_charge": -0.8
+    },
+    "O_3": {
+      "atomic_number": 8,
+      "description": "sp3 oxygen",
+      "mass": 15.999,
+      "vdw_radius": 1.52,
+      "base_charge": -0.8
+    },
+    "O_2": {
+      "atomic_number": 8,
+      "description": "sp2 oxygen",
+      "mass": 15.999,
+      "vdw_radius": 1.52,
+      "base_charge": -0.8
+    },
+    "O_R": {
+      "atomic_number": 8,
+      "description": "ether oxygen",
+      "mass": 15.999,
+      "vdw_radius": 1.52,
+      "base_charge": -0.4
+    },
+    "O_CO2": {
+      "atomic_number": 8,
+      "description": "carbonyl oxygen",
+      "mass": 15.999,
+      "vdw_radius": 1.52,
+      "base_charge": -0.4
+    },
+    "O_3_Z": {
+      "atomic_number": 8,
+      "description": "sp3 oxygen with formal charge",
+      "mass": 15.999,
+      "vdw_radius": 1.52,
+      "base_charge": 0.0
+    },
+    "F": {
+      "atomic_number": 9,
+      "description": "fluorine",
+      "mass": 18.999,
+      "vdw_radius": 1.47,
+      "base_charge": 0.0
+    },
+    "Cl": {
+      "atomic_number": 17,
+      "description": "chlorine",
+      "mass": 35.453,
+      "vdw_radius": 1.75,
+      "base_charge": 0.0
+    },
+    "Br": {
+      "atomic_number": 35,
+      "description": "bromine",
+      "mass": 79.904,
+      "vdw_radius": 1.85,
+      "base_charge": 0.0
+    },
+    "I": {
+      "atomic_number": 53,
+      "description": "iodine",
+      "mass": 126.904,
+      "vdw_radius": 1.98,
+      "base_charge": 0.0
+    },
+    "S_3": {
+      "atomic_number": 16,
+      "description": "sp3 sulfur",
+      "mass": 32.065,
+      "vdw_radius": 1.80,
+      "base_charge": -0.4
+    },
+    "S_2": {
+      "atomic_number": 16,
+      "description": "sp2 sulfur",
+      "mass": 32.065,
+      "vdw_radius": 1.80,
+      "base_charge": -0.4
+    },
+    "S_AR": {
+      "atomic_number": 16,
+      "description": "aromatic sulfur",
+      "mass": 32.065,
+      "vdw_radius": 1.80,
+      "base_charge": -0.4
+    },
+    "P_3": {
+      "atomic_number": 15,
+      "description": "sp3 phosphorus",
+      "mass": 30.974,
+      "vdw_radius": 1.80,
+      "base_charge": 0.0
+    },
+    "P_4": {
+      "atomic_number": 15,
+      "description": "sp2 phosphorus",
+      "mass": 30.974,
+      "vdw_radius": 1.80,
+      "base_charge": 0.0
+    }
+  },
+  "bond_parameters": {
+    "C-C_single": {
+      "type1": "C_3",
+      "type2": "C_3",
+      "bond_type": "Single",
+      "kb": 4.7,
+      "r0": 1.526
+    },
+    "C-C_aromatic": {
+      "type1": "C_AR",
+      "type2": "C_AR",
+      "bond_type": "Aromatic",
+      "kb": 6.0,
+      "r0": 1.39
+    },
+    "C-C_double": {
+      "type1": "C_2",
+      "type2": "C_2",
+      "bond_type": "Double",
+      "kb": 10.0,
+      "r0": 1.335
+    },
+    "C-C_triple": {
+      "type1": "C_1",
+      "type2": "C_1",
+      "bond_type": "Triple",
+      "kb": 15.0,
+      "r0": 1.207
+    },
+    "C-N_single": {
+      "type1": "C_3",
+      "type2": "N_3",
+      "bond_type": "Single",
+      "kb": 4.7,
+      "r0": 1.45
+    },
+    "C-N_double": {
+      "type1": "C_2",
+      "type2": "N_2",
+      "bond_type": "Double",
+      "kb": 9.5,
+      "r0": 1.28
+    },
+    "C-N_triple": {
+      "type1": "C_1",
+      "type2": "N_1",
+      "bond_type": "Triple",
+      "kb": 17.5,
+      "r0": 1.16
+    },
+    "C-O_single": {
+      "type1": "C_3",
+      "type2": "O_3",
+      "bond_type": "Single",
+      "kb": 5.5,
+      "r0": 1.43
+    },
+    "C-O_double": {
+      "type1": "C_2",
+      "type2": "O_2",
+      "bond_type": "Double",
+      "kb": 12.5,
+      "r0": 1.22
+    },
+    "C=O_double": {
+      "type1": "C_2",
+      "type2": "O_R",
+      "bond_type": "Double",
+      "kb": 15.0,
+      "r0": 1.21
+    },
+    "C-S_single": {
+      "type1": "C_3",
+      "type2": "S_3",
+      "bond_type": "Single",
+      "kb": 2.7,
+      "r0": 1.82
+    },
+    "C-S_double": {
+      "type1": "C_2",
+      "type2": "S_2",
+      "bond_type": "Double",
+      "kb": 5.0,
+      "r0": 1.67
+    },
+    "N-H_single": {
+      "type1": "N_3",
+      "type2": "C_3",
+      "bond_type": "Single",
+      "kb": 5.5,
+      "r0": 1.01
+    },
+    "N-H_aromatic": {
+      "type1": "N_AR",
+      "type2": "C_AR",
+      "bond_type": "Aromatic",
+      "kb": 6.0,
+      "r0": 1.08
+    },
+    "O-H_single": {
+      "type1": "O_3",
+      "type2": "C_3",
+      "bond_type": "Single",
+      "kb": 5.5,
+      "r0": 0.96
+    },
+    "O-H_aromatic": {
+      "type1": "O_3",
+      "type2": "C_AR",
+      "bond_type": "Aromatic",
+      "kb": 6.0,
+      "r0": 1.00
+    },
+    "S-H_single": {
+      "type1": "S_3",
+      "type2": "C_3",
+      "bond_type": "Single",
+      "kb": 4.0,
+      "r0": 1.34
+    },
+    "P-O_single": {
+      "type1": "P_3",
+      "type2": "O_3",
+      "bond_type": "Single",
+      "kb": 3.5,
+      "r0": 1.63
+    },
+    "P=O_double": {
+      "type1": "P_4",
+      "type2": "O_2",
+      "bond_type": "Double",
+      "kb": 11.0,
+      "r0": 1.48
+    },
+    "F-C_single": {
+      "type1": "F",
+      "type2": "C_3",
+      "bond_type": "Single",
+      "kb": 5.0,
+      "r0": 1.35
+    },
+    "Cl-C_single": {
+      "type1": "Cl",
+      "type2": "C_3",
+      "bond_type": "Single",
+      "kb": 3.0,
+      "r0": 1.76
+    },
+    "Br-C_single": {
+      "type1": "Br",
+      "type2": "C_3",
+      "bond_type": "Single",
+      "kb": 2.5,
+      "r0": 1.94
+    },
+    "I-C_single": {
+      "type1": "I",
+      "type2": "C_3",
+      "bond_type": "Single",
+      "kb": 2.5,
+      "r0": 2.13
+    }
+  },
+  "angle_parameters": {
+    "C-C-C": {
+      "type1": "C_3",
+      "type2": "C_3",
+      "type3": "C_3",
+      "ktheta": 1.05,
+      "theta0": 109.47
+    },
+    "C-C-C_aromatic": {
+      "type1": "C_AR",
+      "type2": "C_AR",
+      "type3": "C_AR",
+      "ktheta": 1.05,
+      "theta0": 120.0
+    },
+    "C=C-C": {
+      "type1": "C_2",
+      "type2": "C_3",
+      "type3": "C_3",
+      "ktheta": 1.15,
+      "theta0": 121.0
+    },
+    "C-C-H": {
+      "type1": "C_3",
+      "type2": "C_3",
+      "type3": "C_3",
+      "ktheta": 0.80,
+      "theta0": 109.47
+    },
+    "C-C-N": {
+      "type1": "C_3",
+      "type2": "C_3",
+      "type3": "N_3",
+      "ktheta": 0.90,
+      "theta0": 109.47
+    },
+    "C-C-O": {
+      "type1": "C_3",
+      "type2": "C_3",
+      "type3": "O_3",
+      "ktheta": 1.10,
+      "theta0": 109.47
+    },
+    "C-C-S": {
+      "type1": "C_3",
+      "type2": "C_3",
+      "type3": "S_3",
+      "ktheta": 1.20,
+      "theta0": 101.0
+    },
+    "N-C-C": {
+      "type1": "N_3",
+      "type2": "C_3",
+      "type3": "C_3",
+      "ktheta": 0.70,
+      "theta0": 109.47
+    },
+    "N-C-H": {
+      "type1": "N_3",
+      "type2": "C_3",
+      "type3": "C_3",
+      "ktheta": 0.60,
+      "theta0": 109.47
+    },
+    "N-C-N": {
+      "type1": "N_3",
+      "type2": "C_3",
+      "type3": "N_3",
+      "ktheta": 0.70,
+      "theta0": 109.47
+    },
+    "O-C-O": {
+      "type1": "O_3",
+      "type2": "C_3",
+      "type3": "O_3",
+      "ktheta": 1.10,
+      "theta0": 109.47
+    },
+    "O-C-H": {
+      "type1": "O_3",
+      "type2": "C_3",
+      "type3": "C_3",
+      "ktheta": 0.80,
+      "theta0": 109.47
+    },
+    "C-O-H": {
+      "type1": "C_3",
+      "type2": "O_3",
+      "type3": "C_3",
+      "ktheta": 0.75,
+      "theta0": 109.47
+    },
+    "C=O-C": {
+      "type1": "C_2",
+      "type2": "O_3",
+      "type3": "C_3",
+      "ktheta": 0.80,
+      "theta0": 109.47
+    },
+    "P-O-C": {
+      "type1": "P_3",
+      "type2": "C_3",
+      "type3": "C_3",
+      "ktheta": 1.20,
+      "theta0": 104.0
+    }
+  },
+  "vdw_parameters": {
+    "vdw_radii": {
+      "C": 1.7,
+      "N": 1.55,
+      "O": 1.52,
+      "F": 1.47,
+      "Cl": 1.75,
+      "Br": 1.85,
+      "I": 1.98,
+      "S": 1.8,
+      "P": 1.8
+    },
+    "alpha_values": {
+      "C-C_single": 0.08333,
+      "C-C_double": 0.08333,
+      "C-C_triple": 0.08333,
+      "C-C_aromatic": 0.08333,
+      "C-O_single": 0.08333,
+      "C-O_double": 0.08333,
+      "C-O_aromatic": 0.08333,
+      "C-S_single": 0.08333,
+      "C-S_double": 0.08333,
+      "C-S_aromatic": 0.08333,
+      "C-H_single": 0.08333,
+      "C-H_aromatic": 0.08333,
+      "N-H_single": 0.08333,
+      "N-H_aromatic": 0.08333,
+      "O-H_single": 0.08333,
+      "O-H_aromatic": 0.08333,
+      "S-H_single": 0.08333,
+      "P-O_single": 0.08333,
+      "P=O_double": 0.08333,
+      "F-C_single": 0.08333,
+      "Cl-C_single": 0.08333,
+      "Br-C_single": 0.08333,
+      "I-C_single": 0.08333
+    },
+    "epsilon_values": {
+      "C": 0.07,
+      "N": 0.17,
+      "O": 0.095,
+      "F": 0.11,
+      "Cl": 0.266,
+      "Br": 0.401,
+      "I": 0.50,
+      "S": 0.30,
+      "P": 0.20
+    }
+}

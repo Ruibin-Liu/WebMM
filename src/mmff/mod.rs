@@ -1,0 +1,401 @@
+//! MMFF94/MMFF94s force field implementation
+
+use crate::molecule::Hybridization;
+use crate::molecule::Molecule;
+
+pub mod angle;
+pub mod bond;
+pub mod electrostatics;
+pub mod oop;
+pub mod torsion;
+pub mod vdw;
+
+pub use angle::*;
+pub use bond::*;
+pub use electrostatics::*;
+pub use oop::*;
+pub use torsion::*;
+pub use vdw::*;
+
+/// MMFF atom type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MMFFAtomType {
+    // Carbons
+    C_3,
+    C_2,
+    C_1,
+    C_AR,
+    C_CAT,
+    C_AN,
+
+    // Nitrogens
+    N_3,
+    N_2,
+    N_1,
+    N_AR,
+    N_PL3,
+    N_AM,
+    N_4,
+    N_2Z,
+    N_SOM,
+
+    // Oxygens
+    O_3,
+    O_2,
+    O_R,
+    O_CO2,
+    O_3_Z,
+
+    // Halogens
+    F,
+    Cl,
+    Br,
+    I,
+
+    // Sulfur, Phosphorus
+    S_3,
+    S_2,
+    S_AR,
+    P_3,
+    P_4,
+
+    // Ions
+    Fe_P2,
+    Fe_P3,
+    Li,
+    Na,
+    K,
+    Zn_P2,
+    Ca_P2,
+    Cu_P1,
+    Cu_P2,
+    Mg_P2,
+}
+
+/// MMFF variant
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MMFFVariant {
+    MMFF94,
+    MMFF94s,
+}
+
+/// MMFF force field
+pub struct MMFFForceField {
+    pub mol: Molecule,
+    pub atom_types: Vec<MMFFAtomType>,
+    pub charges: Vec<f64>,
+    pub variant: MMFFVariant,
+}
+
+impl MMFFForceField {
+    pub fn new(mol: &Molecule, variant: MMFFVariant) -> Self {
+        let atom_types = Self::assign_atom_types(&mol);
+        let charges = Self::calculate_charges(&mol, &atom_types);
+
+        Self {
+            mol: mol.clone(),
+            atom_types,
+            charges,
+            variant,
+        }
+    }
+
+    fn assign_atom_types(mol: &Molecule) -> Vec<MMFFAtomType> {
+        // TODO: Implement MMFF atom typing rules
+        // For now, use simple typing based on atomic number and hybridization
+        use crate::molecule::graph::{determine_hybridization, is_aromatic};
+
+        mol.atoms
+            .iter()
+            .map(|atom| {
+                let hybrid = determine_hybridization(atom.index, &mol);
+                let aromatic = is_aromatic(atom.index, &mol);
+                let num_bonds = crate::molecule::graph::get_neighbors(atom.index, &mol).len();
+
+                match (atom.atomic_number, hybrid, aromatic, num_bonds) {
+                    // Carbon types
+                    (6, Hybridization::Sp3, _, 1..=4) => MMFFAtomType::C_3,
+                    (6, Hybridization::Sp2, _, 2..) => MMFFAtomType::C_2,
+                    (6, Hybridization::Sp1, _, 1..=2) => MMFFAtomType::C_1,
+                    (6, _, true, 3) => MMFFAtomType::C_AR,
+                    (6, Hybridization::Sp3, true, _) => MMFFAtomType::C_3, // Cationic
+                    (6, Hybridization::Sp3, true, 1) => MMFFAtomType::C_AR, // Anionic
+
+                    // Nitrogen types
+                    (7, Hybridization::Sp3, _, 1..=3) => MMFFAtomType::N_3,
+                    (7, Hybridization::Sp2, _, 2..) => MMFFAtomType::N_2,
+                    (7, Hybridization::Sp1, _, 1..=2) => MMFFAtomType::N_1,
+                    (7, _, true, 2..=3) => MMFFAtomType::N_AR,
+                    (7, Hybridization::Sp3, true, _) => MMFFAtomType::N_PL3, // Planar sp3
+                    (7, _, true, _) => MMFFAtomType::N_AM,                   // Amide
+
+                    // Oxygen types
+                    (8, Hybridization::Sp3, _, 2..) => MMFFAtomType::O_3,
+                    (8, Hybridization::Sp2, _, _) => MMFFAtomType::O_2,
+                    (8, _, true, 2..=2) => MMFFAtomType::O_R,
+                    (8, Hybridization::Sp3, true, _) => MMFFAtomType::O_3_Z, // Cationic
+
+                    // Sulfur types
+                    (16, Hybridization::Sp3, _, 2..) => MMFFAtomType::S_3,
+                    (16, Hybridization::Sp2, _, _) => MMFFAtomType::S_2,
+                    (16, _, true, 2..=3) => MMFFAtomType::S_AR,
+
+                    // Phosphorus types
+                    (15, Hybridization::Sp3, _, 3..=4) => MMFFAtomType::P_3,
+                    (15, Hybridization::Sp2, _, _) => MMFFAtomType::P_4,
+
+                    // Halogens
+                    (9, _, _, _) => MMFFAtomType::F,
+                    (17, _, _, _) => MMFFAtomType::Cl,
+                    (35, _, _, _) => MMFFAtomType::Br,
+                    (53, _, _, _) => MMFFAtomType::I,
+
+                    // Default (fallback)
+                    _ => match atom.atomic_number {
+                        6 => MMFFAtomType::C_3,
+                        7 => MMFFAtomType::N_3,
+                        8 => MMFFAtomType::O_3,
+                        _ => panic!("Unsupported atom type: {}", atom.symbol),
+                    },
+                }
+            })
+            .collect()
+    }
+
+    fn calculate_charges(mol: &Molecule, atom_types: &[MMFFAtomType]) -> Vec<f64> {
+        // TODO: Implement bond charge increment method
+        // For now, set all charges to 0
+        vec![0.0; mol.atoms.len()]
+    }
+
+    pub fn calculate_energy(&self, coords: &[[f64; 3]]) -> f64 {
+        let mut energy = 0.0;
+
+        // Bond stretching
+        for bond in &self.mol.bonds {
+            if let Some(params) = get_bond_params(
+                self.atom_types[bond.atom1],
+                self.atom_types[bond.atom2],
+                bond.bond_type,
+            ) {
+                energy += bond_energy(coords, bond.atom1, bond.atom2, &params);
+            }
+        }
+
+        // Angle bending
+        for angle in crate::molecule::graph::find_angles(&self.mol) {
+            if let Some(params) = get_angle_params(
+                self.atom_types[angle.atom1],
+                self.atom_types[angle.atom2],
+                self.atom_types[angle.atom3],
+            ) {
+                energy += angle_energy(coords, angle.atom1, angle.atom2, angle.atom3, &params);
+            }
+        }
+
+        // Torsion
+        for torsion in crate::molecule::graph::find_torsions(&self.mol) {
+            if let Some(params) = get_torsion_params(
+                self.atom_types[torsion.atom1],
+                self.atom_types[torsion.atom2],
+                self.atom_types[torsion.atom3],
+                self.atom_types[torsion.atom4],
+                self.variant,
+            ) {
+                energy += torsion_energy(
+                    coords,
+                    torsion.atom1,
+                    torsion.atom2,
+                    torsion.atom3,
+                    torsion.atom4,
+                    &params,
+                );
+            }
+        }
+
+        // Out-of-plane
+        for oop in crate::molecule::graph::find_out_of_planes(&self.mol) {
+            let params = get_oop_params(self.atom_types[oop.central], self.variant);
+            energy += oop_energy(
+                coords,
+                oop.central,
+                oop.atom1,
+                oop.atom2,
+                oop.atom3,
+                &params,
+            );
+        }
+
+        // Van der Waals (all nonbonded pairs, no cutoff)
+        let n = self.mol.atoms.len();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                // Skip bonded pairs and 1-2, 1-3 separated atoms
+                let is_bonded = self
+                    .mol
+                    .bonds
+                    .iter()
+                    .any(|b| (b.atom1 == i && b.atom2 == j) || (b.atom1 == j && b.atom2 == i));
+
+                if !is_bonded {
+                    let params_i = get_vdw_params(self.atom_types[i]);
+                    let params_j = get_vdw_params(self.atom_types[j]);
+                    let (e, _, _) = vdw_energy_and_gradient(coords, i, j, &params_i, &params_j);
+                    energy += e;
+                }
+            }
+        }
+
+        // Electrostatics (all charged pairs)
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
+                    let (e, _, _) =
+                        electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0);
+                    energy += e;
+                }
+            }
+        }
+
+        energy
+    }
+
+    pub fn calculate_gradient(&self, coords: &[[f64; 3]]) -> Vec<[f64; 3]> {
+        let mut gradient = vec![[0.0, 0.0, 0.0]; self.mol.atoms.len()];
+
+        // Bond gradients
+        for bond in &self.mol.bonds {
+            if let Some(params) = get_bond_params(
+                self.atom_types[bond.atom1],
+                self.atom_types[bond.atom2],
+                bond.bond_type,
+            ) {
+                let (grad_i, grad_j) = bond_gradient(coords, bond.atom1, bond.atom2, &params);
+                gradient[bond.atom1][0] += grad_i[0];
+                gradient[bond.atom1][1] += grad_i[1];
+                gradient[bond.atom1][2] += grad_i[2];
+                gradient[bond.atom2][0] += grad_j[0];
+                gradient[bond.atom2][1] += grad_j[1];
+                gradient[bond.atom2][2] += grad_j[2];
+            }
+        }
+
+        // Angle gradients
+        for angle in crate::molecule::graph::find_angles(&self.mol) {
+            if let Some(params) = get_angle_params(
+                self.atom_types[angle.atom1],
+                self.atom_types[angle.atom2],
+                self.atom_types[angle.atom3],
+            ) {
+                let (g1, g2, g3) =
+                    angle_gradient(coords, angle.atom1, angle.atom2, angle.atom3, &params);
+                gradient[angle.atom1][0] += g1[0];
+                gradient[angle.atom1][1] += g1[1];
+                gradient[angle.atom1][2] += g1[2];
+                gradient[angle.atom2][0] += g2[0];
+                gradient[angle.atom2][1] += g2[1];
+                gradient[angle.atom2][2] += g2[2];
+                gradient[angle.atom3][0] += g3[0];
+                gradient[angle.atom3][1] += g3[1];
+                gradient[angle.atom3][2] += g3[2];
+            }
+        }
+        // Torsion gradients
+        for torsion in crate::molecule::graph::find_torsions(&self.mol) {
+            if let Some(params) = get_torsion_params(
+                self.atom_types[torsion.atom1],
+                self.atom_types[torsion.atom2],
+                self.atom_types[torsion.atom3],
+                self.atom_types[torsion.atom4],
+                self.variant,
+            ) {
+                let (g2, g3, _, _) = torsion_gradient(
+                    coords,
+                    torsion.atom1,
+                    torsion.atom2,
+                    torsion.atom3,
+                    torsion.atom4,
+                    &params,
+                );
+                gradient[torsion.atom2][0] += g2[0];
+                gradient[torsion.atom2][1] += g2[1];
+                gradient[torsion.atom2][2] += g2[2];
+                gradient[torsion.atom3][0] += g3[0];
+                gradient[torsion.atom3][1] += g3[1];
+                gradient[torsion.atom3][2] += g3[2];
+            }
+        }
+        // OOP gradients
+        for oop in crate::molecule::graph::find_out_of_planes(&self.mol) {
+            let params = get_oop_params(self.atom_types[oop.central], self.variant);
+            let (g_central, g1, g2, g3) = oop_gradient(
+                coords,
+                oop.central,
+                oop.atom1,
+                oop.atom2,
+                oop.atom3,
+                &params,
+            );
+            gradient[oop.central][0] += g_central[0];
+            gradient[oop.central][1] += g_central[1];
+            gradient[oop.central][2] += g_central[2];
+            gradient[oop.atom1][0] += g1[0];
+            gradient[oop.atom1][1] += g1[1];
+            gradient[oop.atom1][2] += g1[2];
+            gradient[oop.atom2][0] += g2[0];
+            gradient[oop.atom2][1] += g2[1];
+            gradient[oop.atom2][2] += g2[2];
+            gradient[oop.atom3][0] += g3[0];
+            gradient[oop.atom3][1] += g3[1];
+            gradient[oop.atom3][2] += g3[2];
+        }
+        // VDW gradients
+        let n = self.mol.atoms.len();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let is_bonded = self
+                    .mol
+                    .bonds
+                    .iter()
+                    .any(|b| (b.atom1 == i && b.atom2 == j) || (b.atom1 == j && b.atom2 == i));
+
+                if !is_bonded {
+                    let params_i = get_vdw_params(self.atom_types[i]);
+                    let params_j = get_vdw_params(self.atom_types[j]);
+                    let (_, grad_i, grad_j) =
+                        vdw_energy_and_gradient(coords, i, j, &params_i, &params_j);
+                    gradient[i][0] += grad_i[0];
+                    gradient[i][1] += grad_i[1];
+                    gradient[i][2] += grad_i[2];
+                    gradient[j][0] += grad_j[0];
+                    gradient[j][1] += grad_j[1];
+                    gradient[j][2] += grad_j[2];
+                }
+            }
+        }
+
+        // Electrostatic gradients
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
+                    let (_, grad_i, grad_j) =
+                        electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0);
+                    gradient[i][0] += grad_i[0];
+                    gradient[i][1] += grad_i[1];
+                    gradient[i][2] += grad_i[2];
+                    gradient[j][0] += grad_j[0];
+                    gradient[j][1] += grad_j[1];
+                    gradient[j][2] += grad_j[2];
+                }
+            }
+        }
+
+        gradient
+    }
+
+    pub fn calculate_energy_and_gradient(&self, coords: &[[f64; 3]]) -> (f64, Vec<[f64; 3]>) {
+        let energy = self.calculate_energy(coords);
+        let gradient = self.calculate_gradient(coords);
+        (energy, gradient)
+    }
+}

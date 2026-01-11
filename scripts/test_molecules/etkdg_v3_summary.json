@@ -1,0 +1,331 @@
+{
+  "categories": {
+    "Simple Alkanes": {
+      "Simple_Alkanes_001": {
+        "smiles": "C",
+        "canonical_smiles": "[H]C([H])([H])[H]",
+        "num_atoms": 5,
+        "num_heavy_atoms": 1
+      },
+      "Simple_Alkanes_002": {
+        "smiles": "CC",
+        "canonical_smiles": "[H]C([H])([H])C([H])([H])[H]",
+        "num_atoms": 8,
+        "num_heavy_atoms": 2
+      },
+      "Simple_Alkanes_003": {
+        "smiles": "CCC",
+        "canonical_smiles": "[H]C([H])([H])C([H])([H])C([H])([H])[H]",
+        "num_atoms": 11,
+        "num_heavy_atoms": 3
+      },
+      "Simple_Alkanes_004": {
+        "smiles": "CCCC",
+        "canonical_smiles": "[H]C([H])([H])C([H])([H])C([H])([H])C([H])([H])[H]",
+        "num_atoms": 14,
+        "num_heavy_atoms": 4
+      },
+      "Simple_Alkanes_005": {
+        "smiles": "CCCCCC",
+        "canonical_smiles": "[H]C([H])([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])[H]",
+        "num_atoms": 20,
+        "num_heavy_atoms": 6
+      },
+      "Simple_Alkanes_006": {
+        "smiles": "CCCCCCCCCC",
+        "canonical_smiles": "[H]C([H])([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])[H]",
+        "num_atoms": 32,
+        "num_heavy_atoms": 10
+      }
+    },
+    "Branched Alkanes": {
+      "Branched_Alkanes_001": {
+        "smiles": "C(C)(C)C",
+        "canonical_smiles": "[H]C([H])([H])C([H])(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 14,
+        "num_heavy_atoms": 4
+      },
+      "Branched_Alkanes_002": {
+        "smiles": "CC(C)C(C)C",
+        "canonical_smiles": "[H]C([H])([H])C([H])(C([H])([H])[H])C([H])(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 20,
+        "num_heavy_atoms": 6
+      },
+      "Branched_Alkanes_003": {
+        "smiles": "CC(C)(C)C",
+        "canonical_smiles": "[H]C([H])([H])C(C([H])([H])[H])(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 17,
+        "num_heavy_atoms": 5
+      }
+    },
+    "Aromatic Rings": {
+      "Aromatic_Rings_001": {
+        "smiles": "c1ccccc1",
+        "canonical_smiles": "[H]c1c([H])c([H])c([H])c([H])c1[H]",
+        "num_atoms": 12,
+        "num_heavy_atoms": 6
+      },
+      "Aromatic_Rings_002": {
+        "smiles": "c1ccncc1",
+        "canonical_smiles": "[H]c1nc([H])c([H])c([H])c1[H]",
+        "num_atoms": 11,
+        "num_heavy_atoms": 6
+      },
+      "Aromatic_Rings_006": {
+        "smiles": "c1ccccccc1",
+        "canonical_smiles": "[H]C1=C([H])C([H])=C([H])C([H])=C([H])C([H])=C1[H]",
+        "num_atoms": 16,
+        "num_heavy_atoms": 8
+      }
+    },
+    "Heterocycles": {
+      "Heterocycles_002": {
+        "smiles": "c1ccncc1",
+        "canonical_smiles": "[H]c1nc([H])c([H])c([H])c1[H]",
+        "num_atoms": 11,
+        "num_heavy_atoms": 6
+      },
+      "Heterocycles_004": {
+        "smiles": "C1CCOCC1",
+        "canonical_smiles": "[H]C1([H])OC([H])([H])C([H])([H])C([H])([H])C1([H])[H]",
+        "num_atoms": 16,
+        "num_heavy_atoms": 6
+      },
+      "Heterocycles_005": {
+        "smiles": "C1COCC1",
+        "canonical_smiles": "[H]C1([H])OC([H])([H])C([H])([H])C1([H])[H]",
+        "num_atoms": 13,
+        "num_heavy_atoms": 5
+      },
+      "Heterocycles_006": {
+        "smiles": "C1CNCC1",
+        "canonical_smiles": "[H]N1C([H])([H])C([H])([H])C([H])([H])C1([H])[H]",
+        "num_atoms": 14,
+        "num_heavy_atoms": 5
+      }
+    },
+    "Functional Groups": {
+      "Functional_Groups_001": {
+        "smiles": "CCO",
+        "canonical_smiles": "[H]OC([H])([H])C([H])([H])[H]",
+        "num_atoms": 9,
+        "num_heavy_atoms": 3
+      },
+      "Functional_Groups_002": {
+        "smiles": "CC(C)=O",
+        "canonical_smiles": "[H]C([H])([H])C(=O)C([H])([H])[H]",
+        "num_atoms": 10,
+        "num_heavy_atoms": 4
+      },
+      "Functional_Groups_003": {
+        "smiles": "c1ccccc1O",
+        "canonical_smiles": "[H]Oc1c([H])c([H])c([H])c([H])c1[H]",
+        "num_atoms": 13,
+        "num_heavy_atoms": 7
+      },
+      "Functional_Groups_004": {
+        "smiles": "CCN",
+        "canonical_smiles": "[H]N([H])C([H])([H])C([H])([H])[H]",
+        "num_atoms": 10,
+        "num_heavy_atoms": 3
+      },
+      "Functional_Groups_005": {
+        "smiles": "CC(C)=N",
+        "canonical_smiles": "[H]N=C(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 11,
+        "num_heavy_atoms": 4
+      },
+      "Functional_Groups_006": {
+        "smiles": "c1ccccc1N",
+        "canonical_smiles": "[H]c1c([H])c([H])c(N([H])[H])c([H])c1[H]",
+        "num_atoms": 14,
+        "num_heavy_atoms": 7
+      },
+      "Functional_Groups_007": {
+        "smiles": "c1ccncc1",
+        "canonical_smiles": "[H]c1nc([H])c([H])c([H])c1[H]",
+        "num_atoms": 11,
+        "num_heavy_atoms": 6
+      },
+      "Functional_Groups_008": {
+        "smiles": "CC(C)C(=O)O",
+        "canonical_smiles": "[H]OC(=O)C([H])(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 14,
+        "num_heavy_atoms": 6
+      },
+      "Functional_Groups_009": {
+        "smiles": "CC(=O)O",
+        "canonical_smiles": "[H]OC(=O)C([H])([H])[H]",
+        "num_atoms": 8,
+        "num_heavy_atoms": 4
+      },
+      "Functional_Groups_011": {
+        "smiles": "CCS",
+        "canonical_smiles": "[H]SC([H])([H])C([H])([H])[H]",
+        "num_atoms": 9,
+        "num_heavy_atoms": 3
+      },
+      "Functional_Groups_012": {
+        "smiles": "CC(C)S",
+        "canonical_smiles": "[H]SC([H])(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 12,
+        "num_heavy_atoms": 4
+      },
+      "Functional_Groups_013": {
+        "smiles": "c1ccccc1S",
+        "canonical_smiles": "[H]Sc1c([H])c([H])c([H])c([H])c1[H]",
+        "num_atoms": 13,
+        "num_heavy_atoms": 7
+      }
+    },
+    "Drug-like Fragments": {
+      "Drug-like_Fragments_001": {
+        "smiles": "c1ccc(cc1)",
+        "canonical_smiles": "[H]c1c([H])c([H])c([H])c([H])c1[H]",
+        "num_atoms": 12,
+        "num_heavy_atoms": 6
+      },
+      "Drug-like_Fragments_004": {
+        "smiles": "CC(C)C(=O)O",
+        "canonical_smiles": "[H]OC(=O)C([H])(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 14,
+        "num_heavy_atoms": 6
+      },
+      "Drug-like_Fragments_006": {
+        "smiles": "CCN(C)C(=O)O",
+        "canonical_smiles": "[H]OC(=O)N(C([H])([H])[H])C([H])([H])C([H])([H])[H]",
+        "num_atoms": 16,
+        "num_heavy_atoms": 7
+      },
+      "Drug-like_Fragments_009": {
+        "smiles": "CC(C)(C)C",
+        "canonical_smiles": "[H]C([H])([H])C(C([H])([H])[H])(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 17,
+        "num_heavy_atoms": 5
+      }
+    },
+    "Small Rings (3-7 members)": {
+      "Small_Rings_(3-7_members)_001": {
+        "smiles": "C1CCC1",
+        "canonical_smiles": "[H]C1([H])C([H])([H])C([H])([H])C1([H])[H]",
+        "num_atoms": 12,
+        "num_heavy_atoms": 4
+      },
+      "Small_Rings_(3-7_members)_002": {
+        "smiles": "C1CCCC1",
+        "canonical_smiles": "[H]C1([H])C([H])([H])C([H])([H])C([H])([H])C1([H])[H]",
+        "num_atoms": 15,
+        "num_heavy_atoms": 5
+      },
+      "Small_Rings_(3-7_members)_003": {
+        "smiles": "C1CCCCC1",
+        "canonical_smiles": "[H]C1([H])C([H])([H])C([H])([H])C([H])([H])C([H])([H])C1([H])[H]",
+        "num_atoms": 18,
+        "num_heavy_atoms": 6
+      },
+      "Small_Rings_(3-7_members)_006": {
+        "smiles": "c1ccccc1",
+        "canonical_smiles": "[H]c1c([H])c([H])c([H])c([H])c1[H]",
+        "num_atoms": 12,
+        "num_heavy_atoms": 6
+      }
+    },
+    "Nitrogen-containing": {
+      "Nitrogen-containing_001": {
+        "smiles": "c1ccncc1",
+        "canonical_smiles": "[H]c1nc([H])c([H])c([H])c1[H]",
+        "num_atoms": 11,
+        "num_heavy_atoms": 6
+      },
+      "Nitrogen-containing_004": {
+        "smiles": "c1cn(C)C1",
+        "canonical_smiles": "[H]C1=C([H])C([H])([H])N1C([H])([H])[H]",
+        "num_atoms": 12,
+        "num_heavy_atoms": 5
+      },
+      "Nitrogen-containing_005": {
+        "smiles": "CN(C)C",
+        "canonical_smiles": "[H]C([H])([H])N(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 13,
+        "num_heavy_atoms": 4
+      },
+      "Nitrogen-containing_006": {
+        "smiles": "CN(C)C(=O)",
+        "canonical_smiles": "[H]C(=O)N(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 12,
+        "num_heavy_atoms": 5
+      },
+      "Nitrogen-containing_007": {
+        "smiles": "c1cnccc1O",
+        "canonical_smiles": "[H]Oc1c([H])c([H])nc([H])c1[H]",
+        "num_atoms": 12,
+        "num_heavy_atoms": 7
+      },
+      "Nitrogen-containing_008": {
+        "smiles": "c1ccn(Cc1)C(=O)O",
+        "canonical_smiles": "[H]OC(=O)N1C([H])=C([H])C([H])=C([H])C1([H])[H]",
+        "num_atoms": 16,
+        "num_heavy_atoms": 9
+      }
+    },
+    "Halogens": {},
+    "Sulfur and Phosphorus": {
+      "Sulfur_and_Phosphorus_003": {
+        "smiles": "CCP(=O)(C)C",
+        "canonical_smiles": "[H]C([H])([H])C([H])([H])P(=O)(C([H])([H])[H])C([H])([H])[H]",
+        "num_atoms": 17,
+        "num_heavy_atoms": 6
+      }
+    }
+  },
+  "statistics": {
+    "total": 77,
+    "success": 43,
+    "failed": 26
+  },
+  "sdf_files": [
+    "test_molecules/Simple_Alkanes_001.sdf",
+    "test_molecules/Simple_Alkanes_002.sdf",
+    "test_molecules/Simple_Alkanes_003.sdf",
+    "test_molecules/Simple_Alkanes_004.sdf",
+    "test_molecules/Simple_Alkanes_005.sdf",
+    "test_molecules/Simple_Alkanes_006.sdf",
+    "test_molecules/Branched_Alkanes_001.sdf",
+    "test_molecules/Branched_Alkanes_002.sdf",
+    "test_molecules/Branched_Alkanes_003.sdf",
+    "test_molecules/Aromatic_Rings_001.sdf",
+    "test_molecules/Aromatic_Rings_002.sdf",
+    "test_molecules/Aromatic_Rings_006.sdf",
+    "test_molecules/Heterocycles_002.sdf",
+    "test_molecules/Heterocycles_004.sdf",
+    "test_molecules/Heterocycles_005.sdf",
+    "test_molecules/Heterocycles_006.sdf",
+    "test_molecules/Functional_Groups_001.sdf",
+    "test_molecules/Functional_Groups_002.sdf",
+    "test_molecules/Functional_Groups_003.sdf",
+    "test_molecules/Functional_Groups_004.sdf",
+    "test_molecules/Functional_Groups_005.sdf",
+    "test_molecules/Functional_Groups_006.sdf",
+    "test_molecules/Functional_Groups_007.sdf",
+    "test_molecules/Functional_Groups_008.sdf",
+    "test_molecules/Functional_Groups_009.sdf",
+    "test_molecules/Functional_Groups_011.sdf",
+    "test_molecules/Functional_Groups_012.sdf",
+    "test_molecules/Functional_Groups_013.sdf",
+    "test_molecules/Drug-like_Fragments_001.sdf",
+    "test_molecules/Drug-like_Fragments_004.sdf",
+    "test_molecules/Drug-like_Fragments_006.sdf",
+    "test_molecules/Drug-like_Fragments_009.sdf",
+    "test_molecules/Small_Rings_(3-7_members)_001.sdf",
+    "test_molecules/Small_Rings_(3-7_members)_002.sdf",
+    "test_molecules/Small_Rings_(3-7_members)_003.sdf",
+    "test_molecules/Small_Rings_(3-7_members)_006.sdf",
+    "test_molecules/Nitrogen-containing_001.sdf",
+    "test_molecules/Nitrogen-containing_004.sdf",
+    "test_molecules/Nitrogen-containing_005.sdf",
+    "test_molecules/Nitrogen-containing_006.sdf",
+    "test_molecules/Nitrogen-containing_007.sdf",
+    "test_molecules/Nitrogen-containing_008.sdf",
+    "test_molecules/Sulfur_and_Phosphorus_003.sdf"
+  ]
+}

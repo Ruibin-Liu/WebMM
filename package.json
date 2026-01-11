@@ -1,0 +1,14 @@
+{
+  "name": "molgopt",
+  "version": "0.1.0",
+  "description": "Molecular Geometry Optimization in WebAssembly",
+  "main": "pkg/index.js",
+  "scripts": {
+    "build": "wasm-pack build --target web --out-dir pkg",
+    "serve": "python3 pkg/server.py"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "wasm-pack": "^0.13.0"
+  }
+}
