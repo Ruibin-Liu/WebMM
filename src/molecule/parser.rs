@@ -67,7 +67,8 @@ pub fn parse_sdf(sdf_content: &str) -> Result<Molecule, String> {
             return Err(format!("Atom line {} too short: {}", i + 1, line.len()));
         }
 
-        let symbol = line[0..3].trim();
+        let end = std::cmp::min(34, line.len());
+        let symbol = line[31..end].trim();
         let symbol = if symbol.is_empty() {
             "C".to_string()
         } else {
@@ -78,9 +79,6 @@ pub fn parse_sdf(sdf_content: &str) -> Result<Molecule, String> {
         let x: f64 = line[0..9].trim().parse().unwrap_or(0.0);
         let y: f64 = line[10..19].trim().parse().unwrap_or(0.0);
         let z: f64 = line[20..29].trim().parse().unwrap_or(0.0);
-
-        // Extract mass difference (column 30-38) and charge (column 36-39)
-        // These are typically 0 for standard SDF files
 
         let atomic_number = get_atomic_number(&symbol);
         let mass = get_atomic_mass(atomic_number);
@@ -100,25 +98,24 @@ pub fn parse_sdf(sdf_content: &str) -> Result<Molecule, String> {
     let bond_start = atom_end;
     let bond_end = bond_start + num_bonds;
 
-    if lines.len() > bond_start {
+    if lines.len() >= bond_end {
         for line in lines[bond_start..bond_end].iter() {
             if line.len() < 7 {
                 continue;
             }
 
-            // Parse first bond
             let atom1: usize = line[0..3]
                 .trim()
                 .parse::<usize>()
                 .map_err(|e| format!("Failed to parse atom1: {}", e))?
-                .checked_sub(1) // Convert from 1-indexed to 0-indexed
+                .checked_sub(1)
                 .ok_or_else(|| "Invalid atom1 index".to_string())?;
 
             let atom2: usize = line[3..6]
                 .trim()
                 .parse::<usize>()
                 .map_err(|e| format!("Failed to parse atom2: {}", e))?
-                .checked_sub(1) // Convert from 1-indexed to 0-indexed
+                .checked_sub(1)
                 .ok_or_else(|| "Invalid atom2 index".to_string())?;
 
             let bond_type_num: i32 = line[6..9]
@@ -131,8 +128,8 @@ pub fn parse_sdf(sdf_content: &str) -> Result<Molecule, String> {
                 2 => BondType::Double,
                 3 => BondType::Triple,
                 4 => BondType::Aromatic,
-                5 | 6 | 7 => BondType::Aromatic, // Variations
-                _ => BondType::Single,           // Default to single
+                5..=7 => BondType::Aromatic,
+                _ => BondType::Single,
             };
 
             bonds.push(Bond {
@@ -140,53 +137,25 @@ pub fn parse_sdf(sdf_content: &str) -> Result<Molecule, String> {
                 atom2,
                 bond_type,
             });
-
-            // Check for second bond on same line (columns 9-11, 12-14, 15-17)
-            if line.len() > 12 {
-                let second_bond_str = line[9..12].trim();
-                if !second_bond_str.is_empty() && second_bond_str != "0" {
-                    let atom1_b: usize = line[9..12]
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|e| format!("Failed to parse atom1 (bond 2): {}", e))?
-                        .checked_sub(1)
-                        .ok_or_else(|| "Invalid atom1 index (bond 2)".to_string())?;
-
-                    let atom2_b: usize = line[12..15]
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|e| format!("Failed to parse atom2 (bond 2): {}", e))?
-                        .checked_sub(1)
-                        .ok_or_else(|| "Invalid atom2 index (bond 2)".to_string())?;
-
-                    let bond_type_num_b: i32 = line[15..18].trim().parse::<i32>().unwrap_or(1);
-
-                    let bond_type_b = match bond_type_num_b {
-                        1 => BondType::Single,
-                        2 => BondType::Double,
-                        3 => BondType::Triple,
-                        4 => BondType::Aromatic,
-                        _ => BondType::Single,
-                    };
-
-                    bonds.push(Bond {
-                        atom1: atom1_b,
-                        atom2: atom2_b,
-                        bond_type: bond_type_b,
-                    });
-                }
-            }
         }
     }
 
-    // Extract molecule name from header (line 1)
-    let name = if lines.len() > 1 {
-        lines[1].trim().to_string()
+    // Extract molecule name from header
+    // V2000 format: line 0 = name, line 1 = program/timestamp, line 2 = comment, line 3 = counts
+    let name = if counts_line_idx >= 3 {
+        lines[counts_line_idx - 3].trim().to_string()
     } else {
-        "Unknown".to_string()
+        lines[0].trim().to_string()
     };
 
-    Ok(Molecule { atoms, bonds, name })
+    let adjacency = super::graph::build_adjacency_list_from_bonds(&atoms.len(), &bonds);
+
+    Ok(Molecule {
+        atoms,
+        bonds,
+        name,
+        adjacency,
+    })
 }
 
 /// Get atomic number from element symbol
@@ -202,35 +171,43 @@ fn get_atomic_number(symbol: &str) -> u8 {
         "Cl" => 17,
         "Br" => 35,
         "I" => 53,
-        _ => 0, // Unknown
+        _ => 0,
     }
 }
 
 /// Get atomic mass in atomic mass units (amu)
 fn get_atomic_mass(atomic_number: u8) -> f64 {
     match atomic_number {
-        1 => 1.00794,   // H
-        6 => 12.0107,   // C
-        7 => 14.0067,   // N
-        8 => 15.9994,   // O
-        9 => 18.9984,   // F
-        15 => 30.9738,  // P
-        16 => 32.0660,  // S
-        17 => 35.4527,  // Cl
-        35 => 79.9040,  // Br
-        53 => 126.9045, // I
-        _ => 12.0107,   // Default to carbon
+        1 => 1.00794,
+        6 => 12.0107,
+        7 => 14.0067,
+        8 => 15.9994,
+        9 => 18.9984,
+        15 => 30.9738,
+        16 => 32.0660,
+        17 => 35.4527,
+        35 => 79.9040,
+        53 => 126.9045,
+        _ => 12.0107,
     }
 }
 
-/// Parse charge from atom line
+/// Parse charge from atom line using V2000 encoding
 fn parse_charge(line: &str) -> f64 {
-    // Charge is typically in columns 36-39 (4 chars)
+    // V2000 charge field encoding (column 36-39)
+    // 0=none, 1=+3, 2=+2, 3=+1, 4=doublet radical, 5=-1, 6=-2, 7=-3
     if line.len() > 39 {
-        let charge_str = line[36..40].trim();
-        match charge_str.parse::<i32>() {
-            Ok(c) => c as f64,
-            Err(_) => 0.0,
+        let charge_code: i32 = line[36..40].trim().parse().unwrap_or(0);
+        match charge_code {
+            0 => 0.0,
+            1 => 3.0,
+            2 => 2.0,
+            3 => 1.0,
+            4 => 0.0,
+            5 => -1.0,
+            6 => -2.0,
+            7 => -3.0,
+            _ => 0.0,
         }
     } else {
         0.0
@@ -242,64 +219,46 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore] // Test data format issues - needs valid SDF format
-    fn test_parse_simple_sdf() {
-        let sdf = "test
-     2  1  0  0  0  0  0  0  0  0  0999 V2000
-    6.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-    6.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0
-  1  1  0  0  0  0
-    1  2  1  0  0  0
+    fn test_parse_water_sdf() {
+        let sdf = "Water
+     CDK     101218203532D 0
+
+   3  2  0  0  0  0            999 V2000
+     0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+     0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
 M  END";
 
-        let result = parse_sdf(sdf);
-        if let Err(e) = &result {
-            eprintln!("Parse error: {}", e);
-        }
-        assert!(result.is_ok());
+        let mol = parse_sdf(sdf).expect("Failed to parse water SDF");
+        assert_eq!(mol.name, "Water");
+        assert_eq!(mol.atoms.len(), 3);
+        assert_eq!(mol.bonds.len(), 2);
 
-        let mol = result.unwrap();
-        assert_eq!(mol.atoms.len(), 2);
-        assert_eq!(mol.bonds.len(), 1);
+        assert_eq!(mol.atoms[0].symbol, "O");
+        assert_eq!(mol.atoms[0].atomic_number, 8);
+        assert_eq!(mol.atoms[1].symbol, "H");
+        assert_eq!(mol.atoms[1].atomic_number, 1);
+        assert_eq!(mol.atoms[2].symbol, "H");
+        assert_eq!(mol.atoms[2].atomic_number, 1);
+
+        assert_eq!(mol.adjacency.len(), 3);
+        assert_eq!(mol.adjacency[0], vec![1, 2]);
+        assert_eq!(mol.adjacency[1], vec![0]);
+        assert_eq!(mol.adjacency[2], vec![0]);
     }
 
     #[test]
-    #[ignore] // Test data format issues - needs valid SDF format
-    fn test_parse_benzene_sdf() {
-        let sdf = "Benzene
-  12  12  0  0  0  0  0  0  0  0  0  0  0999 V2000
-    0.0000    1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-    1.2115    0.7035    0.0000 C   0  0  0  0  0  0  0  0  0  0
-    2.1230    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0
-    1.2115   -1.2129    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-    0.0000   -1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0
-   -1.2115   -2.1045    0.0000 C   0  0  0  0  0  0  0  0  0  0
-   -2.1230   -2.8070    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-   -1.2115   -3.5115    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-   -2.4230   -2.8070    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-   -3.6345   -2.1045    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-   -3.6345   -1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-   -2.4230    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-   -1.2115    1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0  0
-   1  2  3  4  5  6  7  8  9 10 11
-   1  2  1  0  0  0
-   2  3  1  0  0  0
-   3  4  2  0  0  0
-   4  5  1  0  0  0
-   5  6  2  0  0  0
-   6  7  1  0  0  0
-   7  8  2  0  0  0
-   8  9  1  0  0  0
-   9 10  2  0  0  0
-   10 11  2  0  0  0
-   11  1  2  0  0  0
+    fn test_parse_charge_encoding() {
+        let sdf = "Charged
+     CDK     101218203532D 0
+
+   1  0  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 O  0  5  0  0  0  0  0  0  0  0  0  0  0
 M  END";
 
-        let result = parse_sdf(sdf);
-        assert!(result.is_ok());
-
-        let mol = result.unwrap();
-        assert_eq!(mol.atoms.len(), 12);
-        assert_eq!(mol.bonds.len(), 12);
+        let mol = parse_sdf(sdf).expect("Failed to parse charged SDF");
+        assert_eq!(mol.atoms[0].charge, -1.0);
     }
 }

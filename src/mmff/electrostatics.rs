@@ -1,7 +1,5 @@
 //! Electrostatics term for MMFF94
 
-use crate::molecule::Molecule;
-
 /// Electrostatic energy between two charged atoms
 pub fn electrostatic_energy_and_gradient(
     coords: &[[f64; 3]],
@@ -26,14 +24,20 @@ pub fn electrostatic_energy_and_gradient(
     // Energy: 332.1 * q_i * q_j / (dielectric * r)  (kcal/mol)
     let energy = 332.1 * q_prod / (dielectric * r);
 
-    // Gradient: dE/dx = -332.1 * q_i * q_j / (dielectric * r^2) * (dx/dr)
-    let dE_dr = -332.1 * q_prod / (dielectric * r * r);
-    let factor = dE_dr / r;
+    // Gradient: dE/dr = -332.1 * q_i * q_j / (dielectric * r^2)
+    let d_e_dr = -332.1 * q_prod / (dielectric * r * r);
 
-    // Force on atom i is negative gradient (attractive if charges opposite)
-    // Force on atom j is positive gradient
-    let grad_i = [factor * r_vec[0], factor * r_vec[1], factor * r_vec[2]];
-    let grad_j = [-factor * r_vec[0], -factor * r_vec[1], -factor * r_vec[2]];
+    // grad_i = dE/dx_i = dE/dr * dr/dx_i = dE/dr * (-r_vec_x / r)
+    let grad_i = [
+        -d_e_dr * r_vec[0] / r,
+        -d_e_dr * r_vec[1] / r,
+        -d_e_dr * r_vec[2] / r,
+    ];
+    let grad_j = [
+        d_e_dr * r_vec[0] / r,
+        d_e_dr * r_vec[1] / r,
+        d_e_dr * r_vec[2] / r,
+    ];
 
     (energy, grad_i, grad_j)
 }
@@ -45,22 +49,24 @@ mod tests {
     #[test]
     fn test_electrostatic_energy() {
         let coords = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
-        let charges = vec![-1.0, 1.0]; // Opposite charges
+        let charges = vec![-1.0, 1.0];
 
         let (energy, grad_i, grad_j) =
             electrostatic_energy_and_gradient(&coords, &charges, 0, 1, 1.0);
 
-        assert!(energy < 0.0); // Attractive energy
-                               // Forces should point toward each other (attraction)
-                               // grad_i is force on atom i (at index 0, q=-1), should point to j (positive x)
-                               // grad_j is force on atom j (at index 1, q=+1), should point to i (negative x)
         assert!(
-            grad_i[0] > 0.0,
-            "Force on negative charge should point toward positive charge"
+            energy < 0.0,
+            "Opposite charges should have attractive energy"
+        );
+        // Gradient convention: dE/dx. For opposite charges, moving atom i toward j decreases energy.
+        // So grad_i (negative direction in gradient space) = negative x (descent is toward j).
+        assert!(
+            grad_i[0] < 0.0,
+            "grad_i should be negative (descent direction pulls i toward j)"
         );
         assert!(
-            grad_j[0] < 0.0,
-            "Force on positive charge should point toward negative charge"
+            grad_j[0] > 0.0,
+            "grad_j should be positive (descent direction pulls j toward i)"
         );
     }
 }

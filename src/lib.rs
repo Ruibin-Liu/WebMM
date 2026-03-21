@@ -20,16 +20,11 @@ pub mod utils;
 
 /// MMFF variant selection
 #[wasm_bindgen]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MMFFVariant {
     MMFF94,
+    #[default]
     MMFF94s,
-}
-
-impl Default for MMFFVariant {
-    fn default() -> Self {
-        MMFFVariant::MMFF94s
-    }
 }
 
 /// Convergence criteria options
@@ -67,6 +62,14 @@ pub struct OptimizationOptions {
     pub convergence: ConvergenceOptions,
 }
 
+#[wasm_bindgen]
+impl OptimizationOptions {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 impl Default for OptimizationOptions {
     fn default() -> Self {
         Self {
@@ -85,22 +88,7 @@ pub struct OptimizationResult {
     pub iterations: usize,
     #[wasm_bindgen(getter_with_clone)]
     pub message: String,
-}
-
-/// Internal result that holds actual optimized coordinates
-#[derive(Debug, Clone)]
-struct InternalOptimizationResult {
-    optimized_coords: Vec<[f64; 3]>,
-    final_energy: f64,
-    converged: bool,
-    iterations: usize,
-    message: String,
-}
-
-impl InternalOptimizationResult {
-    pub fn get_coord(&self, atom_idx: usize, coord_idx: usize) -> f64 {
-        self.optimized_coords[atom_idx][coord_idx]
-    }
+    coordinates: Vec<f64>,
 }
 
 #[wasm_bindgen]
@@ -124,7 +112,12 @@ impl OptimizationResult {
     pub fn get_message(&self) -> String {
         self.message.clone()
     }
-        }
+
+    #[wasm_bindgen]
+    pub fn get_coord(&self, atom_idx: usize, coord_idx: usize) -> f64 {
+        self.coordinates[atom_idx * 3 + coord_idx]
+    }
+}
 #[wasm_bindgen]
 pub struct ETKDGResult {
     coordinates: Vec<f64>,
@@ -175,7 +168,7 @@ pub fn generate_initial_coordinates_wasm(sdf_content: &str) -> Result<ETKDGResul
             error: "Empty or invalid SDF content".to_string(),
         });
     }
-    
+
     let mol = match crate::molecule::parser::parse_sdf(trimmed) {
         Ok(m) => m,
         Err(e) => {
@@ -187,13 +180,13 @@ pub fn generate_initial_coordinates_wasm(sdf_content: &str) -> Result<ETKDGResul
             });
         }
     };
-    
+
     let coords = crate::etkdg::generate_initial_coords(&mol);
     let mut flat_coords = Vec::new();
     for coord in &coords {
         flat_coords.extend_from_slice(coord);
     }
-    
+
     Ok(ETKDGResult {
         coordinates: flat_coords,
         n_atoms: coords.len(),
@@ -213,6 +206,7 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
                 converged: false,
                 iterations: 0,
                 message: format!("Parse error: {}", e),
+                coordinates: Vec::new(),
             };
         }
     };
@@ -220,12 +214,17 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
     let initial_coords = crate::etkdg::generate_initial_coords(&mol);
 
     let variant = match options.mmff_variant.as_str() {
-        "MMFF94" => crate::mmff::MMFFVariant::MMFF94,
-        _ => crate::mmff::MMFFVariant::MMFF94s,
+        "MMFF94" => MMFFVariant::MMFF94,
+        _ => MMFFVariant::MMFF94s,
     };
 
     let ff = crate::mmff::MMFFForceField::new(&mol, variant);
     let optimizer_result = crate::optimizer::optimize(&ff, &initial_coords, &options.convergence);
+
+    let mut flat_coords = Vec::new();
+    for coord in &optimizer_result.optimized_coords {
+        flat_coords.extend_from_slice(coord);
+    }
 
     OptimizationResult {
         n_atoms: optimizer_result.optimized_coords.len(),
@@ -233,13 +232,15 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
         converged: optimizer_result.converged,
         iterations: optimizer_result.iterations,
         message: "Optimization completed".to_string(),
+        coordinates: flat_coords,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::molecule::parse_sdf;
+    use crate::ConvergenceOptions;
+    use crate::MMFFVariant;
 
     #[test]
     fn test_parse_real_sdf() {
@@ -350,5 +351,35 @@ M  END"#;
         // O-H bond lengths should be reasonable (0.5-2.0 Å for initial coordinates)
         assert!(dist_oh1 > 0.5 && dist_oh1 < 2.0);
         assert!(dist_oh2 > 0.5 && dist_oh2 < 2.0);
+    }
+
+    #[test]
+    fn test_end_to_end_water_optimization() {
+        let sdf = r#"Water
+     RDKit          3D
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+M  END"#;
+
+        let mol = crate::molecule::parser::parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 3);
+        assert_eq!(mol.atoms[0].symbol, "O");
+
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        assert_eq!(coords.len(), 3);
+
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let _initial_energy = ff.calculate_energy(&coords);
+
+        let conv = ConvergenceOptions::default();
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+
+        assert!(result.final_energy.is_finite(), "Energy should be finite");
+        assert!(result.optimized_coords.len() == 3);
     }
 }

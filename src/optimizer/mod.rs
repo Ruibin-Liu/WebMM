@@ -36,6 +36,8 @@ pub fn optimize(
 
     let mut converged = false;
     let mut final_energy = 0.0;
+    let mut prev_energy = f64::MAX;
+    let mut final_iter = 0;
 
     for iter in 0..convergence.max_iterations {
         // Calculate energy and gradient
@@ -52,7 +54,15 @@ pub fn optimize(
 
         final_energy = energy;
 
-        // Check convergence
+        // Check energy change convergence
+        if iter > 0 && (prev_energy - energy).abs() < convergence.energy_change {
+            converged = true;
+            final_iter = iter + 1;
+            break;
+        }
+        prev_energy = energy;
+
+        // Check force convergence
         let max_f = g
             .iter()
             .map(|&gi| gi.abs())
@@ -61,6 +71,7 @@ pub fn optimize(
 
         if max_f < convergence.max_force && rms_f < convergence.rms_force {
             converged = true;
+            final_iter = iter + 1;
             break;
         }
 
@@ -80,8 +91,8 @@ pub fn optimize(
         }
 
         // Update history
-        let g_new_2d = flatten_to_2d(&x, n_atoms);
-        let (_, g_new_2d) = ff.calculate_energy_and_gradient(&g_new_2d);
+        let x_new_2d = flatten_to_2d(&x, n_atoms);
+        let (_, g_new_2d) = ff.calculate_energy_and_gradient(&x_new_2d);
 
         let mut g_new = Vec::with_capacity(n_coords);
         for grad in g_new_2d.iter() {
@@ -110,6 +121,8 @@ pub fn optimize(
             y_history.push(g_diff.clone());
             rho_history.push(1.0 / y_dot_s);
         }
+
+        final_iter = iter + 1;
     }
 
     let optimized_coords = flatten_to_2d(&x, n_atoms);
@@ -118,11 +131,7 @@ pub fn optimize(
         optimized_coords,
         final_energy,
         converged,
-        iterations: if converged {
-            converged as usize
-        } else {
-            convergence.max_iterations
-        },
+        iterations: final_iter,
     }
 }
 
@@ -143,37 +152,57 @@ fn compute_lbfgs_direction(
     rho_history: &[f64],
 ) -> Vec<f64> {
     let m = s_history.len();
-
     if m == 0 {
         return g.iter().map(|&gi| -gi).collect();
     }
 
+    let n = g.len();
     let mut q = g.to_vec();
+    let mut alpha_arr = vec![0.0; m];
 
-    // Two-loop recursion
+    // First loop (backward)
     for i in (0..m).rev() {
-        let alpha = rho_history[i]
-            * y_history[i]
-                .iter()
-                .zip(s_history[i].iter())
-                .map(|(yi, sj)| yi * sj)
-                .sum::<f64>();
-
-        let s_g = s_history[i]
+        let s_dot_q: f64 = s_history[i]
             .iter()
-            .zip(g.iter())
-            .map(|(si, gj)| si * gj)
-            .sum::<f64>();
-
-        for j in 0..q.len() {
-            q[j] -= alpha * s_g;
+            .zip(q.iter())
+            .map(|(s, qi)| s * qi)
+            .sum();
+        alpha_arr[i] = rho_history[i] * s_dot_q;
+        for j in 0..n {
+            q[j] -= alpha_arr[i] * y_history[i][j];
         }
     }
 
-    q
+    // H0 scaling
+    let last = m - 1;
+    let y_y: f64 = y_history[last].iter().map(|y| y * y).sum();
+    let s_y_last: f64 = s_history[last]
+        .iter()
+        .zip(y_history[last].iter())
+        .map(|(s, y)| s * y)
+        .sum();
+    let gamma = if y_y > 1e-20 { s_y_last / y_y } else { 1.0 };
+
+    let mut r = q.iter().map(|qi| gamma * qi).collect::<Vec<f64>>();
+
+    // Second loop (forward)
+    for i in 0..m {
+        let y_dot_r: f64 = y_history[i]
+            .iter()
+            .zip(r.iter())
+            .map(|(y, ri)| y * ri)
+            .sum();
+        let beta = rho_history[i] * y_dot_r;
+        for j in 0..n {
+            r[j] += (alpha_arr[i] - beta) * s_history[i][j];
+        }
+    }
+
+    r.iter().map(|ri| -ri).collect()
 }
 
 /// Armijo line search
+#[allow(clippy::too_many_arguments)]
 fn armijo_line_search(
     ff: &MMFFForceField,
     x: &[f64],

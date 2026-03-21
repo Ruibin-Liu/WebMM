@@ -1,18 +1,16 @@
 //! Out-of-plane bending term for MMFF94
 
-use super::super::mmff::MMFFAtomType;
-use super::super::mmff::MMFFVariant;
+use super::MMFFAtomType;
+use super::MMFFVariant;
 
 /// Out-of-plane parameters
 #[derive(Debug, Clone, Copy)]
 pub struct OOPParams {
-    pub k_oop: f64, // kcal/mol/rad²
+    pub k_oop: f64,
 }
 
 /// Get OOP parameters for central atom type
-pub fn get_oop_params(central_type: MMFFAtomType, mmff_variant: MMFFVariant) -> OOPParams {
-    // TODO: Load from parameter tables
-    // For now, return simple default values
+pub fn get_oop_params(central_type: MMFFAtomType, _mmff_variant: MMFFVariant) -> OOPParams {
     match central_type {
         MMFFAtomType::C_3 | MMFFAtomType::C_2 | MMFFAtomType::C_AR => OOPParams { k_oop: 0.04 },
         MMFFAtomType::N_3 | MMFFAtomType::N_2 | MMFFAtomType::N_AR => OOPParams { k_oop: 0.04 },
@@ -32,7 +30,6 @@ pub fn oop_energy(
 ) -> f64 {
     let chi = calculate_oop_angle(coords, central, i, j, k);
 
-    // E_oop = k_oop * sum[n=1 to 4] (C_n * (1 - cos(n*chi)))
     let cos_chi = chi.cos();
     let cos_2chi = (2.0 * chi).cos();
     let cos_3chi = (3.0 * chi).cos();
@@ -43,7 +40,6 @@ pub fn oop_energy(
 
 /// Calculate out-of-plane angle (deviation from plane)
 fn calculate_oop_angle(coords: &[[f64; 3]], central: usize, i: usize, j: usize, k: usize) -> f64 {
-    // Vectors from central to bonded atoms
     let v1 = [
         coords[i][0] - coords[central][0],
         coords[i][1] - coords[central][1],
@@ -60,7 +56,6 @@ fn calculate_oop_angle(coords: &[[f64; 3]], central: usize, i: usize, j: usize, 
         coords[k][2] - coords[central][2],
     ];
 
-    // Plane normal = (v1 - v2) cross (v1 - v3)
     let diff12 = [v1[0] - v2[0], v1[1] - v2[1], v1[2] - v2[2]];
     let diff13 = [v1[0] - v3[0], v1[1] - v3[1], v1[2] - v3[2]];
 
@@ -76,15 +71,12 @@ fn calculate_oop_angle(coords: &[[f64; 3]], central: usize, i: usize, j: usize, 
         return 0.0;
     }
 
-    // Normalize normal
     let normal = [
         normal[0] / normal_norm,
         normal[1] / normal_norm,
         normal[2] / normal_norm,
     ];
 
-    // OOP angle is the angle between v1 and the plane
-    // Use average of angles with v2 and v3
     let v1_norm = (v1[0].powi(2) + v1[1].powi(2) + v1[2].powi(2)).sqrt();
     if v1_norm == 0.0 {
         return 0.0;
@@ -92,11 +84,9 @@ fn calculate_oop_angle(coords: &[[f64; 3]], central: usize, i: usize, j: usize, 
 
     let v1_unit = [v1[0] / v1_norm, v1[1] / v1_norm, v1[2] / v1_norm];
 
-    // Project v1 onto normal (distance from plane)
     let dot = v1_unit[0] * normal[0] + v1_unit[1] * normal[1] + v1_unit[2] * normal[2];
     let dist_from_plane = dot.abs();
 
-    // OOP angle = arcsin(distance)
     dist_from_plane.asin()
 }
 
@@ -108,79 +98,76 @@ pub fn oop_gradient(
     atom3: usize,
     params: &OOPParams,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    // Simplified OOP gradient
-    let chi = oop_energy(coords, central, atom1, atom2, atom3, params);
-    // chi is already the angle in radians
-    let sin_chi = chi.sin();
+    let eps = 1e-7;
+    let e_ref = oop_energy(coords, central, atom1, atom2, atom3, params);
+    let mut gc = [0.0; 3];
+    let mut g1 = [0.0; 3];
+    let mut g2 = [0.0; 3];
+    let mut g3 = [0.0; 3];
 
-    // Force magnitude
-    let force = 2.0 * params.k_oop * sin_chi;
+    for (atom_idx, grad) in [
+        (central, &mut gc),
+        (atom1, &mut g1),
+        (atom2, &mut g2),
+        (atom3, &mut g3),
+    ] {
+        for dim in 0..3 {
+            let mut coords_p = coords.to_vec();
+            coords_p[atom_idx][dim] += eps;
+            let e_plus = oop_energy(&coords_p, central, atom1, atom2, atom3, params);
+            grad[dim] = (e_plus - e_ref) / eps;
+        }
+    }
 
-    // Normal to plane
-    let v1 = [
-        coords[atom1][0] - coords[central][0],
-        coords[atom1][1] - coords[central][1],
-        coords[atom1][2] - coords[central][2],
-    ];
-
-    let v2 = [
-        coords[atom2][0] - coords[central][0],
-        coords[atom2][1] - coords[central][1],
-        coords[atom2][2] - coords[central][2],
-    ];
-
-    let v3 = [
-        coords[atom3][0] - coords[central][0],
-        coords[atom3][1] - coords[central][1],
-        coords[atom3][2] - coords[central][2],
-    ];
-
-    // Cross product to get normal
-    let normal = [
-        v1[1] * v2[2] - v1[2] * v2[1],
-        v1[2] * v2[0] - v1[0] * v2[2],
-        v1[0] * v2[1] - v1[1] * v2[0],
-    ];
-
-    let normal_norm = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
-    let normal_unit = [
-        normal[0] / normal_norm,
-        normal[1] / normal_norm,
-        normal[2] / normal_norm,
-    ];
-
-    // Gradient for central atom
-    let grad_central = [
-        -force * normal_unit[0],
-        -force * normal_unit[1],
-        -force * normal_unit[2],
-    ];
-
-    // Gradient for out-of-plane atoms (simplified)
-    let grad1 = [force * 0.3, force * 0.3, force * 0.3];
-    let grad2 = [force * 0.3, force * 0.3, force * 0.3];
-    let grad3 = [force * 0.3, force * 0.3, force * 0.3];
-
-    (grad_central, grad1, grad2, grad3)
+    (gc, g1, g2, g3)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mmff::MMFFVariant;
 
     #[test]
     fn test_oop_energy() {
         let coords = vec![
-            [1.526, 0.0, 0.0],    // H
-            [0.0, 0.0, 0.0],      // C
-            [1.526, 0.934, 0.0],  // H
-            [0.0, 0.934, -1.526], // H (out of plane)
+            [1.526, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [1.526, 0.934, 0.0],
+            [0.0, 0.934, -1.526],
         ];
 
         let params = OOPParams { k_oop: 0.04 };
         let energy = oop_energy(&coords, 1, 0, 2, 3, &params);
 
         assert!(energy.is_finite());
+    }
+
+    #[test]
+    fn test_oop_gradient_numerical() {
+        let coords = vec![
+            [1.526, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 1.526, 0.0],
+            [0.0, 0.0, 0.5],
+        ];
+        let params = OOPParams { k_oop: 0.04 };
+        let (gc, g1, g2, g3) = oop_gradient(&coords, 1, 0, 2, 3, &params);
+
+        let eps = 1e-7;
+        for (idx, grad) in [(1usize, gc), (0usize, g1), (2usize, g2), (3usize, g3)] {
+            for dim in 0..3 {
+                let mut cp = coords.clone();
+                cp[idx][dim] += eps;
+                let ep = oop_energy(&cp, 1, 0, 2, 3, &params);
+                let num = (ep - oop_energy(&coords, 1, 0, 2, 3, &params)) / eps;
+                assert!(
+                    (grad[dim] - num).abs() < 1e-4,
+                    "OOP grad[{}] = {} vs numerical {} for atom {}",
+                    dim,
+                    grad[dim],
+                    num,
+                    idx
+                );
+            }
+        }
     }
 }

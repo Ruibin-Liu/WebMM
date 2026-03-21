@@ -1,13 +1,8 @@
 pub mod graph;
 pub mod parser;
 
-pub use graph::*;
+pub use graph::{Angle, Hybridization, OutOfPlane, Torsion};
 pub use parser::*;
-
-pub use graph::Angle;
-pub use graph::Hybridization;
-pub use graph::OutOfPlane;
-pub use graph::Torsion;
 
 /// Atom in a molecule
 #[derive(Debug, Clone)]
@@ -43,4 +38,5 @@ pub struct Molecule {
     pub atoms: Vec<Atom>,
     pub bonds: Vec<Bond>,
     pub name: String,
+    pub adjacency: Vec<Vec<usize>>,
 }

@@ -1,6 +1,13 @@
 //! ETKDG v3 3D coordinate embedding
 
-use crate::molecule::{Bond, BondType, Molecule};
+use crate::molecule::{BondType, Molecule};
+
+fn random_f64() -> f64 {
+    let mut buf = [0u8; 8];
+    let _ = getrandom::getrandom(&mut buf);
+    let val = u64::from_ne_bytes(buf);
+    val as f64 / u64::MAX as f64
+}
 
 /// ETKDG v3 configuration
 #[derive(Debug, Clone)]
@@ -100,7 +107,7 @@ fn vdw_radius(element: &str) -> f64 {
         "Cl" => 1.75,
         "Br" => 1.85,
         "I" => 1.98,
-        _ => 1.70, // Default for unknown elements
+        _ => 1.70,
     }
 }
 
@@ -117,7 +124,7 @@ fn covalent_radius(element: &str) -> f64 {
         "Cl" => 1.02,
         "Br" => 1.20,
         "I" => 1.33,
-        _ => 0.76, // Default for unknown elements
+        _ => 0.76,
     }
 }
 
@@ -139,7 +146,7 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                 // Lower bound: sum of covalent radii
                 let r_cov_i = covalent_radius(&mol.atoms[i].symbol);
                 let r_cov_j = covalent_radius(&mol.atoms[j].symbol);
-                bounds.lower[i][j] = r_cov_i + r_cov_j - 0.2; // Allow slight compression
+                bounds.lower[i][j] = r_cov_i + r_cov_j - 0.2;
 
                 // Upper bound: sum of van der Waals radii
                 bounds.upper[i][j] = (r_i + r_j) * config.vdw_scale;
@@ -149,8 +156,8 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
 
     // Apply bond constraints
     for bond in &mol.bonds {
-        let i = bond.atom1 as usize;
-        let j = bond.atom2 as usize;
+        let i = bond.atom1;
+        let j = bond.atom2;
 
         let r_cov_i = covalent_radius(&mol.atoms[i].symbol);
         let r_cov_j = covalent_radius(&mol.atoms[j].symbol);
@@ -188,12 +195,12 @@ fn generate_4d_coordinates(bounds: &DistanceBounds) -> Vec<[f64; 4]> {
 
     // Start with small random coordinates
     let mut coords = Vec::with_capacity(n_atoms);
-    for i in 0..n_atoms {
+    for _ in 0..n_atoms {
         coords.push([
-            (js_sys::Math::random() - 0.5) * 0.1,
-            (js_sys::Math::random() - 0.5) * 0.1,
-            (js_sys::Math::random() - 0.5) * 0.1,
-            (js_sys::Math::random() - 0.5) * 0.1,
+            (random_f64() - 0.5) * 0.1,
+            (random_f64() - 0.5) * 0.1,
+            (random_f64() - 0.5) * 0.1,
+            (random_f64() - 0.5) * 0.1,
         ]);
     }
 
@@ -213,9 +220,9 @@ fn generate_4d_coordinates(bounds: &DistanceBounds) -> Vec<[f64; 4]> {
                 let target_dist = if current_dist < bounds.lower[i][j] {
                     bounds.lower[i][j]
                 } else if current_dist > bounds.upper[i][j] {
-                    bounds.upper[i][j].min(10.0) // Cap to reasonable value
+                    bounds.upper[i][j].min(10.0)
                 } else {
-                    continue; // Within bounds
+                    continue;
                 };
 
                 if current_dist >= 1e-8 {
@@ -262,10 +269,10 @@ fn dgff_minimization(
     config: &ETKDGConfig,
 ) {
     let n_atoms = coords.len();
-    let k_bond = 100.0; // Bond force constant (reduced for stability)
-    let k_vdw = 10.0; // Van der Waals force constant (reduced for stability)
+    let k_bond = 100.0;
+    let k_vdw = 10.0;
 
-    for iteration in 0..config.max_iterations {
+    for _iteration in 0..config.max_iterations {
         let mut total_gradient = 0.0;
         let mut forces = vec![[0.0; 3]; n_atoms];
 
@@ -291,8 +298,7 @@ fn dgff_minimization(
 
                 // Bond constraints (stronger force)
                 for bond in &mol.bonds {
-                    if (bond.atom1 as usize == i && bond.atom2 as usize == j)
-                        || (bond.atom1 as usize == j && bond.atom2 as usize == i)
+                    if (bond.atom1 == i && bond.atom2 == j) || (bond.atom1 == j && bond.atom2 == i)
                     {
                         let ideal_dist = (bounds.lower[i][j] + bounds.upper[i][j]) / 2.0;
                         force += k_bond * (ideal_dist - dist) / dist;
@@ -320,9 +326,9 @@ fn dgff_minimization(
         let step_size = 0.01;
         for i in 0..n_atoms {
             // Limit force magnitude to prevent instability
-            let fx = forces[i][0].max(-1.0).min(1.0);
-            let fy = forces[i][1].max(-1.0).min(1.0);
-            let fz = forces[i][2].max(-1.0).min(1.0);
+            let fx = forces[i][0].clamp(-1.0, 1.0);
+            let fy = forces[i][1].clamp(-1.0, 1.0);
+            let fz = forces[i][2].clamp(-1.0, 1.0);
 
             coords[i][0] += step_size * fx;
             coords[i][1] += step_size * fy;
@@ -344,7 +350,7 @@ pub fn generate_initial_coords(mol: &Molecule) -> Vec<[f64; 3]> {
 
 /// Generate initial 3D coordinates using ETKDG v3 with custom configuration
 pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
-    if mol.atoms.len() < 1 {
+    if mol.atoms.is_empty() {
         return Vec::new();
     }
 

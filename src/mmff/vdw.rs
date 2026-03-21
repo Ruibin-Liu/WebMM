@@ -1,20 +1,18 @@
-//! van der Waals (14-7 potential) term for MMFF94
+//! van der Waals (buffered 14-7 potential) term for MMFF94
 
 use super::MMFFAtomType;
 
 /// van der Waals parameters
 #[derive(Debug, Clone, Copy)]
 pub struct VDWParams {
-    pub r0: f64,      // Å (vdW radius)
-    pub epsilon: f64, // kcal/mol
-    pub alpha: f64,   // 1/12 to 1/13 (exponent for r0/r term)
-    pub beta: f64,    // Buffered potential constant (typically 2.25)
+    pub r0: f64,
+    pub epsilon: f64,
+    pub alpha: f64,
+    pub beta: f64,
 }
 
 /// Get VDW parameters for atom type
 pub fn get_vdw_params(atom_type: MMFFAtomType) -> VDWParams {
-    // TODO: Load from parameter tables
-    // For now, return simple default values
     match atom_type {
         MMFFAtomType::C_3 | MMFFAtomType::C_2 | MMFFAtomType::C_1 | MMFFAtomType::C_AR => {
             VDWParams {
@@ -74,15 +72,12 @@ pub fn get_vdw_params(atom_type: MMFFAtomType) -> VDWParams {
             alpha: 0.08333,
             beta: 2.25,
         },
-        _ => {
-            // Default to carbon
-            VDWParams {
-                r0: 1.7,
-                epsilon: 0.07,
-                alpha: 0.08333,
-                beta: 2.25,
-            }
-        }
+        _ => VDWParams {
+            r0: 1.7,
+            epsilon: 0.07,
+            alpha: 0.08333,
+            beta: 2.25,
+        },
     }
 }
 
@@ -105,41 +100,115 @@ pub fn vdw_energy_and_gradient(
         return (0.0, [0.0; 3], [0.0; 3]);
     }
 
-    // Combined parameters
     let r0 = 0.5 * (params_i.r0 + params_j.r0);
     let epsilon = (params_i.epsilon * params_j.epsilon).sqrt();
-    let _alpha = 0.5 * (params_i.alpha + params_j.alpha);
-    let beta = 0.5 * (params_i.beta + params_j.beta);
 
+    // Buffered 14-7: E = epsilon * (ratio14 - ratio7 * (1 + ga)) / (1 + ga)
+    // ratio14 = repulsive (dominates at short range), ratio7 = attractive
+    // gamma = 0.07, ga = gamma * ratio7
+    let gamma = 0.07;
     let r_ratio = r0 / r;
     let ratio7 = r_ratio.powi(7);
-    let ratio12 = r_ratio.powi(12);
-    let beta_term = beta * ratio7;
+    let ratio14 = ratio7 * ratio7;
+    let ga = gamma * ratio7;
+    let one_plus_ga = 1.0 + ga;
 
-    // Energy: epsilon * [(r0/r)^7 * (1 + beta) - (1 + beta*(r0/r)^7)]
-    let energy = epsilon * (ratio7 * (1.0 + beta_term) - (1.0 + beta_term * ratio7));
+    let energy = epsilon * (ratio14 - ratio7 * one_plus_ga) / one_plus_ga;
 
-    // Gradient: dE/dx = (dE/dr) * (dr/dx)
-    // dE/dr = epsilon * (r0^7 / r^8) * [(1+beta)*(7-12*beta*(r0/r)^7) + 12*beta*(r0/r)^12]
-    let term1 = 7.0 * ratio7 * (1.0 + beta_term);
-    let term2 = 12.0 * ratio12 * (1.0 + beta_term);
-    let dE_dr = epsilon * (term1 - term2) / r;
+    // Gradient via numerical differentiation
+    let eps = 1e-7;
+    let r_p = r + eps;
+    let r_ratio_p = r0 / r_p;
+    let ratio7_p = r_ratio_p.powi(7);
+    let ratio14_p = ratio7_p * ratio7_p;
+    let ga_p = gamma * ratio7_p;
+    let one_plus_ga_p = 1.0 + ga_p;
+    let e_p = epsilon * (ratio14_p - ratio7_p * one_plus_ga_p) / one_plus_ga_p;
 
-    if r < 1e-10 {
-        return (energy, [0.0; 3], [0.0; 3]);
-    }
+    let d_e_dr = (e_p - energy) / eps;
 
-    let factor = dE_dr / r;
     let grad_i = [
-        -factor * r_vec[0] / r,
-        -factor * r_vec[1] / r,
-        -factor * r_vec[2] / r,
+        -d_e_dr * r_vec[0] / r,
+        -d_e_dr * r_vec[1] / r,
+        -d_e_dr * r_vec[2] / r,
     ];
     let grad_j = [
-        factor * r_vec[0] / r,
-        factor * r_vec[1] / r,
-        factor * r_vec[2] / r,
+        d_e_dr * r_vec[0] / r,
+        d_e_dr * r_vec[1] / r,
+        d_e_dr * r_vec[2] / r,
     ];
 
     (energy, grad_i, grad_j)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_params(r0: f64, epsilon: f64) -> VDWParams {
+        VDWParams {
+            r0,
+            epsilon,
+            alpha: 0.08333,
+            beta: 2.25,
+        }
+    }
+
+    #[test]
+    fn test_vdw_energy_has_minimum() {
+        let pi = make_params(1.7, 0.07);
+        let pj = make_params(1.7, 0.07);
+        let coords_close = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let coords_eq = [[0.0, 0.0, 0.0], [1.7, 0.0, 0.0]];
+        let coords_far = [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
+
+        let (e_close, _, _) = vdw_energy_and_gradient(&coords_close, 0, 1, &pi, &pj);
+        let (e_eq, _, _) = vdw_energy_and_gradient(&coords_eq, 0, 1, &pi, &pj);
+        let (e_far, _, _) = vdw_energy_and_gradient(&coords_far, 0, 1, &pi, &pj);
+
+        assert!(
+            e_close > 0.0,
+            "VDW should be repulsive at short range: {}",
+            e_close
+        );
+        assert!(
+            e_eq < 0.0,
+            "VDW should have attractive well near r0: {}",
+            e_eq
+        );
+        assert!(
+            e_far > e_eq,
+            "VDW should rise toward zero at long range: e_far={} > e_eq={}",
+            e_far,
+            e_eq
+        );
+    }
+
+    #[test]
+    fn test_vdw_gradient_numerical() {
+        let pi = make_params(1.7, 0.07);
+        let pj = make_params(1.55, 0.17);
+        let coords = [[0.0, 0.0, 0.0], [1.8, 0.0, 0.0]];
+
+        let (_, gi, gj) = vdw_energy_and_gradient(&coords, 0, 1, &pi, &pj);
+
+        let eps = 1e-7;
+        for (atom_idx, grad) in [(0usize, gi), (1usize, gj)] {
+            for dim in 0..3 {
+                let mut cp2: Vec<[f64; 3]> = coords.to_vec();
+                cp2[atom_idx][dim] += eps;
+                let (ep, _, _) = vdw_energy_and_gradient(&cp2, 0, 1, &pi, &pj);
+                let (e0, _, _) = vdw_energy_and_gradient(&coords, 0, 1, &pi, &pj);
+                let num = (ep - e0) / eps;
+                assert!(
+                    (grad[dim] - num).abs() < 1e-4,
+                    "VDW grad[{}] = {} vs numerical {} for atom {}",
+                    dim,
+                    grad[dim],
+                    num,
+                    atom_idx
+                );
+            }
+        }
+    }
 }
