@@ -5,7 +5,8 @@
   "main": "pkg/index.js",
   "scripts": {
     "build": "wasm-pack build --target web --out-dir pkg",
-    "serve": "python3 pkg/server.py"
+    "serve": "python3 pkg/server.py",
+    "preview": "wasm-pack build --target web --out-dir pkg && python3 pkg/server.py"
   },
   "dependencies": {},
   "devDependencies": {
