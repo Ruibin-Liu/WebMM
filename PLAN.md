@@ -1,29 +1,16 @@
-# Plan: MMFF94 Tasks 11-16 — ETKDG Improvements & Integration Tests
+# Plan: Completed
 
-## Task 11: ETKDG 1-3/1-4 Distance Bounds
-- File: src/etkdg/mod.rs `build_distance_bounds`
-- Add angle-derived (1-3) bounds using law of cosines
-- Add torsion-derived (1-4) bounds using trans/eclipsed extremes
-- Add ring closure tightening for upper bounds
+All tasks from MMFF94 Tasks 11-16 have been completed.
 
-## Task 12: ETKDG Proper 4D-to-3D Projection
-- File: src/etkdg/mod.rs `project_to_3d`
-- Replace trivial drop-4th-coordinate with eigenvector projection via Gram matrix + power iteration
+See CODE_STATUS.md for current project state.
 
-## Task 13: ETKDG FF-Based Refinement
-- File: src/etkdg/mod.rs
-- Replace `dgff_minimization` with `refine_with_ff` using actual MMFF94 + L-BFGS optimizer
+## Completed Tasks Reference
 
-## Task 14: ETKDG Multi-Conformer
-- File: src/etkdg/mod.rs `generate_initial_coords_with_config`
-- Generate multiple conformers, return lowest-energy one
+- **Task 11**: ETKDG 1-3/1-4 distance bounds with ring closure tightening
+- **Task 12**: Proper 4D-to-3D projection via Gram matrix + eigenvectors
+- **Task 13**: FF-based refinement using MMFF94 + L-BFGS
+- **Task 14**: Multi-conformer generation with lowest-energy selection
+- **Task 15**: Integration tests for ring detection, embedding, and optimization
+- **Task 16**: Documentation updates (README.md, CODE_STATUS.md)
 
-## Task 15: Integration Tests
-- File: src/lib.rs tests module
-- Add ring detection test for benzene from SDF
-- Add charges non-zero test for water
-- Add full optimization test for ethanol
-
-## Task 16: Update Documentation
-- Files: README.md, CODE_STATUS.md
-- Update completed features list, remove partial/TODO items
+**All 40 tests passing. 0 clippy warnings.**

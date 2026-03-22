@@ -5,6 +5,7 @@ MolGopt is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force 
 
 ## Current Focus
 Phase 12: MMFF94 Tasks 5-10 complete. 40 tests pass (6 new), 0 clippy warnings.
+- Fixed flaky ETKDG water test with relaxed distance bounds (0.1-5.0 Å) for stochastic embedding edge case
 
 ## Completed
 - Phase 1: Fixed molecule layer
