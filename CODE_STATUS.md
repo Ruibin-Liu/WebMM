@@ -4,7 +4,7 @@
 MolGopt is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-Phase 11: MMFF94 Tasks 11-16 complete. 34 tests pass (3 new), 0 clippy warnings.
+Phase 12: MMFF94 Tasks 5-10 complete. 40 tests pass (6 new), 0 clippy warnings.
 
 ## Completed
 - Phase 1: Fixed molecule layer
@@ -76,6 +76,15 @@ Phase 11: MMFF94 Tasks 11-16 complete. 34 tests pass (3 new), 0 clippy warnings.
 - (none)
 
 ## Completed
+- Phase 12: BCI charges, parameter estimation, expanded tables, per-type VDW/OOP
+  - Task 5: Bond Charge Increment method (src/mmff/charges.rs) — FBCI initialization, 37-entry BCI table, electronegativity-based fallback estimation, charge neutralization
+  - Task 6: Parameter estimation rules (src/mmff/estimation.rs) — Halgren eqs 10-13 for bond params (kb, r0 with bond order corrections), eqs 14-16 for angle params (ktheta, theta0 by central geometry)
+  - Task 7: Expanded bond parameters from ~15 to 80+ entries: C-C, C-N, C-O, C-S, C-H, N-H, O-H, S-H, halogen, N-N, O-O, P bonds with symmetric matching
+  - Task 8: Expanded angle parameters from ~10 to 80+ entries: C-C-C, C=C-C, aromatic, C-N-C, aromatic N, C-O-C, carbonyl, C-S-C, C-P-C, halogen angles with symmetric matching
+  - Task 9: Expanded torsion parameters from 3 to 17 central-bond types: C_3-C_3, C_3-C_2, C_2=C_2, C_3-C_AR, C_AR-C_AR, C_3-N_3, C_3-N_PL3, C_3-N_AM, C_AR-N_AR, C_3-O_3, C_3-O_R, C_AR-O_R, C_3-S_3, C_3-P_3, N_3-C_2. Default zero-barrier fallback for unknown torsions.
+  - Task 10: Per-type VDW (r0, epsilon, alpha) and OOP (k_oop) from atom type property table — replaced grouped per-element match with individual per-type values
+  - Bond/angle parameter lookup now chains: hardcoded table -> estimation fallback -> JSON fallback
+  - 6 new tests: 3 charges (ethanol, water, neutralization), 3 estimation (bond, angle, ions)
 - Phase 11: ETKDG improvements and integration tests
   - Task 11: Added 1-3 (angle-derived) and 1-4 (torsion-derived) distance bounds + ring closure tightening to `build_distance_bounds`
   - Task 12: Replaced trivial 4D-to-3D projection with eigenvector projection via Gram matrix + power iteration
@@ -96,6 +105,9 @@ Phase 11: MMFF94 Tasks 11-16 complete. 34 tests pass (3 new), 0 clippy warnings.
 - 2026-03-21 — Single-pass energy+gradient in MMFFForceField (halves force field evaluation cost)
 - 2026-03-21 — Used include_str! to embed MMFF94 JSON parameters at compile time (works for both native and WASM targets)
 - 2026-03-21 — JSON parameter fallback in get_bond_params for types not in hardcoded match table
+- 2026-03-22 — Three-tier parameter lookup: hardcoded table -> estimation fallback -> JSON fallback
+- 2026-03-22 — Per-type VDW/OOP from atom type property table (replaces grouped per-element values)
+- 2026-03-22 — Zero-barrier default for unknown torsions (flat landscape) instead of skipping entirely
 
 ## Constraints & Assumptions
 - V2000 MOL format only (no V3000 support)

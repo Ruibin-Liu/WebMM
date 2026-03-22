@@ -20,28 +20,115 @@ pub fn get_torsion_params(
     _mmff_variant: MMFFVariant,
 ) -> Option<TorsionParams> {
     match (type1, type2, type3, type4) {
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => {
+        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => {
             Some(TorsionParams {
                 v1: 0.0,
-                v2: 0.2,
-                v3: 0.15,
+                v2: 0.15,
+                v3: 0.0,
             })
         }
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::C_2) => {
+        (_, MMFFAtomType::C_3, MMFFAtomType::C_2, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.2,
+            v3: 0.15,
+        }),
+
+        (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => {
             Some(TorsionParams {
                 v1: 0.0,
-                v2: 0.2,
-                v3: 0.15,
+                v2: 0.15,
+                v3: 0.0,
             })
         }
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => {
-            Some(TorsionParams {
-                v1: 0.0,
-                v2: 0.2,
-                v3: 0.15,
-            })
-        }
-        _ => None,
+        (_, MMFFAtomType::N_3, MMFFAtomType::C_2, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.2,
+            v3: 0.15,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::N_PL3, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 10.0,
+            v3: 0.5,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::N_AM, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 10.0,
+            v3: 0.5,
+        }),
+
+        (_, MMFFAtomType::C_AR, MMFFAtomType::O_R, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 2.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_2, MMFFAtomType::C_2, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 10.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_AR, MMFFAtomType::C_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_AR, MMFFAtomType::N_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::C_3, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.2,
+            v3: 0.15,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::C_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.2,
+            v3: 0.15,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::N_3, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.2,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::O_3, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.5,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::O_R, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.5,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::S_3, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.2,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_3, MMFFAtomType::P_3, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.2,
+            v3: 0.0,
+        }),
+
+        _ => Some(TorsionParams {
+            v1: 0.0,
+            v2: 0.0,
+            v3: 0.0,
+        }),
     }
 }
 

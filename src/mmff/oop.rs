@@ -1,5 +1,6 @@
 //! Out-of-plane bending term for MMFF94
 
+use super::atom_types::get_atom_type_props;
 use super::MMFFAtomType;
 use super::MMFFVariant;
 
@@ -9,14 +10,12 @@ pub struct OOPParams {
     pub k_oop: f64,
 }
 
-/// Get OOP parameters for central atom type
 pub fn get_oop_params(central_type: MMFFAtomType, _mmff_variant: MMFFVariant) -> OOPParams {
-    match central_type {
-        MMFFAtomType::C_3 | MMFFAtomType::C_2 | MMFFAtomType::C_AR => OOPParams { k_oop: 0.04 },
-        MMFFAtomType::N_3 | MMFFAtomType::N_2 | MMFFAtomType::N_AR => OOPParams { k_oop: 0.04 },
-        MMFFAtomType::O_2 | MMFFAtomType::O_3 => OOPParams { k_oop: 0.04 },
-        _ => OOPParams { k_oop: 0.04 },
-    }
+    let k_oop = match get_atom_type_props(central_type) {
+        Some(props) => props.oop_k,
+        None => 0.0,
+    };
+    OOPParams { k_oop }
 }
 
 /// Calculate out-of-plane bending energy

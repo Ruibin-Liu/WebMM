@@ -9,7 +9,9 @@ use crate::molecule::Molecule;
 pub mod angle;
 pub mod atom_types;
 pub mod bond;
+pub mod charges;
 pub mod electrostatics;
+pub mod estimation;
 pub mod oop;
 pub mod torsion;
 pub mod vdw;
@@ -17,7 +19,9 @@ pub mod vdw;
 pub use angle::*;
 pub use atom_types::*;
 pub use bond::*;
+pub use charges::*;
 pub use electrostatics::*;
+pub use estimation::*;
 pub use oop::*;
 pub use torsion::*;
 pub use vdw::*;
@@ -264,9 +268,8 @@ impl MMFFForceField {
             .collect()
     }
 
-    fn calculate_charges(mol: &Molecule, _atom_types: &[MMFFAtomType]) -> Vec<f64> {
-        // TODO: Implement bond charge increment method
-        vec![0.0; mol.atoms.len()]
+    fn calculate_charges(mol: &Molecule, atom_types: &[MMFFAtomType]) -> Vec<f64> {
+        calculate_bci_charges(mol, atom_types)
     }
 
     pub fn calculate_energy_and_gradient(&self, coords: &[[f64; 3]]) -> (f64, Vec<[f64; 3]>) {

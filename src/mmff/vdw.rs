@@ -1,5 +1,6 @@
 //! van der Waals (buffered 14-7 potential) term for MMFF94
 
+use super::atom_types::get_atom_type_props;
 use super::MMFFAtomType;
 
 /// van der Waals parameters
@@ -11,71 +12,18 @@ pub struct VDWParams {
     pub beta: f64,
 }
 
-/// Get VDW parameters for atom type
 pub fn get_vdw_params(atom_type: MMFFAtomType) -> VDWParams {
-    match atom_type {
-        MMFFAtomType::C_3 | MMFFAtomType::C_2 | MMFFAtomType::C_1 | MMFFAtomType::C_AR => {
-            VDWParams {
-                r0: 1.7,
-                epsilon: 0.07,
-                alpha: 0.08333,
-                beta: 2.25,
-            }
-        }
-        MMFFAtomType::N_3 | MMFFAtomType::N_2 | MMFFAtomType::N_1 | MMFFAtomType::N_AR => {
-            VDWParams {
-                r0: 1.55,
-                epsilon: 0.17,
-                alpha: 0.08333,
-                beta: 2.25,
-            }
-        }
-        MMFFAtomType::O_3 | MMFFAtomType::O_2 => VDWParams {
-            r0: 1.52,
-            epsilon: 0.095,
-            alpha: 0.08333,
+    match get_atom_type_props(atom_type) {
+        Some(props) => VDWParams {
+            r0: props.vdw_r,
+            epsilon: props.vdw_eps,
+            alpha: props.vdw_alpha,
             beta: 2.25,
         },
-        MMFFAtomType::F => VDWParams {
-            r0: 1.47,
-            epsilon: 0.11,
-            alpha: 0.08333,
-            beta: 2.25,
-        },
-        MMFFAtomType::Cl => VDWParams {
-            r0: 1.75,
-            epsilon: 0.266,
-            alpha: 0.08333,
-            beta: 2.25,
-        },
-        MMFFAtomType::Br => VDWParams {
-            r0: 1.85,
-            epsilon: 0.401,
-            alpha: 0.08333,
-            beta: 2.25,
-        },
-        MMFFAtomType::I => VDWParams {
-            r0: 1.98,
-            epsilon: 0.50,
-            alpha: 0.08333,
-            beta: 2.25,
-        },
-        MMFFAtomType::S_3 | MMFFAtomType::S_2 | MMFFAtomType::S_AR => VDWParams {
-            r0: 1.8,
-            epsilon: 0.30,
-            alpha: 0.08333,
-            beta: 2.25,
-        },
-        MMFFAtomType::P_3 | MMFFAtomType::P_4 => VDWParams {
-            r0: 1.8,
-            epsilon: 0.20,
-            alpha: 0.08333,
-            beta: 2.25,
-        },
-        _ => VDWParams {
+        None => VDWParams {
             r0: 1.7,
             epsilon: 0.07,
-            alpha: 0.08333,
+            alpha: 0.083,
             beta: 2.25,
         },
     }
