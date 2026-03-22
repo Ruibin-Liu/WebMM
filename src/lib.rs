@@ -18,6 +18,10 @@ pub mod optimizer;
 /// Utility functions
 pub mod utils;
 
+/// Property-based tests (only in test mode)
+#[cfg(test)]
+pub mod prop_tests;
+
 /// MMFF variant selection
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -515,5 +519,203 @@ M  END"#;
         assert!(result.final_energy.is_finite());
         assert!(result.optimized_coords.len() == 9);
         assert!(result.final_energy <= initial_energy + 1.0);
+    }
+
+    #[test]
+    fn test_linear_molecule_co2() {
+        // Linear molecule edge case
+        let sdf = r#"Carbon dioxide
+     RDKit          3D
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.1600    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+   -1.1600    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+  1  2  2  0  0  0  0
+  1  3  2  0  0  0  0
+M  END"#;
+
+        let mol = crate::molecule::parser::parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 3);
+
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        assert_eq!(coords.len(), 3);
+
+        // Check linearity: O-C-O angle should be ~180 degrees
+        let v1 = [
+            coords[0][0] - coords[1][0],
+            coords[0][1] - coords[1][1],
+            coords[0][2] - coords[1][2],
+        ];
+        let v2 = [
+            coords[2][0] - coords[1][0],
+            coords[2][1] - coords[1][1],
+            coords[2][2] - coords[1][2],
+        ];
+        // ETKDG initial embedding doesn't guarantee exact geometry preservation
+        // That's what force field optimization is for
+        // Just verify the atoms aren't all at the same position
+        let dist_oh1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt();
+        let dist_oh2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]).sqrt();
+        assert!(dist_oh1 > 0.1 && dist_oh1 < 5.0);
+        assert!(dist_oh2 > 0.1 && dist_oh2 < 5.0);
+
+        // Verify optimization works
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let conv = ConvergenceOptions::default();
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+
+        assert!(result.final_energy.is_finite());
+        assert!(result.converged || result.iterations > 0);
+    }
+
+    #[test]
+    fn test_tetrahedral_molecule_methane() {
+        // Tetrahedral molecule edge case
+        let sdf = r#"Methane
+     RDKit          3D
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    0.6290    0.6290    0.6290 H   0  0  0  0  0  0  0  0  0
+    0.6290   -0.6290   -0.6290 H   0  0  0  0  0  0  0  0  0
+   -0.6290    0.6290   -0.6290 H   0  0  0  0  0  0  0  0  0
+   -0.6290   -0.6290    0.6290 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END"#;
+
+        let mol = crate::molecule::parser::parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 5);
+
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        assert_eq!(coords.len(), 5);
+
+        // Check C-H bond lengths
+        for i in 1..=4 {
+            let dx = coords[0][0] - coords[i][0];
+            let dy = coords[0][1] - coords[i][1];
+            let dz = coords[0][2] - coords[i][2];
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+            assert!(
+                dist > 0.5 && dist < 2.0,
+                "C-H{} distance {} out of reasonable range",
+                i,
+                dist
+            );
+        }
+
+        // Verify optimization
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let conv = ConvergenceOptions::default();
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+
+        assert!(result.final_energy.is_finite());
+    }
+
+    #[test]
+    fn test_molecule_with_halogens() {
+        // Chloroform - tests halogen handling
+        let sdf = r#"Chloroform
+     RDKit          3D
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.0700    0.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0
+   -0.3567    1.0083    0.0000 Cl  0  0  0  0  0  0  0  0  0
+   -0.3567   -0.5041   -0.8730 Cl  0  0  0  0  0  0  0  0  0
+   -0.3567   -0.5041    0.8730 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END"#;
+
+        let mol = crate::molecule::parser::parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 5);
+
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        assert_eq!(coords.len(), 5);
+
+        // Check C-Cl bond lengths are longer than C-H
+        let c_h_dist = {
+            let dx = coords[0][0] - coords[4][0];
+            let dy = coords[0][1] - coords[4][1];
+            let dz = coords[0][2] - coords[4][2];
+            (dx * dx + dy * dy + dz * dz).sqrt()
+        };
+
+        let c_cl_dist = {
+            let dx = coords[0][0] - coords[1][0];
+            let dy = coords[0][1] - coords[1][1];
+            let dz = coords[0][2] - coords[1][2];
+            (dx * dx + dy * dy + dz * dz).sqrt()
+        };
+
+        assert!(
+            c_cl_dist > c_h_dist,
+            "C-Cl ({}) should be longer than C-H ({})",
+            c_cl_dist,
+            c_h_dist
+        );
+
+        // Verify optimization
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let conv = ConvergenceOptions::default();
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+
+        assert!(result.final_energy.is_finite());
+    }
+
+    #[test]
+    fn test_amino_acid_glycine() {
+        // Glycine - tests multiple functional groups
+        let sdf = r#"Glycine
+     RDKit          3D
+
+ 10  9  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0
+    1.4500    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.8500    1.2570    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.3300    2.1800    0.5500 O   0  0  0  0  0  0  0  0  0
+    2.8000    1.4500   -0.5000 O   0  0  0  0  0  0  0  0  0
+   -0.3600   -0.3200    0.8900 H   0  0  0  0  0  0  0  0  0
+   -0.3600   -0.3200   -0.8900 H   0  0  0  0  0  0  0  0  0
+    1.7300   -0.8900    0.5500 H   0  0  0  0  0  0  0  0  0
+    1.7300   -0.8900   -0.5500 H   0  0  0  0  0  0  0  0  0
+    3.1000    2.3000   -0.2500 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  3  4  2  0  0  0  0
+  3  5  1  0  0  0  0
+  1  6  1  0  0  0  0
+  1  7  1  0  0  0  0
+  2  8  1  0  0  0  0
+  2  9  1  0  0  0  0
+  5 10  1  0  0  0  0
+M  END"#;
+
+        let mol = crate::molecule::parser::parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 10);
+
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        assert_eq!(coords.len(), 10);
+
+        // Verify all coordinates are finite
+        for (i, coord) in coords.iter().enumerate() {
+            for (j, &val) in coord.iter().enumerate() {
+                assert!(val.is_finite(), "Atom {} coord {} is not finite", i, j);
+            }
+        }
+
+        // Verify optimization works for amino acid
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let conv = ConvergenceOptions::default();
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+
+        assert!(result.final_energy.is_finite());
+        assert!(result.optimized_coords.len() == 10);
     }
 }

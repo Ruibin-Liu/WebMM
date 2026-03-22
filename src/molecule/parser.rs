@@ -3,6 +3,7 @@
 use super::{Atom, Bond, BondType, Molecule};
 
 /// Parse SDF/MOL file content into Molecule structure
+/// Supports both V2000 and V3000 formats
 pub fn parse_sdf(sdf_content: &str) -> Result<Molecule, String> {
     let lines: Vec<&str> = sdf_content.lines().collect();
 
@@ -10,6 +11,18 @@ pub fn parse_sdf(sdf_content: &str) -> Result<Molecule, String> {
         return Err("SDF file too short".to_string());
     }
 
+    // Detect format version
+    let is_v3000 = lines.iter().any(|line| line.contains("V3000"));
+
+    if is_v3000 {
+        parse_v3000(&lines)
+    } else {
+        parse_v2000(&lines)
+    }
+}
+
+/// Parse V2000 format MOL/SDF file
+fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
     // Find counts line (typically line 3-4, but search for line with counts)
     let counts_line_idx = lines
         .iter()
@@ -158,6 +171,123 @@ pub fn parse_sdf(sdf_content: &str) -> Result<Molecule, String> {
     })
 }
 
+/// Parse V3000 format MOL/SDF file
+fn parse_v3000(lines: &[&str]) -> Result<Molecule, String> {
+    let mut atoms = Vec::new();
+    let mut bonds = Vec::new();
+    let mut name = String::new();
+    let mut in_atom_block = false;
+    let mut in_bond_block = false;
+
+    // First line after header is molecule name
+    if !lines.is_empty() {
+        name = lines[0].trim().to_string();
+    }
+
+    for line in lines.iter() {
+        let trimmed = line.trim();
+
+        // Handle BEGIN/END blocks (be flexible with spacing - V3000 uses "M  V30")
+        if trimmed.contains("BEGIN ATOM") && trimmed.starts_with("M") && trimmed.contains("V30") {
+            in_atom_block = true;
+            continue;
+        }
+        if trimmed.contains("END ATOM") && trimmed.starts_with("M") && trimmed.contains("V30") {
+            in_atom_block = false;
+            continue;
+        }
+        if trimmed.contains("BEGIN BOND") && trimmed.starts_with("M") && trimmed.contains("V30") {
+            in_bond_block = true;
+            continue;
+        }
+        if trimmed.contains("END BOND") && trimmed.starts_with("M") && trimmed.contains("V30") {
+            in_bond_block = false;
+            continue;
+        }
+
+        // Skip non-data lines (including BEGIN/END CTAB, COUNTS, etc.)
+        if !(trimmed.starts_with("M") && trimmed.contains("V30")) {
+            continue;
+        }
+
+        // Skip non-atom/bond lines
+        if trimmed.contains("BEGIN") || trimmed.contains("END") || trimmed.contains("COUNTS") {
+            continue;
+        }
+
+        // Remove the "M  V30" prefix (V3000 format uses two spaces after M)
+        let data = if let Some(pos) = trimmed.find("V30") {
+            trimmed[pos + 3..].trim()
+        } else {
+            trimmed
+        };
+
+        if in_atom_block {
+            // Atom format: index symbol x y z [optional fields]
+            let parts: Vec<&str> = data.split_whitespace().collect();
+            if parts.len() >= 5 {
+                let index: usize = parts[0].parse().map_err(|_| "Invalid atom index")?;
+                let symbol = parts[1].to_string();
+                let x: f64 = parts[2].parse().map_err(|_| "Invalid x coordinate")?;
+                let y: f64 = parts[3].parse().map_err(|_| "Invalid y coordinate")?;
+                let z: f64 = parts[4].parse().map_err(|_| "Invalid z coordinate")?;
+
+                let atomic_number = get_atomic_number(&symbol);
+                let mass = get_atomic_mass(atomic_number);
+                let charge = 0.0; // V3000 stores charge separately
+
+                atoms.push(Atom {
+                    symbol,
+                    atomic_number,
+                    mass,
+                    charge,
+                    position: [x, y, z],
+                    index: index - 1, // Convert to 0-based
+                });
+            }
+        } else if in_bond_block {
+            // Bond format: index type atom1 atom2
+            let parts: Vec<&str> = data.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let bond_type_num: i32 = parts[1].parse().map_err(|_| "Invalid bond type")?;
+                let atom1: usize = parts[2].parse::<usize>().map_err(|_| "Invalid atom1")?;
+                let atom2: usize = parts[3].parse::<usize>().map_err(|_| "Invalid atom2")?;
+
+                let bond_type = match bond_type_num {
+                    1 => BondType::Single,
+                    2 => BondType::Double,
+                    3 => BondType::Triple,
+                    4 => BondType::Aromatic,
+                    _ => BondType::Single,
+                };
+
+                bonds.push(Bond {
+                    atom1: atom1 - 1, // Convert to 0-based
+                    atom2: atom2 - 1,
+                    bond_type,
+                });
+            }
+        }
+    }
+
+    // Sort atoms by index to ensure correct order
+    atoms.sort_by_key(|a| a.index);
+
+    // Re-index atoms to be 0-based sequential
+    for (i, atom) in atoms.iter_mut().enumerate() {
+        atom.index = i;
+    }
+
+    let adjacency = super::graph::build_adjacency_list_from_bonds(&atoms.len(), &bonds);
+
+    Ok(Molecule {
+        atoms,
+        bonds,
+        name,
+        adjacency,
+    })
+}
+
 /// Get atomic number from element symbol
 fn get_atomic_number(symbol: &str) -> u8 {
     match symbol.trim() {
@@ -260,5 +390,76 @@ M  END";
 
         let mol = parse_sdf(sdf).expect("Failed to parse charged SDF");
         assert_eq!(mol.atoms[0].charge, -1.0);
+    }
+
+    #[test]
+    fn test_parse_v3000_water() {
+        let sdf = "Water
+  CDK
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 3 2 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 O 0.0000 0.0000 0.0000 0
+M  V30 2 H 0.9580 0.0000 0.0000 0
+M  V30 3 H -0.2390 0.9270 0.0000 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 1 1 2
+M  V30 2 1 1 3
+M  V30 END BOND
+M  V30 END CTAB
+M  END";
+
+        let mol = parse_sdf(sdf).expect("Failed to parse V3000 water SDF");
+        assert_eq!(mol.name, "Water");
+        assert_eq!(mol.atoms.len(), 3);
+        assert_eq!(mol.bonds.len(), 2);
+
+        assert_eq!(mol.atoms[0].symbol, "O");
+        assert_eq!(mol.atoms[0].atomic_number, 8);
+        assert_eq!(mol.atoms[1].symbol, "H");
+        assert_eq!(mol.atoms[1].atomic_number, 1);
+        assert_eq!(mol.atoms[2].symbol, "H");
+        assert_eq!(mol.atoms[2].atomic_number, 1);
+
+        assert_eq!(mol.adjacency.len(), 3);
+        assert_eq!(mol.adjacency[0], vec![1, 2]);
+        assert_eq!(mol.adjacency[1], vec![0]);
+        assert_eq!(mol.adjacency[2], vec![0]);
+    }
+
+    #[test]
+    fn test_parse_v3000_methane() {
+        let sdf = "Methane
+  CDK
+
+  0  0  0     0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 5 4 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0.0000 0.0000 0.0000 0
+M  V30 2 H 0.6290 0.6290 0.6290 0
+M  V30 3 H 0.6290 -0.6290 -0.6290 0
+M  V30 4 H -0.6290 0.6290 -0.6290 0
+M  V30 5 H -0.6290 -0.6290 0.6290 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 1 1 2
+M  V30 2 1 1 3
+M  V30 3 1 1 4
+M  V30 4 1 1 5
+M  V30 END BOND
+M  V30 END CTAB
+M  END";
+
+        let mol = parse_sdf(sdf).expect("Failed to parse V3000 methane SDF");
+        assert_eq!(mol.name, "Methane");
+        assert_eq!(mol.atoms.len(), 5);
+        assert_eq!(mol.bonds.len(), 4);
+
+        assert_eq!(mol.atoms[0].symbol, "C");
+        assert_eq!(mol.atoms[0].atomic_number, 6);
     }
 }
