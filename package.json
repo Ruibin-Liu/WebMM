@@ -1,5 +1,5 @@
 {
-  "name": "molgopt",
+  "name": "webmm",
   "version": "0.1.0",
   "description": "Molecular Geometry Optimization in WebAssembly",
   "main": "pkg/index.js",

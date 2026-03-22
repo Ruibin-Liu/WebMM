@@ -205,18 +205,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
-name = "molgopt"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.2.16",
- "js-sys",
- "proptest",
- "serde",
- "serde_json",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -581,6 +569,18 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "webmm"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.16",
+ "js-sys",
+ "proptest",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

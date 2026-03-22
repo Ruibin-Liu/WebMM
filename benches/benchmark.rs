@@ -1,11 +1,11 @@
-//! Benchmarks for MolGopt
+//! Benchmarks for WebMM
 //!
 //! Run with: `cargo bench`
 
 use std::time::Instant;
 
 fn main() {
-    println!("MolGopt Benchmark Suite");
+    println!("WebMM Benchmark Suite");
     println!("======================\n");
 
     // Load test molecules
@@ -76,21 +76,21 @@ fn benchmark_parsing(water: &str, benzene: &str, ethanol: &str) {
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::molecule::parser::parse_sdf(water).unwrap();
+        let _ = webmm::molecule::parser::parse_sdf(water).unwrap();
     }
     let water_time = start.elapsed().as_micros() as f64 / iterations as f64;
     println!("Water (3 atoms):       {:>8.2} µs/op", water_time);
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::molecule::parser::parse_sdf(benzene).unwrap();
+        let _ = webmm::molecule::parser::parse_sdf(benzene).unwrap();
     }
     let benzene_time = start.elapsed().as_micros() as f64 / iterations as f64;
     println!("Benzene (6 atoms):     {:>8.2} µs/op", benzene_time);
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::molecule::parser::parse_sdf(ethanol).unwrap();
+        let _ = webmm::molecule::parser::parse_sdf(ethanol).unwrap();
     }
     let ethanol_time = start.elapsed().as_micros() as f64 / iterations as f64;
     println!("Ethanol (9 atoms):     {:>8.2} µs/op", ethanol_time);
@@ -102,29 +102,29 @@ fn benchmark_etkdg(water: &str, benzene: &str, ethanol: &str) {
     println!("ETKDG Embedding Benchmarks");
     println!("---------------------------");
 
-    let water_mol = molgopt::molecule::parser::parse_sdf(water).unwrap();
-    let benzene_mol = molgopt::molecule::parser::parse_sdf(benzene).unwrap();
-    let ethanol_mol = molgopt::molecule::parser::parse_sdf(ethanol).unwrap();
+    let water_mol = webmm::molecule::parser::parse_sdf(water).unwrap();
+    let benzene_mol = webmm::molecule::parser::parse_sdf(benzene).unwrap();
+    let ethanol_mol = webmm::molecule::parser::parse_sdf(ethanol).unwrap();
 
     let iterations = 100;
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::etkdg::generate_initial_coords(&water_mol);
+        let _ = webmm::etkdg::generate_initial_coords(&water_mol);
     }
     let water_time = start.elapsed().as_millis() as f64 / iterations as f64;
     println!("Water (3 atoms):       {:>8.2} ms/op", water_time);
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::etkdg::generate_initial_coords(&benzene_mol);
+        let _ = webmm::etkdg::generate_initial_coords(&benzene_mol);
     }
     let benzene_time = start.elapsed().as_millis() as f64 / iterations as f64;
     println!("Benzene (6 atoms):     {:>8.2} ms/op", benzene_time);
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::etkdg::generate_initial_coords(&ethanol_mol);
+        let _ = webmm::etkdg::generate_initial_coords(&ethanol_mol);
     }
     let ethanol_time = start.elapsed().as_millis() as f64 / iterations as f64;
     println!("Ethanol (9 atoms):     {:>8.2} ms/op", ethanol_time);
@@ -136,19 +136,17 @@ fn benchmark_energy(water: &str, benzene: &str, ethanol: &str) {
     println!("MMFF Energy Calculation Benchmarks");
     println!("-----------------------------------");
 
-    let water_mol = molgopt::molecule::parser::parse_sdf(water).unwrap();
-    let benzene_mol = molgopt::molecule::parser::parse_sdf(benzene).unwrap();
-    let ethanol_mol = molgopt::molecule::parser::parse_sdf(ethanol).unwrap();
+    let water_mol = webmm::molecule::parser::parse_sdf(water).unwrap();
+    let benzene_mol = webmm::molecule::parser::parse_sdf(benzene).unwrap();
+    let ethanol_mol = webmm::molecule::parser::parse_sdf(ethanol).unwrap();
 
-    let water_coords = molgopt::etkdg::generate_initial_coords(&water_mol);
-    let benzene_coords = molgopt::etkdg::generate_initial_coords(&benzene_mol);
-    let ethanol_coords = molgopt::etkdg::generate_initial_coords(&ethanol_mol);
+    let water_coords = webmm::etkdg::generate_initial_coords(&water_mol);
+    let benzene_coords = webmm::etkdg::generate_initial_coords(&benzene_mol);
+    let ethanol_coords = webmm::etkdg::generate_initial_coords(&ethanol_mol);
 
-    let water_ff = molgopt::mmff::MMFFForceField::new(&water_mol, molgopt::MMFFVariant::MMFF94s);
-    let benzene_ff =
-        molgopt::mmff::MMFFForceField::new(&benzene_mol, molgopt::MMFFVariant::MMFF94s);
-    let ethanol_ff =
-        molgopt::mmff::MMFFForceField::new(&ethanol_mol, molgopt::MMFFVariant::MMFF94s);
+    let water_ff = webmm::mmff::MMFFForceField::new(&water_mol, webmm::MMFFVariant::MMFF94s);
+    let benzene_ff = webmm::mmff::MMFFForceField::new(&benzene_mol, webmm::MMFFVariant::MMFF94s);
+    let ethanol_ff = webmm::mmff::MMFFForceField::new(&ethanol_mol, webmm::MMFFVariant::MMFF94s);
 
     let iterations = 1000;
 
@@ -180,41 +178,39 @@ fn benchmark_optimization(water: &str, benzene: &str, ethanol: &str) {
     println!("L-BFGS Optimization Benchmarks");
     println!("-------------------------------");
 
-    let water_mol = molgopt::molecule::parser::parse_sdf(water).unwrap();
-    let benzene_mol = molgopt::molecule::parser::parse_sdf(benzene).unwrap();
-    let ethanol_mol = molgopt::molecule::parser::parse_sdf(ethanol).unwrap();
+    let water_mol = webmm::molecule::parser::parse_sdf(water).unwrap();
+    let benzene_mol = webmm::molecule::parser::parse_sdf(benzene).unwrap();
+    let ethanol_mol = webmm::molecule::parser::parse_sdf(ethanol).unwrap();
 
-    let water_coords = molgopt::etkdg::generate_initial_coords(&water_mol);
-    let benzene_coords = molgopt::etkdg::generate_initial_coords(&benzene_mol);
-    let ethanol_coords = molgopt::etkdg::generate_initial_coords(&ethanol_mol);
+    let water_coords = webmm::etkdg::generate_initial_coords(&water_mol);
+    let benzene_coords = webmm::etkdg::generate_initial_coords(&benzene_mol);
+    let ethanol_coords = webmm::etkdg::generate_initial_coords(&ethanol_mol);
 
-    let water_ff = molgopt::mmff::MMFFForceField::new(&water_mol, molgopt::MMFFVariant::MMFF94s);
-    let benzene_ff =
-        molgopt::mmff::MMFFForceField::new(&benzene_mol, molgopt::MMFFVariant::MMFF94s);
-    let ethanol_ff =
-        molgopt::mmff::MMFFForceField::new(&ethanol_mol, molgopt::MMFFVariant::MMFF94s);
+    let water_ff = webmm::mmff::MMFFForceField::new(&water_mol, webmm::MMFFVariant::MMFF94s);
+    let benzene_ff = webmm::mmff::MMFFForceField::new(&benzene_mol, webmm::MMFFVariant::MMFF94s);
+    let ethanol_ff = webmm::mmff::MMFFForceField::new(&ethanol_mol, webmm::MMFFVariant::MMFF94s);
 
-    let conv = molgopt::ConvergenceOptions::default();
+    let conv = webmm::ConvergenceOptions::default();
 
     let iterations = 10;
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::optimizer::optimize(&water_ff, &water_coords, &conv);
+        let _ = webmm::optimizer::optimize(&water_ff, &water_coords, &conv);
     }
     let water_time = start.elapsed().as_millis() as f64 / iterations as f64;
     println!("Water (3 atoms):       {:>8.2} ms/op", water_time);
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::optimizer::optimize(&benzene_ff, &benzene_coords, &conv);
+        let _ = webmm::optimizer::optimize(&benzene_ff, &benzene_coords, &conv);
     }
     let benzene_time = start.elapsed().as_millis() as f64 / iterations as f64;
     println!("Benzene (6 atoms):     {:>8.2} ms/op", benzene_time);
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = molgopt::optimizer::optimize(&ethanol_ff, &ethanol_coords, &conv);
+        let _ = webmm::optimizer::optimize(&ethanol_ff, &ethanol_coords, &conv);
     }
     let ethanol_time = start.elapsed().as_millis() as f64 / iterations as f64;
     println!("Ethanol (9 atoms):     {:>8.2} ms/op", ethanol_time);

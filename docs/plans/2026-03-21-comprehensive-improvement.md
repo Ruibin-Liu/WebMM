@@ -1,8 +1,8 @@
-# Comprehensive MolGopt Improvement Plan
+# Comprehensive WebMM Improvement Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Fix all critical bugs, implement correct gradients, fix the optimizer, expose WASM API properly, and clean up code quality across the entire MolGopt codebase.
+**Goal:** Fix all critical bugs, implement correct gradients, fix the optimizer, expose WASM API properly, and clean up code quality across the entire WebMM codebase.
 
 **Architecture:** The project is a Rust/WASM molecular geometry optimizer using MMFF94 force field and L-BFGS. Fixes are ordered by dependency: parser (foundation) -> force field energy terms -> gradients -> optimizer -> WASM API -> tests -> cleanup.
 

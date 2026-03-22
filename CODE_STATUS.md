@@ -1,7 +1,7 @@
 # Code Status
 
 ## Project Summary
-MolGopt is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
+WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
 Phase 13: Test suite expansion. 86 tests pass (34 new), 0 clippy warnings.

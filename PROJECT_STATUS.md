@@ -1,4 +1,4 @@
-# MolGopt - MMFF94/MMFF94s Geometry Optimizer
+# WebMM - MMFF94/MMFF94s Geometry Optimizer
 
 ## Project Status Summary
 
@@ -244,7 +244,7 @@ WASM-based molecular geometry optimizer for drug-like compounds using:
 ## Files Created
 
 ```
-molgopt/
+webmm/
 ├── Cargo.toml              # Rust project config
 ├── README.md               # Project documentation
 ├── data/
@@ -283,7 +283,7 @@ test_molecules/         # 43 SDF files ✅
 1. **Build WASM Library**:
     ```bash
     cargo build --release --target wasm32-unknown-unknown
-    wasm-bindgen --out-dir pkg target/wasm32-unknown-unknown/release/molgopt.wasm
+    wasm-bindgen --out-dir pkg target/wasm32-unknown-unknown/release/webmm.wasm
     ```
     - ✅ WASM files generated in pkg/
     - ✅ JavaScript bindings created
@@ -304,7 +304,7 @@ test_molecules/         # 43 SDF files ✅
 
 4. **Fix Remaining Warnings** (Optional):
     ```bash
-    cargo fix --lib -p molgopt --allow-dirty
+    cargo fix --lib -p webmm --allow-dirty
     cargo clippy --fix --allow-dirty
     ```
     - Fix non-snake-case variable names
@@ -370,17 +370,17 @@ test_molecules/         # 43 SDF files ✅
 5. **WASM Integration - Build Complete!**
 
 **Generated Files:**
-- ✅ pkg/molgopt.wasm - WebAssembly binary
-- ✅ pkg/molgopt.js - JavaScript bindings
-- ✅ pkg/molgopt_bg.js - Background worker
-- ✅ pkg/molgopt.d.ts - TypeScript definitions
+- ✅ pkg/webmm.wasm - WebAssembly binary
+- ✅ pkg/webmm.js - JavaScript bindings
+- ✅ pkg/webmm_bg.js - Background worker
+- ✅ pkg/webmm.d.ts - TypeScript definitions
 - ✅ pkg/index.html - Browser test page with live demo
 
 **Testing Instructions:**
 ```bash
 # 1. Build WASM
 cargo build --release --target wasm32-unknown-unknown
-wasm-bindgen --out-dir pkg target/wasm32-unknown-unknown/release/molgopt.wasm
+wasm-bindgen --out-dir pkg target/wasm32-unknown-unknown/release/webmm.wasm
 
 # 2. Test in browser
 cd pkg
@@ -390,7 +390,7 @@ python3 -m http.server 8000
 
 **Browser Usage Example:**
 ```javascript
-import { optimize_from_sdf, OptimizationOptions, MMFFVariant } from './molgopt.js';
+import { optimize_from_sdf, OptimizationOptions, MMFFVariant } from './webmm.js';
 
 const options = new OptimizationOptions();
 options.convergence.max_force = 0.01;

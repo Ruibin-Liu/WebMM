@@ -1,11 +1,11 @@
-# MolGopt - MMFF94/MMFF94s Geometry Optimizer
+# WebMM - MMFF94/MMFF94s Geometry Optimizer
 
 WASM-based molecular geometry optimizer for drug-like compounds using ETKDG v3 embedding and MMFF94/MMFF94s force field.
 
 ## Project Structure
 
 ```
-molgopt/
+webmm/
 ├── Cargo.toml                 # Rust project configuration
 ├── data/
 │   └── mmff94_sample_parameters.json  # MMFF94 parameters (embedded at compile time)
@@ -81,7 +81,7 @@ cargo build --release
 
 # Build WASM library
 cargo build --release --target wasm32-unknown-unknown
-wasm-bindgen --out-dir pkg target/wasm32-unknown-unknown/release/molgopt.wasm
+wasm-bindgen --out-dir pkg target/wasm32-unknown-unknown/release/webmm.wasm
 ```
 
 ### Test
@@ -95,7 +95,7 @@ cargo test
 ### Browser Usage
 
 ```javascript
-import { optimize_from_sdf, OptimizationOptions, MMFFVariant } from './molgopt.js';
+import { optimize_from_sdf, OptimizationOptions, MMFFVariant } from './webmm.js';
 
 // Configure optimization
 const options = new OptimizationOptions();

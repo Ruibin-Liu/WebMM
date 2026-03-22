@@ -1,4 +1,4 @@
-//! Property-based tests for MolGopt
+//! Property-based tests for WebMM
 //!
 //! These tests verify invariants using randomly generated inputs.
 
