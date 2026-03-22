@@ -4,7 +4,7 @@
 MolGopt is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-Phase 9: All phases complete. 21 tests pass, 0 ignored, 0 clippy warnings.
+Phase 11: MMFF94 Tasks 11-16 complete. 34 tests pass (3 new), 0 clippy warnings.
 
 ## Completed
 - Phase 1: Fixed molecule layer
@@ -65,9 +65,24 @@ Phase 9: All phases complete. 21 tests pass, 0 ignored, 0 clippy warnings.
   - Removed wasm-pack from dev-dependencies (CLI tool, not a crate)
 - Phase 9: Updated documentation
   - Fixed pkg/index.html: `result.converged()` -> `result.get_converged()`
+- Phase 10: MMFF94 ring detection, aromaticity, atom typing, property table
+  - SSSR ring detection via BFS shortest-path tree + canonical deduplication (graph.rs)
+  - Aromaticity detection via ring membership + Huckel rule with heteroatom handling (graph.rs)
+  - Context-sensitive atom typing: formal charge, neighbor C=O, ether O, amide N (mmff/mod.rs)
+  - Atom type property table from Halgren 1996 Table II (mmff/atom_types.rs)
+  - 10 new tests: 4 ring detection, 4 aromaticity, 2 property table
 
 ## In Progress
 - (none)
+
+## Completed
+- Phase 11: ETKDG improvements and integration tests
+  - Task 11: Added 1-3 (angle-derived) and 1-4 (torsion-derived) distance bounds + ring closure tightening to `build_distance_bounds`
+  - Task 12: Replaced trivial 4D-to-3D projection with eigenvector projection via Gram matrix + power iteration
+  - Task 13: Replaced custom DGFF minimization with FF-based refinement using actual MMFF94 + L-BFGS optimizer
+  - Task 14: Multi-conformer generation with lowest-energy selection
+  - Task 15: 3 new integration tests (ring detection from SDF, benzene embedding, ethanol optimization)
+  - Task 16: Updated README.md (removed Partial/TODO, listed all completed features) and CODE_STATUS.md
 
 ## Upcoming
 - (none)

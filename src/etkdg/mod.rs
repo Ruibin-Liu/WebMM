@@ -25,9 +25,9 @@ pub struct ETKDGConfig {
 impl Default for ETKDGConfig {
     fn default() -> Self {
         Self {
-            max_attempts: 50,
+            max_attempts: 10,
             convergence_threshold: 1e-6,
-            max_iterations: 1000,
+            max_iterations: 200,
             vdw_scale: 0.8,
         }
     }
@@ -186,6 +186,81 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
         bounds.upper[j][i] = bounds.upper[i][j];
     }
 
+    // 1-3 bounds (angle-derived): law of cosines
+    let angle_info = crate::molecule::graph::find_angles(mol);
+    for angle in &angle_info {
+        let (a_min, a_max) = (angle.atom1.min(angle.atom2), angle.atom1.max(angle.atom2));
+        let (b_min, b_max) = (angle.atom2.min(angle.atom3), angle.atom2.max(angle.atom3));
+        let r_ij = bounds.lower[a_min][a_max];
+        let r_jk = bounds.lower[b_min][b_max];
+
+        // Default theta0 = 109.47 degrees (tetrahedral)
+        let theta0_rad = 109.47_f64.to_radians();
+        let r_ik_sq = r_ij * r_ij + r_jk * r_jk - 2.0 * r_ij * r_jk * theta0_rad.cos();
+        if r_ik_sq > 0.0 {
+            let r_ik = r_ik_sq.sqrt();
+            let tolerance = 0.2;
+            let lower = (r_ik - tolerance).max(0.5);
+            let upper = r_ik + tolerance;
+            let (a, c) = (angle.atom1.min(angle.atom3), angle.atom1.max(angle.atom3));
+            bounds.lower[a][c] = bounds.lower[a][c].max(lower);
+            bounds.upper[a][c] = bounds.upper[a][c].min(upper);
+            bounds.lower[c][a] = bounds.lower[a][c];
+            bounds.upper[c][a] = bounds.upper[a][c];
+        }
+    }
+
+    // 1-4 bounds (torsion-derived)
+    let torsion_info = crate::molecule::graph::find_torsions(mol);
+    for torsion in &torsion_info {
+        let r_ij = (bounds.lower[torsion.atom1.min(torsion.atom2)]
+            [torsion.atom1.max(torsion.atom2)]
+            + bounds.upper[torsion.atom1.min(torsion.atom2)][torsion.atom1.max(torsion.atom2)])
+            / 2.0;
+        let r_jk = (bounds.lower[torsion.atom2.min(torsion.atom3)]
+            [torsion.atom2.max(torsion.atom3)]
+            + bounds.upper[torsion.atom2.min(torsion.atom3)][torsion.atom2.max(torsion.atom3)])
+            / 2.0;
+        let r_kl = (bounds.lower[torsion.atom3.min(torsion.atom4)]
+            [torsion.atom3.max(torsion.atom4)]
+            + bounds.upper[torsion.atom3.min(torsion.atom4)][torsion.atom3.max(torsion.atom4)])
+            / 2.0;
+
+        let upper = r_ij + r_jk + r_kl + 0.1;
+        let inner = r_ij * r_ij + r_jk * r_jk + r_kl * r_kl - 2.0 * r_ij * r_jk - 2.0 * r_jk * r_kl
+            + 2.0 * r_ij * r_kl;
+        let lower = if inner > 0.0 { inner.sqrt() - 0.1 } else { 0.5 };
+
+        let (a, d) = (
+            torsion.atom1.min(torsion.atom4),
+            torsion.atom1.max(torsion.atom4),
+        );
+        bounds.lower[a][d] = bounds.lower[a][d].max(lower);
+        bounds.upper[a][d] = bounds.upper[a][d].min(upper);
+        bounds.lower[d][a] = bounds.lower[a][d];
+        bounds.upper[d][a] = bounds.upper[a][d];
+    }
+
+    // Ring closure: tighten upper bounds for ring bonds
+    let rings = crate::molecule::graph::find_rings(mol);
+    for ring in &rings {
+        let total_upper: f64 = (0..ring.len())
+            .map(|i| {
+                let a = ring[i];
+                let b = ring[(i + 1) % ring.len()];
+                bounds.upper[a.min(b)][a.max(b)]
+            })
+            .sum();
+        let per_atom = total_upper / ring.len() as f64;
+        for w in 0..ring.len() {
+            let a = ring[w];
+            let b = ring[(w + 1) % ring.len()];
+            let (a2, b2) = (a.min(b), a.max(b));
+            bounds.upper[a2][b2] = bounds.upper[a2][b2].min(per_atom + 0.3);
+            bounds.upper[b2][a2] = bounds.upper[a2][b2];
+        }
+    }
+
     bounds
 }
 
@@ -249,96 +324,141 @@ fn generate_4d_coordinates(bounds: &DistanceBounds) -> Vec<[f64; 4]> {
     coords
 }
 
-/// Project 4D coordinates to 3D
+/// Project 4D coordinates to 3D using eigenvector projection
 fn project_to_3d(coords_4d: &[[f64; 4]]) -> Vec<[f64; 3]> {
-    let n_atoms = coords_4d.len();
-    let mut coords_3d = Vec::with_capacity(n_atoms);
+    let n = coords_4d.len();
+    if n < 3 {
+        return coords_4d.iter().map(|c| [c[0], c[1], c[2]]).collect();
+    }
 
-    for coord in coords_4d {
-        coords_3d.push([coord[0], coord[1], coord[2]]);
+    let centroid: [f64; 4] = {
+        let mut c = [0.0; 4];
+        for coord in coords_4d {
+            for d in 0..4 {
+                c[d] += coord[d];
+            }
+        }
+        for val in c.iter_mut() {
+            *val /= n as f64;
+        }
+        c
+    };
+
+    let centered: Vec<[f64; 4]> = coords_4d
+        .iter()
+        .map(|c| {
+            [
+                c[0] - centroid[0],
+                c[1] - centroid[1],
+                c[2] - centroid[2],
+                c[3] - centroid[3],
+            ]
+        })
+        .collect();
+
+    let mut gram = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            let dx = centered[i][0] - centered[j][0];
+            let dy = centered[i][1] - centered[j][1];
+            let dz = centered[i][2] - centered[j][2];
+            let dw = centered[i][3] - centered[j][3];
+            gram[i][j] = dx * dx + dy * dy + dz * dz + dw * dw;
+        }
+    }
+
+    let mut b = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            b[i][j] = -0.5 * (gram[i][j] - gram[i][0] - gram[0][j] + gram[0][0]);
+        }
+    }
+
+    let mut eigenvectors = vec![vec![0.0; n]; 3];
+    let mut eigenvalues = [0.0f64; 3];
+
+    for k in 0..3 {
+        let mut v = vec![0.0f64; n];
+        for vi in v.iter_mut() {
+            *vi = random_f64() - 0.5;
+        }
+        let v_norm: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        for vi in v.iter_mut() {
+            *vi /= v_norm;
+        }
+
+        for _ in 0..200 {
+            let mut new_v = vec![0.0f64; n];
+            for i in 0..n {
+                for j in 0..n {
+                    new_v[i] += b[i][j] * v[j];
+                }
+            }
+
+            for prev_eigvec in eigenvectors.iter().take(k) {
+                let dot: f64 = new_v
+                    .iter()
+                    .zip(prev_eigvec.iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                for (new_vi, prev_ei) in new_v.iter_mut().zip(prev_eigvec.iter()) {
+                    *new_vi -= dot * prev_ei;
+                }
+            }
+
+            let norm: f64 = new_v.iter().map(|x| x * x).sum::<f64>().sqrt();
+            if norm < 1e-10 {
+                break;
+            }
+            for vi in new_v.iter_mut() {
+                *vi /= norm;
+            }
+
+            v = new_v;
+        }
+
+        let mut lambda = 0.0;
+        for i in 0..n {
+            for j in 0..n {
+                lambda += v[i] * b[i][j] * v[j];
+            }
+        }
+
+        eigenvalues[k] = lambda;
+        eigenvectors[k] = v;
+    }
+
+    let mut coords_3d = vec![[0.0; 3]; n];
+    for i in 0..n {
+        for d in 0..3 {
+            let ev = eigenvalues[d];
+            coords_3d[i][d] = if ev > 0.0 {
+                eigenvectors[d][i] * ev.sqrt()
+            } else {
+                eigenvectors[d][i] * 0.001
+            };
+        }
     }
 
     coords_3d
 }
 
-/// Distance Geometry Force Field (DGFF) minimization
-fn dgff_minimization(
-    mol: &Molecule,
-    coords: &mut [[f64; 3]],
-    bounds: &DistanceBounds,
-    config: &ETKDGConfig,
-) {
-    let n_atoms = coords.len();
-    let k_bond = 100.0;
-    let k_vdw = 10.0;
+/// Refine coordinates using actual MMFF94 force field + L-BFGS
+fn refine_with_ff(mol: &Molecule, coords: &mut [[f64; 3]], config: &ETKDGConfig) {
+    let variant = crate::MMFFVariant::MMFF94s;
+    let ff = crate::mmff::MMFFForceField::new(mol, variant);
 
-    for _iteration in 0..config.max_iterations {
-        let mut total_gradient = 0.0;
-        let mut forces = vec![[0.0; 3]; n_atoms];
+    let conv = crate::ConvergenceOptions {
+        max_force: 0.05,
+        rms_force: 0.005,
+        energy_change: 1e-6,
+        max_iterations: config.max_iterations,
+    };
 
-        // Calculate forces from distance constraints
-        for i in 0..n_atoms {
-            for j in i + 1..n_atoms {
-                let dx = coords[j][0] - coords[i][0];
-                let dy = coords[j][1] - coords[i][1];
-                let dz = coords[j][2] - coords[i][2];
-                let dist_sq = dx * dx + dy * dy + dz * dz;
-                let dist = dist_sq.sqrt();
+    let result = crate::optimizer::optimize(&ff, coords, &conv);
 
-                if dist < 1e-8 {
-                    continue;
-                }
-
-                let mut force = 0.0;
-
-                // Van der Waals repulsion
-                if dist < bounds.upper[i][j] {
-                    force += k_vdw * (bounds.upper[i][j] - dist) / dist;
-                }
-
-                // Bond constraints (stronger force)
-                for bond in &mol.bonds {
-                    if (bond.atom1 == i && bond.atom2 == j) || (bond.atom1 == j && bond.atom2 == i)
-                    {
-                        let ideal_dist = (bounds.lower[i][j] + bounds.upper[i][j]) / 2.0;
-                        force += k_bond * (ideal_dist - dist) / dist;
-                        break;
-                    }
-                }
-
-                let fx = force * dx;
-                let fy = force * dy;
-                let fz = force * dz;
-
-                forces[i][0] -= fx;
-                forces[i][1] -= fy;
-                forces[i][2] -= fz;
-
-                forces[j][0] += fx;
-                forces[j][1] += fy;
-                forces[j][2] += fz;
-
-                total_gradient += fx * fx + fy * fy + fz * fz;
-            }
-        }
-
-        // Update coordinates (simple gradient descent with damping)
-        let step_size = 0.01;
-        for i in 0..n_atoms {
-            // Limit force magnitude to prevent instability
-            let fx = forces[i][0].clamp(-1.0, 1.0);
-            let fy = forces[i][1].clamp(-1.0, 1.0);
-            let fz = forces[i][2].clamp(-1.0, 1.0);
-
-            coords[i][0] += step_size * fx;
-            coords[i][1] += step_size * fy;
-            coords[i][2] += step_size * fz;
-        }
-
-        // Check convergence
-        if total_gradient.sqrt() < config.convergence_threshold {
-            break;
-        }
+    for (i, coord) in result.optimized_coords.iter().enumerate() {
+        coords[i] = *coord;
     }
 }
 
@@ -354,20 +474,26 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
         return Vec::new();
     }
 
-    // Step 1: Build distance bounds matrix
     let mut bounds = build_distance_bounds(mol, config);
-
-    // Step 2: Triangle inequality smoothing
     bounds.smooth_triangle_inequality();
 
-    // Step 3: Generate 4D coordinates
-    let coords_4d = generate_4d_coordinates(&bounds);
+    let mut best_coords = Vec::new();
+    let mut best_energy = f64::INFINITY;
 
-    // Step 4: Project to 3D
-    let mut coords_3d = project_to_3d(&coords_4d);
+    for _attempt in 0..config.max_attempts {
+        let coords_4d = generate_4d_coordinates(&bounds);
+        let mut coords_3d = project_to_3d(&coords_4d);
+        refine_with_ff(mol, &mut coords_3d, config);
 
-    // Step 5: DGFF minimization
-    dgff_minimization(mol, &mut coords_3d, &bounds, config);
+        let variant = crate::MMFFVariant::MMFF94s;
+        let ff = crate::mmff::MMFFForceField::new(mol, variant);
+        let energy = ff.calculate_energy(&coords_3d);
 
-    coords_3d
+        if energy < best_energy {
+            best_energy = energy;
+            best_coords = coords_3d;
+        }
+    }
+
+    best_coords
 }

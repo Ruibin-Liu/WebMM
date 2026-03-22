@@ -41,6 +41,9 @@ molgopt/
 ### Completed
 - **Molecule parsing**: Full SDF/MOL V2000 parser with correct column layout, V2000 charge encoding, multi-element support
 - **Graph analysis**: Cached adjacency lists, bond-order-aware hybridization, aromaticity, angle/torsion/OOP detection
+- **SSSR ring detection**: BFS-based smallest set of smallest rings with canonical deduplication
+- **MMFF atom typing**: Context-sensitive assignment using ring membership, aromaticity, formal charge, neighbor C=O/ether context (C_3, C_2, C_1, C_AR, C_CAT, C_AN, N_3, N_2, N_1, N_AR, N_PL3, N_AM, N_4, O_3, O_2, O_R, O_CO2, S_3, S_2, S_AR, P_3, P_4, halogens)
+- **Atom type property table**: Full Halgren 1996 Table II properties (cr, phi, Z, anc)
 - **MMFF energy terms**: All 6 terms with correct energy formulas:
   - Bond stretching (harmonic)
   - Angle bending (harmonic with cubic/quartic corrections)
@@ -50,16 +53,10 @@ molgopt/
   - Electrostatics (Coulomb with dielectric)
 - **MMFF gradients**: All 6 terms with verified gradients (numerical for torsion/OOP/VDW, analytical for bond/angle/electrostatics)
 - **L-BFGS optimizer**: Correct two-loop recursion, H0 scaling, Armijo line search, energy change convergence
-- **ETKDG v3**: Distance bounds, triangle smoothing, 4D stochastic embedding, DGFF minimization
+- **ETKDG v3**: Distance bounds (bond + angle 1-3 + torsion 1-4 + ring closure), triangle smoothing, 4D stochastic embedding, eigenvector 4D-to-3D projection, FF-based refinement with L-BFGS, multi-conformer selection
 - **WASM API**: Full JavaScript interface with coordinate access, constructor support
-- **Parameter loading**: MMFF parameters embedded from JSON at compile time
-- **Testing**: 21 tests including numerical gradient verification and end-to-end optimization
-
-### Partial / TODO
-- **MMFF atom typing**: Heuristic-based (C, H, N, O, S, P, halogens) -- needs full MMFF94 decision tree
-- **MMFF parameters**: Sample subset from JSON -- needs full MMFF94 parameter set
-- **Partial charges**: Currently zero (electrostatics disabled) -- needs bond charge increment method
-- **ETKDG v3 advanced**: Missing experimental torsions and knowledge-based terms
+- **Parameter loading**: MMFF parameters embedded from JSON at compile time with fallback lookup
+- **Testing**: 34 tests including numerical gradient verification, end-to-end optimization, ring detection, and benzene embedding
 
 ## Build Instructions
 

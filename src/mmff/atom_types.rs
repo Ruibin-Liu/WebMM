@@ -1,0 +1,354 @@
+//! MMFF94 atom type property table (Halgren 1996 Table II)
+
+use super::MMFFAtomType;
+
+pub struct AtomTypeProperties {
+    pub bond_class: i32,
+    pub angle_class: i32,
+    pub fbci: f64,
+    pub crd: f64,
+    pub vdw_r: f64,
+    pub vdw_eps: f64,
+    pub vdw_alpha: f64,
+    pub oop_k: f64,
+}
+
+pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties> {
+    match atom_type {
+        MMFFAtomType::H => Some(AtomTypeProperties {
+            bond_class: 1,
+            angle_class: 1,
+            fbci: 0.0,
+            crd: 0.35,
+            vdw_r: 1.20,
+            vdw_eps: 0.0157,
+            vdw_alpha: 0.083,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::C_3 => Some(AtomTypeProperties {
+            bond_class: 2,
+            angle_class: 2,
+            fbci: 0.0,
+            crd: 0.77,
+            vdw_r: 1.70,
+            vdw_eps: 0.0100,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::C_2 => Some(AtomTypeProperties {
+            bond_class: 5,
+            angle_class: 6,
+            fbci: 0.0,
+            crd: 0.67,
+            vdw_r: 1.68,
+            vdw_eps: 0.0080,
+            vdw_alpha: 0.167,
+            oop_k: 0.008,
+        }),
+        MMFFAtomType::C_1 => Some(AtomTypeProperties {
+            bond_class: 10,
+            angle_class: 14,
+            fbci: 0.0,
+            crd: 0.60,
+            vdw_r: 1.66,
+            vdw_eps: 0.0060,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::C_AR => Some(AtomTypeProperties {
+            bond_class: 3,
+            angle_class: 3,
+            fbci: 0.0,
+            crd: 0.73,
+            vdw_r: 1.6925,
+            vdw_eps: 0.0050,
+            vdw_alpha: 0.167,
+            oop_k: 0.04,
+        }),
+        MMFFAtomType::C_CAT => Some(AtomTypeProperties {
+            bond_class: 15,
+            angle_class: 3,
+            fbci: 0.0,
+            crd: 0.77,
+            vdw_r: 1.70,
+            vdw_eps: 0.0100,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::C_AN => Some(AtomTypeProperties {
+            bond_class: 17,
+            angle_class: 18,
+            fbci: 0.0,
+            crd: 0.77,
+            vdw_r: 1.70,
+            vdw_eps: 0.0100,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::N_3 => Some(AtomTypeProperties {
+            bond_class: 4,
+            angle_class: 5,
+            fbci: -0.80,
+            crd: 0.70,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::N_2 => Some(AtomTypeProperties {
+            bond_class: 8,
+            angle_class: 9,
+            fbci: -0.60,
+            crd: 0.60,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.02,
+        }),
+        MMFFAtomType::N_1 => Some(AtomTypeProperties {
+            bond_class: 11,
+            angle_class: 13,
+            fbci: -0.50,
+            crd: 0.56,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::N_AR => Some(AtomTypeProperties {
+            bond_class: 6,
+            angle_class: 7,
+            fbci: -0.80,
+            crd: 0.68,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.02,
+        }),
+        MMFFAtomType::N_PL3 => Some(AtomTypeProperties {
+            bond_class: 9,
+            angle_class: 10,
+            fbci: -0.70,
+            crd: 0.70,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::N_AM => Some(AtomTypeProperties {
+            bond_class: 12,
+            angle_class: 11,
+            fbci: -0.70,
+            crd: 0.68,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::N_4 => Some(AtomTypeProperties {
+            bond_class: 16,
+            angle_class: 16,
+            fbci: -0.80,
+            crd: 0.70,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::N_2Z => Some(AtomTypeProperties {
+            bond_class: 27,
+            angle_class: 27,
+            fbci: -0.50,
+            crd: 0.60,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::N_SOM => Some(AtomTypeProperties {
+            bond_class: 30,
+            angle_class: 30,
+            fbci: -0.70,
+            crd: 0.70,
+            vdw_r: 1.55,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::O_3 => Some(AtomTypeProperties {
+            bond_class: 7,
+            angle_class: 8,
+            fbci: -0.80,
+            crd: 0.66,
+            vdw_r: 1.52,
+            vdw_eps: 0.0160,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::O_2 => Some(AtomTypeProperties {
+            bond_class: 13,
+            angle_class: 12,
+            fbci: -0.40,
+            crd: 0.60,
+            vdw_r: 1.50,
+            vdw_eps: 0.0150,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::O_R => Some(AtomTypeProperties {
+            bond_class: 19,
+            angle_class: 19,
+            fbci: -0.40,
+            crd: 0.66,
+            vdw_r: 1.52,
+            vdw_eps: 0.0160,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::O_CO2 => Some(AtomTypeProperties {
+            bond_class: 14,
+            angle_class: 4,
+            fbci: -0.40,
+            crd: 0.60,
+            vdw_r: 1.50,
+            vdw_eps: 0.0150,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::O_3_Z => Some(AtomTypeProperties {
+            bond_class: 29,
+            angle_class: 29,
+            fbci: -0.80,
+            crd: 0.66,
+            vdw_r: 1.52,
+            vdw_eps: 0.0160,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::F => Some(AtomTypeProperties {
+            bond_class: 20,
+            angle_class: 20,
+            fbci: 0.0,
+            crd: 0.64,
+            vdw_r: 1.47,
+            vdw_eps: 0.0610,
+            vdw_alpha: 0.083,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::Cl => Some(AtomTypeProperties {
+            bond_class: 22,
+            angle_class: 22,
+            fbci: 0.0,
+            crd: 0.99,
+            vdw_r: 1.75,
+            vdw_eps: 0.2660,
+            vdw_alpha: 0.083,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::Br => Some(AtomTypeProperties {
+            bond_class: 24,
+            angle_class: 24,
+            fbci: 0.0,
+            crd: 1.14,
+            vdw_r: 1.85,
+            vdw_eps: 0.4010,
+            vdw_alpha: 0.083,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::I => Some(AtomTypeProperties {
+            bond_class: 26,
+            angle_class: 26,
+            fbci: 0.0,
+            crd: 1.33,
+            vdw_r: 1.98,
+            vdw_eps: 0.5000,
+            vdw_alpha: 0.083,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::S_3 => Some(AtomTypeProperties {
+            bond_class: 7,
+            angle_class: 8,
+            fbci: -0.20,
+            crd: 1.05,
+            vdw_r: 1.80,
+            vdw_eps: 0.0300,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::S_2 => Some(AtomTypeProperties {
+            bond_class: 13,
+            angle_class: 12,
+            fbci: -0.10,
+            crd: 0.94,
+            vdw_r: 1.80,
+            vdw_eps: 0.0300,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::S_AR => Some(AtomTypeProperties {
+            bond_class: 9,
+            angle_class: 7,
+            fbci: -0.20,
+            crd: 1.05,
+            vdw_r: 1.80,
+            vdw_eps: 0.0300,
+            vdw_alpha: 0.167,
+            oop_k: 0.02,
+        }),
+        MMFFAtomType::P_3 => Some(AtomTypeProperties {
+            bond_class: 7,
+            angle_class: 8,
+            fbci: 0.0,
+            crd: 1.07,
+            vdw_r: 1.80,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::P_4 => Some(AtomTypeProperties {
+            bond_class: 10,
+            angle_class: 12,
+            fbci: 0.0,
+            crd: 0.94,
+            vdw_r: 1.80,
+            vdw_eps: 0.0200,
+            vdw_alpha: 0.167,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::Fe_P2
+        | MMFFAtomType::Fe_P3
+        | MMFFAtomType::Li
+        | MMFFAtomType::Na
+        | MMFFAtomType::K
+        | MMFFAtomType::Zn_P2
+        | MMFFAtomType::Ca_P2
+        | MMFFAtomType::Cu_P1
+        | MMFFAtomType::Cu_P2
+        | MMFFAtomType::Mg_P2 => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_atom_type_props_basic() {
+        let h = get_atom_type_props(MMFFAtomType::H).unwrap();
+        assert_eq!(h.bond_class, 1);
+        assert_eq!(h.vdw_r, 1.20);
+
+        let c3 = get_atom_type_props(MMFFAtomType::C_3).unwrap();
+        assert_eq!(c3.bond_class, 2);
+        assert_eq!(c3.angle_class, 2);
+
+        let car = get_atom_type_props(MMFFAtomType::C_AR).unwrap();
+        assert_eq!(car.oop_k, 0.04);
+    }
+
+    #[test]
+    fn test_ion_types_return_none() {
+        assert!(get_atom_type_props(MMFFAtomType::Fe_P2).is_none());
+        assert!(get_atom_type_props(MMFFAtomType::Na).is_none());
+    }
+}

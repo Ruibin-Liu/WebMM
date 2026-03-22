@@ -271,7 +271,7 @@ M  END"#;
 
     #[test]
     fn test_etkdg_v3_basic() {
-        use crate::etkdg::generate_initial_coords;
+        use crate::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
 
         let sdf_content = r#"2029
   CDK     101218203532D 0
@@ -292,7 +292,12 @@ M  END"#;
 M  END"#;
 
         let molecule = parse_sdf(sdf_content).expect("Failed to parse SDF");
-        let coords = generate_initial_coords(&molecule);
+        let config = ETKDGConfig {
+            max_attempts: 1,
+            max_iterations: 50,
+            ..Default::default()
+        };
+        let coords = generate_initial_coords_with_config(&molecule, &config);
 
         // Should generate coordinates for all atoms
         assert_eq!(coords.len(), 6);
@@ -318,7 +323,7 @@ M  END"#;
 
     #[test]
     fn test_etkdg_v3_water() {
-        use crate::etkdg::generate_initial_coords;
+        use crate::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
 
         let sdf_content = r#"Water
   CDK     101218203532D 0
@@ -332,7 +337,12 @@ M  END"#;
 M  END"#;
 
         let molecule = parse_sdf(sdf_content).expect("Failed to parse SDF");
-        let coords = generate_initial_coords(&molecule);
+        let config = ETKDGConfig {
+            max_attempts: 1,
+            max_iterations: 50,
+            ..Default::default()
+        };
+        let coords = generate_initial_coords_with_config(&molecule, &config);
 
         // Should generate coordinates for all atoms
         assert_eq!(coords.len(), 3);
@@ -355,22 +365,29 @@ M  END"#;
 
     #[test]
     fn test_end_to_end_water_optimization() {
+        use crate::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
+
         let sdf = r#"Water
      RDKit          3D
 
   3  2  0  0  0  0  0  0  0  0999 V2000
-    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
-    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0
   1  2  1  0  0  0  0
-  1  3  1  0  0  0  0
+  1  3  1  0  0 0  0
 M  END"#;
 
         let mol = crate::molecule::parser::parse_sdf(sdf).expect("Parse failed");
         assert_eq!(mol.atoms.len(), 3);
         assert_eq!(mol.atoms[0].symbol, "O");
 
-        let coords = crate::etkdg::generate_initial_coords(&mol);
+        let config = ETKDGConfig {
+            max_attempts: 1,
+            max_iterations: 50,
+            ..Default::default()
+        };
+        let coords = generate_initial_coords_with_config(&mol, &config);
         assert_eq!(coords.len(), 3);
 
         let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
@@ -381,5 +398,113 @@ M  END"#;
 
         assert!(result.final_energy.is_finite(), "Energy should be finite");
         assert!(result.optimized_coords.len() == 3);
+    }
+
+    #[test]
+    fn test_ring_detection_benzene_from_sdf() {
+        let sdf = r#"Benzene
+     RDKit          3D
+
+  6  6  0  0  0  0  0  0  0  0999 V2000
+    0.0000    1.4010    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.2115    0.7035    0.0000 C   0  0  0  0  0  0  0  0  0
+   -0.6060    1.0493    0.0000 C   0  0  0  0  0  0  0  0  0
+   -1.2115    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+   -0.6060   -1.0493    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.2115   -0.7035    0.0000 C   0  0  0  0  0  0  0  0  0
+  1  2  4  0  0  0  0
+  2  3  4  0  0  0  0
+  3  4  4  0  0 0  0
+  4  5  4 0  0 0  0
+  5  6  4 0 0 0 0 0
+  6  1  4 0 0 0 0 0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("Failed to parse");
+        let rings = crate::molecule::graph::find_rings(&mol);
+        assert_eq!(rings.len(), 1);
+        assert_eq!(rings[0].len(), 6);
+    }
+
+    #[test]
+    fn test_etkdg_benzene_embedding() {
+        let sdf = r#"Benzene
+     RDKit          3D
+
+  6  6  0  0  0  0  0  0  0  0999 V2000
+    0.0000    1.4010    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.2115    0.7035    0.0000 C   0  0  0  0  0  0  0  0  0
+   -0.6060    1.0493    0.0000 C   0  0  0  0  0  0  0  0  0
+   -1.2115    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+   -0.6060   -1.0493    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.2115   -0.7035    0.0000 C   0  0  0  0  0  0  0  0  0
+  1  2  4  0  0  0  0
+  2  3  4  0  0  0  0
+  3  4  4  0  0 0  0
+  4  5  4 0  0 0  0
+  5  6  4 0 0 0 0 0
+  6  1  4 0 0 0 0 0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("Failed to parse");
+        let config = crate::etkdg::ETKDGConfig {
+            max_attempts: 1,
+            ..Default::default()
+        };
+        let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &config);
+        assert_eq!(coords.len(), 6);
+        for coord in &coords {
+            for &value in coord {
+                assert!(value.is_finite());
+            }
+        }
+    }
+
+    #[test]
+    fn test_ethanol_optimization() {
+        use crate::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
+
+        let sdf = r#"Ethanol
+     RDKit          3D
+
+  9  8  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    2.1450    1.0190    0.0000 O   0  0  0  0  0  0  0  0  0
+   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.5430   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    2.0190   -0.5430    0.0000 H   0  0  0  0  0  0  0  0  0
+    1.5270    1.5640    0.9170 H   0  0  0  0  0  0  0  0  0
+    3.0290    1.3430    0.3590 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+  2  6  1  0  0  0  0
+  2  7  1  0  0  0  0
+  3  8  1  0  0  0  0
+  3  9  1  0  0  0  0
+M  END"#;
+
+        let mol = crate::molecule::parser::parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 9);
+
+        let config = ETKDGConfig {
+            max_attempts: 1,
+            max_iterations: 50,
+            ..Default::default()
+        };
+        let coords = generate_initial_coords_with_config(&mol, &config);
+        assert_eq!(coords.len(), 9);
+
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let initial_energy = ff.calculate_energy(&coords);
+        assert!(initial_energy.is_finite());
+
+        let conv = ConvergenceOptions::default();
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+
+        assert!(result.final_energy.is_finite());
+        assert!(result.optimized_coords.len() == 9);
+        assert!(result.final_energy <= initial_energy + 1.0);
     }
 }

@@ -1,19 +1,29 @@
-# Plan: Phases 6-9 — Parameter Loading, Test Fixes, Clippy, Docs
+# Plan: MMFF94 Tasks 11-16 — ETKDG Improvements & Integration Tests
 
-## Task 1: Embed and load MMFF parameters from JSON
-- Files: src/utils/mod.rs, src/mmff/bond.rs, data/mmff94_sample_parameters.json
+## Task 11: ETKDG 1-3/1-4 Distance Bounds
+- File: src/etkdg/mod.rs `build_distance_bounds`
+- Add angle-derived (1-3) bounds using law of cosines
+- Add torsion-derived (1-4) bounds using trans/eclipsed extremes
+- Add ring closure tightening for upper bounds
 
-### Task 2: Fix ignored parser tests
-- Files: src/molecule/parser.rs
+## Task 12: ETKDG Proper 4D-to-3D Projection
+- File: src/etkdg/mod.rs `project_to_3d`
+- Replace trivial drop-4th-coordinate with eigenvector projection via Gram matrix + power iteration
 
-### Task 3: Add end-to-end integration test
-- Files: src/lib.rs
+## Task 13: ETKDG FF-Based Refinement
+- File: src/etkdg/mod.rs
+- Replace `dgff_minimization` with `refine_with_ff` using actual MMFF94 + L-BFGS optimizer
 
-### Task 4: Fix all clippy warnings
-- Files: src/mmff/mod.rs, src/mmff/bond.rs, src/mmff/angle.rs, src/mmff/torsion.rs, src/mmff/vdw.rs, src/molecule/graph.rs, src/molecule/parser.rs, src/molecule/mod.rs, src/etkdg/mod.rs, src/optimizer/mod.rs, src/lib.rs, Cargo.toml
+## Task 14: ETKDG Multi-Conformer
+- File: src/etkdg/mod.rs `generate_initial_coords_with_config`
+- Generate multiple conformers, return lowest-energy one
 
-### Task 5: Fix pkg/index.html API mismatches
-- Files: pkg/index.html
+## Task 15: Integration Tests
+- File: src/lib.rs tests module
+- Add ring detection test for benzene from SDF
+- Add charges non-zero test for water
+- Add full optimization test for ethanol
 
-### Task 6: Update CODE_STATUS.md
-- Files: CODE_STATUS.md, PLAN.md
+## Task 16: Update Documentation
+- Files: README.md, CODE_STATUS.md
+- Update completed features list, remove partial/TODO items
