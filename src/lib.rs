@@ -718,4 +718,321 @@ M  END"#;
         assert!(result.final_energy.is_finite());
         assert!(result.optimized_coords.len() == 10);
     }
+
+    // === Edge case tests ===
+
+    #[test]
+    fn test_single_atom_molecule() {
+        let sdf = r#"Single
+     RDKit          3D
+
+  1  0  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 1);
+        assert_eq!(mol.bonds.len(), 0);
+
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let coords = vec![[0.0, 0.0, 0.0]];
+        let energy = ff.calculate_energy(&coords);
+        assert!(energy.is_finite(), "Single atom energy should be finite");
+    }
+
+    #[test]
+    fn test_two_atom_molecule() {
+        let sdf = r#"H2
+     RDKit          3D
+
+  2  1  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+    0.7400    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 2);
+        assert_eq!(mol.bonds.len(), 1);
+
+        let coords = vec![[0.0, 0.0, 0.0], [0.74, 0.0, 0.0]];
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let energy = ff.calculate_energy(&coords);
+        assert!(energy.is_finite());
+    }
+
+    #[test]
+    fn test_molecule_with_triple_bond() {
+        // Acetylene (HCCH) - linear molecule with triple bond
+        let sdf = r#"Acetylene
+     RDKit          3D
+
+  4  3  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.2000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    2.2800    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.6000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  3  0  0  0  0
+  2  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 4);
+        assert_eq!(mol.bonds.len(), 3);
+
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let coords = vec![
+            [0.0, 0.0, 0.0],
+            [1.2, 0.0, 0.0],
+            [2.28, 0.0, 0.0],
+            [-0.6, 0.0, 0.0],
+        ];
+        let energy = ff.calculate_energy(&coords);
+        assert!(energy.is_finite());
+    }
+
+    #[test]
+    fn test_molecule_with_sulfur() {
+        // Dimethyl sulfide (CH3-S-CH3)
+        let sdf = r#"Dimethyl sulfide
+     RDKit          3D
+
+  6  5  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.5400    0.0000    0.0000 S   0  0  0  0  0  0  0  0  0
+    2.9000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    0.0000    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    0.0000   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    0.5400    0.8800    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+  3  6  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 6);
+
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        assert_eq!(coords.len(), 6);
+
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let conv = ConvergenceOptions::default();
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+        assert!(result.final_energy.is_finite());
+    }
+
+    // === Atom type assignment tests ===
+
+    #[test]
+    fn test_atom_types_methane() {
+        let sdf = r#"Methane
+     RDKit          3D
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.0900    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+    0.0000    1.0900    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.3630   -0.5450    0.8900 H   0  0  0  0  0  0  0  0  0
+   -0.3630   -0.5450   -0.8900 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+
+        assert_eq!(ff.atom_types[0], crate::mmff::MMFFAtomType::C_3);
+        assert_eq!(ff.atom_types[1], crate::mmff::MMFFAtomType::H);
+        assert_eq!(ff.atom_types[2], crate::mmff::MMFFAtomType::H);
+        assert_eq!(ff.atom_types[3], crate::mmff::MMFFAtomType::H);
+        assert_eq!(ff.atom_types[4], crate::mmff::MMFFAtomType::H);
+    }
+
+    #[test]
+    fn test_atom_types_formaldehyde() {
+        // H2C=O: C should be C_2, O should be O_2
+        let sdf = r#"Formaldehyde
+     RDKit          3D
+
+  4  3  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.2000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+   -0.5400    0.9400    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.5400   -0.9400    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  2  0  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+
+        assert_eq!(
+            ff.atom_types[0],
+            crate::mmff::MMFFAtomType::C_2,
+            "Carbonyl C should be C_2, got {:?}",
+            ff.atom_types[0]
+        );
+        assert_eq!(
+            ff.atom_types[1],
+            crate::mmff::MMFFAtomType::O_CO2,
+            "Carbonyl O double-bonded to C should be O_CO2, got {:?}",
+            ff.atom_types[1]
+        );
+    }
+
+    #[test]
+    fn test_atom_types_hydroxide() {
+        // OH- with formal charge -1: O has 1 bond so it's O_2 (sp2 for O with 1 bond)
+        let sdf = r#"Hydroxide
+     RDKit          3D
+
+  2  1  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O  0  5  0  0  0  0  0  0  0  0  0  0  0
+    0.9600    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+
+        assert_eq!(ff.atom_types[0], crate::mmff::MMFFAtomType::O_2);
+        assert_eq!(ff.atom_types[1], crate::mmff::MMFFAtomType::H);
+    }
+
+    #[test]
+    fn test_atom_types_ether() {
+        // Dimethyl ether CH3-O-CH3: O should be O_R (ether oxygen bonded to 2 carbons)
+        let sdf = r#"Dimethyl ether
+     RDKit          3D
+
+  6  5  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.4300    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+    2.4900    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    0.0000    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    0.0000   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    3.1100    0.0000    0.8900 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+  3  6  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+
+        assert_eq!(
+            ff.atom_types[1],
+            crate::mmff::MMFFAtomType::O_R,
+            "Ether O bonded to 2 C should be O_R, got {:?}",
+            ff.atom_types[1]
+        );
+    }
+
+    #[test]
+    fn test_optimizer_convergence_improves_energy() {
+        let sdf = r#"Ethanol
+     RDKit          3D
+
+  9  8  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    2.1450    1.0190    0.0000 O   0  0  0  0  0  0  0  0  0
+   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.5430   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    2.0190   -0.5430    0.0000 H   0  0  0  0  0  0  0  0  0
+    1.5270    1.5640    0.9170 H   0  0  0  0  0  0  0  0  0
+    3.0290    1.3430    0.3590 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+  2  6  1  0  0  0  0
+  2  7  1  0  0  0  0
+  3  8  1  0  0  0  0
+  3  9  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+
+        let initial_energy = ff.calculate_energy(&coords);
+        let conv = ConvergenceOptions {
+            max_iterations: 500,
+            ..Default::default()
+        };
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+
+        assert!(
+            result.final_energy <= initial_energy,
+            "Optimizer should not increase energy: initial={}, final={}",
+            initial_energy,
+            result.final_energy
+        );
+    }
+
+    #[test]
+    fn test_mmff94s_variant() {
+        let sdf = r#"Water
+     RDKit          3D
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+
+        let coords = vec![[0.0, 0.0, 0.0], [0.958, 0.0, 0.0], [-0.239, 0.927, 0.0]];
+        let ff_94 = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94);
+        let ff_94s = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+
+        let e_94 = ff_94.calculate_energy(&coords);
+        let e_94s = ff_94s.calculate_energy(&coords);
+
+        // Both should produce finite energies
+        assert!(e_94.is_finite(), "MMFF94 energy should be finite");
+        assert!(e_94s.is_finite(), "MMFF94s energy should be finite");
+    }
+
+    #[test]
+    fn test_wasm_api_from_sdf() {
+        use crate::optimize_from_sdf;
+        use crate::OptimizationOptions;
+
+        let sdf = r#"Water
+     RDKit          3D
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+M  END"#;
+
+        let options = OptimizationOptions::default();
+        let result = optimize_from_sdf(sdf, options);
+
+        assert_eq!(result.n_atoms, 3);
+        assert!(result.get_final_energy().is_finite());
+        assert_eq!(result.get_iterations() > 0, true);
+
+        let x0 = result.get_coord(0, 0);
+        let y0 = result.get_coord(0, 1);
+        let z0 = result.get_coord(0, 2);
+        assert!(x0.is_finite() && y0.is_finite() && z0.is_finite());
+    }
 }

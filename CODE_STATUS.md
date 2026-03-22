@@ -4,7 +4,7 @@
 MolGopt is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-Phase 12: MMFF94 Tasks 5-10 complete. 40 tests pass (6 new), 0 clippy warnings.
+Phase 13: Test suite expansion. 86 tests pass (34 new), 0 clippy warnings.
 - Fixed flaky ETKDG water test with relaxed distance bounds (0.1-5.0 Å) for stochastic embedding edge case
 
 ## Completed
@@ -72,6 +72,15 @@ Phase 12: MMFF94 Tasks 5-10 complete. 40 tests pass (6 new), 0 clippy warnings.
   - Context-sensitive atom typing: formal charge, neighbor C=O, ether O, amide N (mmff/mod.rs)
   - Atom type property table from Halgren 1996 Table II (mmff/atom_types.rs)
   - 10 new tests: 4 ring detection, 4 aromaticity, 2 property table
+
+- Phase 13: Test suite expansion
+  - Angle: 6 new tests (equilibrium energy, straight line, numerical gradient, coincident atoms, linear atoms)
+  - Electrostatics: 8 new tests (like charges, magnitude, dielectric, 3D geometry, zero charge, coincident, numerical gradient)
+  - Estimation: 7 new tests (double/triple/aromatic bond scaling, heteroatom bonds, linear/trigonal angles, symmetric types)
+  - Charges: 3 new tests (ammonia, methane symmetry, single atom)
+  - Integration: 11 new tests (single atom, H2, acetylene, dimethyl sulfide, atom type assignment for methane/formaldehyde/hydroxide/ether, optimizer convergence, MMFF94/MMFF94s variants, WASM API)
+  - V3000 parser: 2 new tests (water, methane)
+  - Property-based tests: 6 proptest invariants (energy finiteness, bond equilibrium, convexity, VDW well, parser robustness, gradient consistency)
 
 ## In Progress
 - (none)

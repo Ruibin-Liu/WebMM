@@ -56,7 +56,7 @@ molgopt/
 - **ETKDG v3**: Distance bounds (bond + angle 1-3 + torsion 1-4 + ring closure), triangle smoothing, 4D stochastic embedding, eigenvector 4D-to-3D projection, FF-based refinement with L-BFGS, multi-conformer selection
 - **WASM API**: Full JavaScript interface with coordinate access, constructor support
 - **Parameter loading**: MMFF parameters embedded from JSON at compile time with fallback lookup
-- **Testing**: 34 tests including numerical gradient verification, end-to-end optimization, ring detection, and benzene embedding
+- **Testing**: 86 tests including numerical gradient verification, end-to-end optimization, ring detection, V3000 parsing, property-based invariants, atom type assignment, and edge cases
 
 ## Build Instructions
 

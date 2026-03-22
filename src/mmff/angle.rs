@@ -452,4 +452,111 @@ mod tests {
 
         assert!(energy.is_finite());
     }
+
+    #[test]
+    fn test_angle_energy_zero_at_equilibrium() {
+        // Place atoms so the H-C-H angle equals theta0 = 109.47 degrees
+        let theta = 109.47_f64.to_radians();
+        let r = 1.1;
+        let coords = vec![
+            [r * theta.cos(), r * theta.sin(), 0.0],
+            [0.0, 0.0, 0.0],
+            [r * theta.cos(), -r * theta.sin(), 0.0],
+        ];
+
+        let params = AngleParams {
+            k_theta: 0.8,
+            theta0: 109.47,
+        };
+        let energy = angle_energy(&coords, 0, 1, 2, &params);
+
+        assert!(
+            energy.abs() < 0.01,
+            "Angle energy at equilibrium should be ~0, got {}",
+            energy
+        );
+    }
+
+    #[test]
+    fn test_angle_energy_straight_line() {
+        // Collinear atoms: angle = 180 degrees, should be higher energy
+        let coords = vec![[-2.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+
+        let params = AngleParams {
+            k_theta: 0.8,
+            theta0: 109.47,
+        };
+        let energy = angle_energy(&coords, 0, 1, 2, &params);
+
+        assert!(energy.is_finite());
+        assert!(energy > 0.0, "Deviated angle should have positive energy");
+    }
+
+    #[test]
+    fn test_angle_gradient_numerical() {
+        let coords = vec![[1.526, 0.0, 0.0], [0.0, 0.0, 0.0], [1.526, 0.934, 0.0]];
+
+        let params = AngleParams {
+            k_theta: 0.8,
+            theta0: 109.47,
+        };
+
+        let (g1, g2, g3) = angle_gradient(&coords, 0, 1, 2, &params);
+
+        let eps = 1e-7;
+        let e0 = angle_energy(&coords, 0, 1, 2, &params);
+
+        for (atom_idx, grad) in [(0, g1), (1, g2), (2, g3)] {
+            for dim in 0..3 {
+                let mut coords_p = coords.clone();
+                coords_p[atom_idx][dim] += eps;
+                let e_plus = angle_energy(&coords_p, 0, 1, 2, &params);
+                let num_grad = (e_plus - e0) / eps;
+                assert!(
+                    (grad[dim] - num_grad).abs() < 1e-3,
+                    "Analytical grad[{}] = {} but numerical = {} for atom {}",
+                    dim,
+                    grad[dim],
+                    num_grad,
+                    atom_idx
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_angle_gradient_coincident_atoms() {
+        // Two atoms at the same position should not panic
+        let coords = vec![[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+
+        let params = AngleParams {
+            k_theta: 0.8,
+            theta0: 109.47,
+        };
+
+        let (g1, g2, g3) = angle_gradient(&coords, 0, 1, 2, &params);
+        for grad in [g1, g2, g3] {
+            for &v in &grad {
+                assert!(v.is_finite(), "Gradient should be finite, got NaN/Inf");
+            }
+        }
+    }
+
+    #[test]
+    fn test_angle_gradient_linear_atoms() {
+        // Collinear atoms (sin_theta ~ 0) should not panic
+        let coords = vec![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+
+        let params = AngleParams {
+            k_theta: 0.8,
+            theta0: 109.47,
+        };
+
+        let (g1, g2, g3) = angle_gradient(&coords, 0, 1, 2, &params);
+        for grad in [g1, g2, g3] {
+            for &v in &grad {
+                assert!(v.is_finite(), "Gradient should be finite for linear case");
+            }
+        }
+    }
 }

@@ -377,4 +377,190 @@ mod tests {
             total
         );
     }
+
+    #[test]
+    fn test_ammonia_charges() {
+        // NH3: N should have negative charge, H should have positive
+        let atoms = vec![
+            Atom {
+                symbol: "N".into(),
+                atomic_number: 7,
+                mass: 14.0,
+                charge: 0.0,
+                position: [0.0; 3],
+                index: 0,
+            },
+            Atom {
+                symbol: "H".into(),
+                atomic_number: 1,
+                mass: 1.0,
+                charge: 0.0,
+                position: [1.0, 0.0, 0.0],
+                index: 1,
+            },
+            Atom {
+                symbol: "H".into(),
+                atomic_number: 1,
+                mass: 1.0,
+                charge: 0.0,
+                position: [-0.5, 0.866, 0.0],
+                index: 2,
+            },
+            Atom {
+                symbol: "H".into(),
+                atomic_number: 1,
+                mass: 1.0,
+                charge: 0.0,
+                position: [-0.5, -0.866, 0.0],
+                index: 3,
+            },
+        ];
+        let bonds = vec![
+            Bond {
+                atom1: 0,
+                atom2: 1,
+                bond_type: BondType::Single,
+            },
+            Bond {
+                atom1: 0,
+                atom2: 2,
+                bond_type: BondType::Single,
+            },
+            Bond {
+                atom1: 0,
+                atom2: 3,
+                bond_type: BondType::Single,
+            },
+        ];
+        let mol = make_molecule(atoms, bonds);
+        let atom_types = vec![
+            MMFFAtomType::N_3,
+            MMFFAtomType::H,
+            MMFFAtomType::H,
+            MMFFAtomType::H,
+        ];
+        let charges = calculate_bci_charges(&mol, &atom_types);
+
+        let total: f64 = charges.iter().sum();
+        assert!(
+            total.abs() < 1e-10,
+            "Ammonia charges should sum to zero, got {}",
+            total
+        );
+        assert!(
+            charges[0] < 0.0,
+            "N should have negative charge in NH3, got {}",
+            charges[0]
+        );
+    }
+
+    #[test]
+    fn test_methane_charges_symmetric() {
+        // CH4: all H charges should be equal due to symmetry
+        let atoms = vec![
+            Atom {
+                symbol: "C".into(),
+                atomic_number: 6,
+                mass: 12.0,
+                charge: 0.0,
+                position: [0.0; 3],
+                index: 0,
+            },
+            Atom {
+                symbol: "H".into(),
+                atomic_number: 1,
+                mass: 1.0,
+                charge: 0.0,
+                position: [1.0, 0.0, 0.0],
+                index: 1,
+            },
+            Atom {
+                symbol: "H".into(),
+                atomic_number: 1,
+                mass: 1.0,
+                charge: 0.0,
+                position: [-0.5, 0.866, 0.0],
+                index: 2,
+            },
+            Atom {
+                symbol: "H".into(),
+                atomic_number: 1,
+                mass: 1.0,
+                charge: 0.0,
+                position: [-0.5, -0.866, 0.0],
+                index: 3,
+            },
+            Atom {
+                symbol: "H".into(),
+                atomic_number: 1,
+                mass: 1.0,
+                charge: 0.0,
+                position: [0.0, 0.0, 1.0],
+                index: 4,
+            },
+        ];
+        let bonds = vec![
+            Bond {
+                atom1: 0,
+                atom2: 1,
+                bond_type: BondType::Single,
+            },
+            Bond {
+                atom1: 0,
+                atom2: 2,
+                bond_type: BondType::Single,
+            },
+            Bond {
+                atom1: 0,
+                atom2: 3,
+                bond_type: BondType::Single,
+            },
+            Bond {
+                atom1: 0,
+                atom2: 4,
+                bond_type: BondType::Single,
+            },
+        ];
+        let mol = make_molecule(atoms, bonds);
+        let atom_types = vec![
+            MMFFAtomType::C_3,
+            MMFFAtomType::H,
+            MMFFAtomType::H,
+            MMFFAtomType::H,
+            MMFFAtomType::H,
+        ];
+        let charges = calculate_bci_charges(&mol, &atom_types);
+
+        for (i, &q) in charges.iter().enumerate() {
+            assert!(q.is_finite(), "Charge for atom {} should be finite", i);
+        }
+        assert!(
+            charges[1].abs() - charges[2].abs() < 1e-10,
+            "All H charges should be symmetric"
+        );
+        assert!(
+            charges[2].abs() - charges[3].abs() < 1e-10,
+            "All H charges should be symmetric"
+        );
+    }
+
+    #[test]
+    fn test_single_atom_charge() {
+        // Single atom with no bonds: charge should just be fbci
+        let atoms = vec![Atom {
+            symbol: "C".into(),
+            atomic_number: 6,
+            mass: 12.0,
+            charge: 0.0,
+            position: [0.0; 3],
+            index: 0,
+        }];
+        let bonds: Vec<Bond> = vec![];
+        let mol = make_molecule(atoms, bonds);
+        let atom_types = vec![MMFFAtomType::C_3];
+        let charges = calculate_bci_charges(&mol, &atom_types);
+
+        assert_eq!(charges.len(), 1);
+        assert!(charges[0].is_finite());
+    }
 }

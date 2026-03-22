@@ -107,7 +107,7 @@ M  END"#, x, y, z, x + 1.5, y, z);
             let coords_mid = vec![[0.0, 0.0, 0.0], [3.5, 0.0, 0.0]];    // At r0, attractive well
             let coords_far = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]];  // Far, ~zero
 
-            let (e_close, _, _) = vdw_energy_and_gradient(
+            let (_e_close, _, _) = vdw_energy_and_gradient(
                 &coords_close, 0, 1, &params, &params);
             let (e_mid, _, _) = vdw_energy_and_gradient(
                 &coords_mid, 0, 1, &params, &params);
@@ -136,7 +136,7 @@ M  END"#, x, y, z, x + 1.5, y, z);
         fn parser_rejects_invalid_input(input in "[\u{0000}-\u{007F}]{0,100}") {
             // Most random strings are not valid SDF
             if !input.as_str().contains("V2000") && !input.as_str().contains("V3000") {
-                let result = crate::molecule::parser::parse_sdf(&input);
+                let _result = crate::molecule::parser::parse_sdf(&input);
                 // Should either parse successfully or return an error
                 // Either is fine, just shouldn't panic
             }
