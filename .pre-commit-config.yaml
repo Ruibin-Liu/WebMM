@@ -8,6 +8,9 @@ minimum_pre_commit_version: "2.20"
 
 default_stages: [pre-commit]
 
+ci:
+  skip: [fmt, clippy, cargo-check]
+
 repos:
   # ── General file hygiene ──────────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks
