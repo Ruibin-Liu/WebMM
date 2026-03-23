@@ -170,7 +170,7 @@ M  END"></textarea>
                 if (typeof result === 'object' && result.get_success()) {
                     setStatus('ETKDG v3 coordinate generation complete!', 'success');
                     log(`✓ Generated initial coordinates in ${((endTime - startTime) / 1000).toFixed(2)}s`);
-                    log(`✓ Atoms: ${result.get_n_atoms()}`);
+                    log(`✓ Atoms: ${result.n_atoms}`);
                     
                     log('');
                     log('--- Initial 3D Coordinates (ETKDG v3) ---');
@@ -222,7 +222,7 @@ M  END"></textarea>
                     setStatus('Optimization successful!', 'success');
                     log(`✓ Converged in ${result.get_iterations()} iterations`);
                     log(`✓ Final energy: ${result.get_final_energy().toFixed(6)} kcal/mol`);
-                    log(`✓ Atoms: ${result.get_n_atoms()}`);
+                    log(`✓ Atoms: ${result.n_atoms}`);
                     log(`⏱ Time: ${((endTime - startTime) / 1000).toFixed(2)}s`);
                 } else {
                     setStatus('Optimization did not converge', 'error');
@@ -232,7 +232,7 @@ M  END"></textarea>
                 
                 log('');
                 log('--- Optimized Coordinates ---');
-                for (let i = 0; i < result.get_n_atoms(); i++) {
+                for (let i = 0; i < result.n_atoms; i++) {
                     const x = result.get_coord(i, 0);
                     const y = result.get_coord(i, 1);
                     const z = result.get_coord(i, 2);
