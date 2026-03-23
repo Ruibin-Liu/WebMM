@@ -405,7 +405,7 @@ if (result.converged()) {
     console.log('✓ Optimization converged!');
     console.log('Final energy:', result.get_final_energy());
     console.log('Atoms:', result.get_n_atoms());
-    
+
     // Access optimized coordinates
     for (let i = 0; i < result.get_n_atoms(); i++) {
         const x = result.get_coord(i, 0);

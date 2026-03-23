@@ -108,7 +108,7 @@ Implement the BCI charge method (Halgren 1996 Section II.D):
 
 The BCI table needs ~200-300 entries for common type pairs. Use the Halgren Table VI values:
 - C_3-C_3: 0.00
-- C_3-H: 0.00  
+- C_3-H: 0.00
 - C_3-N_3: 0.08
 - C_3-O_3: 0.13
 - C_2=O_2: 0.10
