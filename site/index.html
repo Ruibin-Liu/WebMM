@@ -122,13 +122,22 @@ M  END"></textarea>
             try {
                 console.log('Loading WASM module...');
                 const wasmModule = await import('./webmm.js');
-                console.log('WASM module loaded');
+                console.log('WASM module loaded:', Object.keys(wasmModule));
+                
+                // Initialize the WASM runtime
+                if (wasmModule.default) {
+                    await wasmModule.default();
+                }
                 
                 // Extract functions from module
                 optimize_from_sdf = wasmModule.optimize_from_sdf;
                 generate_initial_coordinates_wasm = wasmModule.generate_initial_coordinates_wasm;
                 OptimizationOptions = wasmModule.OptimizationOptions;
                 MMFFVariant = wasmModule.MMFFVariant;
+                
+                if (!optimize_from_sdf) {
+                    throw new Error('optimize_from_sdf not found in module. Available: ' + Object.keys(wasmModule).join(', '));
+                }
                 
                 setStatus('WASM module initialized successfully', 'success');
                 log('✓ Ready to optimize molecules');
@@ -240,19 +249,23 @@ M  END"></textarea>
         window.loadTestFile = async function() {
             try {
                 setStatus('Loading test molecule...', 'info');
-                log('→ Loading Branched Alkanes test molecule');
+                log('→ Loading Water test molecule');
                 
-                const response = await fetch('test_molecules/Branched_Alkanes_001.sdf');
-                if (!response.ok) {
-                    throw new Error('Failed to load test file');
-                }
-                
-                const sdfContent = await response.text();
+                const sdfContent = `Water
+     RDKit          3D
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+M  END`;
                 document.getElementById('sdf-input').value = sdfContent;
                 
                 setStatus('Test file loaded!', 'success');
-                log(`✓ Loaded Branched Alkanes test molecule`);
-                log(`✓ Ready to optimize`);
+                log('✓ Loaded Water (H2O)');
+                log('✓ Ready to optimize');
             } catch (error) {
                 setStatus(`Error: ${error.message}`, 'error');
                 log(`✗ Failed to load test file: ${error}`);
