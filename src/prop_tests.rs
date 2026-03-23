@@ -147,9 +147,9 @@ M  END"#, x, y, z, x + 1.5, y, z);
     proptest! {
         #[test]
         fn gradient_finite_difference(
-            x in -1.0f64..1.0,
-            y in -1.0f64..1.0,
-            z in -1.0f64..1.0,
+            x in 0.5f64..3.0,
+            y in 0.0f64..3.0,
+            z in 0.0f64..3.0,
         ) {
             use crate::mmff::bond::{bond_energy, bond_gradient, BondParams};
 

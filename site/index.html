@@ -208,10 +208,10 @@ M  END"></textarea>
                 }
                 
                 const options = new OptimizationOptions();
-                options.convergence.max_force = 0.01;
-                options.convergence.rms_force = 0.001;
-                options.convergence.energy_change = 1e-6;
-                options.convergence.max_iterations = 500;
+                options.set_max_iterations(500);
+                options.set_max_force(0.01);
+                options.set_rms_force(0.001);
+                options.set_energy_change(1e-6);
                 options.mmff_variant = 'MMFF94s';
                 
                 const startTime = performance.now();

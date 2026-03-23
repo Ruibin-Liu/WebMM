@@ -60,9 +60,9 @@ impl Default for ConvergenceOptions {
 #[wasm_bindgen]
 #[derive(Debug, Clone)]
 pub struct OptimizationOptions {
-    #[wasm_bindgen(getter_with_clone)]
+    #[wasm_bindgen(getter_with_clone, setter)]
     pub mmff_variant: String,
-    #[wasm_bindgen(getter_with_clone)]
+    #[wasm_bindgen(skip)]
     pub convergence: ConvergenceOptions,
 }
 
@@ -71,6 +71,26 @@ impl OptimizationOptions {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[wasm_bindgen]
+    pub fn set_max_iterations(&mut self, val: usize) {
+        self.convergence.max_iterations = val;
+    }
+
+    #[wasm_bindgen]
+    pub fn set_max_force(&mut self, val: f64) {
+        self.convergence.max_force = val;
+    }
+
+    #[wasm_bindgen]
+    pub fn set_rms_force(&mut self, val: f64) {
+        self.convergence.rms_force = val;
+    }
+
+    #[wasm_bindgen]
+    pub fn set_energy_change(&mut self, val: f64) {
+        self.convergence.energy_change = val;
     }
 }
 
@@ -1034,5 +1054,75 @@ M  END"#;
         let y0 = result.get_coord(0, 1);
         let z0 = result.get_coord(0, 2);
         assert!(x0.is_finite() && y0.is_finite() && z0.is_finite());
+    }
+
+    #[test]
+    fn test_acetic_acid_convergence() {
+        use crate::ConvergenceOptions;
+
+        let sdf = r#"Acetic acid
+     RDKit          3D
+
+  8  7  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0
+    2.2000    1.0190    0.0000 O   0  0  0  0  0  0  0  0  0
+    2.9000    0.3000    0.0000 O   0  0  0  0  0  0  0  0  0
+   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.5430   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0
+    3.0000    1.2000    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  2  3  2  0  0  0  0
+  2  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+  1  6  1  0  0  0  0
+  2  7  1  0  0  0  0
+  4  8  1  0  0  0  0
+M  END"#;
+
+        let mol = parse_sdf(sdf).expect("Parse failed");
+        assert_eq!(mol.atoms.len(), 8);
+
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+
+        let initial_energy = ff.calculate_energy(&coords);
+        let initial_grad = ff.calculate_gradient(&coords);
+        let max_grad = initial_grad
+            .iter()
+            .flat_map(|g| g.iter())
+            .map(|&v| v.abs())
+            .fold(0.0f64, f64::max);
+
+        let conv = ConvergenceOptions {
+            max_iterations: 500,
+            max_force: 0.01,
+            rms_force: 0.001,
+            energy_change: 1e-6,
+        };
+        let result = crate::optimizer::optimize(&ff, &coords, &conv);
+
+        eprintln!(
+            "Acetic acid: {} atoms, {} iters, converged={}",
+            mol.atoms.len(),
+            result.iterations,
+            result.converged
+        );
+        eprintln!("  Initial energy: {:.4}", initial_energy);
+        eprintln!("  Final energy:   {:.4}", result.final_energy);
+        eprintln!(
+            "  Energy change:  {:.6}",
+            (initial_energy - result.final_energy).abs()
+        );
+        eprintln!("  Initial max |grad|: {:.6}", max_grad);
+
+        // Energy should decrease
+        assert!(
+            result.final_energy < initial_energy,
+            "Energy should decrease: initial={}, final={}",
+            initial_energy,
+            result.final_energy
+        );
     }
 }
