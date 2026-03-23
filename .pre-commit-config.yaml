@@ -6,7 +6,7 @@
 
 minimum_pre_commit_version: "2.20"
 
-default_stages: [commit]
+default_stages: [pre-commit]
 
 repos:
   # ── General file hygiene ──────────────────────────────────────────
@@ -43,7 +43,7 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
-        stages: [commit]
+        stages: [pre-commit]
 
       - id: cargo-check
         name: cargo check
@@ -51,11 +51,9 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
-        stages: [commit]
+        stages: [pre-commit]
 
-  # ── WASM build check ────────────────────────────────────────────
-  # Uncomment if you want to verify WASM builds on every commit
-  # (slower but catches wasm-bindgen errors early)
+  # ── WASM build check (uncomment to enable) ──────────────────────
   # - repo: local
   #   hooks:
   #     - id: wasm-build
@@ -64,4 +62,4 @@ repos:
   #       language: system
   #       types: [rust]
   #       pass_filenames: false
-  #       stages: [push]
+  #       stages: [pre-push]
