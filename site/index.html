@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebMM - MMFF94 Geometry Optimizer</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .log {
+            background-color: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            padding: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            margin-bottom: 20px;
+        }
+        .log p {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebMM - MMFF94 Geometry Optimizer</h1>
+        
+        <div class="status">
+            <div id="status" class="info">Initializing...</div>
+        </div>
+        
+        <h2>Test Molecule (SDF Format)</h2>
+        <textarea id="sdf-input" placeholder="Paste SDF/MOL file content here...
+For example:
+  2  1  0  0  0  0  0  0  0  0999 V2000
+    6.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0
+  1  1  0  0  0  0
+M  END"></textarea>
+        
+        <div>
+            <button onclick="runOptimization()">Optimize Molecule</button>
+            <button onclick="loadTestFile()">Load Test File</button>
+            <button onclick="generateInitialCoordinates()">Generate Initial 3D Coordinates</button>
+        </div>
+        
+        <div id="log" class="log"></div>
+    </div>
+    
+    <script type="module">
+        // Import WASM module
+        let optimize_from_sdf, generate_initial_coordinates_wasm, OptimizationOptions, MMFFVariant;
+        
+        const statusDiv = document.getElementById('status');
+        const logDiv = document.getElementById('log');
+        
+        function setStatus(message, type = 'info') {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+        
+        function log(message) {
+            const p = document.createElement('p');
+            p.textContent = message;
+            logDiv.appendChild(p);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        // Initialize WASM module
+        async function initWasm() {
+            try {
+                console.log('Loading WASM module...');
+                const wasmModule = await import('./webmm.js');
+                console.log('WASM module loaded');
+                
+                // Extract functions from module
+                optimize_from_sdf = wasmModule.optimize_from_sdf;
+                generate_initial_coordinates_wasm = wasmModule.generate_initial_coordinates_wasm;
+                OptimizationOptions = wasmModule.OptimizationOptions;
+                MMFFVariant = wasmModule.MMFFVariant;
+                
+                setStatus('WASM module initialized successfully', 'success');
+                log('✓ Ready to optimize molecules');
+                log('✓ Ready to generate initial coordinates');
+                
+            } catch (error) {
+                setStatus(`Failed to load WASM: ${error.message}`, 'error');
+                log(`✗ ${error}`);
+                console.error(error);
+            }
+        }
+        
+        // Generate initial 3D coordinates (ETKDG v3)
+        window.generateInitialCoordinates = async function() {
+            try {
+                setStatus('Generating initial 3D coordinates with ETKDG v3...', 'info');
+                log('→ Starting ETKDG v3 coordinate generation');
+                
+                const sdfContent = document.getElementById('sdf-input').value;
+                if (!sdfContent.trim()) {
+                    setStatus('Please enter an SDF file first', 'error');
+                    log('✗ No SDF content provided');
+                    return;
+                }
+                
+                const startTime = performance.now();
+                const result = await generate_initial_coordinates_wasm(sdfContent);
+                const endTime = performance.now();
+                
+                if (typeof result === 'object' && result.get_success()) {
+                    setStatus('ETKDG v3 coordinate generation complete!', 'success');
+                    log(`✓ Generated initial coordinates in ${((endTime - startTime) / 1000).toFixed(2)}s`);
+                    log(`✓ Atoms: ${result.get_n_atoms()}`);
+                    
+                    log('');
+                    log('--- Initial 3D Coordinates (ETKDG v3) ---');
+                    const coords = result.get_coordinates();
+                    for (let i = 0; i < coords.length; i += 3) {
+                        const x = coords[i];
+                        const y = coords[i+1];
+                        const z = coords[i+2];
+                        log(`Atom ${i/3+1}: (${x.toFixed(4)}, ${y.toFixed(4)}, ${z.toFixed(4)})`);
+                    }
+                    
+                    log('→ Initial coordinates ready for visualization');
+                } else {
+                    setStatus('ETKDG v3 failed', 'error');
+                    log(`✗ Error: ${typeof result === 'string' ? result : 'Unknown error'}`);
+                }
+            } catch (error) {
+                setStatus(`Error: ${error.message}`, 'error');
+                log(`✗ ${error}`);
+                console.error(error);
+            }
+        };
+        
+        // Run optimization function
+        window.runOptimization = async function() {
+            try {
+                setStatus('Optimizing...', 'info');
+                log('→ Starting MMFF94 optimization');
+                
+                const sdfContent = document.getElementById('sdf-input').value;
+                if (!sdfContent.trim()) {
+                    setStatus('Please enter an SDF content', 'error');
+                    log('✗ No SDF content provided');
+                    return;
+                }
+                
+                const options = new OptimizationOptions();
+                options.convergence.max_force = 0.01;
+                options.convergence.rms_force = 0.001;
+                options.convergence.energy_change = 1e-6;
+                options.convergence.max_iterations = 500;
+                options.mmff_variant = 'MMFF94s';
+                
+                const startTime = performance.now();
+                const result = optimize_from_sdf(sdfContent, options);
+                const endTime = performance.now();
+                
+                if (result.get_converged()) {
+                    setStatus('Optimization successful!', 'success');
+                    log(`✓ Converged in ${result.get_iterations()} iterations`);
+                    log(`✓ Final energy: ${result.get_final_energy().toFixed(6)} kcal/mol`);
+                    log(`✓ Atoms: ${result.get_n_atoms()}`);
+                    log(`⏱ Time: ${((endTime - startTime) / 1000).toFixed(2)}s`);
+                } else {
+                    setStatus('Optimization did not converge', 'error');
+                    log(`✗ Max iterations reached: ${result.get_iterations()}`);
+                    log(`✗ Final energy: ${result.get_final_energy().toFixed(6)} kcal/mol`);
+                }
+                
+                log('');
+                log('--- Optimized Coordinates ---');
+                for (let i = 0; i < result.get_n_atoms(); i++) {
+                    const x = result.get_coord(i, 0);
+                    const y = result.get_coord(i, 1);
+                    const z = result.get_coord(i, 2);
+                    log(`Atom ${i+1}: (${x.toFixed(4)}, ${y.toFixed(4)}, ${z.toFixed(4)})`);
+                }
+            } catch (error) {
+                setStatus(`Error: ${error.message}`, 'error');
+                log(`✗ ${error}`);
+                console.error(error);
+            }
+        };
+        
+        // Load test file function
+        window.loadTestFile = async function() {
+            try {
+                setStatus('Loading test molecule...', 'info');
+                log('→ Loading Branched Alkanes test molecule');
+                
+                const response = await fetch('test_molecules/Branched_Alkanes_001.sdf');
+                if (!response.ok) {
+                    throw new Error('Failed to load test file');
+                }
+                
+                const sdfContent = await response.text();
+                document.getElementById('sdf-input').value = sdfContent;
+                
+                setStatus('Test file loaded!', 'success');
+                log(`✓ Loaded Branched Alkanes test molecule`);
+                log(`✓ Ready to optimize`);
+            } catch (error) {
+                setStatus(`Error: ${error.message}`, 'error');
+                log(`✗ Failed to load test file: ${error}`);
+                console.error(error);
+            }
+        };
+        
+        // Initialize WASM when page loads
+        initWasm();
+    </script>
+</body>
+</html>
