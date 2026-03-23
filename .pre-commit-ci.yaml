@@ -1,0 +1,7 @@
+ci:
+  # pre-commit.ci 没有 Rust 环境，Rust 检查交给 GitHub Actions
+  skip:
+    - fmt
+    - clippy
+    - cargo-check
+  autoupdate_schedule: weekly
