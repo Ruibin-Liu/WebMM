@@ -67,10 +67,11 @@
             height: 400px;
             border: 1px solid #ddd;
             border-radius: 4px;
-            position: relative;
             background: #f9f9f9;
+            overflow: hidden;
         }
         #viewer canvas {
+            display: block !important;
             width: 100% !important;
             height: 100% !important;
         }
@@ -212,6 +213,13 @@
                 applyViewerStyle();
                 viewer3Dmol.zoomTo();
                 viewer3Dmol.render();
+                // Debug: check DOM
+                const viewerDiv = document.getElementById('viewer');
+                const canvases = viewerDiv.querySelectorAll('canvas');
+                console.log('Canvas elements in viewer:', canvases.length);
+                canvases.forEach((c, i) => {
+                    console.log(`Canvas ${i}:`, c.width, 'x', c.height, 'style:', c.style.cssText);
+                });
                 console.log('Molecule rendered successfully');
             } catch (e) {
                 console.error('Error in updateViewer:', e);
