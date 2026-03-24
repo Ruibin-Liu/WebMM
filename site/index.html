@@ -347,6 +347,8 @@ M  END`
             log(`✓ Loaded ${name}`);
         };
 
+        window.setStyle = setStyle;
+
         window.generateInitialCoords = async function() {
             try {
                 const sdfContent = document.getElementById('sdf-input').value;
