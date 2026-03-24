@@ -184,20 +184,12 @@
             try {
                 viewer3Dmol = $3Dmol.createViewer(element, config);
                 console.log('3Dmol viewer created successfully');
-                // Force immediate render with a simple shape to test
-                viewer3Dmol.addSphere({x:0, y:0, z:0, radius:1, color:'red'});
-                viewer3Dmol.zoomTo();
-                viewer3Dmol.render();
                 // Check what was added to DOM
                 const canvases = element.querySelectorAll('canvas');
                 console.log('Canvases in viewer div after creation:', canvases.length);
                 canvases.forEach((c, i) => {
                     const style = window.getComputedStyle(c);
                     console.log(`Canvas ${i}:`, c.width, 'x', c.height, 'display:', style.display, 'visibility:', style.visibility, 'opacity:', style.opacity, 'bg:', style.backgroundColor);
-                    // Force the canvas to be visible
-                    c.style.display = 'block';
-                    c.style.visibility = 'visible';
-                    c.style.opacity = '1';
                 });
                 log('✓ 3D viewer initialized');
             } catch (e) {
