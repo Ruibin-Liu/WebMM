@@ -70,6 +70,10 @@
             position: relative;
             background: #f9f9f9;
         }
+        #viewer canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
         .log {
             background-color: #f5f5f5;
             border: 1px solid #e0e0e0;
@@ -106,9 +110,10 @@
             <div id="viewer"></div>
             <div>
                 <button class="secondary" onclick="setStyle('stick')">Stick</button>
-                <button class="secondary" onclick="setStyle('sphere')">Sphere</button>
-                <button class="secondary" onclick="setStyle('line')">Line</button>
-                <button class="secondary" onclick="setStyle('cartoon')">Cartoon</button>
+                <button class="secondary" onclick="setStyle('sphere')">Space Fill</button>
+                <button class="secondary" onclick="setStyle('ball+stick')">Ball+Stick</button>
+                <button class="secondary" onclick="setStyle('line')">Wireframe</button>
+                <button class="secondary" onclick="setStyle('cross')">Cross</button>
             </div>
         </div>
     </div>
@@ -149,7 +154,12 @@
                 return;
             }
             const element = document.getElementById('viewer');
-            const config = { backgroundColor: '#f9f9f9' };
+            const rect = element.getBoundingClientRect();
+            const config = {
+                backgroundColor: '#f9f9f9',
+                width: rect.width,
+                height: rect.height
+            };
             try {
                 viewer3Dmol = $3Dmol.createViewer(element, config);
             } catch (e) {
@@ -167,12 +177,21 @@
         }
 
         function applyViewerStyle() {
-            viewer3Dmol.setStyle({}, {
-                stick: { colors: { C: '#909090', O: '#ff4444', N: '#4444ff', S: '#ffff00', H: '#ffffff', default: '#909090' } },
-                sphere: { scale: 0.5, colors: { C: '#909090', O: '#ff4444', N: '#4444ff', S: '#ffff00', H: '#ffffff', default: '#909090' } },
-                line: {},
-                cartoon: { colorscheme: 'default' }
-            });
+            if (!viewer3Dmol) return;
+            
+            const styles = {
+                stick: { stick: { radius: 0.15, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } } },
+                sphere: { sphere: { scale: 1.0, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } } },
+                'ball+stick': {
+                    stick: { radius: 0.15, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } },
+                    sphere: { scale: 0.25, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } }
+                },
+                line: { line: { linewidth: 4, colors: { C: '#000000', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#aaaaaa' } } },
+                cross: { cross: { radius: 0.2, colors: { C: '#000000', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#aaaaaa' } } }
+            };
+            
+            viewer3Dmol.setStyle({}, styles[currentStyle]);
+            viewer3Dmol.render();
         }
 
         function updateViewer(sdfContent) {
@@ -405,6 +424,17 @@ M  END`
                 log(`✗ ${error}`);
             }
         };
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (viewer3Dmol) {
+                const element = document.getElementById('viewer');
+                const rect = element.getBoundingClientRect();
+                viewer3Dmol.setWidth(rect.width);
+                viewer3Dmol.setHeight(rect.height);
+                viewer3Dmol.render();
+            }
+        });
 
         // Init
         load3Dmol(() => {
