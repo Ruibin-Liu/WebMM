@@ -80,6 +80,7 @@
             top: 0 !important;
             left: 0 !important;
             z-index: 1 !important;
+            background-color: #e0e0e0 !important;
         }
         .log {
             background-color: #f5f5f5;
@@ -158,6 +159,16 @@
         // 3Dmol.js viewer
         function initViewer() {
             console.log('initViewer called, $3Dmol defined:', typeof $3Dmol !== 'undefined');
+            
+            // Check WebGL support first
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            console.log('WebGL supported:', !!gl);
+            if (!gl) {
+                log('✗ WebGL not supported - 3D viewer disabled');
+                return;
+            }
+            
             if (typeof $3Dmol === 'undefined') {
                 log('✗ 3Dmol.js not loaded - viewer disabled');
                 return;
@@ -178,7 +189,7 @@
                 console.log('Canvases in viewer div after creation:', canvases.length);
                 canvases.forEach((c, i) => {
                     const style = window.getComputedStyle(c);
-                    console.log(`Canvas ${i}:`, c.width, 'x', c.height, 'display:', style.display, 'visibility:', style.visibility, 'opacity:', style.opacity);
+                    console.log(`Canvas ${i}:`, c.width, 'x', c.height, 'display:', style.display, 'visibility:', style.visibility, 'opacity:', style.opacity, 'bg:', style.backgroundColor);
                 });
                 log('✓ 3D viewer initialized');
             } catch (e) {
