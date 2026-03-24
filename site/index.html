@@ -109,6 +109,7 @@
 
     <h2>Optimization</h2>
     <div>
+        <button onclick="renderFromInput()">Render from Input</button>
         <button onclick="generateInitialCoords()">Generate 3D (ETKDG v3)</button>
         <button onclick="runOptimization()">Optimize (MMFF94s)</button>
     </div>
@@ -312,6 +313,17 @@
                 log(error);
             }
         }
+
+        function renderFromInput() {
+            var sdf = document.getElementById('sdf-input').value;
+            if (sdf.trim()) {
+                renderMolecule(sdf);
+            }
+        }
+
+        document.getElementById('sdf-input').addEventListener('change', function() {
+            renderFromInput();
+        });
 
         window.addEventListener('resize', function() {
             if (viewer3Dmol) {
