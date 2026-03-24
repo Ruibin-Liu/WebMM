@@ -1127,4 +1127,50 @@ M  END"#;
             result.final_energy
         );
     }
+
+    #[test]
+    fn test_generate_initial_coordinates_wasm() {
+        use crate::generate_initial_coordinates_wasm;
+
+        let sdf = r#"Water
+     RDKit          3D
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+M  END"#;
+
+        let result = generate_initial_coordinates_wasm(sdf).expect("Should return Ok");
+
+        assert!(result.get_success(), "Should succeed for valid SDF");
+        assert_eq!(result.get_n_atoms(), 3, "Water should have 3 atoms");
+
+        let coords = result.get_coordinates();
+        assert_eq!(coords.len(), 9, "Should have 9 coordinate values (3 atoms * 3 coords)");
+
+        for coord in &coords {
+            assert!(coord.is_finite(), "All coordinates should be finite");
+        }
+    }
+
+    #[test]
+    fn test_generate_initial_coordinates_wasm_empty_input() {
+        use crate::generate_initial_coordinates_wasm;
+
+        let result = generate_initial_coordinates_wasm("").expect("Should return Ok even for empty input");
+        assert!(!result.get_success(), "Should fail for empty input");
+        assert!(!result.get_error().is_empty(), "Should have error message");
+    }
+
+    #[test]
+    fn test_generate_initial_coordinates_wasm_invalid_input() {
+        use crate::generate_initial_coordinates_wasm;
+
+        let result = generate_initial_coordinates_wasm("invalid sdf content").expect("Should return Ok");
+        assert!(!result.get_success(), "Should fail for invalid SDF");
+        assert!(!result.get_error().is_empty(), "Should have error message");
+    }
 }

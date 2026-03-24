@@ -4,7 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebMM - MMFF94 Geometry Optimizer</title>
-    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+    <script>
+        function load3Dmol(callback) {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js';
+            script.onload = callback;
+            script.onerror = () => {
+                console.error('Failed to load 3Dmol.js');
+                callback();
+            };
+            document.head.appendChild(script);
+        }
+    </script>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -133,9 +144,17 @@
 
         // 3Dmol.js viewer
         function initViewer() {
+            if (typeof $3Dmol === 'undefined') {
+                log('✗ 3Dmol.js not loaded - viewer disabled');
+                return;
+            }
             const element = document.getElementById('viewer');
             const config = { backgroundColor: '#f9f9f9' };
-            viewer3Dmol = $3Dmol.createViewer(element, config);
+            try {
+                viewer3Dmol = $3Dmol.createViewer(element, config);
+            } catch (e) {
+                log(`✗ Failed to init 3Dmol viewer: ${e.message}`);
+            }
         }
 
         function setStyle(style) {
@@ -439,8 +458,10 @@ M  END`
         };
 
         // Init
-        initViewer();
-        initWasm();
+        load3Dmol(() => {
+            initViewer();
+            initWasm();
+        });
     </script>
 </body>
 </html>
