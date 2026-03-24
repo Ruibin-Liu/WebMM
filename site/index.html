@@ -128,6 +128,7 @@
     <div id="log" class="log"></div>
 
     <script type="module">
+        console.log('WebMM script module starting...');
         let optimize_from_sdf, generate_initial_coordinates_wasm, OptimizationOptions;
         let viewer3Dmol;
         let currentStyle = 'stick';
@@ -149,12 +150,14 @@
 
         // 3Dmol.js viewer
         function initViewer() {
+            console.log('initViewer called, $3Dmol defined:', typeof $3Dmol !== 'undefined');
             if (typeof $3Dmol === 'undefined') {
                 log('✗ 3Dmol.js not loaded - viewer disabled');
                 return;
             }
             const element = document.getElementById('viewer');
             const rect = element.getBoundingClientRect();
+            console.log('Viewer container dimensions:', rect.width, 'x', rect.height);
             const config = {
                 backgroundColor: '#f9f9f9',
                 width: rect.width,
@@ -162,8 +165,11 @@
             };
             try {
                 viewer3Dmol = $3Dmol.createViewer(element, config);
+                console.log('3Dmol viewer created successfully');
+                log('✓ 3D viewer initialized');
             } catch (e) {
                 log(`✗ Failed to init 3Dmol viewer: ${e.message}`);
+                console.error('3Dmol init error:', e);
             }
         }
 
@@ -195,12 +201,21 @@
         }
 
         function updateViewer(sdfContent) {
-            if (!viewer3Dmol || !sdfContent) return;
-            viewer3Dmol.removeAllModels();
-            viewer3Dmol.addModel(sdfContent, 'sdf');
-            applyViewerStyle();
-            viewer3Dmol.zoomTo();
-            viewer3Dmol.render();
+            console.log('updateViewer called, viewer exists:', !!viewer3Dmol, 'sdf length:', sdfContent ? sdfContent.length : 0);
+            if (!viewer3Dmol || !sdfContent) {
+                console.log('Skipping update - viewer or sdf missing');
+                return;
+            }
+            try {
+                viewer3Dmol.removeAllModels();
+                viewer3Dmol.addModel(sdfContent, 'sdf');
+                applyViewerStyle();
+                viewer3Dmol.zoomTo();
+                viewer3Dmol.render();
+                console.log('Molecule rendered successfully');
+            } catch (e) {
+                console.error('Error in updateViewer:', e);
+            }
         }
 
         function updateViewerWithCoords(coords, sdfContent) {
@@ -358,8 +373,12 @@ M  END`
         };
 
         window.loadTestFile = function(name = 'water') {
+            console.log('loadTestFile called with:', name);
             const sdf = TEST_MOLECULES[name];
-            if (!sdf) return;
+            if (!sdf) {
+                console.log('No SDF found for:', name);
+                return;
+            }
             document.getElementById('sdf-input').value = sdf;
             updateViewer(sdf);
             setStatus(`Loaded ${name}`, 'success');
@@ -436,18 +455,26 @@ M  END`
             }
         });
 
-        // Init
+        // Set up style button listeners immediately
+        try {
+            const buttons = document.querySelectorAll('#style-buttons .secondary');
+            console.log('Found', buttons.length, 'style buttons');
+            buttons.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    console.log('Button clicked:', e.target.dataset.style);
+                    const style = e.target.dataset.style;
+                    setStyle(style, e.target);
+                });
+            });
+        } catch (e) {
+            console.error('Failed to set up button listeners:', e);
+        }
+
+        // Init 3Dmol and WASM
         load3Dmol(() => {
+            console.log('3Dmol load callback triggered');
             initViewer();
             initWasm();
-        });
-
-        // Set up style button listeners (works even before 3Dmol loads)
-        document.querySelectorAll('#style-buttons .secondary').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const style = e.target.dataset.style;
-                setStyle(style, e.target);
-            });
         });
     </script>
 </body>
