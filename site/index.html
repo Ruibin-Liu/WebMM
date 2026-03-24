@@ -362,7 +362,7 @@ M  END`
                     const coords = result.get_coordinates();
                     updateViewerWithCoords(coords, sdfContent);
                 } else {
-                    setStatus('ETKDG failed', 'error');
+                    setStatus('ETKDG failed: ' + (result.get_error ? result.get_error() : ''), 'error');
                 }
             } catch (error) {
                 setStatus(`Error: ${error.message}`, 'error');

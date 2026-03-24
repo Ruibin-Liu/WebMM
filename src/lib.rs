@@ -154,22 +154,22 @@ pub struct ETKDGResult {
 
 #[wasm_bindgen]
 impl ETKDGResult {
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen]
     pub fn get_coordinates(&self) -> Vec<f64> {
         self.coordinates.clone()
     }
 
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen]
     pub fn get_n_atoms(&self) -> usize {
         self.n_atoms
     }
 
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen]
     pub fn get_success(&self) -> bool {
         self.success
     }
 
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen]
     pub fn get_error(&self) -> String {
         self.error.clone()
     }
