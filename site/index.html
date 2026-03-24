@@ -235,9 +235,14 @@
         }
 
         function updateViewerWithCoords(coords, sdfContent) {
-            if (!viewer3Dmol || !sdfContent || !coords) return;
+            console.log('updateViewerWithCoords called, coords length:', coords ? coords.length : 0);
+            if (!viewer3Dmol || !sdfContent || !coords) {
+                console.log('Missing viewer, sdf, or coords');
+                return;
+            }
             
-            // Parse the original SDF to get atom elements
+            try {
+                // Parse the original SDF to get atom elements
             const lines = sdfContent.split('\n');
             let countsLine = -1;
             for (let i = 0; i < lines.length; i++) {
@@ -278,11 +283,18 @@
             // Add M END
             newLines.push('M  END');
             
+            const newSdf = newLines.join('\n');
+            console.log('Rebuilt SDF with new coords:', newSdf.substring(0, 200));
+            
             viewer3Dmol.removeAllModels();
-            viewer3Dmol.addModel(newLines.join('\n'), 'sdf');
+            viewer3Dmol.addModel(newSdf, 'sdf');
             applyViewerStyle();
             viewer3Dmol.zoomTo();
             viewer3Dmol.render();
+            console.log('Viewer updated with new coordinates');
+        } catch (e) {
+            console.error('Error in updateViewerWithCoords:', e);
+        }
         }
 
         // WASM init
@@ -416,6 +428,7 @@ M  END`
                     setStatus('ETKDG v3 complete', 'success');
                     log(`✓ Generated in ${dt}s, ${result.n_atoms} atoms`);
                     const coords = result.get_coordinates();
+                    console.log('ETKDG generated coords:', coords.slice(0, 9), '...');
                     updateViewerWithCoords(coords, sdfContent);
                 } else {
                     setStatus('ETKDG failed: ' + (result.get_error ? result.get_error() : ''), 'error');
@@ -446,6 +459,7 @@ M  END`
                     coords.push(result.get_coord(i, 1));
                     coords.push(result.get_coord(i, 2));
                 }
+                console.log('Optimization result coords:', coords.slice(0, 9), '...');
                 if (result.get_converged()) {
                     setStatus(`Converged in ${result.get_iterations()} iters (${dt}s)`, 'success');
                     log(`✓ Converged: ${result.get_iterations()} iters, E=${result.get_final_energy().toFixed(2)} kcal/mol`);
