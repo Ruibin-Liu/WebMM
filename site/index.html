@@ -167,46 +167,59 @@
 
         function renderMolecule(sdfContent) {
             if (!viewer3Dmol || !sdfContent) return;
-            viewer3Dmol.removeAllModels();
-            viewer3Dmol.addModel(sdfContent, 'sdf');
-            viewer3Dmol.setStyle({}, VIEWER_STYLES[currentStyle]);
-            viewer3Dmol.zoomTo();
-            viewer3Dmol.render();
+            try {
+                viewer3Dmol.removeAllModels();
+                viewer3Dmol.addModel(sdfContent, 'sdf');
+                viewer3Dmol.setStyle({}, VIEWER_STYLES[currentStyle]);
+                viewer3Dmol.zoomTo();
+                viewer3Dmol.render();
+            } catch (e) {
+                console.error('renderMolecule error:', e);
+            }
         }
 
         function renderMoleculeWithCoords(coords, sdfContent) {
             if (!viewer3Dmol || !sdfContent || !coords) return;
-            const lines = sdfContent.split('\n');
-            let countsLine = -1;
-            for (let i = 0; i < lines.length; i++) {
-                const t = lines[i].trim();
-                if (t.length >= 10) {
-                    const first = t.substring(0, 10).trim().split(/\s+/);
-                    const n = parseInt(first[0]);
-                    if (!isNaN(n) && n > 0 && n <= 10000) {
-                        countsLine = i;
-                        break;
+            try {
+                const lines = sdfContent.split('\n');
+                let countsLine = -1;
+                for (let i = 0; i < lines.length; i++) {
+                    const t = lines[i].trim();
+                    if (t.length >= 10) {
+                        const first = t.substring(0, 10).trim().split(/\s+/);
+                        const n = parseInt(first[0]);
+                        if (!isNaN(n) && n > 0 && n <= 10000) {
+                            countsLine = i;
+                            break;
+                        }
                     }
                 }
+                if (countsLine < 0) return;
+                const numAtoms = parseInt(lines[countsLine].trim().substring(0, 6).trim());
+                const newLines = [];
+                for (let i = 0; i <= countsLine; i++) {
+                    newLines.push(lines[i]);
+                }
+                for (let i = 0; i < numAtoms && i < coords.length / 3; i++) {
+                    const originalLine = lines[countsLine + 1 + i];
+                    const elem = (originalLine.substring(31, 34).trim() || 'C').padEnd(3);
+                    const x = coords[i * 3].toFixed(4).padStart(10);
+                    const y = coords[i * 3 + 1].toFixed(4).padStart(10);
+                    const z = coords[i * 3 + 2].toFixed(4).padStart(10);
+                    const rest = originalLine.substring(34);
+                    newLines.push(x + y + z + ' ' + elem + rest);
+                }
+                const numBonds = parseInt(lines[countsLine].trim().substring(6, 12).trim());
+                for (let i = 0; i < numBonds; i++) {
+                    newLines.push(lines[countsLine + 1 + numAtoms + i]);
+                }
+                newLines.push('M  END');
+                const newSdf = newLines.join('\n');
+                document.getElementById('sdf-input').value = newSdf;
+                renderMolecule(newSdf);
+            } catch (e) {
+                console.error('renderMoleculeWithCoords error:', e);
             }
-            if (countsLine < 0) return;
-            const numAtoms = parseInt(lines[countsLine].trim().substring(0, 6).trim());
-            const newLines = lines.slice(0, countsLine + 1);
-            for (let i = 0; i < numAtoms && i < coords.length / 3; i++) {
-                const originalLine = lines[countsLine + 1 + i];
-                const elem = originalLine.substring(31, 34).trim() || 'C';
-                const x = coords[i * 3].toFixed(4).padStart(10);
-                const y = coords[i * 3 + 1].toFixed(4).padStart(10);
-                const z = coords[i * 3 + 2].toFixed(4).padStart(10);
-                const rest = originalLine.substring(34);
-                newLines.push(x + y + z + ' ' + elem.padEnd(3) + rest);
-            }
-            const numBonds = parseInt(lines[countsLine].trim().substring(6, 12).trim());
-            for (let i = 0; i < numBonds; i++) {
-                newLines.push(lines[countsLine + 1 + numAtoms + i]);
-            }
-            newLines.push('M  END');
-            renderMolecule(newLines.join('\n'));
         }
 
         async function initWasm() {
