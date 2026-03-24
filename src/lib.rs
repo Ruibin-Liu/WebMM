@@ -1,6 +1,8 @@
 //! Molecular geometry optimizer using MMFF94/MMFF94s force field
 //! and L-BFGS optimization algorithm
 
+#![allow(unused_variables)]
+
 use wasm_bindgen::prelude::*;
 
 /// Core molecular data structures
