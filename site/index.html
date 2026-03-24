@@ -70,11 +70,16 @@
             background: #f9f9f9;
             overflow: hidden;
             position: relative;
+            min-height: 400px;
         }
         #viewer canvas {
             display: block !important;
             width: 100% !important;
             height: 100% !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            z-index: 1 !important;
         }
         .log {
             background-color: #f5f5f5;
