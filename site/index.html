@@ -4,18 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebMM - MMFF94 Geometry Optimizer</title>
-    <script>
-        function load3Dmol(callback) {
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js';
-            script.onload = callback;
-            script.onerror = () => {
-                console.error('Failed to load 3Dmol.js');
-                callback();
-            };
-            document.head.appendChild(script);
-        }
-    </script>
+    <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"></script>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -68,19 +57,11 @@
             border: 1px solid #ddd;
             border-radius: 4px;
             background: #f9f9f9;
-            overflow: hidden;
             position: relative;
-            min-height: 400px;
         }
         #viewer canvas {
-            display: block !important;
             width: 100% !important;
             height: 100% !important;
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            z-index: 1 !important;
-            background-color: #e0e0e0 !important;
         }
         .log {
             background-color: #f5f5f5;
@@ -116,12 +97,12 @@
         <div class="col">
             <h2>3D Viewer</h2>
             <div id="viewer"></div>
-            <div id="style-buttons">
-                <button class="secondary" data-style="stick">Stick</button>
-                <button class="secondary" data-style="sphere">Space Fill</button>
-                <button class="secondary" data-style="ball+stick">Ball+Stick</button>
-                <button class="secondary" data-style="line">Wireframe</button>
-                <button class="secondary" data-style="cross">Cross</button>
+            <div>
+                <button class="secondary" onclick="setStyle('stick')">Stick</button>
+                <button class="secondary" onclick="setStyle('sphere')">Space Fill</button>
+                <button class="secondary" onclick="setStyle('ball+stick')">Ball+Stick</button>
+                <button class="secondary" onclick="setStyle('line')">Wireframe</button>
+                <button class="secondary" onclick="setStyle('cross')">Cross</button>
             </div>
         </div>
     </div>
@@ -135,8 +116,7 @@
     <h2>Log</h2>
     <div id="log" class="log"></div>
 
-    <script type="module">
-        console.log('WebMM script module starting...');
+    <script>
         let optimize_from_sdf, generate_initial_coordinates_wasm, OptimizationOptions;
         let viewer3Dmol;
         let currentStyle = 'stick';
@@ -144,9 +124,9 @@
         const statusDiv = document.getElementById('status');
         const logDiv = document.getElementById('log');
 
-        function setStatus(msg, type = 'info') {
+        function setStatus(msg, type) {
             statusDiv.textContent = msg;
-            statusDiv.className = `status ${type}`;
+            statusDiv.className = 'status ' + type;
         }
 
         function log(msg) {
@@ -156,109 +136,46 @@
             logDiv.scrollTop = logDiv.scrollHeight;
         }
 
-        // 3Dmol.js viewer
         function initViewer() {
-            console.log('initViewer called, $3Dmol defined:', typeof $3Dmol !== 'undefined');
-            
-            // Check WebGL support first
-            const canvas = document.createElement('canvas');
-            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-            console.log('WebGL supported:', !!gl);
-            if (!gl) {
-                log('✗ WebGL not supported - 3D viewer disabled');
-                return;
-            }
-            
             if (typeof $3Dmol === 'undefined') {
-                log('✗ 3Dmol.js not loaded - viewer disabled');
+                log('3Dmol.js not loaded - viewer disabled');
                 return;
             }
             const element = document.getElementById('viewer');
-            const rect = element.getBoundingClientRect();
-            console.log('Viewer container dimensions:', rect.width, 'x', rect.height);
-            const config = {
-                backgroundColor: '#f9f9f9',
-                width: rect.width,
-                height: rect.height
-            };
-            try {
-                viewer3Dmol = $3Dmol.createViewer(element, config);
-                console.log('3Dmol viewer created successfully');
-                // Check what was added to DOM
-                const canvases = element.querySelectorAll('canvas');
-                console.log('Canvases in viewer div after creation:', canvases.length);
-                canvases.forEach((c, i) => {
-                    const style = window.getComputedStyle(c);
-                    console.log(`Canvas ${i}:`, c.width, 'x', c.height, 'display:', style.display, 'visibility:', style.visibility, 'opacity:', style.opacity, 'bg:', style.backgroundColor);
-                });
-                log('✓ 3D viewer initialized');
-            } catch (e) {
-                log(`✗ Failed to init 3Dmol viewer: ${e.message}`);
-                console.error('3Dmol init error:', e);
-            }
+            viewer3Dmol = $3Dmol.createViewer(element, { backgroundColor: '#f9f9f9' });
+            log('3D viewer initialized');
         }
 
-        function setStyle(style, button) {
+        const VIEWER_STYLES = {
+            stick: { stick: { radius: 0.15, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } } },
+            sphere: { sphere: { scale: 1.0, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } } },
+            'ball+stick': {
+                stick: { radius: 0.15, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } },
+                sphere: { scale: 0.25, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } }
+            },
+            line: { line: { linewidth: 4, colors: { C: '#000000', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#aaaaaa' } } },
+            cross: { cross: { radius: 0.2, colors: { C: '#000000', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#aaaaaa' } } }
+        };
+
+        function setStyle(style) {
             currentStyle = style;
             if (viewer3Dmol) {
-                document.querySelectorAll('#style-buttons .secondary').forEach(b => b.classList.remove('active'));
-                if (button) button.classList.add('active');
-                applyViewerStyle();
+                viewer3Dmol.setStyle({}, VIEWER_STYLES[style]);
+                viewer3Dmol.render();
             }
         }
 
-        function applyViewerStyle() {
-            if (!viewer3Dmol) return;
-            
-            const styles = {
-                stick: { stick: { radius: 0.15, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } } },
-                sphere: { sphere: { scale: 1.0, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } } },
-                'ball+stick': {
-                    stick: { radius: 0.15, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } },
-                    sphere: { scale: 0.25, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } }
-                },
-                line: { line: { linewidth: 4, colors: { C: '#000000', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#aaaaaa' } } },
-                cross: { cross: { radius: 0.2, colors: { C: '#000000', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#aaaaaa' } } }
-            };
-            
-            viewer3Dmol.setStyle({}, styles[currentStyle]);
+        function renderMolecule(sdfContent) {
+            if (!viewer3Dmol || !sdfContent) return;
+            viewer3Dmol.removeAllModels();
+            viewer3Dmol.addModel(sdfContent, 'sdf');
+            viewer3Dmol.setStyle({}, VIEWER_STYLES[currentStyle]);
+            viewer3Dmol.zoomTo();
             viewer3Dmol.render();
         }
 
-        function updateViewer(sdfContent) {
-            console.log('updateViewer called, viewer exists:', !!viewer3Dmol, 'sdf length:', sdfContent ? sdfContent.length : 0);
-            if (!viewer3Dmol || !sdfContent) {
-                console.log('Skipping update - viewer or sdf missing');
-                return;
-            }
-            try {
-                viewer3Dmol.removeAllModels();
-                viewer3Dmol.addModel(sdfContent, 'sdf');
-                applyViewerStyle();
-                viewer3Dmol.zoomTo();
-                viewer3Dmol.render();
-                // Debug: check DOM
-                const viewerDiv = document.getElementById('viewer');
-                const canvases = viewerDiv.querySelectorAll('canvas');
-                console.log('Canvas elements in viewer:', canvases.length);
-                canvases.forEach((c, i) => {
-                    console.log(`Canvas ${i}:`, c.width, 'x', c.height, 'style:', c.style.cssText);
-                });
-                console.log('Molecule rendered successfully');
-            } catch (e) {
-                console.error('Error in updateViewer:', e);
-            }
-        }
-
-        function updateViewerWithCoords(coords, sdfContent) {
-            console.log('updateViewerWithCoords called, coords length:', coords ? coords.length : 0);
-            if (!viewer3Dmol || !sdfContent || !coords) {
-                console.log('Missing viewer, sdf, or coords');
-                return;
-            }
-            
-            try {
-                // Parse the original SDF to get atom elements
+        function renderMoleculeWithCoords(coords, sdfContent) {
+            if (!viewer3Dmol || !sdfContent || !coords) return;
             const lines = sdfContent.split('\n');
             let countsLine = -1;
             for (let i = 0; i < lines.length; i++) {
@@ -272,14 +189,9 @@
                     }
                 }
             }
-            
             if (countsLine < 0) return;
-            
             const numAtoms = parseInt(lines[countsLine].trim().substring(0, 6).trim());
-            
-            // Build new SDF with updated coordinates
             const newLines = lines.slice(0, countsLine + 1);
-            
             for (let i = 0; i < numAtoms && i < coords.length / 3; i++) {
                 const originalLine = lines[countsLine + 1 + i];
                 const elem = originalLine.substring(31, 34).trim() || 'C';
@@ -287,33 +199,16 @@
                 const y = coords[i * 3 + 1].toFixed(4).padStart(10);
                 const z = coords[i * 3 + 2].toFixed(4).padStart(10);
                 const rest = originalLine.substring(34);
-                newLines.push(`${x}${y}${z} ${elem.padEnd(3)}${rest}`);
+                newLines.push(x + y + z + ' ' + elem.padEnd(3) + rest);
             }
-            
-            // Add bond lines
             const numBonds = parseInt(lines[countsLine].trim().substring(6, 12).trim());
             for (let i = 0; i < numBonds; i++) {
                 newLines.push(lines[countsLine + 1 + numAtoms + i]);
             }
-            
-            // Add M END
             newLines.push('M  END');
-            
-            const newSdf = newLines.join('\n');
-            console.log('Rebuilt SDF with new coords:', newSdf.substring(0, 200));
-            
-            viewer3Dmol.removeAllModels();
-            viewer3Dmol.addModel(newSdf, 'sdf');
-            applyViewerStyle();
-            viewer3Dmol.zoomTo();
-            viewer3Dmol.render();
-            console.log('Viewer updated with new coordinates');
-        } catch (e) {
-            console.error('Error in updateViewerWithCoords:', e);
-        }
+            renderMolecule(newLines.join('\n'));
         }
 
-        // WASM init
         async function initWasm() {
             try {
                 const wasmModule = await import('./webmm.js');
@@ -323,212 +218,101 @@
                 OptimizationOptions = wasmModule.OptimizationOptions;
                 if (!optimize_from_sdf) throw new Error('optimize_from_sdf not found');
                 setStatus('Ready', 'success');
-                log('✓ WASM module loaded');
+                log('WASM module loaded');
             } catch (error) {
-                setStatus(`Failed: ${error.message}`, 'error');
-                log(`✗ ${error}`);
+                setStatus('Failed: ' + error.message, 'error');
+                log(error);
                 console.error(error);
             }
         }
 
-        // Test molecules
-        const TEST_MOLECULES = {
-            water: `Water
-     RDKit          3D
-
-   3  2  0  0  0  0  0  0  0  0999 V2000
-     0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
-     0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
-    -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
-  1  2  1  0  0  0  0
-  1  3  1  0  0  0  0
-M  END`,
-            acetic: `Acetic acid
-     RDKit          3D
-
-   8  7  0  0  0  0  0  0  0  0999 V2000
-    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-    2.2000    1.0190    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
-    2.9000    0.3000    0.0000 O   0  0  0  0  0  0  0  0  0 0  0  0
-   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
-   -0.5430   -1.0200    0.0000 H   0  0  0  0  0  0  0 0  0  0 0  0 0
-    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0 0 0  0 0
-    3.0000    1.2000    0.0000 H   0   0  0  0  0  0  0 0  0 0 0  0  0
-  1  2  1  0  0  0  0
-  2  3  2  0  0  0  0
-  2  4  1  0  0  0  0
-  1  5  1  0  0  0  0
-  1  6  1  0  0  0  0
-  2  7  1  0  0  0  0
-  4  8  1  0  0  0  0
-M  END`,
-            benzene: `Benzene
-     RDKit          3D
-
-  12  12  0  0  0  0  0  0  0  0999 V2000
-    0.0000    1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0 0  0
-    1.2115    0.7035    0.0000 C   0  0  0  0  0  0  0  0  0  0 0  0
-   -0.6060    1.0493    0.0000 C   0  0  0  0  0  0  0 0  0  0 0  0
-   -1.2115    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0 0  0
-   -0.6060   -1.0493    0.0000 C   0  0  0  0  0  0  0  0  0  0 0  0
-    1.2115   -0.7035    0.0000 C   0  0  0  0  0  0  0 0  0  0 0  0
-    1.0840    2.4860    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
-    2.1647    1.2520    0.0000 H   0  0  0  0  0  0  0  0  0 0 0  0
-   -1.0771    1.8682    0.0000 H   0  0  0  0  0  0 0 0 0 0 0 0 0 0
-   -2.1647    0.0000    0.0000 H   0  0  0  0 0 0 0 0 0  0 0 0 0 0 0
-   -1.0771   -1.8682    0.0000 H   0  0  0  0  0  0 0 0  0 0 0 0 0 0
-    2.1647   -1.2520    0.0000 H   0  0  0  0 0  0 0 0 0  0 0 0 0 0 0
-  1  2  1  0  0  0  0
-  2  3  2  0  0  0  0
-  3  4  1 0  0  0  0 0
-  4  5  2 0  0 0  0 0
-  5  6  1 0  0 0  0 0
-  6  1  1 0  0 0  0  0
-  6  7  1 0  0 0  0 0
-  7  8 1 0  0 0  0 0
-  8  9  1 0 0 0  0 0
-  9 10  1 0 0 0 0 0
- 10 11 1 0 0 0 0 0
- 11 12 1 0 0 0 0 0
-M  END`,
-            ethanol: `Ethanol
-     RDKit          3D
-
-   9  8  0  0  0  0  0  0  0  0999 V2000
-    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0 0 0  0
-    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0 0 0  0
-    2.1450    1.0190    0.0000 O   0  0  0  0  0  0  0 0  0 0 0  0
-   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0 0  0  0 0  0
-   -0.5430   -1.0200    0.0000 H   0   0  0  0 0  0  0 0  0 0 0 0 0 0
-    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0 0 0 0 0 0 0 0 0 0
-    2.0190   -0.5430    0.0000 H   0  0  0  0 0  0 0 0 0 0 0 0 0 0 0
-    1.5270    1.5640    0.9170 H   0  0  0 0 0 0 0 0 0 0 0 0 0 0  0
-    3.0290    1.3430    0.3590 H   0  0  0 0 0  0 0 0 0 0 0 0 0 0 0
-  1  2  1  0  0  0  0
-  2  3  1  0  0  0  0
-  1  4  1  0 0  0  0
-  1  5  1  0  0 0 0 0
-  2  6  1  0  0 0 0 0
-  2  7  1  0  0 0 0 0
-  3  8 1  0 0 0 0 0
-  3  9  1  0 0 0 0 0
-M  END`
+        var TEST_MOLECULES = {
+            water: 'Water\n     RDKit          3D\n\n  3  2  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0  0  0  0\n  1  3  1  0  0  0  0\nM  END',
+            acetic: 'Acetic acid\n     RDKit          3D\n\n  8  7  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2000    1.0190    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9000    0.3000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5430   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    3.0000    1.2000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0  0  0  0\n  2  3  2  0  0  0  0\n  2  4  1  0  0  0  0\n  1  5  1  0  0  0  0\n  1  6  1  0  0  0  0\n  2  7  1  0  0  0  0\n  4  8  1  0  0  0  0\nM  END',
+            benzene: 'Benzene\n     RDKit          3D\n\n 12 12  0  0  0  0  0  0  0  0999 V2000\n    0.0000    1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2115    0.7035    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2135   -0.7005    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000   -1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2135   -0.7005    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2115    0.7035    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000    2.4850    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1500    1.2400    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1500   -1.2400    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000   -2.4850    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1500   -1.2400    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1500    1.2400    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0  0  0  0\n  2  3  1  0  0  0  0\n  3  4  2  0  0  0  0\n  4  5  1  0  0  0  0\n  5  6  2  0  0  0  0\n  6  1  1  0  0  0  0\n  1  7  1  0  0  0  0\n  2  8  1  0  0  0  0\n  3  9  1  0  0  0  0\n  4 10  1  0  0  0  0\n  5 11  1  0  0  0  0\n  6 12  1  0  0  0  0\nM  END',
+            ethanol: 'Ethanol\n     RDKit          3D\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1450    1.0190    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5430   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.0190   -0.5430    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5270    1.5640    0.9170 H   0  0  0  0  0  0  0  0  0  0  0  0\n    3.0290    1.3430    0.3590 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0  0  0  0\n  2  3  1  0  0  0  0\n  1  4  1  0  0  0  0\n  1  5  1  0  0  0  0\n  2  6  1  0  0  0  0\n  2  7  1  0  0  0  0\n  3  8  1  0  0  0  0\n  3  9  1  0  0  0  0\nM  END'
         };
 
-        window.loadTestFile = function(name = 'water') {
-            console.log('loadTestFile called with:', name);
-            const sdf = TEST_MOLECULES[name];
-            if (!sdf) {
-                console.log('No SDF found for:', name);
-                return;
-            }
+        function loadTestFile(name) {
+            name = name || 'water';
+            var sdf = TEST_MOLECULES[name];
+            if (!sdf) return;
             document.getElementById('sdf-input').value = sdf;
-            updateViewer(sdf);
-            setStatus(`Loaded ${name}`, 'success');
-            log(`✓ Loaded ${name}`);
-        };
+            renderMolecule(sdf);
+            setStatus('Loaded ' + name, 'success');
+            log('Loaded ' + name);
+        }
 
-        window.setStyle = setStyle;
-
-        window.generateInitialCoords = async function() {
+        async function generateInitialCoords() {
             try {
-                const sdfContent = document.getElementById('sdf-input').value;
+                var sdfContent = document.getElementById('sdf-input').value;
                 if (!sdfContent.trim()) { setStatus('Enter SDF first', 'error'); return; }
                 setStatus('Generating 3D coords (ETKDG v3)...', 'info');
-                log('→ Starting ETKDG v3');
-                const t0 = performance.now();
-                const result = await generate_initial_coordinates_wasm(sdfContent);
-                const dt = ((performance.now() - t0) / 1000).toFixed(2);
-                if (typeof result === 'object' && result.get_success()) {
+                log('Starting ETKDG v3');
+                var t0 = performance.now();
+                var result = await generate_initial_coordinates_wasm(sdfContent);
+                var dt = ((performance.now() - t0) / 1000).toFixed(2);
+                if (result.get_success()) {
                     setStatus('ETKDG v3 complete', 'success');
-                    log(`✓ Generated in ${dt}s, ${result.n_atoms} atoms`);
-                    const coords = result.get_coordinates();
-                    console.log('ETKDG generated coords:', coords.slice(0, 9), '...');
-                    updateViewerWithCoords(coords, sdfContent);
+                    log('Generated in ' + dt + 's, ' + result.n_atoms + ' atoms');
+                    renderMoleculeWithCoords(result.get_coordinates(), sdfContent);
                 } else {
-                    setStatus('ETKDG failed: ' + (result.get_error ? result.get_error() : ''), 'error');
+                    setStatus('ETKDG failed: ' + result.get_error(), 'error');
+                    log('ETKDG failed');
                 }
             } catch (error) {
-                setStatus(`Error: ${error.message}`, 'error');
-                log(`✗ ${error}`);
+                setStatus('Error: ' + error.message, 'error');
+                log(error);
             }
-        };
+        }
 
-        window.runOptimization = function() {
+        function runOptimization() {
             try {
-                const sdfContent = document.getElementById('sdf-input').value;
+                var sdfContent = document.getElementById('sdf-input').value;
                 if (!sdfContent.trim()) { setStatus('Enter SDF first', 'error'); return; }
                 setStatus('Optimizing...', 'info');
-                log('→ Starting MMFF94s optimization');
-                const options = new OptimizationOptions();
+                log('Starting MMFF94s optimization');
+                var options = new OptimizationOptions();
                 options.set_max_iterations(500);
                 options.set_max_force(0.01);
                 options.set_rms_force(0.001);
                 options.set_energy_change(1e-6);
-                const t0 = performance.now();
-                const result = optimize_from_sdf(sdfContent, options);
-                const dt = ((performance.now() - t0) / 1000).toFixed(2);
-                const coords = [];
-                for (let i = 0; i < result.n_atoms; i++) {
+                var t0 = performance.now();
+                var result = optimize_from_sdf(sdfContent, options);
+                var dt = ((performance.now() - t0) / 1000).toFixed(2);
+                var coords = [];
+                for (var i = 0; i < result.n_atoms; i++) {
                     coords.push(result.get_coord(i, 0));
                     coords.push(result.get_coord(i, 1));
                     coords.push(result.get_coord(i, 2));
                 }
-                console.log('Optimization result coords:', coords.slice(0, 9), '...');
+                renderMoleculeWithCoords(coords, sdfContent);
                 if (result.get_converged()) {
-                    setStatus(`Converged in ${result.get_iterations()} iters (${dt}s)`, 'success');
-                    log(`✓ Converged: ${result.get_iterations()} iters, E=${result.get_final_energy().toFixed(2)} kcal/mol`);
+                    setStatus('Converged in ' + result.get_iterations() + ' iters (' + dt + 's)', 'success');
+                    log('Converged: ' + result.get_iterations() + ' iters, E=' + result.get_final_energy().toFixed(2) + ' kcal/mol');
                 } else {
-                    setStatus(`Max iters reached (${dt}s)`, 'error');
-                    log(`✗ ${result.get_iterations()} iters, E=${result.get_final_energy().toFixed(2)} kcal/mol`);
+                    setStatus('Max iters reached (' + dt + 's)', 'error');
+                    log(result.get_iterations() + ' iters, E=' + result.get_final_energy().toFixed(2) + ' kcal/mol');
                 }
-                updateViewerWithCoords(coords, sdfContent);
             } catch (error) {
-                setStatus(`Error: ${error.message}`, 'error');
-                log(`✗ ${error}`);
+                setStatus('Error: ' + error.message, 'error');
+                log(error);
             }
-        };
+        }
 
-        // Handle window resize
         window.addEventListener('resize', function() {
             if (viewer3Dmol) {
-                const element = document.getElementById('viewer');
-                const rect = element.getBoundingClientRect();
+                var element = document.getElementById('viewer');
+                var rect = element.getBoundingClientRect();
                 viewer3Dmol.setWidth(rect.width);
                 viewer3Dmol.setHeight(rect.height);
                 viewer3Dmol.render();
             }
         });
 
-        // Set up style button listeners immediately
-        try {
-            const buttons = document.querySelectorAll('#style-buttons .secondary');
-            console.log('Found', buttons.length, 'style buttons');
-            buttons.forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    console.log('Button clicked:', e.target.dataset.style);
-                    const style = e.target.dataset.style;
-                    setStyle(style, e.target);
-                });
-            });
-        } catch (e) {
-            console.error('Failed to set up button listeners:', e);
-        }
-
-        // Init 3Dmol and WASM
-        load3Dmol(() => {
-            console.log('3Dmol load callback triggered');
-            initViewer();
-            // Load a default molecule so viewer isn't empty
-            setTimeout(() => {
-                if (viewer3Dmol) {
-                    console.log('Loading default water molecule');
-                    window.loadTestFile('water');
-                }
-            }, 100);
-            initWasm();
-        });
+        initViewer();
+        initWasm();
+        loadTestFile('water');
     </script>
 </body>
 </html>
