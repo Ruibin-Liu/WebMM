@@ -108,12 +108,12 @@
         <div class="col">
             <h2>3D Viewer</h2>
             <div id="viewer"></div>
-            <div>
-                <button class="secondary" onclick="setStyle('stick')">Stick</button>
-                <button class="secondary" onclick="setStyle('sphere')">Space Fill</button>
-                <button class="secondary" onclick="setStyle('ball+stick')">Ball+Stick</button>
-                <button class="secondary" onclick="setStyle('line')">Wireframe</button>
-                <button class="secondary" onclick="setStyle('cross')">Cross</button>
+            <div id="style-buttons">
+                <button class="secondary" data-style="stick">Stick</button>
+                <button class="secondary" data-style="sphere">Space Fill</button>
+                <button class="secondary" data-style="ball+stick">Ball+Stick</button>
+                <button class="secondary" data-style="line">Wireframe</button>
+                <button class="secondary" data-style="cross">Cross</button>
             </div>
         </div>
     </div>
@@ -167,11 +167,11 @@
             }
         }
 
-        function setStyle(style) {
+        function setStyle(style, button) {
             currentStyle = style;
             if (viewer3Dmol) {
-                document.querySelectorAll('.secondary').forEach(b => b.classList.remove('active'));
-                event.target.classList.add('active');
+                document.querySelectorAll('#style-buttons .secondary').forEach(b => b.classList.remove('active'));
+                if (button) button.classList.add('active');
                 applyViewerStyle();
             }
         }
@@ -440,6 +440,14 @@ M  END`
         load3Dmol(() => {
             initViewer();
             initWasm();
+        });
+
+        // Set up style button listeners (works even before 3Dmol loads)
+        document.querySelectorAll('#style-buttons .secondary').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const style = e.target.dataset.style;
+                setStyle(style, e.target);
+            });
         });
     </script>
 </body>
