@@ -1149,7 +1149,11 @@ M  END"#;
         assert_eq!(result.get_n_atoms(), 3, "Water should have 3 atoms");
 
         let coords = result.get_coordinates();
-        assert_eq!(coords.len(), 9, "Should have 9 coordinate values (3 atoms * 3 coords)");
+        assert_eq!(
+            coords.len(),
+            9,
+            "Should have 9 coordinate values (3 atoms * 3 coords)"
+        );
 
         for coord in &coords {
             assert!(coord.is_finite(), "All coordinates should be finite");
@@ -1160,7 +1164,8 @@ M  END"#;
     fn test_generate_initial_coordinates_wasm_empty_input() {
         use crate::generate_initial_coordinates_wasm;
 
-        let result = generate_initial_coordinates_wasm("").expect("Should return Ok even for empty input");
+        let result =
+            generate_initial_coordinates_wasm("").expect("Should return Ok even for empty input");
         assert!(!result.get_success(), "Should fail for empty input");
         assert!(!result.get_error().is_empty(), "Should have error message");
     }
@@ -1169,7 +1174,8 @@ M  END"#;
     fn test_generate_initial_coordinates_wasm_invalid_input() {
         use crate::generate_initial_coordinates_wasm;
 
-        let result = generate_initial_coordinates_wasm("invalid sdf content").expect("Should return Ok");
+        let result =
+            generate_initial_coordinates_wasm("invalid sdf content").expect("Should return Ok");
         assert!(!result.get_success(), "Should fail for invalid SDF");
         assert!(!result.get_error().is_empty(), "Should have error message");
     }

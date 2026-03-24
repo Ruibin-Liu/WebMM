@@ -175,114 +175,61 @@
             });
         }
 
-        function parseAtomsFromSDF(sdf) {
-            const atoms = [];
-            const lines = sdf.split('\n');
-            let countsLine = -1;
-            for (let i = 0; i < lines.length; i++) {
-                const t = lines[i].trim();
-                if (t.length >= 10) {
-                    const first = t.substring(0, 10).trim().split(/\s+/);
-                    const n = parseInt(first[0]);
-                    if (!isNaN(n) && n > 0 && n <= 10000) {
-                        countsLine = i;
-                        break;
-                    }
-                }
-            }
-            if (countsLine < 0) return atoms;
-            const numAtoms = parseInt(lines[countsLine].trim().substring(0, 6).trim());
-            for (let i = 0; i < numAtoms; i++) {
-                const line = lines[countsLine + 1 + i];
-                if (line && line.length >= 34) {
-                    const elem = line.substring(31, 34).trim() || 'C';
-                    const x = parseFloat(line.substring(0, 10));
-                    const y = parseFloat(line.substring(10, 20));
-                    const z = parseFloat(line.substring(20, 30));
-                    atoms.push({ elem, x, y, z });
-                }
-            }
-            return atoms;
-        }
-
-        function updateViewer(sdfContent, coords) {
+        function updateViewer(sdfContent) {
+            if (!viewer3Dmol || !sdfContent) return;
             viewer3Dmol.removeAllModels();
-            const modelData = {};
-
-            if (coords) {
-                const n = coords.length / 3;
-                const atomData = [];
-                for (let i = 0; i < n; i++) {
-                    atomData.push({
-                        x: coords[i * 3],
-                        y: coords[i * 3 + 1],
-                        z: coords[i * 3 + 2]
-                    });
-                }
-                modelData.atoms = atomData;
-            } else {
-                const atoms = parseAtomsFromSDF(sdfContent);
-                if (atoms.length > 0) {
-                    modelData.atoms = atoms;
-                }
-            }
-
-            if (modelData.atoms && modelData.atoms.length > 0) {
-                viewer3Dmol.addModel(modelData);
-                applyViewerStyle();
-                viewer3Dmol.zoomTo();
-                viewer3Dmol.render();
-            }
-        }
-
-        function parseBondsFromSDF(sdf) {
-            const lines = sdf.split('\n');
-            let countsLine = -1;
-            for (let i = 0; i < lines.length; i++) {
-                const t = lines[i].trim();
-                if (t.length >= 10) {
-                    const first = t.substring(0, 10).trim().split(/\s+/);
-                    const n = parseInt(first[0]);
-                    if (!isNaN(n) && n > 0 && n <= 10000) {
-                        countsLine = i;
-                        break;
-                    }
-                }
-            }
-            if (countsLine < 0) return [];
-            const numAtoms = parseInt(lines[countsLine].trim().substring(0, 6).trim());
-            const numBonds = parseInt(lines[countsLine].trim().substring(6, 12).trim());
-            const bonds = [];
-            for (let i = 0; i < numBonds; i++) {
-                const line = lines[countsLine + 1 + numAtoms + i];
-                if (line && line.length >= 10) {
-                    const a1 = parseInt(line.substring(0, 3).trim()) - 1;
-                    const a2 = parseInt(line.substring(3, 6).trim()) - 1;
-                    const order = parseInt(line.substring(6, 9).trim());
-                    if (a1 >= 0 && a2 >= 0 && !isNaN(order)) {
-                        bonds.push([a1, a2, order]);
-                    }
-                }
-            }
-            return bonds;
+            viewer3Dmol.addModel(sdfContent, 'sdf');
+            applyViewerStyle();
+            viewer3Dmol.zoomTo();
+            viewer3Dmol.render();
         }
 
         function updateViewerWithCoords(coords, sdfContent) {
+            if (!viewer3Dmol || !sdfContent || !coords) return;
+            
+            // Parse the original SDF to get atom elements
+            const lines = sdfContent.split('\n');
+            let countsLine = -1;
+            for (let i = 0; i < lines.length; i++) {
+                const t = lines[i].trim();
+                if (t.length >= 10) {
+                    const first = t.substring(0, 10).trim().split(/\s+/);
+                    const n = parseInt(first[0]);
+                    if (!isNaN(n) && n > 0 && n <= 10000) {
+                        countsLine = i;
+                        break;
+                    }
+                }
+            }
+            
+            if (countsLine < 0) return;
+            
+            const numAtoms = parseInt(lines[countsLine].trim().substring(0, 6).trim());
+            
+            // Build new SDF with updated coordinates
+            const newLines = lines.slice(0, countsLine + 1);
+            
+            for (let i = 0; i < numAtoms && i < coords.length / 3; i++) {
+                const originalLine = lines[countsLine + 1 + i];
+                const elem = originalLine.substring(31, 34).trim() || 'C';
+                const x = coords[i * 3].toFixed(4).padStart(10);
+                const y = coords[i * 3 + 1].toFixed(4).padStart(10);
+                const z = coords[i * 3 + 2].toFixed(4).padStart(10);
+                const rest = originalLine.substring(34);
+                newLines.push(`${x}${y}${z} ${elem.padEnd(3)}${rest}`);
+            }
+            
+            // Add bond lines
+            const numBonds = parseInt(lines[countsLine].trim().substring(6, 12).trim());
+            for (let i = 0; i < numBonds; i++) {
+                newLines.push(lines[countsLine + 1 + numAtoms + i]);
+            }
+            
+            // Add M END
+            newLines.push('M  END');
+            
             viewer3Dmol.removeAllModels();
-            const modelData = { atoms: [], bonds: [] };
-            const n = coords.length / 3;
-            for (let i = 0; i < n; i++) {
-                modelData.atoms.push({
-                    x: coords[i * 3],
-                    y: coords[i * 3 + 1],
-                    z: coords[i * 3 + 2]
-                });
-            }
-            const bonds = parseBondsFromSDF(sdfContent);
-            if (bonds.length > 0) {
-                modelData.bonds = bonds.map(b => [b[0], b[1], b[2]]);
-            }
-            viewer3Dmol.addModel(modelData);
+            viewer3Dmol.addModel(newLines.join('\n'), 'sdf');
             applyViewerStyle();
             viewer3Dmol.zoomTo();
             viewer3Dmol.render();
