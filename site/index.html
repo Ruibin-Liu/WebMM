@@ -112,13 +112,14 @@
         <button onclick="renderFromInput()">Render from Input</button>
         <button onclick="generateInitialCoords()">Generate 3D (ETKDG v3)</button>
         <button onclick="runOptimization()">Optimize (MMFF94s)</button>
+        <button onclick="logRdkitRef()">Show RDKit Reference</button>
     </div>
 
     <h2>Log</h2>
     <div id="log" class="log"></div>
 
     <script>
-        let optimize_from_sdf, generate_initial_coordinates_wasm, OptimizationOptions;
+        let optimize_from_sdf, generate_initial_coordinates_wasm;
         let viewer3Dmol;
         let currentStyle = 'stick';
 
@@ -180,52 +181,29 @@
         }
 
         function renderMoleculeWithCoords(coords, sdfContent) {
-            if (!viewer3Dmol || !sdfContent || !coords) return;
+            if (!viewer3Dmol || !coords) return;
             try {
-                const lines = sdfContent.split('\n');
-                let countsLine = -1;
-                for (let i = 0; i < lines.length; i++) {
-                    const t = lines[i].trim();
-                    if (t.length >= 10) {
-                        const first = t.substring(0, 10).trim().split(/\s+/);
-                        const n = parseInt(first[0]);
-                        if (!isNaN(n) && n > 0 && n <= 10000) {
-                            countsLine = i;
-                            break;
-                        }
+                renderMolecule(sdfContent);
+                var atoms = viewer3Dmol.selectedAtoms({});
+                for (var i = 0; i < atoms.length; i++) {
+                    if (i * 3 + 2 < coords.length) {
+                        atoms[i].x = coords[i * 3];
+                        atoms[i].y = coords[i * 3 + 1];
+                        atoms[i].z = coords[i * 3 + 2];
                     }
                 }
-                if (countsLine < 0) return;
-                const numAtoms = parseInt(lines[countsLine].trim().substring(0, 6).trim());
-                const newLines = [];
-                for (let i = 0; i <= countsLine; i++) {
-                    newLines.push(lines[i]);
-                }
-                for (let i = 0; i < numAtoms && i < coords.length / 3; i++) {
-                    const originalLine = lines[countsLine + 1 + i];
-                    const elem = (originalLine.substring(31, 34).trim() || 'C').padEnd(3);
-                    const x = coords[i * 3].toFixed(4).padStart(10);
-                    const y = coords[i * 3 + 1].toFixed(4).padStart(10);
-                    const z = coords[i * 3 + 2].toFixed(4).padStart(10);
-                    const rest = originalLine.substring(34);
-                    newLines.push(x + y + z + ' ' + elem + rest);
-                }
-                const numBonds = parseInt(lines[countsLine].trim().substring(6, 12).trim());
-                for (let i = 0; i < numBonds; i++) {
-                    newLines.push(lines[countsLine + 1 + numAtoms + i]);
-                }
-                newLines.push('M  END');
-                const newSdf = newLines.join('\n');
-                document.getElementById('sdf-input').value = newSdf;
-                renderMolecule(newSdf);
+                viewer3Dmol.setStyle({}, VIEWER_STYLES[currentStyle]);
+                viewer3Dmol.zoomTo();
+                viewer3Dmol.render();
             } catch (e) {
-                console.error('renderMoleculeWithCoords error:', e);
+                log('renderMoleculeWithCoords error: ' + e.message);
+                console.error(e);
             }
         }
 
         async function initWasm() {
             try {
-                const wasmModule = await import('./webmm.js');
+                const wasmModule = await import('./pkg/webmm.js');
                 if (wasmModule.default) await wasmModule.default();
                 optimize_from_sdf = wasmModule.optimize_from_sdf;
                 generate_initial_coordinates_wasm = wasmModule.generate_initial_coordinates_wasm;
@@ -242,9 +220,9 @@
 
         var TEST_MOLECULES = {
             water: 'Water\n     RDKit          3D\n\n  3  2  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0  0  0  0\n  1  3  1  0  0  0  0\nM  END',
-            acetic: 'Acetic acid\n     RDKit          3D\n\n  8  7  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2000    1.0190    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9000    0.3000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5430   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    3.0000    1.2000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0  0  0  0\n  2  3  2  0  0  0  0\n  2  4  1  0  0  0  0\n  1  5  1  0  0  0  0\n  1  6  1  0  0  0  0\n  2  7  1  0  0  0  0\n  4  8  1  0  0  0  0\nM  END',
-            benzene: 'Benzene\n     RDKit          3D\n\n 12 12  0  0  0  0  0  0  0  0999 V2000\n    0.0000    1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2115    0.7035    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2135   -0.7005    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000   -1.4010    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2135   -0.7005    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2115    0.7035    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000    2.4850    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1500    1.2400    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1500   -1.2400    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000   -2.4850    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1500   -1.2400    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1500    1.2400    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0  0  0  0\n  2  3  1  0  0  0  0\n  3  4  2  0  0  0  0\n  4  5  1  0  0  0  0\n  5  6  2  0  0  0  0\n  6  1  1  0  0  0  0\n  1  7  1  0  0  0  0\n  2  8  1  0  0  0  0\n  3  9  1  0  0  0  0\n  4 10  1  0  0  0  0\n  5 11  1  0  0  0  0\n  6 12  1  0  0  0  0\nM  END',
-            ethanol: 'Ethanol\n     RDKit          3D\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5260    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1450    1.0190    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5430    1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5430   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8860   -1.0200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.0190   -0.5430    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5270    1.5640    0.9170 H   0  0  0  0  0  0  0  0  0  0  0  0\n    3.0290    1.3430    0.3590 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0  0  0  0\n  2  3  1  0  0  0  0\n  1  4  1  0  0  0  0\n  1  5  1  0  0  0  0\n  2  6  1  0  0  0  0\n  2  7  1  0  0  0  0\n  3  8  1  0  0  0  0\n  3  9  1  0  0  0  0\nM  END'
+            acetic: 'Acetic acid\n     RDKit          3D\n\n  8  7  0  0  0  0  0  0  0  0999 V2000\n   -0.9335   -0.0601   -0.2304 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4936    0.2789    0.0469 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0325    1.3566   -0.1361 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1814   -0.7645    0.5462 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4427    0.8203   -0.6327 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4305   -0.3576    0.6963 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9867   -0.8625   -0.9702 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.0859   -0.4112    0.6800 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  2  0\n  2  4  1  0\n  1  5  1  0\n  1  6  1  0\n  1  7  1  0\n  4  8  1  0\nM  END',
+            benzene: 'Benzene\n     RDKit          3D\n\n 12 12  0  0  0  0  0  0  0  0999 V2000\n    0.8035   -1.1401   -0.0082 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3889    0.1258   -0.0281 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.5853    1.2659   -0.0199 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8035    1.1401    0.0083 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3889   -0.1258    0.0281 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5853   -1.2659    0.0199 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4295   -2.0284   -0.0147 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.4709    0.2238   -0.0501 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0414    2.2522   -0.0354 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4295    2.0284    0.0147 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.4709   -0.2238    0.0500 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.0414   -2.2522    0.0354 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  1  1  0\n  1  7  1  0\n  2  8  1  0\n  3  9  1  0\n  4 10  1  0\n  5 11  1  0\n  6 12  1  0\nM  END',
+            ethanol: 'Ethanol\n     RDKit          3D\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n   -0.8883    0.1670   -0.0273 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4658   -0.5116   -0.0368 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4311    0.3229    0.5867 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8487    1.1175   -0.5695 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.6471   -0.4704   -0.4896 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1964    0.3978    0.9977 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7920   -0.7224   -1.0597 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4246   -1.4559    0.5138 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4671    1.1550    0.0848 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  1  4  1  0\n  1  5  1  0\n  1  6  1  0\n  2  7  1  0\n  2  8  1  0\n  3  9  1  0\nM  END'
         };
 
         function loadTestFile(name) {
@@ -268,8 +246,12 @@
                 var dt = ((performance.now() - t0) / 1000).toFixed(2);
                 if (result.get_success()) {
                     setStatus('ETKDG v3 complete', 'success');
-                    log('Generated in ' + dt + 's, ' + result.n_atoms + ' atoms');
-                    renderMoleculeWithCoords(result.get_coordinates(), sdfContent);
+                    var nAtoms = typeof result.get_n_atoms === 'function' ? result.get_n_atoms() : result.get_n_atoms;
+                    log('Generated in ' + dt + 's, ' + nAtoms + ' atoms');
+                    var coords = result.get_coordinates();
+                    logCoords('Ours ETKDGv3', coords);
+                renderMoleculeWithCoords(coords, sdfContent);
+                logCoords('Ours MMFF94s optimized', coords);
                 } else {
                     setStatus('ETKDG failed: ' + result.get_error(), 'error');
                     log('ETKDG failed');
@@ -280,19 +262,47 @@
             }
         }
 
-        function runOptimization() {
+        function logCoords(label, coords) {
+            var elements = ['C','C','O','O','H','H','H','H'];
+            log(label + ' coords (' + (coords.length/3) + ' atoms):');
+            for (var i = 0; i < coords.length / 3; i++) {
+                var sym = i < elements.length ? elements[i] : '?';
+                log('  ' + sym + i + ': ' + coords[i*3].toFixed(4) + ', ' + coords[i*3+1].toFixed(4) + ', ' + coords[i*3+2].toFixed(4));
+            }
+        }
+
+        function logRdkitRef() {
+            log('RDKit ETKDGv3:');
+            log('  C0: -0.9794, -0.0632, -0.1563');
+            log('  C1:  0.4678,  0.2830, -0.0817');
+            log('  O2:  0.8586,  1.4893, -0.1794');
+            log('  O3:  1.4633, -0.6673,  0.0956');
+            log('  H4: -1.5215,  0.6873, -0.7239');
+            log('  H5: -1.3801, -0.1392,  0.8725');
+            log('  H6: -1.1188, -1.0861, -0.5983');
+            log('  H7:  2.2103, -0.5038,  0.7714');
+            log('RDKit MMFF optimized:');
+            log('  C0: -0.9335, -0.0601, -0.2304');
+            log('  C1:  0.4936,  0.2789,  0.0469');
+            log('  O2:  1.0325,  1.3566, -0.1361');
+            log('  O3:  1.1814, -0.7645,  0.5462');
+            log('  H4: -1.4427,  0.8203, -0.6327');
+            log('  H5: -1.4305, -0.3576,  0.6963');
+            log('  H6: -0.9867, -0.8625, -0.9702');
+            log('  H7:  2.0859, -0.4112,  0.6800');
+        }
+
+        async function runOptimization() {
             try {
                 var sdfContent = document.getElementById('sdf-input').value;
                 if (!sdfContent.trim()) { setStatus('Enter SDF first', 'error'); return; }
                 setStatus('Optimizing...', 'info');
                 log('Starting MMFF94s optimization');
-                var options = new OptimizationOptions();
-                options.set_max_iterations(500);
-                options.set_max_force(0.01);
-                options.set_rms_force(0.001);
-                options.set_energy_change(1e-6);
                 var t0 = performance.now();
-                var result = optimize_from_sdf(sdfContent, options);
+                var opts = new OptimizationOptions();
+                opts.set_max_iterations(500);
+                opts.set_max_force(0.01);
+                var result = await optimize_from_sdf(sdfContent, opts);
                 var dt = ((performance.now() - t0) / 1000).toFixed(2);
                 var coords = [];
                 for (var i = 0; i < result.n_atoms; i++) {

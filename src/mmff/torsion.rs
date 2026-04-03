@@ -223,7 +223,7 @@ fn calculate_dihedral(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usiz
     let b3_x = (b3[0] * x[0] + b3[1] * x[1] + b3[2] * x[2]) / b3_norm;
     let b3_y = (b3[0] * y[0] + b3[1] * y[1] + b3[2] * y[2]) / b3_norm;
 
-    (b1_x.atan2(b1_y) - b3_x.atan2(b3_y)).abs()
+    b1_x.atan2(b1_y) - b3_x.atan2(b3_y)
 }
 
 pub fn torsion_gradient(

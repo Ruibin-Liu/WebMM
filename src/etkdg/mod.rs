@@ -1,6 +1,6 @@
 //! ETKDG v3 3D coordinate embedding
 
-use crate::molecule::{BondType, Molecule};
+use crate::molecule::{BondType, Hybridization, Molecule};
 
 fn random_f64() -> f64 {
     let mut buf = [0u8; 8];
@@ -128,6 +128,16 @@ fn covalent_radius(element: &str) -> f64 {
     }
 }
 
+/// Estimate the bond angle at the central atom using hybridization
+fn estimate_angle(a: usize, b: usize, c: usize, mol: &Molecule, bounds: &DistanceBounds) -> f64 {
+    let hyb = crate::molecule::graph::determine_hybridization(b, mol);
+    match hyb {
+        Hybridization::Sp1 => std::f64::consts::PI,
+        Hybridization::Sp2 => 120.0_f64.to_radians(),
+        Hybridization::Sp3 => 109.47_f64.to_radians(),
+    }
+}
+
 /// Build distance bounds matrix from molecular topology
 fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds {
     let n_atoms = mol.atoms.len();
@@ -143,13 +153,12 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                 let r_i = vdw_radius(&mol.atoms[i].symbol);
                 let r_j = vdw_radius(&mol.atoms[j].symbol);
 
-                // Lower bound: sum of covalent radii
                 let r_cov_i = covalent_radius(&mol.atoms[i].symbol);
                 let r_cov_j = covalent_radius(&mol.atoms[j].symbol);
-                bounds.lower[i][j] = r_cov_i + r_cov_j - 0.2;
+                bounds.lower[i][j] = r_cov_i + r_cov_j - 0.3;
 
-                // Upper bound: sum of van der Waals radii
-                bounds.upper[i][j] = (r_i + r_j) * config.vdw_scale;
+                // Upper bound: generous VdW sum to accommodate non-bonded contacts
+                bounds.upper[i][j] = r_i + r_j + 1.0;
             }
         }
     }
@@ -161,24 +170,30 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
 
         let r_cov_i = covalent_radius(&mol.atoms[i].symbol);
         let r_cov_j = covalent_radius(&mol.atoms[j].symbol);
-        let ideal_length = r_cov_i + r_cov_j;
+        let single_length = r_cov_i + r_cov_j;
 
         match bond.bond_type {
             BondType::Single => {
-                bounds.lower[i][j] = ideal_length - 0.1;
-                bounds.upper[i][j] = ideal_length + 0.1;
+                bounds.lower[i][j] = single_length - 0.15;
+                bounds.upper[i][j] = single_length + 0.15;
             }
             BondType::Double => {
-                bounds.lower[i][j] = ideal_length - 0.08;
-                bounds.upper[i][j] = ideal_length + 0.08;
+                // Double bonds are ~86% of single bond length
+                let ideal = single_length * 0.86;
+                bounds.lower[i][j] = ideal - 0.10;
+                bounds.upper[i][j] = ideal + 0.10;
             }
             BondType::Triple => {
-                bounds.lower[i][j] = ideal_length - 0.06;
-                bounds.upper[i][j] = ideal_length + 0.06;
+                // Triple bonds are ~78% of single bond length
+                let ideal = single_length * 0.78;
+                bounds.lower[i][j] = ideal - 0.08;
+                bounds.upper[i][j] = ideal + 0.08;
             }
             BondType::Aromatic => {
-                bounds.lower[i][j] = ideal_length - 0.09;
-                bounds.upper[i][j] = ideal_length + 0.09;
+                // Aromatic bonds are intermediate
+                let ideal = single_length * 0.93;
+                bounds.lower[i][j] = ideal - 0.10;
+                bounds.upper[i][j] = ideal + 0.10;
             }
         }
 
@@ -191,15 +206,19 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
     for angle in &angle_info {
         let (a_min, a_max) = (angle.atom1.min(angle.atom2), angle.atom1.max(angle.atom2));
         let (b_min, b_max) = (angle.atom2.min(angle.atom3), angle.atom2.max(angle.atom3));
-        let r_ij = bounds.lower[a_min][a_max];
-        let r_jk = bounds.lower[b_min][b_max];
+        let r_ij = (bounds.lower[a_min][a_max] + bounds.upper[a_min][a_max]) / 2.0;
+        let r_jk = (bounds.lower[b_min][b_max] + bounds.upper[b_min][b_max]) / 2.0;
 
-        // Default theta0 = 109.47 degrees (tetrahedral)
-        let theta0_rad = 109.47_f64.to_radians();
+        let hyb = crate::molecule::graph::determine_hybridization(angle.atom2, mol);
+        let theta0_rad: f64 = match hyb {
+            Hybridization::Sp1 => 180.0_f64.to_radians(),
+            Hybridization::Sp2 => 120.0_f64.to_radians(),
+            Hybridization::Sp3 => 109.47_f64.to_radians(),
+        };
         let r_ik_sq = r_ij * r_ij + r_jk * r_jk - 2.0 * r_ij * r_jk * theta0_rad.cos();
         if r_ik_sq > 0.0 {
             let r_ik = r_ik_sq.sqrt();
-            let tolerance = 0.2;
+            let tolerance = 0.15;
             let lower = (r_ik - tolerance).max(0.5);
             let upper = r_ik + tolerance;
             let (a, c) = (angle.atom1.min(angle.atom3), angle.atom1.max(angle.atom3));
@@ -210,7 +229,7 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
         }
     }
 
-    // 1-4 bounds (torsion-derived)
+    // 1-4 bounds (torsion-derived) with torsion angle preferences
     let torsion_info = crate::molecule::graph::find_torsions(mol);
     for torsion in &torsion_info {
         let r_ij = (bounds.lower[torsion.atom1.min(torsion.atom2)]
@@ -226,10 +245,48 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
             + bounds.upper[torsion.atom3.min(torsion.atom4)][torsion.atom3.max(torsion.atom4)])
             / 2.0;
 
-        let upper = r_ij + r_jk + r_kl + 0.1;
-        let inner = r_ij * r_ij + r_jk * r_jk + r_kl * r_kl - 2.0 * r_ij * r_jk - 2.0 * r_jk * r_kl
-            + 2.0 * r_ij * r_kl;
-        let lower = if inner > 0.0 { inner.sqrt() - 0.1 } else { 0.5 };
+        // Determine preferred torsion angle based on hybridization of central atoms
+        let hyb_j = crate::molecule::graph::determine_hybridization(torsion.atom2, mol);
+        let hyb_k = crate::molecule::graph::determine_hybridization(torsion.atom3, mol);
+
+        let (upper, lower) = match (hyb_j, hyb_k) {
+            // sp3-sp3: staggered (~60°), use cosine law with theta=60°
+            (Hybridization::Sp3, Hybridization::Sp3) => {
+                let angle_ij =
+                    estimate_angle(torsion.atom1, torsion.atom2, torsion.atom3, mol, &bounds);
+                let angle_kl =
+                    estimate_angle(torsion.atom2, torsion.atom3, torsion.atom4, mol, &bounds);
+                let phi = 60.0_f64.to_radians();
+                let r14_sq = r_ij * r_ij + r_jk * r_jk + r_kl * r_kl
+                    - 2.0 * r_ij * r_jk * angle_ij.cos()
+                    - 2.0 * r_jk * r_kl * angle_kl.cos()
+                    + 2.0
+                        * r_ij
+                        * r_kl
+                        * (angle_ij.cos() * angle_kl.cos()
+                            - angle_ij.sin() * angle_kl.sin() * phi.cos());
+                let r14 = if r14_sq > 0.0 { r14_sq.sqrt() } else { 0.5 };
+                (r14 + 0.4, (r14 - 0.4).max(0.5))
+            }
+            // sp2-sp2: planar (0° or 180°)
+            (Hybridization::Sp2, Hybridization::Sp2) => {
+                let upper = r_ij + r_jk + r_kl + 0.1;
+                let inner =
+                    r_ij * r_ij + r_jk * r_jk + r_kl * r_kl - 2.0 * r_ij * r_jk - 2.0 * r_jk * r_kl
+                        + 2.0 * r_ij * r_kl;
+                let lower = if inner > 0.0 { inner.sqrt() - 0.1 } else { 0.5 };
+                (upper, lower)
+            }
+            // Default: wide bounds
+            _ => {
+                let upper = r_ij + r_jk + r_kl + 0.1;
+                let inner =
+                    r_ij * r_ij + r_jk * r_jk + r_kl * r_kl - 2.0 * r_ij * r_jk - 2.0 * r_jk * r_kl
+                        + 2.0 * r_ij * r_kl;
+                let lower = if inner > 0.0 { inner.sqrt() - 0.1 } else { 0.5 };
+                (upper, lower)
+            }
+        };
 
         let (a, d) = (
             torsion.atom1.min(torsion.atom4),
@@ -264,195 +321,422 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
     bounds
 }
 
-/// Generate initial 4D coordinates using metric matrix approach
-fn generate_4d_coordinates(bounds: &DistanceBounds) -> Vec<[f64; 4]> {
-    let n_atoms = bounds.n_atoms;
-
-    // Start with small random coordinates
-    let mut coords = Vec::with_capacity(n_atoms);
-    for _ in 0..n_atoms {
-        coords.push([
-            (random_f64() - 0.5) * 0.1,
-            (random_f64() - 0.5) * 0.1,
-            (random_f64() - 0.5) * 0.1,
-            (random_f64() - 0.5) * 0.1,
-        ]);
+/// Generate coordinates using classical distance geometry (metric matrix + eigenvector method)
+/// Uses 4D embedding then random projection to 3D (standard ETKDG approach)
+fn generate_4d_coordinates(bounds: &DistanceBounds) -> Vec<[f64; 3]> {
+    let n = bounds.n_atoms;
+    if n < 3 {
+        return vec![[0.0; 3]; n];
     }
 
-    // Simple embedding using stochastic proximity embedding
-    for iteration in 0..100 {
-        let learning_rate = 0.1 * (1.0 - iteration as f64 / 100.0);
+    // Build a target distance matrix with biased sampling
+    let mut dist = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        for j in i + 1..n {
+            let lo = bounds.lower[i][j];
+            let hi = bounds.upper[i][j];
+            let range = hi - lo;
+            let t = if range < 0.5 {
+                lo + range * (0.3 + 0.4 * random_f64())
+            } else {
+                let u = random_f64();
+                lo + range * u * u
+            };
+            dist[i][j] = t;
+            dist[j][i] = t;
+        }
+    }
 
-        for i in 0..n_atoms {
-            for j in i + 1..n_atoms {
-                let dx = coords[i][0] - coords[j][0];
-                let dy = coords[i][1] - coords[j][1];
-                let dz = coords[i][2] - coords[j][2];
-                let dw = coords[i][3] - coords[j][3];
+    // Build squared distance matrix and double-center for Gram matrix
+    let n_f = n as f64;
+    let mut d2 = vec![vec![0.0f64; n]; n];
+    let mut row_sums = vec![0.0f64; n];
+    let mut total_sum = 0.0f64;
+    for i in 0..n {
+        for j in 0..n {
+            d2[i][j] = dist[i][j] * dist[i][j];
+            row_sums[i] += d2[i][j];
+            total_sum += d2[i][j];
+        }
+    }
+    let row_means: Vec<f64> = row_sums.iter().map(|s| s / n_f).collect();
+    let grand_mean = total_sum / (n_f * n_f);
 
-                let current_dist = (dx * dx + dy * dy + dz * dz + dw * dw).sqrt();
+    // Double-centering: B = -0.5 * (D2 - row_means - col_means + grand_mean)
+    let mut b = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            b[i][j] = -0.5 * (d2[i][j] - row_means[i] - row_means[j] + grand_mean);
+        }
+    }
 
-                let target_dist = if current_dist < bounds.lower[i][j] {
-                    bounds.lower[i][j]
-                } else if current_dist > bounds.upper[i][j] {
-                    bounds.upper[i][j].min(10.0)
+    // Jacobi eigenvalue decomposition
+    let (eigenvalues, eigenvectors) = jacobi_eigen(&b, 100);
+
+    // Sort by eigenvalue (largest first)
+    let mut indices: Vec<usize> = (0..n).collect();
+    indices.sort_by(|&a, &b| eigenvalues[b].partial_cmp(&eigenvalues[a]).unwrap());
+
+    // Embed in 4D using top 4 eigenvalues
+    let dim = 4.min(n);
+    let mut coords_4d = vec![[0.0f64; 4]; n];
+    for i in 0..n {
+        for d in 0..dim {
+            if d < indices.len() {
+                let idx = indices[d];
+                let ev = eigenvalues[idx];
+                coords_4d[i][d] = if ev > 0.0 {
+                    eigenvectors[idx][i] * ev.sqrt()
                 } else {
-                    continue;
+                    eigenvectors[idx][i] * 0.001
                 };
-
-                if current_dist >= 1e-8 {
-                    let scale = learning_rate * (target_dist - current_dist) / current_dist;
-                    let dx_scale = dx * scale;
-                    let dy_scale = dy * scale;
-                    let dz_scale = dz * scale;
-                    let dw_scale = dw * scale;
-
-                    coords[i][0] += dx_scale;
-                    coords[i][1] += dy_scale;
-                    coords[i][2] += dz_scale;
-                    coords[i][3] += dw_scale;
-
-                    coords[j][0] -= dx_scale;
-                    coords[j][1] -= dy_scale;
-                    coords[j][2] -= dz_scale;
-                    coords[j][3] -= dw_scale;
-                }
             }
+        }
+    }
+
+    // Random projection from 4D to 3D using a random rotation matrix
+    // Generate a random 3x4 projection matrix with orthogonal rows
+    let mut proj = [[0.0f64; 4]; 3];
+    for r in 0..3 {
+        for c in 0..4 {
+            proj[r][c] = random_f64() * 2.0 - 1.0;
+        }
+    }
+
+    // Gram-Schmidt orthogonalization of projection rows
+    for r in 0..3 {
+        for prev in 0..r {
+            let dot: f64 = (0..4).map(|c| proj[r][c] * proj[prev][c]).sum();
+            for c in 0..4 {
+                proj[r][c] -= dot * proj[prev][c];
+            }
+        }
+        let norm: f64 = (0..4).map(|c| proj[r][c] * proj[r][c]).sum::<f64>().sqrt();
+        if norm > 1e-10 {
+            for c in 0..4 {
+                proj[r][c] /= norm;
+            }
+        }
+    }
+
+    // Project 4D coords to 3D
+    let mut coords = vec![[0.0; 3]; n];
+    for i in 0..n {
+        for r in 0..3 {
+            coords[i][r] = (0..4).map(|c| proj[r][c] * coords_4d[i][c]).sum();
         }
     }
 
     coords
 }
 
-/// Project 4D coordinates to 3D using eigenvector projection
-fn project_to_3d(coords_4d: &[[f64; 4]]) -> Vec<[f64; 3]> {
-    let n = coords_4d.len();
-    if n < 3 {
-        return coords_4d.iter().map(|c| [c[0], c[1], c[2]]).collect();
+/// Jacobi eigenvalue decomposition for symmetric matrices
+/// Returns (eigenvalues, eigenvectors) where eigenvectors[i] is the i-th eigenvector
+fn jacobi_eigen(matrix: &[Vec<f64>], max_sweeps: usize) -> (Vec<f64>, Vec<Vec<f64>>) {
+    let n = matrix.len();
+    let mut a = matrix.to_vec(); // work on a copy
+    let n = a.len();
+    let mut v = vec![vec![0.0f64; n]; n];
+    for i in 0..n {
+        v[i][i] = 1.0;
     }
+    let mut d = vec![0.0f64; n];
+    for i in 0..n {
+        d[i] = a[i][i];
+    }
+    let mut b = d.clone();
+    let mut z = vec![0.0f64; n];
 
-    let centroid: [f64; 4] = {
-        let mut c = [0.0; 4];
-        for coord in coords_4d {
-            for d in 0..4 {
-                c[d] += coord[d];
+    for _sweep in 0..max_sweeps {
+        let mut sum = 0.0;
+        for i in 0..n - 1 {
+            for j in i + 1..n {
+                sum += a[i][j].abs();
             }
         }
-        for val in c.iter_mut() {
-            *val /= n as f64;
-        }
-        c
-    };
-
-    let centered: Vec<[f64; 4]> = coords_4d
-        .iter()
-        .map(|c| {
-            [
-                c[0] - centroid[0],
-                c[1] - centroid[1],
-                c[2] - centroid[2],
-                c[3] - centroid[3],
-            ]
-        })
-        .collect();
-
-    let mut gram = vec![vec![0.0f64; n]; n];
-    for i in 0..n {
-        for j in 0..n {
-            let dx = centered[i][0] - centered[j][0];
-            let dy = centered[i][1] - centered[j][1];
-            let dz = centered[i][2] - centered[j][2];
-            let dw = centered[i][3] - centered[j][3];
-            gram[i][j] = dx * dx + dy * dy + dz * dz + dw * dw;
-        }
-    }
-
-    let mut b = vec![vec![0.0f64; n]; n];
-    for i in 0..n {
-        for j in 0..n {
-            b[i][j] = -0.5 * (gram[i][j] - gram[i][0] - gram[0][j] + gram[0][0]);
-        }
-    }
-
-    let mut eigenvectors = vec![vec![0.0; n]; 3];
-    let mut eigenvalues = [0.0f64; 3];
-
-    for k in 0..3 {
-        let mut v = vec![0.0f64; n];
-        for vi in v.iter_mut() {
-            *vi = random_f64() - 0.5;
-        }
-        let v_norm: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-        for vi in v.iter_mut() {
-            *vi /= v_norm;
+        if sum < 1e-12 {
+            break;
         }
 
-        for _ in 0..200 {
-            let mut new_v = vec![0.0f64; n];
-            for i in 0..n {
-                for j in 0..n {
-                    new_v[i] += b[i][j] * v[j];
+        let threshold = if _sweep < 3 {
+            0.2 * sum / (n * n) as f64
+        } else {
+            0.0
+        };
+
+        for p in 0..n - 1 {
+            for q in p + 1..n {
+                let apq = a[p][q].abs();
+                let g = 100.0 * apq;
+
+                if _sweep > 3 && d[p].abs() + g == d[p].abs() && d[q].abs() + g == d[q].abs() {
+                    a[p][q] = 0.0;
+                    continue;
+                }
+
+                if apq <= threshold {
+                    continue;
+                }
+
+                let h = d[q] - d[p];
+                let t = if h.abs() + g == h.abs() {
+                    a[p][q] / h
+                } else {
+                    let theta = 0.5 * h / a[p][q];
+                    let mut tt = 1.0 / (theta.abs() + (1.0 + theta * theta).sqrt());
+                    if theta < 0.0 {
+                        tt = -tt;
+                    }
+                    tt
+                };
+
+                let c = 1.0 / (1.0 + t * t).sqrt();
+                let s = t * c;
+                let tau = s / (1.0 + c);
+                let h = t * a[p][q];
+                z[p] -= h;
+                z[q] += h;
+                d[p] -= h;
+                d[q] += h;
+                a[p][q] = 0.0;
+
+                for r in 0..p {
+                    let g = a[r][p];
+                    let h = a[r][q];
+                    a[r][p] = g - s * (h + g * tau);
+                    a[r][q] = h + s * (g - h * tau);
+                }
+                for r in p + 1..q {
+                    let g = a[p][r];
+                    let h = a[r][q];
+                    a[p][r] = g - s * (h + g * tau);
+                    a[r][q] = h + s * (g - h * tau);
+                }
+                for r in q + 1..n {
+                    let g = a[p][r];
+                    let h = a[q][r];
+                    a[p][r] = g - s * (h + g * tau);
+                    a[q][r] = h + s * (g - h * tau);
+                }
+                for r in 0..n {
+                    let g = v[r][p];
+                    let h = v[r][q];
+                    v[r][p] = g - s * (h + g * tau);
+                    v[r][q] = h + s * (g - h * tau);
                 }
             }
-
-            for prev_eigvec in eigenvectors.iter().take(k) {
-                let dot: f64 = new_v
-                    .iter()
-                    .zip(prev_eigvec.iter())
-                    .map(|(a, b)| a * b)
-                    .sum();
-                for (new_vi, prev_ei) in new_v.iter_mut().zip(prev_eigvec.iter()) {
-                    *new_vi -= dot * prev_ei;
-                }
-            }
-
-            let norm: f64 = new_v.iter().map(|x| x * x).sum::<f64>().sqrt();
-            if norm < 1e-10 {
-                break;
-            }
-            for vi in new_v.iter_mut() {
-                *vi /= norm;
-            }
-
-            v = new_v;
         }
 
-        let mut lambda = 0.0;
         for i in 0..n {
-            for j in 0..n {
-                lambda += v[i] * b[i][j] * v[j];
-            }
+            b[i] += z[i];
+            d[i] = b[i];
+            z[i] = 0.0;
         }
-
-        eigenvalues[k] = lambda;
-        eigenvectors[k] = v;
     }
 
-    let mut coords_3d = vec![[0.0; 3]; n];
+    // v[r][i] contains the i-th eigenvector's r-th component
+    // We want eigenvectors[i] = column i of v
+    let mut evecs = vec![vec![0.0f64; n]; n];
     for i in 0..n {
-        for d in 0..3 {
-            let ev = eigenvalues[d];
-            coords_3d[i][d] = if ev > 0.0 {
-                eigenvectors[d][i] * ev.sqrt()
-            } else {
-                eigenvectors[d][i] * 0.001
-            };
+        for r in 0..n {
+            evecs[i][r] = v[r][i];
         }
     }
 
-    coords_3d
+    (d, evecs)
 }
 
-/// Refine coordinates using actual MMFF94 force field + L-BFGS
+/// Scale coordinates so that average bonded distance matches expected bond lengths.
+/// This corrects for eigenvector embeddings that are too large or too small.
+fn scale_to_bonds(bounds: &DistanceBounds, coords: &mut [[f64; 3]]) {
+    let n = bounds.n_atoms;
+    let mut expected_sum = 0.0f64;
+    let mut actual_sum = 0.0f64;
+    let mut count = 0usize;
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let lo = bounds.lower[i][j];
+            let hi = bounds.upper[i][j];
+            if hi - lo < 0.5 {
+                // Tight bounds = bonded pair
+                let target = (lo + hi) / 2.0;
+                let dx = coords[i][0] - coords[j][0];
+                let dy = coords[i][1] - coords[j][1];
+                let dz = coords[i][2] - coords[j][2];
+                let d = (dx * dx + dy * dy + dz * dz).sqrt();
+                if d > 1e-10 {
+                    expected_sum += target;
+                    actual_sum += d;
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    if count > 0 && actual_sum > 1e-10 {
+        let scale = expected_sum / actual_sum;
+        // Only apply if scale is reasonable (not NaN/inf, not wildly off)
+        if scale.is_finite() && scale > 0.001 && scale < 1000.0 {
+            for c in coords.iter_mut() {
+                c[0] *= scale;
+                c[1] *= scale;
+                c[2] *= scale;
+            }
+        }
+    }
+}
+
+/// Refine coordinates by minimizing distance bound violations (steepest descent)
+/// Applied before force field refinement to establish correct local geometry
+fn refine_with_dg(bounds: &DistanceBounds, coords: &mut [[f64; 3]], max_iterations: usize) {
+    let n = bounds.n_atoms;
+    if n < 2 {
+        return;
+    }
+
+    // First scale to match expected bond lengths
+    scale_to_bonds(bounds, coords);
+
+    let max_atom_step = 0.02; // Max displacement per atom per iteration (Å)
+
+    for _iter in 0..max_iterations {
+        let mut grad = vec![[0.0f64; 3]; n];
+        let mut error = 0.0f64;
+
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let dx = coords[i][0] - coords[j][0];
+                let dy = coords[i][1] - coords[j][1];
+                let dz = coords[i][2] - coords[j][2];
+                let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
+
+                let lo = bounds.lower[i][j];
+                let hi = bounds.upper[i][j];
+
+                let lo_viol = (lo - d).max(0.0);
+                let hi_viol = (d - hi).max(0.0);
+
+                if lo_viol < 1e-8 && hi_viol < 1e-8 {
+                    continue;
+                }
+
+                let range = (hi - lo).max(0.01);
+                let w = 1.0 / range;
+
+                error += w * (lo_viol * lo_viol + hi_viol * hi_viol);
+
+                let coeff = 2.0 * w * (hi_viol - lo_viol);
+
+                let fx = coeff * dx / d;
+                let fy = coeff * dy / d;
+                let fz = coeff * dz / d;
+
+                grad[i][0] += fx;
+                grad[i][1] += fy;
+                grad[i][2] += fz;
+                grad[j][0] -= fx;
+                grad[j][1] -= fy;
+                grad[j][2] -= fz;
+            }
+        }
+
+        if error < 1e-10 {
+            break;
+        }
+
+        // Per-atom step: cap each atom's displacement at max_atom_step
+        let max_g = grad
+            .iter()
+            .map(|g| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt())
+            .fold(0.0f64, f64::max)
+            .max(1e-10);
+
+        let step = max_atom_step / max_g;
+
+        for i in 0..n {
+            coords[i][0] -= step * grad[i][0];
+            coords[i][1] -= step * grad[i][1];
+            coords[i][2] -= step * grad[i][2];
+        }
+    }
+}
+
+/// Refine coordinates using MMFF94 force field.
+/// Two-phase approach: steepest descent for robust initial convergence,
+/// then L-BFGS for efficient final optimization.
 fn refine_with_ff(mol: &Molecule, coords: &mut [[f64; 3]], config: &ETKDGConfig) {
     let variant = crate::MMFFVariant::MMFF94s;
     let ff = crate::mmff::MMFFForceField::new(mol, variant);
+    let n = mol.atoms.len();
+    let max_total_iters = config.max_iterations.max(1000);
 
+    // Phase 1: Steepest descent with Armijo line search
+    // Robust for bad starting geometries where L-BFGS struggles
+    let sd_iters = max_total_iters / 2;
+
+    for _iter in 0..sd_iters {
+        let (energy, grad) = ff.calculate_energy_and_gradient(coords);
+
+        // Check convergence by max force
+        let max_g = grad
+            .iter()
+            .map(|g| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt())
+            .fold(0.0f64, f64::max);
+
+        if max_g < 0.5 {
+            break;
+        }
+
+        // Descent direction: d = -g
+        // Compute g^T * d = -|g|^2
+        let g_dot_d: f64 = -grad
+            .iter()
+            .flat_map(|g| g.iter())
+            .map(|gi| gi * gi)
+            .sum::<f64>();
+
+        // Armijo backtracking: start with step that gives max 0.1 Å displacement
+        let max_component = grad
+            .iter()
+            .flat_map(|g| g.iter())
+            .map(|gi| gi.abs())
+            .fold(0.0f64, f64::max)
+            .max(1e-10);
+        let mut alpha = 0.1 / max_component;
+
+        let mut accepted = false;
+        for _backtrack in 0..30 {
+            let mut new_coords = coords.to_vec();
+            for i in 0..n {
+                new_coords[i][0] -= alpha * grad[i][0];
+                new_coords[i][1] -= alpha * grad[i][1];
+                new_coords[i][2] -= alpha * grad[i][2];
+            }
+            let new_energy = ff.calculate_energy(&new_coords);
+
+            // Armijo condition: f(x + alpha*d) <= f(x) + c1 * alpha * g^T * d
+            if new_energy <= energy + 1e-4 * alpha * g_dot_d {
+                for i in 0..n {
+                    coords[i] = new_coords[i];
+                }
+                accepted = true;
+                break;
+            }
+            alpha *= 0.5;
+        }
+
+        if !accepted {
+            break; // Can't make progress
+        }
+    }
+
+    // Phase 2: L-BFGS for fine-tuning
     let conv = crate::ConvergenceOptions {
-        max_force: 0.05,
-        rms_force: 0.005,
+        max_force: 0.01,
+        rms_force: 0.001,
         energy_change: 1e-6,
-        max_iterations: config.max_iterations,
+        max_iterations: max_total_iters / 2,
     };
 
     let result = crate::optimizer::optimize(&ff, coords, &conv);
@@ -481,8 +765,8 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
     let mut best_energy = f64::INFINITY;
 
     for _attempt in 0..config.max_attempts {
-        let coords_4d = generate_4d_coordinates(&bounds);
-        let mut coords_3d = project_to_3d(&coords_4d);
+        let mut coords_3d = generate_4d_coordinates(&bounds);
+        refine_with_dg(&bounds, &mut coords_3d, 500);
         refine_with_ff(mol, &mut coords_3d, config);
 
         let variant = crate::MMFFVariant::MMFF94s;

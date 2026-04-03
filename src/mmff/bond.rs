@@ -16,33 +16,35 @@ pub fn get_bond_params(
     type2: MMFFAtomType,
     bond_type: BondType,
 ) -> Option<BondParams> {
+    let type1 = super::base_type(type1);
+    let type2 = super::base_type(type2);
     match (type1, type2, bond_type) {
         // C-C bonds
         (MMFFAtomType::C_3, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 4.7,
-            r0: 1.526,
+            k_bond: 4.258,
+            r0: 1.508,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::C_3, BondType::Single)
         | (MMFFAtomType::C_3, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 1.501,
+            k_bond: 4.19,
+            r0: 1.492,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
-            k_bond: 6.7,
-            r0: 1.339,
+            k_bond: 9.505,
+            r0: 1.333,
         }),
         (MMFFAtomType::C_1, MMFFAtomType::C_1, BondType::Triple) => Some(BondParams {
-            k_bond: 9.5,
-            r0: 1.198,
+            k_bond: 15.206,
+            r0: 1.2,
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
-            k_bond: 6.0,
-            r0: 1.39,
+            k_bond: 5.573,
+            r0: 1.374,
         }),
         (MMFFAtomType::C_3, MMFFAtomType::C_AR, BondType::Single)
         | (MMFFAtomType::C_AR, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 4.0,
-            r0: 1.508,
+            k_bond: 4.957,
+            r0: 1.486,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::C_AR, BondType::Single)
         | (MMFFAtomType::C_AR, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
@@ -108,8 +110,8 @@ pub fn get_bond_params(
         // C-O bonds
         (MMFFAtomType::C_3, MMFFAtomType::O_3, BondType::Single)
         | (MMFFAtomType::O_3, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 1.43,
+            k_bond: 5.047,
+            r0: 1.418,
         }),
         (MMFFAtomType::C_3, MMFFAtomType::O_2, BondType::Single)
         | (MMFFAtomType::O_2, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
@@ -128,8 +130,8 @@ pub fn get_bond_params(
         }),
         (MMFFAtomType::C_2, MMFFAtomType::O_2, BondType::Double)
         | (MMFFAtomType::O_2, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
-            k_bond: 10.5,
-            r0: 1.22,
+            k_bond: 12.95,
+            r0: 1.222,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::O_R, BondType::Double)
         | (MMFFAtomType::O_R, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
@@ -141,6 +143,16 @@ pub fn get_bond_params(
             k_bond: 10.0,
             r0: 1.23,
         }),
+        (MMFFAtomType::C_2, MMFFAtomType::O_CO2, BondType::Double)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
+            k_bond: 12.95,
+            r0: 1.222,
+        }),
+        (MMFFAtomType::C_2, MMFFAtomType::O_3, BondType::Single)
+        | (MMFFAtomType::O_3, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
+            k_bond: 5.801,
+            r0: 1.355,
+        }),
         (MMFFAtomType::C_AR, MMFFAtomType::O_R, BondType::Aromatic)
         | (MMFFAtomType::O_R, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
             k_bond: 5.0,
@@ -148,8 +160,8 @@ pub fn get_bond_params(
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::O_3, BondType::Single)
         | (MMFFAtomType::O_3, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
-            k_bond: 5.0,
-            r0: 1.37,
+            k_bond: 5.614,
+            r0: 1.376,
         }),
 
         // C-S bonds
@@ -172,33 +184,33 @@ pub fn get_bond_params(
         // C-H bonds (symmetric)
         (MMFFAtomType::H, MMFFAtomType::C_3, BondType::Single)
         | (MMFFAtomType::C_3, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 4.5,
-            r0: 1.113,
+            k_bond: 4.766,
+            r0: 1.093,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_2, BondType::Single)
         | (MMFFAtomType::C_2, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 4.5,
-            r0: 1.080,
+            k_bond: 4.65,
+            r0: 1.101,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_1, BondType::Single)
         | (MMFFAtomType::C_1, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 1.060,
+            k_bond: 5.726,
+            r0: 1.065,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_AR, BondType::Single)
         | (MMFFAtomType::C_AR, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 4.3,
-            r0: 1.080,
+            k_bond: 5.306,
+            r0: 1.084,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_CAT, BondType::Single)
         | (MMFFAtomType::C_CAT, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 4.5,
-            r0: 1.113,
+            k_bond: 4.766,
+            r0: 1.093,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_AN, BondType::Single)
         | (MMFFAtomType::C_AN, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 4.5,
-            r0: 1.080,
+            k_bond: 4.766,
+            r0: 1.093,
         }),
 
         // N-H bonds (symmetric)
@@ -236,18 +248,18 @@ pub fn get_bond_params(
         // O-H bonds (symmetric)
         (MMFFAtomType::H, MMFFAtomType::O_3, BondType::Single)
         | (MMFFAtomType::O_3, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 0.960,
+            k_bond: 7.794,
+            r0: 0.972,
         }),
         (MMFFAtomType::H, MMFFAtomType::O_2, BondType::Single)
         | (MMFFAtomType::O_2, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 0.960,
+            k_bond: 7.794,
+            r0: 0.972,
         }),
         (MMFFAtomType::H, MMFFAtomType::O_R, BondType::Single)
         | (MMFFAtomType::O_R, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 0.960,
+            k_bond: 7.794,
+            r0: 0.972,
         }),
 
         // S-H bonds (symmetric)
@@ -270,8 +282,8 @@ pub fn get_bond_params(
         }),
         (MMFFAtomType::C_3, MMFFAtomType::Cl, BondType::Single)
         | (MMFFAtomType::Cl, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 3.5,
-            r0: 1.78,
+            k_bond: 2.893,
+            r0: 1.805,
         }),
         (MMFFAtomType::C_3, MMFFAtomType::Br, BondType::Single)
         | (MMFFAtomType::Br, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
@@ -376,6 +388,10 @@ pub fn get_bond_params(
 }
 
 /// Calculate bond stretching energy
+///
+/// MMFF94 anharmonic bond stretch (RDKit-compatible):
+///   E = 0.5 * c1 * kb * dr² * (1 + cs * dr + c3 * cs² * dr²)
+/// where cs = -2.0, c3 = 7/12, c1 = 143.9324
 pub fn bond_energy(coords: &[[f64; 3]], i: usize, j: usize, params: &BondParams) -> f64 {
     let r_vec = [
         coords[j][0] - coords[i][0],
@@ -385,11 +401,18 @@ pub fn bond_energy(coords: &[[f64; 3]], i: usize, j: usize, params: &BondParams)
     let r = (r_vec[0].powi(2) + r_vec[1].powi(2) + r_vec[2].powi(2)).sqrt();
     let dr = r - params.r0;
 
-    // E_bond = 143.9324 * k_bond * (r - r0)^2  (kcal/mol)
-    143.9324 * params.k_bond * dr * dr
+    // RDKit anharmonic bond stretch
+    let c1 = 143.9324;
+    let cs = -2.0;
+    let c3 = 7.0 / 12.0;
+    let dr2 = dr * dr;
+
+    c1 * params.k_bond * dr2 * (1.0 + cs * dr + c3 * cs * cs * dr2) / 2.0
 }
 
 /// Calculate bond stretching gradient (forces on atoms i and j)
+///
+/// Uses numerical differentiation for the anharmonic term.
 pub fn bond_gradient(
     coords: &[[f64; 3]],
     i: usize,
@@ -408,10 +431,17 @@ pub fn bond_gradient(
         return ([0.0; 3], [0.0; 3]);
     }
 
-    // dE/dr = 2 * 143.9324 * k_bond * (r - r0)
-    let d_e_dr = 2.0 * 143.9324 * params.k_bond * dr;
+    // dE/dr for anharmonic bond:
+    // E = 0.5 * c1 * kb * dr² * (1 + cs * dr + c3 * cs² * dr²)
+    // dE/dr = c1 * kb * dr * (1 + 1.5 * cs * dr + 2.0 * c3 * cs² * dr²)
+    let c1 = 143.9324;
+    let cs = -2.0;
+    let c3 = 7.0 / 12.0;
+
+    let d_e_dr = c1 * params.k_bond * dr * (1.0 + 1.5 * cs * dr + 2.0 * c3 * cs * cs * dr * dr);
 
     // grad_i = -dE/dr * r_vec / r, grad_j = +dE/dr * r_vec / r
+    // (gradient points in direction of increasing energy, so descent moves opposite)
     let grad_i = [
         -d_e_dr * r_vec[0] / r,
         -d_e_dr * r_vec[1] / r,

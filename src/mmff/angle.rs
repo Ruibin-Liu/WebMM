@@ -15,72 +15,75 @@ pub fn get_angle_params(
     type2: MMFFAtomType,
     type3: MMFFAtomType,
 ) -> Option<AngleParams> {
+    let type1 = super::base_type(type1);
+    let type2 = super::base_type(type2);
+    let type3 = super::base_type(type3);
     match (type1, type2, type3) {
         // C-C-C angles (sp3 centered)
         (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 1.05,
-            theta0: 109.47,
+            k_theta: 0.851,
+            theta0: 109.608,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::C_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 1.15,
-            theta0: 121.0,
+            k_theta: 0.65,
+            theta0: 108.385,
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::C_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 1.10,
-            theta0: 120.0,
+            k_theta: 0.803,
+            theta0: 120.419,
         }),
         (MMFFAtomType::N_3, MMFFAtomType::C_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::N_3) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 109.47,
+            k_theta: 0.851,
+            theta0: 109.608,
         }),
         (MMFFAtomType::O_3, MMFFAtomType::C_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::O_3) => Some(AngleParams {
-            k_theta: 1.10,
-            theta0: 109.47,
+            k_theta: 0.992,
+            theta0: 108.133,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.47,
+            k_theta: 0.636,
+            theta0: 110.549,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.77,
-            theta0: 109.47,
+            k_theta: 0.516,
+            theta0: 108.836,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::C_3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 1.15,
-            theta0: 120.0,
+            k_theta: 0.636,
+            theta0: 110.549,
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::C_3, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 1.10,
-            theta0: 120.0,
+            k_theta: 0.803,
+            theta0: 120.419,
         }),
 
         // C=C-C angles (sp2 centered)
         (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 1.15,
-            theta0: 121.0,
+            k_theta: 0.65,
+            theta0: 108.385,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::C_2, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 1.20,
+            k_theta: 1.15,
             theta0: 120.0,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.45,
-            theta0: 120.0,
+            k_theta: 0.594,
+            theta0: 116.699,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.50,
-            theta0: 120.0,
+            k_theta: 0.808,
+            theta0: 117.28,
         }),
         (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
-            k_theta: 1.30,
-            theta0: 121.0,
+            k_theta: 1.043,
+            theta0: 109.716,
         }),
         (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_2) => Some(AngleParams {
             k_theta: 1.30,
@@ -89,21 +92,21 @@ pub fn get_angle_params(
 
         // Aromatic C-C-C angles
         (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 1.05,
-            theta0: 120.0,
+            k_theta: 0.669,
+            theta0: 119.977,
         }),
         (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 1.05,
-            theta0: 120.0,
+            k_theta: 0.803,
+            theta0: 120.419,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.50,
-            theta0: 120.0,
+            k_theta: 0.563,
+            theta0: 120.571,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 120.0,
+            k_theta: 0.627,
+            theta0: 109.491,
         }),
         (MMFFAtomType::N_AR, MMFFAtomType::C_AR, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::N_AR) => Some(AngleParams {
@@ -123,21 +126,21 @@ pub fn get_angle_params(
 
         // C-N-C angles (N_3 centered)
         (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 109.47,
+            k_theta: 0.851,
+            theta0: 109.608,
         }),
         (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 116.0,
+            k_theta: 0.65,
+            theta0: 108.385,
         }),
         (MMFFAtomType::H, MMFFAtomType::N_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 109.47,
+            k_theta: 0.636,
+            theta0: 110.549,
         }),
         (MMFFAtomType::H, MMFFAtomType::N_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.50,
-            theta0: 109.47,
+            k_theta: 0.595,
+            theta0: 105.998,
         }),
 
         // C-N-C angles (N_PL3 centered)
@@ -191,17 +194,22 @@ pub fn get_angle_params(
 
         // C-O-C angles (O_3 centered)
         (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 109.47,
+            k_theta: 1.197,
+            theta0: 106.926,
         }),
         (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.75,
-            theta0: 109.47,
+            k_theta: 0.793,
+            theta0: 106.503,
+        }),
+        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_2)
+        | (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
+            k_theta: 0.793,
+            theta0: 104.05,
         }),
         (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.47,
+            k_theta: 0.658,
+            theta0: 103.978,
         }),
 
         // C-O-C angles (O_R centered)
@@ -221,13 +229,28 @@ pub fn get_angle_params(
 
         // C=O angles (carbonyl)
         (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 124.0,
+            k_theta: 1.155,
+            theta0: 124.425,
         }),
         (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_AR)
         | (MMFFAtomType::C_AR, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
             k_theta: 1.30,
             theta0: 120.0,
+        }),
+        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_3)
+        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
+            k_theta: 1.043,
+            theta0: 121.0,
+        }),
+        (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::C_3)
+        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some(AngleParams {
+            k_theta: 1.043,
+            theta0: 126.56,
+        }),
+        (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::O_3)
+        | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some(AngleParams {
+            k_theta: 1.155,
+            theta0: 124.425,
         }),
 
         // C-S-C angles
@@ -259,13 +282,13 @@ pub fn get_angle_params(
         // Halogen angles
         (MMFFAtomType::F, MMFFAtomType::C_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::F) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.47,
+            k_theta: 0.576,
+            theta0: 109.609,
         }),
         (MMFFAtomType::Cl, MMFFAtomType::C_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::Cl) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.47,
+            k_theta: 1.654,
+            theta0: 97.335,
         }),
         (MMFFAtomType::Br, MMFFAtomType::C_3, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::Br) => Some(AngleParams {
@@ -281,6 +304,12 @@ pub fn get_angle_params(
         | (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::Cl) => Some(AngleParams {
             k_theta: 0.80,
             theta0: 120.0,
+        }),
+
+        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::O_3)
+        | (MMFFAtomType::O_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
+            k_theta: 0.781,
+            theta0: 108.577,
         }),
 
         // Heteroatom centered
@@ -310,6 +339,12 @@ pub fn get_angle_params(
 }
 
 /// Calculate angle bending energy
+///
+/// MMFF94 anharmonic angle bend (RDKit-compatible):
+///   E = 0.5 * c2 * ka * angle² * (1 + cb * angle)
+/// where cb = -0.006981317, c2 = 143.9324 * (π/180)² = 0.04385
+/// angle is in degrees
+/// For linear angles: E = c2 * ka * (1 + cos(theta))
 pub fn angle_energy(
     coords: &[[f64; 3]],
     i: usize,
@@ -321,11 +356,11 @@ pub fn angle_energy(
     let theta_deg = theta_rad.to_degrees();
     let dtheta = theta_deg - params.theta0;
 
-    // Convert to radians
-    let dtheta_rad = dtheta.to_radians();
+    // RDKit anharmonic angle bend
+    let c2 = 143.9324 * (std::f64::consts::PI / 180.0).powi(2); // = 0.04385
+    let cb = -0.006981317;
 
-    // E_angle = 0.000043945 * k_theta * (theta - theta0)^2  (kcal/mol)
-    0.000043945 * params.k_theta * dtheta_rad * dtheta_rad
+    0.5 * c2 * params.k_theta * dtheta * dtheta * (1.0 + cb * dtheta)
 }
 
 /// Calculate angle between three atoms
@@ -390,43 +425,46 @@ pub fn angle_gradient(
         return ([0.0; 3], [0.0; 3], [0.0; 3]);
     }
 
-    // dE/dtheta = 2 * 0.000043945 * k_theta * (theta - theta0)
-    let prefactor = 2.0 * 0.000043945 * params.k_theta * (theta - params.theta0.to_radians());
+    // RDKit anharmonic angle gradient:
+    // angleTerm = theta (degrees) - theta0 (degrees)
+    // dE/dTheta = RAD2DEG * c2 * ka * angleTerm * (1.0 + 1.5 * cb * angleTerm)
+    // where c2 = 143.9324 * (pi/180)^2
+    let theta_deg = theta.to_degrees();
+    let angle_term = theta_deg - params.theta0;
+    let c2 = 143.9324 * (std::f64::consts::PI / 180.0).powi(2);
+    let cb = -0.006981317;
+    let rad2deg = 180.0 / std::f64::consts::PI;
+
+    let d_e_dtheta = rad2deg * c2 * params.k_theta * angle_term * (1.0 + 1.5 * cb * angle_term);
+
+    // dtheta/dr1 = -1/(|r1|*sin(theta)) * (r2/|r2| - cos(theta)*r1/|r1|)
+    // dtheta/dr3 = -1/(|r2|*sin(theta)) * (r1/|r1| - cos(theta)*r2/|r2|)
+    // dtheta/dr2 = -(dtheta/dr1 + dtheta/dr3)
+    // dE/dr = dE/dtheta * dtheta/dr
+
+    let inv_r1_sq = 1.0 / (r1_norm * r1_norm);
+    let inv_r2_sq = 1.0 / (r2_norm * r2_norm);
+    let inv_r1_r2 = 1.0 / (r1_norm * r2_norm);
 
     // Gradient for atom1
     let grad1 = [
-        prefactor
-            * (r2[0] / (r1_norm * r1_norm * sin_theta) - cos_theta * r1[0] / (r1_norm * r1_norm)),
-        prefactor
-            * (r2[1] / (r1_norm * r1_norm * sin_theta) - cos_theta * r1[1] / (r1_norm * r1_norm)),
-        prefactor
-            * (r2[2] / (r1_norm * r1_norm * sin_theta) - cos_theta * r1[2] / (r1_norm * r1_norm)),
-    ];
-
-    // Gradient for atom2 (center of angle)
-    let grad2 = [
-        -grad1[0]
-            - prefactor
-                * (r1[0] / (r2_norm * r2_norm * sin_theta)
-                    - cos_theta * r2[0] / (r2_norm * r2_norm)),
-        -grad1[1]
-            - prefactor
-                * (r1[1] / (r2_norm * r2_norm * sin_theta)
-                    - cos_theta * r2[1] / (r2_norm * r2_norm)),
-        -grad1[2]
-            - prefactor
-                * (r1[2] / (r2_norm * r2_norm * sin_theta)
-                    - cos_theta * r2[2] / (r2_norm * r2_norm)),
+        -d_e_dtheta * (r2[0] * inv_r1_r2 - cos_theta * r1[0] * inv_r1_sq) / sin_theta,
+        -d_e_dtheta * (r2[1] * inv_r1_r2 - cos_theta * r1[1] * inv_r1_sq) / sin_theta,
+        -d_e_dtheta * (r2[2] * inv_r1_r2 - cos_theta * r1[2] * inv_r1_sq) / sin_theta,
     ];
 
     // Gradient for atom3
     let grad3 = [
-        prefactor
-            * (r1[0] / (r2_norm * r2_norm * sin_theta) - cos_theta * r2[0] / (r2_norm * r2_norm)),
-        prefactor
-            * (r1[1] / (r2_norm * r2_norm * sin_theta) - cos_theta * r2[1] / (r2_norm * r2_norm)),
-        prefactor
-            * (r1[2] / (r2_norm * r2_norm * sin_theta) - cos_theta * r2[2] / (r2_norm * r2_norm)),
+        -d_e_dtheta * (r1[0] * inv_r1_r2 - cos_theta * r2[0] * inv_r2_sq) / sin_theta,
+        -d_e_dtheta * (r1[1] * inv_r1_r2 - cos_theta * r2[1] * inv_r2_sq) / sin_theta,
+        -d_e_dtheta * (r1[2] * inv_r1_r2 - cos_theta * r2[2] * inv_r2_sq) / sin_theta,
+    ];
+
+    // Gradient for atom2 (center of angle)
+    let grad2 = [
+        -(grad1[0] + grad3[0]),
+        -(grad1[1] + grad3[1]),
+        -(grad1[2] + grad3[2]),
     ];
 
     (grad1, grad2, grad3)
@@ -455,18 +493,18 @@ mod tests {
 
     #[test]
     fn test_angle_energy_zero_at_equilibrium() {
-        // Place atoms so the H-C-H angle equals theta0 = 109.47 degrees
-        let theta = 109.47_f64.to_radians();
-        let r = 1.1;
+        let theta0_deg = 108.836;
+        let half = (theta0_deg / 2.0_f64).to_radians();
+        let r = 1.093;
         let coords = vec![
-            [r * theta.cos(), r * theta.sin(), 0.0],
+            [r * half.cos(), r * half.sin(), 0.0],
             [0.0, 0.0, 0.0],
-            [r * theta.cos(), -r * theta.sin(), 0.0],
+            [r * half.cos(), -r * half.sin(), 0.0],
         ];
 
         let params = AngleParams {
-            k_theta: 0.8,
-            theta0: 109.47,
+            k_theta: 0.516,
+            theta0: theta0_deg,
         };
         let energy = angle_energy(&coords, 0, 1, 2, &params);
 
@@ -494,11 +532,20 @@ mod tests {
 
     #[test]
     fn test_angle_gradient_numerical() {
-        let coords = vec![[1.526, 0.0, 0.0], [0.0, 0.0, 0.0], [1.526, 0.934, 0.0]];
+        // Use a non-equilibrium angle to test the gradient
+        let theta0_deg = 108.836;
+        let actual_deg = 115.0; // Perturbed from equilibrium
+        let half = (actual_deg / 2.0_f64).to_radians();
+        let r = 1.093;
+        let coords = vec![
+            [r * half.cos(), r * half.sin(), 0.0],
+            [0.0, 0.0, 0.0],
+            [r * half.cos(), -r * half.sin(), 0.0],
+        ];
 
         let params = AngleParams {
-            k_theta: 0.8,
-            theta0: 109.47,
+            k_theta: 0.516,
+            theta0: theta0_deg,
         };
 
         let (g1, g2, g3) = angle_gradient(&coords, 0, 1, 2, &params);
@@ -512,13 +559,21 @@ mod tests {
                 coords_p[atom_idx][dim] += eps;
                 let e_plus = angle_energy(&coords_p, 0, 1, 2, &params);
                 let num_grad = (e_plus - e0) / eps;
+                let abs_diff = (grad[dim] - num_grad).abs();
+                let max_mag = grad[dim].abs().max(num_grad.abs());
+                let rel_err = if max_mag > 1e-4 {
+                    abs_diff / max_mag
+                } else {
+                    abs_diff
+                };
                 assert!(
-                    (grad[dim] - num_grad).abs() < 1e-3,
-                    "Analytical grad[{}] = {} but numerical = {} for atom {}",
+                    rel_err < 1e-3,
+                    "Analytical grad[{}] = {} but numerical = {} for atom {} (rel_err={})",
                     dim,
                     grad[dim],
                     num_grad,
-                    atom_idx
+                    atom_idx,
+                    rel_err
                 );
             }
         }

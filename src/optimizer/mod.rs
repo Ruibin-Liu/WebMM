@@ -36,7 +36,6 @@ pub fn optimize(
 
     let mut converged = false;
     let mut final_energy = 0.0;
-    let mut prev_energy = f64::MAX;
     let mut final_iter = 0;
 
     for iter in 0..convergence.max_iterations {
@@ -53,14 +52,6 @@ pub fn optimize(
         }
 
         final_energy = energy;
-
-        // Check energy change convergence
-        if iter > 0 && (prev_energy - energy).abs() < convergence.energy_change {
-            converged = true;
-            final_iter = iter + 1;
-            break;
-        }
-        prev_energy = energy;
 
         // Check force convergence
         let max_f = g
@@ -82,8 +73,49 @@ pub fn optimize(
             compute_lbfgs_direction(&g, &s_history, &y_history, &rho_history)
         };
 
+        // Verify descent direction: g^T * d must be negative
+        let gt_dot_d: f64 = g.iter().zip(d.iter()).map(|(gi, di)| gi * di).sum();
+        let d = if gt_dot_d >= 0.0 {
+            // L-BFGS produced a non-descent direction; reset to steepest descent
+            s_history.clear();
+            y_history.clear();
+            rho_history.clear();
+            g.iter().map(|&gi| -gi).collect()
+        } else {
+            d
+        };
+
         // Line search (Armijo backtracking)
-        let alpha = armijo_line_search(ff, &x, &d, n_atoms, energy, &g, 0.01, 0.1, 1e-4, 1e-10);
+        // Use max-component scaling to get ~0.1 Å displacement per atom
+        let max_component = d
+            .iter()
+            .map(|di| di.abs())
+            .fold(0.0f64, f64::max)
+            .max(1e-10);
+        let initial_alpha = if iter == 0 || s_history.len() < 3 {
+            0.1 / max_component // ~0.1 Å max displacement for steepest descent
+        } else {
+            0.3 / max_component // slightly larger for L-BFGS
+        };
+        let alpha = armijo_line_search(
+            ff,
+            &x,
+            &d,
+            n_atoms,
+            energy,
+            &g,
+            initial_alpha,
+            0.5,
+            1e-4,
+            1e-10,
+        );
+
+        // If step is tiny, reset L-BFGS history (corrupted approximation)
+        if alpha * max_component < 1e-8 {
+            s_history.clear();
+            y_history.clear();
+            rho_history.clear();
+        }
 
         // Update x
         for i in 0..n_coords {
@@ -110,7 +142,7 @@ pub fn optimize(
             .map(|(gi, xi)| gi * xi)
             .sum::<f64>();
 
-        if y_dot_s.abs() > 1e-10 {
+        if y_dot_s > 1e-10 {
             if s_history.len() >= memory_size {
                 s_history.remove(0);
                 y_history.remove(0);

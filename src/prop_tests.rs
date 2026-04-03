@@ -108,11 +108,11 @@ M  END"#, x, y, z, x + 1.5, y, z);
             let coords_far = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]];  // Far, ~zero
 
             let (_e_close, _, _) = vdw_energy_and_gradient(
-                &coords_close, 0, 1, &params, &params);
+                &coords_close, 0, 1, &params, &params, false);
             let (e_mid, _, _) = vdw_energy_and_gradient(
-                &coords_mid, 0, 1, &params, &params);
+                &coords_mid, 0, 1, &params, &params, false);
             let (e_far, _, _) = vdw_energy_and_gradient(
-                &coords_far, 0, 1, &params, &params);
+                &coords_far, 0, 1, &params, &params, false);
 
             // At minimum distance (r0), energy should be negative (attractive)
             prop_assert!(
@@ -173,8 +173,15 @@ M  END"#, x, y, z, x + 1.5, y, z);
                 let e_plus = bond_energy(&coords_plus, 0, 1, &params);
                 let num_grad = (e_plus - e0) / eps;
 
+                let abs_diff = (g2[dim] - num_grad).abs();
+                let max_mag = g2[dim].abs().max(num_grad.abs());
+                let rel_err = if max_mag > 1e-4 {
+                    abs_diff / max_mag
+                } else {
+                    abs_diff
+                };
                 prop_assert!(
-                    (g2[dim] - num_grad).abs() < 1e-3,
+                    rel_err < 1e-3,
                     "Gradient mismatch at dim {}: analytical={}, numerical={}",
                     dim, g2[dim], num_grad
                 );

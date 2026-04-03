@@ -76,22 +76,16 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
     let mut bonds = Vec::new();
 
     for (i, line) in lines[atom_start..atom_end].iter().enumerate() {
-        if line.len() < 34 {
-            return Err(format!("Atom line {} too short: {}", i + 1, line.len()));
+        // Extract coordinates using whitespace splitting (more robust than fixed columns)
+        let prefix = if line.len() > 34 { &line[..34] } else { line };
+        let parts: Vec<&str> = prefix.split_whitespace().collect();
+        if parts.len() < 4 {
+            return Err(format!("Atom line {} has too few fields: {}", i + 1, line));
         }
-
-        let end = std::cmp::min(34, line.len());
-        let symbol = line[31..end].trim();
-        let symbol = if symbol.is_empty() {
-            "C".to_string()
-        } else {
-            symbol.to_string()
-        };
-
-        // Extract coordinates (columns 0-9, 10-19, 20-29)
-        let x: f64 = line[0..9].trim().parse().unwrap_or(0.0);
-        let y: f64 = line[10..19].trim().parse().unwrap_or(0.0);
-        let z: f64 = line[20..29].trim().parse().unwrap_or(0.0);
+        let x: f64 = parts[0].parse().unwrap_or(0.0);
+        let y: f64 = parts[1].parse().unwrap_or(0.0);
+        let z: f64 = parts[2].parse().unwrap_or(0.0);
+        let symbol = parts[3].to_string();
 
         let atomic_number = get_atomic_number(&symbol);
         let mass = get_atomic_mass(atomic_number);

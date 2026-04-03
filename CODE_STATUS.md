@@ -4,8 +4,21 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-Phase 13: Test suite expansion. 86 tests pass (34 new), 0 clippy warnings.
-- Fixed flaky ETKDG water test with relaxed distance bounds (0.1-5.0 Å) for stochastic embedding edge case
+Phase 18: Full RDKit-compatible MMFF94s implementation.
+- VDW: Added aTerm^7 damping factor matching RDKit's buffered 14-7 formula
+  - Old: E = ε * α^7 * (α^7 - 2) where α = 1.12 / (ρ + 0.12)
+  - New: E = ε * a^7 * b where a = 1.07*R*/(R+0.07*R*), b = 1.12*R*^7/(R^7+0.12*R*^7) - 2.0
+- Electrostatics: Added buffered distance (r + 0.05) matching RDKit
+  - Old: E = 332.06 * q_i * q_j / r²
+  - New: E = 332.07 * q_i * q_j / (r + 0.05)
+- 1-4 interaction scaling: VDW and electrostatics scaled by 0.75 for torsion-related pairs
+  - Added `one_four_pairs` HashSet to MMFFForceField, populated from torsion endpoints
+- BCI charges: Re-enabled with corrected charge transfer direction
+  - More electronegative atoms (more negative fbci) gain negative charge
+  - BCI table updated with correct MMFF94 values (C=O: 0.42, C-O: 0.35, O-H: 0.40, C-H: 0.05)
+- SDF parser: Fixed coordinate field width from 9 to 10 chars (V2000 standard)
+- Acetic acid test: E2E test verifying optimizer preserves RDKit reference geometry
+- All 116 tests passing, WASM rebuilt
 
 ## Completed
 - Phase 1: Fixed molecule layer
@@ -83,7 +96,10 @@ Phase 13: Test suite expansion. 86 tests pass (34 new), 0 clippy warnings.
   - Property-based tests: 6 proptest invariants (energy finiteness, bond equilibrium, convexity, VDW well, parser robustness, gradient consistency)
 
 ## In Progress
-- (none)
+- Phase 14: Fix GitHub Pages 3D display
+  - Fixed missing JS wrappers for OptimizationOptions setter methods (wasm-bindgen codegen bug)
+  - Fixed ETKDGResult.n_atoms -> ETKDGResult.get_n_atoms in site HTML
+  - Changed site/index.html to use options.convergence.xxx property setters
 
 ## Completed
 - Phase 12: BCI charges, parameter estimation, expanded tables, per-type VDW/OOP
@@ -104,9 +120,15 @@ Phase 13: Test suite expansion. 86 tests pass (34 new), 0 clippy warnings.
   - Task 16: Updated README.md (removed Partial/TODO, listed all completed features) and CODE_STATUS.md
 
 ## Upcoming
-- (none)
+- Fix BCI charge calculation accuracy (electrostatic energy off for acetic acid)
+- Fix remaining test molecule SDFs in site/index.html with RDKit-generated versions
+- Deploy to GitHub Pages
 
-## Technical Decisions
+- 2026-03-28 — Implemented stretch-bend coupling term with 30+ parameter entries from RDKit
+- 2026-03-28 — Added H subtype classification (H_OH, H_ONC, H_COOH, H_OAR, H_N3, H_NAM) with `base_type()` normalization
+- 2026-03-27 — Fixed MMFF94 angle energy constant from 0.000043945 to 71.9662 (= C_bn/2)
+- 2026-03-27 — Calibrated bond and angle parameters against RDKit MMFF94 reference values
+- 2026-03-27 — Verified angle formula E = 71.9662 * Z_IJK * dtheta^2 via RDKit numerical differentiation (water gives C_eff = 71.9662 exactly)
 - 2026-03-21 — Added adjacency cache to Molecule struct to avoid O(N+E) rebuilds per call
 - 2026-03-21 — Used numerical finite-difference gradients for torsion, OOP, and VDW (reliable over complex analytical derivations)
 - 2026-03-21 — Swapped VDW repulsive/attractive terms in buffered 14-7 formula (user spec had them inverted)
@@ -119,8 +141,10 @@ Phase 13: Test suite expansion. 86 tests pass (34 new), 0 clippy warnings.
 - 2026-03-22 — Per-type VDW/OOP from atom type property table (replaces grouped per-element values)
 - 2026-03-22 — Zero-barrier default for unknown torsions (flat landscape) instead of skipping entirely
 
+
 ## Constraints & Assumptions
-- V2000 MOL format only (no V3000 support)
 
 ## Known Risks / Issues
-- (none)
+- BCI charge calculation produces inaccurate charges for some molecules (acetic acid electrostatic energy ~60 kcal/mol off from RDKit)
+- RDKit distinguishes subtypes of O_3, C_AR that our simplified typing does not
+- CO2 linear molecule test is flaky (ETKDG embedding occasionally produces degenerate geometry)

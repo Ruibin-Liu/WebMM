@@ -1,7 +1,8 @@
 //! MMFF94/MMFF94s force field implementation
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::molecule::Bond;
 use crate::molecule::BondType;
 use crate::molecule::Hybridization;
 use crate::molecule::Molecule;
@@ -13,6 +14,7 @@ pub mod charges;
 pub mod electrostatics;
 pub mod estimation;
 pub mod oop;
+pub mod stretch_bend;
 pub mod torsion;
 pub mod vdw;
 
@@ -23,10 +25,23 @@ pub use charges::*;
 pub use electrostatics::*;
 pub use estimation::*;
 pub use oop::*;
+pub use stretch_bend::*;
 pub use torsion::*;
 pub use vdw::*;
 
 pub use crate::MMFFVariant;
+
+pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
+    match t {
+        MMFFAtomType::H_OH
+        | MMFFAtomType::H_ONC
+        | MMFFAtomType::H_COOH
+        | MMFFAtomType::H_OAR
+        | MMFFAtomType::H_N3
+        | MMFFAtomType::H_NAM => MMFFAtomType::H,
+        other => other,
+    }
+}
 
 /// MMFF atom type
 #[allow(non_camel_case_types)]
@@ -34,6 +49,12 @@ pub use crate::MMFFVariant;
 pub enum MMFFAtomType {
     // Hydrogen
     H,
+    H_OH,   // H in water (H-O-H, all O neighbors are H)
+    H_ONC,  // H bonded to O_3 where O bonded to C_3 (ethanol)
+    H_COOH, // H bonded to O_3 where O bonded to C_2 (carboxylic acid -OH)
+    H_OAR,  // H bonded to O_3 where O bonded to C_AR (phenol)
+    H_N3,   // H bonded to N_3 (ammonia)
+    H_NAM,  // H bonded to N_AM or N_AR (aniline, acetamide)
 
     // Carbons
     C_3,
@@ -93,10 +114,12 @@ pub struct MMFFForceField {
     pub atom_types: Vec<MMFFAtomType>,
     pub charges: Vec<f64>,
     pub variant: MMFFVariant,
-    angles: Vec<crate::molecule::Angle>,
-    torsions: Vec<crate::molecule::Torsion>,
-    oops: Vec<crate::molecule::OutOfPlane>,
-    excluded_pairs: HashSet<(usize, usize)>,
+    pub angles: Vec<crate::molecule::Angle>,
+    pub torsions: Vec<crate::molecule::Torsion>,
+    pub oops: Vec<crate::molecule::OutOfPlane>,
+    pub excluded_pairs: HashSet<(usize, usize)>,
+    pub one_four_pairs: HashSet<(usize, usize)>,
+    pub bond_map: HashMap<(usize, usize), Bond>,
 }
 
 impl MMFFForceField {
@@ -109,17 +132,29 @@ impl MMFFForceField {
         let oops = crate::molecule::graph::find_out_of_planes(mol);
 
         let mut excluded_pairs = HashSet::new();
+        let mut one_four_pairs = HashSet::new();
+        let mut bond_map = HashMap::new();
 
         // 1-2 pairs (bonded)
         for bond in &mol.bonds {
             let (a, b) = (bond.atom1.min(bond.atom2), bond.atom1.max(bond.atom2));
             excluded_pairs.insert((a, b));
+            bond_map.insert((a, b), bond.clone());
         }
 
         // 1-3 pairs (angle endpoints)
         for angle in &angles {
             let (a, c) = (angle.atom1.min(angle.atom3), angle.atom1.max(angle.atom3));
             excluded_pairs.insert((a, c));
+        }
+
+        // 1-4 pairs (torsion endpoints) — scaled by 0.75
+        for torsion in &torsions {
+            let (a, d) = (
+                torsion.atom1.min(torsion.atom4),
+                torsion.atom1.max(torsion.atom4),
+            );
+            one_four_pairs.insert((a, d));
         }
 
         Self {
@@ -131,6 +166,8 @@ impl MMFFForceField {
             torsions,
             oops,
             excluded_pairs,
+            one_four_pairs,
+            bond_map,
         }
     }
 
@@ -191,8 +228,14 @@ impl MMFFForceField {
                     .collect();
 
                 match (atom.atomic_number, hybrid, aromatic, num_bonds) {
-                    // Hydrogen
-                    (1, _, _, _) => MMFFAtomType::H,
+                    // Hydrogen - context-dependent subtyping
+                    (1, _, _, _) => {
+                        let neighbor_idx = mol.adjacency[idx]
+                            .first()
+                            .expect("H must have exactly one neighbor");
+                        let neighbor = &mol.atoms[*neighbor_idx];
+                        Self::determine_h_subtype(idx, mol, *neighbor_idx)
+                    }
 
                     // Carbon with formal charge
                     (6, _, _, _) if charge.abs() > 0.5 => {
@@ -272,6 +315,61 @@ impl MMFFForceField {
         calculate_bci_charges(mol, atom_types)
     }
 
+    fn determine_h_subtype(h_idx: usize, mol: &Molecule, neighbor_idx: usize) -> MMFFAtomType {
+        let neighbor = &mol.atoms[neighbor_idx];
+        match neighbor.atomic_number {
+            8 => {
+                let o_neighbors: Vec<usize> = mol.adjacency[neighbor_idx]
+                    .iter()
+                    .filter(|&&n| n != h_idx)
+                    .copied()
+                    .collect();
+
+                if o_neighbors.is_empty() {
+                    return MMFFAtomType::H_OH;
+                }
+
+                let all_h = o_neighbors.iter().all(|&n| mol.atoms[n].atomic_number == 1);
+                if all_h {
+                    return MMFFAtomType::H_OH;
+                }
+
+                let non_h_neighbor = o_neighbors
+                    .iter()
+                    .find(|&&n| mol.atoms[n].atomic_number != 1);
+
+                if let Some(&nn) = non_h_neighbor {
+                    let nn_atom = &mol.atoms[nn];
+                    match nn_atom.atomic_number {
+                        6 => {
+                            // Check if the carbon has a double bond (carbonyl)
+                            let has_double_bond = mol.bonds.iter().any(|b| {
+                                (b.atom1 == nn || b.atom2 == nn) && b.bond_type == BondType::Double
+                            });
+                            if has_double_bond {
+                                MMFFAtomType::H_COOH
+                            } else {
+                                MMFFAtomType::H_ONC
+                            }
+                        }
+                        _ => MMFFAtomType::H_ONC,
+                    }
+                } else {
+                    MMFFAtomType::H_OH
+                }
+            }
+            7 => {
+                let n_atom = neighbor;
+                let n_type = match (n_atom.atomic_number, mol.adjacency[neighbor_idx].len()) {
+                    (7, 3) => MMFFAtomType::H_N3,
+                    _ => MMFFAtomType::H_NAM,
+                };
+                n_type
+            }
+            _ => MMFFAtomType::H,
+        }
+    }
+
     pub fn calculate_energy_and_gradient(&self, coords: &[[f64; 3]]) -> (f64, Vec<[f64; 3]>) {
         let mut energy = 0.0;
         let mut gradient = vec![[0.0; 3]; self.mol.atoms.len()];
@@ -313,6 +411,64 @@ impl MMFFForceField {
                 gradient[angle.atom3][0] += g3[0];
                 gradient[angle.atom3][1] += g3[1];
                 gradient[angle.atom3][2] += g3[2];
+            }
+        }
+
+        // Stretch-bend coupling
+        for angle in &self.angles {
+            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
+            let bij_key = (i.min(j), i.max(j));
+            let bkj_key = (k.min(j), k.max(j));
+            let bond_ij = self.bond_map.get(&bij_key);
+            let bond_kj = self.bond_map.get(&bkj_key);
+            if let (Some(bij), Some(bkj)) = (bond_ij, bond_kj) {
+                if let (
+                    Some(sb_params),
+                    Some(bond_params_ij),
+                    Some(bond_params_kj),
+                    Some(angle_params),
+                ) = (
+                    get_stretch_bend_params(
+                        self.atom_types[i],
+                        self.atom_types[j],
+                        self.atom_types[k],
+                        bij.bond_type,
+                        bkj.bond_type,
+                    ),
+                    get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type),
+                    get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type),
+                    get_angle_params(self.atom_types[i], self.atom_types[j], self.atom_types[k]),
+                ) {
+                    energy += stretch_bend_energy(
+                        coords,
+                        i,
+                        j,
+                        k,
+                        bond_params_ij.r0,
+                        bond_params_kj.r0,
+                        angle_params.theta0.to_radians(),
+                        &sb_params,
+                    );
+                    let (g1, g2, g3) = stretch_bend_gradient(
+                        coords,
+                        i,
+                        j,
+                        k,
+                        bond_params_ij.r0,
+                        bond_params_kj.r0,
+                        angle_params.theta0.to_radians(),
+                        &sb_params,
+                    );
+                    gradient[i][0] += g1[0];
+                    gradient[i][1] += g1[1];
+                    gradient[i][2] += g1[2];
+                    gradient[j][0] += g2[0];
+                    gradient[j][1] += g2[1];
+                    gradient[j][2] += g2[2];
+                    gradient[k][0] += g3[0];
+                    gradient[k][1] += g3[1];
+                    gradient[k][2] += g3[2];
+                }
             }
         }
 
@@ -390,14 +546,16 @@ impl MMFFForceField {
         }
 
         // Van der Waals (all nonbonded pairs, excluding 1-2 and 1-3)
+        // 1-4 pairs are scaled by 0.75
         let n = self.mol.atoms.len();
         for i in 0..n {
             for j in (i + 1)..n {
                 if !self.excluded_pairs.contains(&(i, j)) {
                     let params_i = get_vdw_params(self.atom_types[i]);
                     let params_j = get_vdw_params(self.atom_types[j]);
+                    let is_14 = self.one_four_pairs.contains(&(i, j));
                     let (e, grad_i, grad_j) =
-                        vdw_energy_and_gradient(coords, i, j, &params_i, &params_j);
+                        vdw_energy_and_gradient(coords, i, j, &params_i, &params_j, is_14);
                     energy += e;
                     gradient[i][0] += grad_i[0];
                     gradient[i][1] += grad_i[1];
@@ -409,12 +567,16 @@ impl MMFFForceField {
             }
         }
 
-        // Electrostatics (all charged pairs)
+        // Electrostatics (all charged pairs, excluding 1-2 and 1-3)
+        // 1-4 pairs are scaled by 0.75
         for i in 0..n {
             for j in (i + 1)..n {
-                if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
+                if !self.excluded_pairs.contains(&(i, j))
+                    && (self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6)
+                {
+                    let is_14 = self.one_four_pairs.contains(&(i, j));
                     let (e, grad_i, grad_j) =
-                        electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0);
+                        electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
                     energy += e;
                     gradient[i][0] += grad_i[0];
                     gradient[i][1] += grad_i[1];
@@ -435,5 +597,150 @@ impl MMFFForceField {
 
     pub fn calculate_gradient(&self, coords: &[[f64; 3]]) -> Vec<[f64; 3]> {
         self.calculate_energy_and_gradient(coords).1
+    }
+
+    pub fn calculate_energy_breakdown(&self, coords: &[[f64; 3]]) -> EnergyBreakdown {
+        let mut bd = EnergyBreakdown::default();
+        let n = self.mol.atoms.len();
+
+        for bond in &self.mol.bonds {
+            if let Some(params) = get_bond_params(
+                self.atom_types[bond.atom1],
+                self.atom_types[bond.atom2],
+                bond.bond_type,
+            ) {
+                bd.bond += bond_energy(coords, bond.atom1, bond.atom2, &params);
+            }
+        }
+
+        for angle in &self.angles {
+            if let Some(params) = get_angle_params(
+                self.atom_types[angle.atom1],
+                self.atom_types[angle.atom2],
+                self.atom_types[angle.atom3],
+            ) {
+                bd.angle += angle_energy(coords, angle.atom1, angle.atom2, angle.atom3, &params);
+            }
+        }
+
+        for angle in &self.angles {
+            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
+            let bij_key = (i.min(j), i.max(j));
+            let bkj_key = (k.min(j), k.max(j));
+            let bond_ij = self.bond_map.get(&bij_key);
+            let bond_kj = self.bond_map.get(&bkj_key);
+            if let (Some(bij), Some(bkj)) = (bond_ij, bond_kj) {
+                if let (
+                    Some(sb_params),
+                    Some(bond_params_ij),
+                    Some(bond_params_kj),
+                    Some(angle_params),
+                ) = (
+                    get_stretch_bend_params(
+                        self.atom_types[i],
+                        self.atom_types[j],
+                        self.atom_types[k],
+                        bij.bond_type,
+                        bkj.bond_type,
+                    ),
+                    get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type),
+                    get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type),
+                    get_angle_params(self.atom_types[i], self.atom_types[j], self.atom_types[k]),
+                ) {
+                    bd.stretch_bend += stretch_bend_energy(
+                        coords,
+                        i,
+                        j,
+                        k,
+                        bond_params_ij.r0,
+                        bond_params_kj.r0,
+                        angle_params.theta0.to_radians(),
+                        &sb_params,
+                    );
+                }
+            }
+        }
+
+        for torsion in &self.torsions {
+            if let Some(params) = get_torsion_params(
+                self.atom_types[torsion.atom1],
+                self.atom_types[torsion.atom2],
+                self.atom_types[torsion.atom3],
+                self.atom_types[torsion.atom4],
+                self.variant,
+            ) {
+                bd.torsion += torsion_energy(
+                    coords,
+                    torsion.atom1,
+                    torsion.atom2,
+                    torsion.atom3,
+                    torsion.atom4,
+                    &params,
+                );
+            }
+        }
+
+        for oop in &self.oops {
+            let params = get_oop_params(self.atom_types[oop.central], self.variant);
+            bd.oop += oop_energy(
+                coords,
+                oop.central,
+                oop.atom1,
+                oop.atom2,
+                oop.atom3,
+                &params,
+            );
+        }
+
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if !self.excluded_pairs.contains(&(i, j)) {
+                    let params_i = get_vdw_params(self.atom_types[i]);
+                    let params_j = get_vdw_params(self.atom_types[j]);
+                    let is_14 = self.one_four_pairs.contains(&(i, j));
+                    let (e, _, _) =
+                        vdw_energy_and_gradient(coords, i, j, &params_i, &params_j, is_14);
+                    bd.vdw += e;
+                }
+            }
+        }
+
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if !self.excluded_pairs.contains(&(i, j))
+                    && (self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6)
+                {
+                    let is_14 = self.one_four_pairs.contains(&(i, j));
+                    let (e, _, _) =
+                        electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
+                    bd.electrostatic += e;
+                }
+            }
+        }
+
+        bd
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EnergyBreakdown {
+    pub bond: f64,
+    pub angle: f64,
+    pub stretch_bend: f64,
+    pub torsion: f64,
+    pub oop: f64,
+    pub vdw: f64,
+    pub electrostatic: f64,
+}
+
+impl EnergyBreakdown {
+    pub fn total(&self) -> f64 {
+        self.bond
+            + self.angle
+            + self.stretch_bend
+            + self.torsion
+            + self.oop
+            + self.vdw
+            + self.electrostatic
     }
 }
