@@ -1,58 +1,68 @@
-# Plan: Fix MMFF94 Angle Energy and Parameter Accuracy
+# Plan: Fix BCI Charge Calculation to Match RDKit MMFF94
 
 ## Problem
-Angle energy contributes nearly zero to total energy due to wrong constant.
-Bond and angle parameters differ significantly from RDKit's MMFF94 reference values,
-causing incorrect optimized geometries and energy breakdowns.
+BCI charge calculation produces inaccurate charges for acetic acid and other molecules,
+causing electrostatic energy to be ~60 kcal/mol off from RDKit's MMFF94 reference.
 
 ## Root Cause Analysis
 
-### Angle Energy Constant (Biggest Bug)
-The angle energy formula uses constant `0.000043945` which is off by factor of ~1.6M.
-RDKit's MMFF94 implementation uses `71.9662 = C_bn/2 = 143.9324/2`.
-Verified by numerical second derivative of RDKit's angle-only energy for water (3 atoms):
-- d2E/dtheta2 = 94.707, Z_IJK = 0.658
-- C_eff = 94.707 / (2 * 0.658) = 71.966 (matches exactly)
+Our current BCI implementation is fundamentally different from RDKit's:
 
-### Bond Parameters
-Several bond kb/r0 values differ from RDKit's MMFF94 (extracted via `GetMMFFBondStretchParams`):
-- O_3-H: ours 5.5/0.960 vs RDKit 7.880/0.969 (kb 30% low)
-- C_3-H: ours 4.5/1.113 vs RDKit 4.766/1.093 (r0 too high)
-- C_3-C_3: ours 4.7/1.526 vs RDKit 4.258/1.508
-- C_2=O_2: ours 10.5/1.22 vs RDKit 12.95/1.222 (kb 19% low)
-- C_AR-H: ours 4.3/1.080 vs RDKit 5.306/1.084 (kb 19% low)
-- C_AR-C_AR: ours 6.0/1.39 vs RDKit 5.573/1.374
-- C_3-O_3: ours 5.5/1.43 vs RDKit 5.047/1.418
+### Our Implementation (WRONG)
+1. Simple lookup table of ~37 BCI values by atom type pair
+2. Ad-hoc fallback: `(fbci_j - fbci_i).abs() * bond_order * 0.3 / (degree_i + degree_j)`
+3. Charge direction determined by comparing fbci values
+4. Post-hoc neutralization to match formal charge
 
-### Angle Parameters
-Z_IJK and theta0 values differ from RDKit:
-- H-O_3-H: ours Z=0.80/t0=109.47 vs RDKit Z=0.658/t0=103.978
-- H-C_3-H: ours Z=0.77/t0=109.47 vs RDKit Z=0.516/t0=108.836
-- H-C_2-H: ours Z=0.45/t0=120.0 vs RDKit Z=0.594/t0=116.699
-- C_AR-C_AR-C_AR: ours Z=1.05/t0=120.0 vs RDKit Z=0.669/t0=119.977
+### RDKit's Implementation (CORRECT - Halgren 1996 Eq. 15)
+1. Large BCI table of 498 entries indexed by (bondType, iAtomType, jAtomType)
+2. PBCI (partial bond charge increment) per atom type for fallback: `BCI_ij = pbci_i - pbci_j`
+3. Directional BCI lookup with sign convention: if i > j, swap and negate sign
+4. Full Eq. 15: `q_i = (1 - M_i * v_i) * q0_i + v_i * SUM(q0_j) + SUM(BCI_ij)`
+   - For neutral molecules with v_i = 0: `q_i = q0_i + SUM(BCI_ij)`
+   - q0_i = MMFF formal charge (usually 0 for neutral atoms)
+   - M_i = coordination number, v_i = formal charge adjustment factor
+5. No separate neutralization step needed - the formula inherently produces correct total charge
+
+### Key Differences for Acetic Acid
+For acetic acid (C_3-C_2(=O_2)-O_3-H_COOH):
+- Our O_3-H BCI: 0.40 (same for all H-O types)
+- RDKit O_3-H_COOH BCI: 0.50 (type 6,24 entry: +0.5000)
+- Our C_2=O_2 BCI: 0.42
+- RDKit C_2-O_2 BCI: -0.5700 (much larger magnitude, different sign convention)
+- Our C_2-O_3 BCI: 0.35
+- RDKit C_2-O_3 BCI: -0.1500
 
 ## Fix
 
-### Step 1: Fix angle energy and gradient constants
-- `src/mmff/angle.rs`: Change `0.000043945` to `71.9662` in both `angle_energy()` and `angle_gradient()`
+### Step 1: Replace BCI table in `src/mmff/charges.rs`
+- Replace the 37-entry `get_bci()` function with a complete BCI table from RDKit's MMFFCHG.PAR
+- Use MMFF numeric atom types as keys (1-99)
+- Include bond type (0=single, 1=double, 4=aromatic) in lookup
+- Implement directional lookup with sign convention (swap + negate if i > j)
 
-### Step 2: Update bond parameters to match RDKit MMFF94
-Update `src/mmff/bond.rs` hardcoded entries based on RDKit reference data.
+### Step 2: Add PBCI table for fallback
+- Add PBCI values from RDKit's MMFFPBCI.PAR
+- When no explicit BCI exists, use: `BCI_ij = pbci_i - pbci_j`
+- Also store `fcadj` (formal charge adjustment) and `crd` (coordination number) per type
 
-### Step 3: Update angle parameters to match RDKit MMFF94
-Update `src/mmff/angle.rs` hardcoded entries based on RDKit reference data.
+### Step 3: Implement Eq. 15 charge calculation
+- For neutral molecules (v=0): `q_i = SUM(BCI_ij for all bonds j of atom i)`
+- Add MMFF formal charge handling for charged species
+- Remove old neutralization step
 
-### Step 4: Run tests and fix failures
-Fix any tests that depend on the old (wrong) parameter values.
+### Step 4: Add atom type number mapping
+- Map our MMFFAtomType enum to RDKit numeric types (1-99)
+- Use this mapping for BCI/PBCI lookup
 
-### Step 5: Rebuild WASM and verify in browser
+### Step 5: Run tests and fix failures
+
+### Step 6: Rebuild WASM
 
 ## Changes
-- `src/mmff/angle.rs`: Fix constants and update angle parameter table
-- `src/mmff/bond.rs`: Update bond parameter table
-- `src/lib.rs`: Fix tests that depend on old parameters
+- `src/mmff/charges.rs`: Replace with RDKit-compatible BCI implementation
+- `src/mmff/atom_types.rs`: Add numeric type ID to AtomTypeProperties
 - `CODE_STATUS.md`: Update with changes
 
 ## Reference Data
-RDKit MMFF94 parameters extracted via Python API for 7 molecules:
-Water, Methane, Formaldehyde, Ethane, Ethanol, Acetic Acid, Benzene.
+RDKit MMFF94 BCI/PBCI parameters from Code/ForceField/MMFF/Params.cpp

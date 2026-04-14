@@ -2593,10 +2593,7 @@ M  END"#;
         eprintln!("  Torsion: {:.4} (should be ~0 at planar)", bd.torsion);
         eprintln!("  OOP: {:.4}", bd.oop);
         eprintln!("  VDW: {:.4}", bd.vdw);
-        eprintln!(
-            "  Elec: {:.4} (known inaccurate due to BCI)",
-            bd.electrostatic
-        );
+        eprintln!("  Elec: {:.4}", bd.electrostatic);
 
         // At RDKit geometry, bond and angle terms should be small
         assert!(
