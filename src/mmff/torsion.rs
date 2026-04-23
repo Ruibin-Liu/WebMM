@@ -70,15 +70,53 @@ pub fn get_torsion_params(
             v3: 0.0,
         }),
 
+        // Aromatic torsions: central bond is aromatic
+        // V2 = 7.0 (or 4.0 for 5-membered N-heterocycles like pyrrole/imidazole)
         (_, MMFFAtomType::C_AR, MMFFAtomType::C_AR, _) => Some(TorsionParams {
             v1: 0.0,
-            v2: 0.0,
+            v2: 7.0,
             v3: 0.0,
         }),
 
         (_, MMFFAtomType::C_AR, MMFFAtomType::N_AR, _) => Some(TorsionParams {
             v1: 0.0,
-            v2: 0.0,
+            v2: 7.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::N_AR, MMFFAtomType::C_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 7.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::N_AR, MMFFAtomType::N_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 7.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::C_AR, MMFFAtomType::S_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 7.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::S_AR, MMFFAtomType::C_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 7.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::N_AR, MMFFAtomType::S_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 7.0,
+            v3: 0.0,
+        }),
+
+        (_, MMFFAtomType::S_AR, MMFFAtomType::N_AR, _) => Some(TorsionParams {
+            v1: 0.0,
+            v2: 7.0,
             v3: 0.0,
         }),
 
@@ -147,7 +185,7 @@ pub fn torsion_energy(
     let cos_2phi = (2.0 * phi).cos();
     let cos_3phi = (3.0 * phi).cos();
 
-    params.v1 * (1.0 + cos_phi) + params.v2 * (1.0 - cos_2phi) + params.v3 * (1.0 + cos_3phi)
+    0.5 * (params.v1 * (1.0 + cos_phi) + params.v2 * (1.0 - cos_2phi) + params.v3 * (1.0 + cos_3phi))
 }
 
 /// Calculate dihedral angle between four atoms

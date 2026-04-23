@@ -8,8 +8,6 @@ use super::MMFFAtomType;
 pub struct VDWParams {
     pub r0: f64,
     pub epsilon: f64,
-    pub alpha: f64,
-    pub beta: f64,
 }
 
 pub fn get_vdw_params(atom_type: MMFFAtomType) -> VDWParams {
@@ -18,14 +16,10 @@ pub fn get_vdw_params(atom_type: MMFFAtomType) -> VDWParams {
         Some(props) => VDWParams {
             r0: props.vdw_r,
             epsilon: props.vdw_eps,
-            alpha: props.vdw_alpha,
-            beta: 2.25,
         },
         None => VDWParams {
             r0: 1.7,
             epsilon: 0.07,
-            alpha: 0.083,
-            beta: 2.25,
         },
     }
 }
@@ -137,12 +131,7 @@ mod tests {
     use super::*;
 
     fn make_params(r0: f64, epsilon: f64) -> VDWParams {
-        VDWParams {
-            r0,
-            epsilon,
-            alpha: 0.08333,
-            beta: 2.25,
-        }
+        VDWParams { r0, epsilon }
     }
 
     #[test]

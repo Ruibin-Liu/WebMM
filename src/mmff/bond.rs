@@ -153,6 +153,11 @@ pub fn get_bond_params(
             k_bond: 5.801,
             r0: 1.355,
         }),
+        (MMFFAtomType::C_2, MMFFAtomType::O_R, BondType::Single)
+        | (MMFFAtomType::O_R, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
+            k_bond: 5.801,
+            r0: 1.355,
+        }),
         (MMFFAtomType::C_AR, MMFFAtomType::O_R, BondType::Aromatic)
         | (MMFFAtomType::O_R, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
             k_bond: 5.0,

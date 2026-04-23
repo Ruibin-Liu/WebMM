@@ -39,6 +39,12 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         | MMFFAtomType::H_OAR
         | MMFFAtomType::H_N3
         | MMFFAtomType::H_NAM => MMFFAtomType::H,
+        // 5-membered heteroaromatic ring atoms use same params as generic aromatic
+        MMFFAtomType::C5A | MMFFAtomType::C5B => MMFFAtomType::C_AR,
+        MMFFAtomType::NPYL | MMFFAtomType::N5A | MMFFAtomType::N5B => MMFFAtomType::N_AR,
+        MMFFAtomType::OFUR => MMFFAtomType::O_3,
+        // Water oxygen uses same params as generic sp3 oxygen
+        MMFFAtomType::OH2 => MMFFAtomType::O_3,
         other => other,
     }
 }
@@ -61,6 +67,8 @@ pub enum MMFFAtomType {
     C_2,
     C_1,
     C_AR,
+    C5A,    // Alpha C in 5-membered heteroaromatic ring (MMFF 63)
+    C5B,    // Beta C in 5-membered heteroaromatic ring (MMFF 64)
     C_CAT,
     C_AN,
 
@@ -68,17 +76,22 @@ pub enum MMFFAtomType {
     N_3,
     N_2,
     N_1,
-    N_AR,
+    N_AR,   // Pyridine-type N in 6-membered ring (MMFF 38)
+    NPYL,   // Pyrrole-type N in 5-membered ring (MMFF 39)
     N_PL3,
     N_AM,
     N_4,
     N_2Z,
     N_SOM,
+    N5A,    // Alpha N in 5-membered heteroaromatic ring (MMFF 65)
+    N5B,    // Beta N in 5-membered heteroaromatic ring (MMFF 66)
 
     // Oxygens
     O_3,
     O_2,
-    O_R,
+    O_R,    // Ether/alcohol O (MMFF 6) — note: water uses OH2 (70)
+    OH2,    // Water oxygen (MMFF 70)
+    OFUR,   // Furan oxygen (MMFF 59)
     O_CO2,
     O_3_Z,
 
@@ -157,6 +170,12 @@ impl MMFFForceField {
             one_four_pairs.insert((a, d));
         }
 
+        // Also find 1-4 pairs across non-rotatable bonds (double/triple bonds)
+        use crate::molecule::graph::find_one_four_pairs;
+        for (a, d) in find_one_four_pairs(mol) {
+            one_four_pairs.insert((a, d));
+        }
+
         Self {
             mol: mol.clone(),
             atom_types,
@@ -172,21 +191,71 @@ impl MMFFForceField {
     }
 
     fn assign_atom_types(mol: &Molecule) -> Vec<MMFFAtomType> {
-        use crate::molecule::graph::{determine_hybridization, find_rings, get_aromatic_atoms};
+        use crate::molecule::graph::{determine_hybridization, get_aromatic_atoms, find_rings};
 
         let aromatic_atoms = get_aromatic_atoms(mol);
         let rings = find_rings(mol);
+        
+        // Detect 5-membered heteroaromatic rings and classify their atoms
+        let mut atom_5ring_type: std::collections::HashMap<usize, MMFFAtomType> = std::collections::HashMap::new();
+        for ring in &rings {
+            if ring.len() != 5 { continue; }
+            let all_aromatic = ring.iter().all(|a| aromatic_atoms.contains(a));
+            if !all_aromatic { continue; }
+            let hetero_atoms: Vec<usize> = ring.iter().filter(|&&a| {
+                let an = mol.atoms[a].atomic_number;
+                an == 7 || an == 8 || an == 16
+            }).copied().collect();
+            if hetero_atoms.is_empty() { continue; }
+            
+            for &atom_idx in ring {
+                let an = mol.atoms[atom_idx].atomic_number;
+                let hetero_neighbors_in_ring: Vec<usize> = ring.iter().filter(|&&n| {
+                    n != atom_idx && mol.adjacency[atom_idx].contains(&n) && 
+                    (mol.atoms[n].atomic_number == 7 || mol.atoms[n].atomic_number == 8 || mol.atoms[n].atomic_number == 16)
+                }).copied().collect();
+                
+                let typ = match an {
+                    6 => {
+                        if hetero_neighbors_in_ring.len() == 1 {
+                            MMFFAtomType::C5A
+                        } else {
+                            MMFFAtomType::C5B
+                        }
+                    }
+                    7 => {
+                        let h_count = mol.adjacency[atom_idx].iter().filter(|&&n| mol.atoms[n].atomic_number == 1).count();
+                        if h_count >= 1 {
+                            MMFFAtomType::NPYL
+                        } else {
+                            // N without H in 5-ring: could be N5A or N5B
+                            // N5B = pyridine-like (beta position), N5A = alpha
+                            // For simplicity, use N5B for N without H (imidazole-type)
+                            MMFFAtomType::N5B
+                        }
+                    }
+                    8 => MMFFAtomType::OFUR,
+                    16 => MMFFAtomType::S_AR,
+                    _ => continue,
+                };
+                atom_5ring_type.insert(atom_idx, typ);
+            }
+        }
 
         mol.atoms
             .iter()
             .map(|atom| {
                 let idx = atom.index;
+                
+                // Check if atom is in a 5-membered heteroaromatic ring
+                if let Some(&typ) = atom_5ring_type.get(&idx) {
+                    return typ;
+                }
+                
                 let hybrid = determine_hybridization(idx, mol);
                 let aromatic = aromatic_atoms.contains(&idx);
                 let num_bonds = crate::molecule::graph::get_neighbors(idx, mol).len();
                 let charge = atom.charge;
-
-                let _in_ring = rings.iter().any(|r| r.contains(&idx));
 
                 let has_c_o_neighbor = mol.bonds.iter().any(|b| {
                     let other = if b.atom1 == idx {
@@ -234,7 +303,7 @@ impl MMFFForceField {
                             .first()
                             .expect("H must have exactly one neighbor");
                         let neighbor = &mol.atoms[*neighbor_idx];
-                        Self::determine_h_subtype(idx, mol, *neighbor_idx)
+                        Self::determine_h_subtype(idx, mol, *neighbor_idx, &aromatic_atoms)
                     }
 
                     // Carbon with formal charge
@@ -246,11 +315,11 @@ impl MMFFForceField {
                         }
                     }
 
-                    // Carbon types
-                    (6, Hybridization::Sp3, false, 1..=4) => MMFFAtomType::C_3,
-                    (6, Hybridization::Sp2, _, 2..) => MMFFAtomType::C_2,
-                    (6, Hybridization::Sp1, _, 1..=2) => MMFFAtomType::C_1,
+                    // Carbon types — aromatic takes priority over hybridization
                     (6, _, true, _) => MMFFAtomType::C_AR,
+                    (6, Hybridization::Sp3, false, 1..=4) => MMFFAtomType::C_3,
+                    (6, Hybridization::Sp2, false, 2..) => MMFFAtomType::C_2,
+                    (6, Hybridization::Sp1, _, 1..=2) => MMFFAtomType::C_1,
 
                     // Nitrogen with formal charge +1
                     (7, Hybridization::Sp3, _, _) if charge.abs() > 0.5 && charge > 0.0 => {
@@ -260,34 +329,44 @@ impl MMFFForceField {
                     // Nitrogen: amide N (aromatic ring + bonded to C=O)
                     (7, _, true, _) if has_c_o_neighbor => MMFFAtomType::N_AM,
 
-                    // N_PL3: sp3 N bonded to C=O
+                    // N_PL3: sp3 N bonded to C=O or to aromatic carbon (aniline)
                     (7, Hybridization::Sp3, false, _) if has_c_o_neighbor => MMFFAtomType::N_PL3,
+                    (7, Hybridization::Sp3, false, _) if carbon_neighbors.iter().any(|&c| aromatic_atoms.contains(&c)) => MMFFAtomType::N_PL3,
 
-                    // Nitrogen types
+                    // Nitrogen types — aromatic takes priority
+                    (7, _, true, 2..=3) => MMFFAtomType::N_AR,
+                    (7, _, true, _) => MMFFAtomType::N_AM,
                     (7, Hybridization::Sp3, false, 1..=3) => MMFFAtomType::N_3,
                     (7, Hybridization::Sp2, false, 2..) => MMFFAtomType::N_2,
                     (7, Hybridization::Sp1, false, 1..=2) => MMFFAtomType::N_1,
-                    (7, _, true, 2..=3) => MMFFAtomType::N_AR,
-                    (7, _, true, _) => MMFFAtomType::N_AM,
 
                     // O_CO2: sp2 O double-bonded to carbon
                     (8, _, _, _) if has_double_bond_to_c => MMFFAtomType::O_CO2,
+
+                    // Water O: two H neighbors
+                    (8, Hybridization::Sp3, _, 2) if carbon_neighbors.is_empty() => {
+                        MMFFAtomType::OH2
+                    }
 
                     // O_R: sp3 O bonded to 2 carbons (ether)
                     (8, Hybridization::Sp3, _, 2) if carbon_neighbors.len() == 2 => {
                         MMFFAtomType::O_R
                     }
 
+                    // Alcohol O: sp3 O bonded to 1 C and 1 H
+                    (8, Hybridization::Sp3, _, 2) if carbon_neighbors.len() == 1 => {
+                        MMFFAtomType::O_R
+                    }
+
                     // Oxygen types
-                    (8, Hybridization::Sp3, _, 2..) => MMFFAtomType::O_3,
+                    (8, Hybridization::Sp3, _, 3..) => MMFFAtomType::O_3,
                     (8, Hybridization::Sp2, _, _) => MMFFAtomType::O_2,
-                    (8, _, true, 2) => MMFFAtomType::O_R,
                     (8, Hybridization::Sp3, true, _) => MMFFAtomType::O_3_Z,
 
-                    // Sulfur types
+                    // Sulfur types — aromatic takes priority
+                    (16, _, true, 2..=3) => MMFFAtomType::S_AR,
                     (16, Hybridization::Sp3, _, 2..) => MMFFAtomType::S_3,
                     (16, Hybridization::Sp2, _, _) => MMFFAtomType::S_2,
-                    (16, _, true, 2..=3) => MMFFAtomType::S_AR,
 
                     // Phosphorus types
                     (15, Hybridization::Sp3, _, 3..=4) => MMFFAtomType::P_3,
@@ -315,7 +394,12 @@ impl MMFFForceField {
         calculate_bci_charges(mol, atom_types)
     }
 
-    fn determine_h_subtype(h_idx: usize, mol: &Molecule, neighbor_idx: usize) -> MMFFAtomType {
+    fn determine_h_subtype(
+        h_idx: usize,
+        mol: &Molecule,
+        neighbor_idx: usize,
+        aromatic_atoms: &std::collections::HashSet<usize>,
+    ) -> MMFFAtomType {
         let neighbor = &mol.atoms[neighbor_idx];
         match neighbor.atomic_number {
             8 => {
@@ -342,14 +426,18 @@ impl MMFFForceField {
                     let nn_atom = &mol.atoms[nn];
                     match nn_atom.atomic_number {
                         6 => {
-                            // Check if the carbon has a double bond (carbonyl)
-                            let has_double_bond = mol.bonds.iter().any(|b| {
-                                (b.atom1 == nn || b.atom2 == nn) && b.bond_type == BondType::Double
-                            });
-                            if has_double_bond {
-                                MMFFAtomType::H_COOH
+                            if aromatic_atoms.contains(&nn) {
+                                MMFFAtomType::H_OAR
                             } else {
-                                MMFFAtomType::H_ONC
+                                let has_double_bond = mol.bonds.iter().any(|b| {
+                                    (b.atom1 == nn || b.atom2 == nn)
+                                        && b.bond_type == BondType::Double
+                                });
+                                if has_double_bond {
+                                    MMFFAtomType::H_COOH
+                                } else {
+                                    MMFFAtomType::H_ONC
+                                }
                             }
                         }
                         _ => MMFFAtomType::H_ONC,
@@ -359,12 +447,20 @@ impl MMFFForceField {
                 }
             }
             7 => {
-                let n_atom = neighbor;
-                let n_type = match (n_atom.atomic_number, mol.adjacency[neighbor_idx].len()) {
-                    (7, 3) => MMFFAtomType::H_N3,
-                    _ => MMFFAtomType::H_NAM,
-                };
-                n_type
+                // H_NAM for H bonded to N that is conjugated: aromatic N, amide N (double bond),
+                // or aniline N (bonded to aromatic carbon)
+                let n_is_aniline = mol.adjacency[neighbor_idx].iter().any(|&nbr| {
+                    aromatic_atoms.contains(&nbr) && mol.atoms[nbr].atomic_number == 6
+                });
+                let n_is_amide = mol.bonds.iter().any(|b| {
+                    (b.atom1 == neighbor_idx || b.atom2 == neighbor_idx) && b.bond_type == BondType::Double
+                });
+                let n_is_aromatic = aromatic_atoms.contains(&neighbor_idx);
+                if n_is_aniline || n_is_amide || n_is_aromatic {
+                    MMFFAtomType::H_NAM
+                } else {
+                    MMFFAtomType::H_N3
+                }
             }
             _ => MMFFAtomType::H,
         }

@@ -4,14 +4,48 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-Phase 19: RDKit-compatible BCI charge calculation.
-- Replaced ad-hoc BCI implementation with RDKit MMFF94 charge model
-  - 31 explicit BCI entries verified against RDKit reverse engineering
-  - PBCI fallback for unlisted pairs: `BCI_ij = pbci_i - pbci_j`
-  - Directional sign convention: canonical (min,max) ordering with sign flip
-  - Fixed H subtype type mapping: H_ONC→21(HOR), H_OAR→29(HOCC), H_OH→31(HOH), H_N3→23(HNR), H_COOH→24(HOCO), H_NAM→28(HNCO)
-- Acetic acid charges now match RDKit exactly (C_3=+0.061, C_2=+0.659, O_2=-0.570, O_3=-0.650, H_COOH=+0.500)
-- All 118 tests passing
+Phase 25: ETKDG v3 Full Exact Port — Phase 7 COMPLETE: Fill All Remaining Gaps
+
+Phase 1 (Distance Bounds) completed:
+- `ComputedData` struct, 1-5 geometry helpers, `set_15_bounds_helper`, H-bond detection, macrocycle 14-config
+
+Phase 2 (Embedding Pipeline) completed:
+- Fixed `find_chiral_centers` volume bounds, basic chirality detection, `minimize_fourth_dimension`, `check_tetrahedral`
+
+Phase 3 (Torsion Preferences) completed:
+- Full 6-term Fourier series, 15 pattern categories, basic knowledge ring torsions
+
+Phase 4 (Force Field) completed:
+- Replaced O(n³) finite-difference gradient with full analytical gradients
+- Distance bounds: analytical dE/dr for all pairs
+- Chiral volumes: analytical gradient via scalar triple product derivatives
+- Dihedral gradient: standard MD formula (verified by translational invariance)
+- Torsion preferences: analytical dE/dφ chained through dihedral gradient
+- Planarity: analytical for ring/exocyclic torsions, numerical for impropers (negligible cost)
+- All 122 tests pass, 0 clippy warnings, 4× speedup (19s → 4.4s)
+
+Phase 5 (Aromaticity) completed:
+- Rewrote `is_aromatic` with RDKit-style candidate check: all ring atoms must be candidates
+- Added `is_aromatic_candidate`, `count_pi_electrons`, `has_multiple_bond_in_ring`, `ring_has_heteroatom`, `estimate_total_neighbors`
+- Correctly handles 5-membered heteroaromatics in Kekulé form: furan, thiophene, imidazole, pyrrole
+- Distinguishes pyrrole-like N (2e⁻) from pyridine-like N (1e⁻) via neighbor count
+- Correctly rejects non-aromatic rings: cyclohexane, cyclohexene, 2,5-dihydrofuran, cyclopentadiene
+- Added 3 unit tests: `test_is_aromatic_furan_kekule`, `test_is_aromatic_imidazole_kekule`, `test_is_aromatic_2_5_dihydrofuran`
+- All 125 tests pass, 0 clippy errors
+
+Phase 6 (Conformer Validation) completed:
+- Added `has_vdw_clash` function: rejects conformers with non-bonded atoms closer than 60% of VDW sum
+- Integrated clash check into conformer selection loop in `generate_initial_coords_with_config`
+- Conformer must pass planarity, double-bond geometry, chirality, stereo, AND be clash-free to be accepted
+- All 125 tests pass, WASM build verified
+
+Phase 7 (Fill All Remaining Gaps) completed:
+- Amide/ester trans preference in 1-4 bounds: non-ring 1-4 paths through amide (C=O–N) or ester (C=O–O) bonds now enforce trans geometry via `compute_14_dist_trans` with `GEN_DIST_TOL` window
+- Added `is_ester_bond` helper: detects ester single-bond C–O adjacent to carbonyl, excludes anhydrides
+- Wired up `force_trans_amides` config: default changed from `false` to `true` (RDKit ETKDGv3 default); bounds builder now reads `config.force_trans_amides` for non-ring 1-4 paths
+- Bond length validation: added `bond_lengths_reasonable` function checking all bond distances against expected covalent-radius sums (with bond-type scaling); tolerance ±0.30 Å
+- Integrated bond validation into conformer selection loop alongside existing checks
+- All 125 tests pass, 0 clippy errors, WASM build verified
 
 ## Completed
 - Phase 1: Fixed molecule layer

@@ -14,20 +14,27 @@ fn mmff_type_id(t: MMFFAtomType) -> u8 {
         MMFFAtomType::C_2 => 3,
         MMFFAtomType::C_1 => 4,
         MMFFAtomType::C_AR => 37,
+        MMFFAtomType::C5A => 63,
+        MMFFAtomType::C5B => 64,
         MMFFAtomType::C_CAT => 56,
         MMFFAtomType::C_AN => 57,
         MMFFAtomType::N_3 => 8,
         MMFFAtomType::N_2 => 9,
         MMFFAtomType::N_1 => 42,
         MMFFAtomType::N_AR => 38,
+        MMFFAtomType::NPYL => 39,
         MMFFAtomType::N_PL3 => 40,
         MMFFAtomType::N_AM => 10,
         MMFFAtomType::N_4 => 34,
         MMFFAtomType::N_2Z => 53,
         MMFFAtomType::N_SOM => 48,
+        MMFFAtomType::N5A => 65,
+        MMFFAtomType::N5B => 66,
         MMFFAtomType::O_3 => 6,
         MMFFAtomType::O_2 => 7,
-        MMFFAtomType::O_R => 70,
+        MMFFAtomType::O_R => 6,  // alcohol/ether O is type 6, not 70
+        MMFFAtomType::OH2 => 70,
+        MMFFAtomType::OFUR => 59,
         MMFFAtomType::O_CO2 => 32,
         MMFFAtomType::O_3_Z => 35,
         MMFFAtomType::F => 11,
@@ -654,41 +661,49 @@ mod tests {
                 atom1: 0,
                 atom2: 1,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 1,
                 atom2: 2,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 2,
                 atom2: 3,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 4,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 5,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 6,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 1,
                 atom2: 7,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 1,
                 atom2: 8,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
         ];
         let mol = make_molecule(atoms, bonds);
@@ -750,11 +765,13 @@ mod tests {
                 atom1: 0,
                 atom2: 1,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 2,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
         ];
         let mol = make_molecule(atoms, bonds);
@@ -793,6 +810,7 @@ mod tests {
             atom1: 0,
             atom2: 1,
             bond_type: BondType::Single,
+            ..Default::default()
         }];
         let mol = make_molecule(atoms, bonds);
         let atom_types = vec![MMFFAtomType::O_3, MMFFAtomType::H];
@@ -847,16 +865,19 @@ mod tests {
                 atom1: 0,
                 atom2: 1,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 2,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 3,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
         ];
         let mol = make_molecule(atoms, bonds);
@@ -968,36 +989,43 @@ mod tests {
                 atom1: 0,
                 atom2: 1,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 1,
                 atom2: 2,
                 bond_type: BondType::Double,
+                ..Default::default()
             },
             Bond {
                 atom1: 1,
                 atom2: 3,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 4,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 5,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 6,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 3,
                 atom2: 7,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
         ];
         let mol = make_molecule(atoms, bonds);

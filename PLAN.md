@@ -1,68 +1,49 @@
-# Plan: Fix BCI Charge Calculation to Match RDKit MMFF94
+# Plan: Fill All Remaining Gaps — MMFF Atom Type Expansion + ETKDG Refinement
 
 ## Problem
-BCI charge calculation produces inaccurate charges for acetic acid and other molecules,
-causing electrostatic energy to be ~60 kcal/mol off from RDKit's MMFF94 reference.
+Our MMFF atom type enum is missing several types that RDKit uses for 5-membered heteroaromatic rings (pyrrole, furan, thiophene, imidazole) and some simple molecules (water, alcohols). This causes incorrect force field parameters and ETKDG geometry.
 
-## Root Cause Analysis
+## Missing Types (from RDKit/Towhee MMFF94)
 
-Our current BCI implementation is fundamentally different from RDKit's:
+| Num | Name | Where Used |
+|-----|------|-----------|
+| 21 | `HOR` / `H_ONC` | H on alcohol O (methanol, ethanol) — currently mis-assigned as `H_OH` (31) |
+| 39 | `NPYL` | Pyrrole N, imidazole N with H |
+| 59 | `OFUR` | Furan O |
+| 63 | `C5A` | 5-ring C alpha to heteroatom |
+| 64 | `C5B` | 5-ring C beta to heteroatom |
+| 65 | `N5A` | 5-ring N alpha position (rare) |
+| 66 | `N5B` | 5-ring N beta position (imidazole pyridine-like N) |
+| 70 | `OH2` | Water O — currently mis-assigned as `O_3` (6) |
 
-### Our Implementation (WRONG)
-1. Simple lookup table of ~37 BCI values by atom type pair
-2. Ad-hoc fallback: `(fbci_j - fbci_i).abs() * bond_order * 0.3 / (degree_i + degree_j)`
-3. Charge direction determined by comparing fbci values
-4. Post-hoc neutralization to match formal charge
+## Implementation Steps
 
-### RDKit's Implementation (CORRECT - Halgren 1996 Eq. 15)
-1. Large BCI table of 498 entries indexed by (bondType, iAtomType, jAtomType)
-2. PBCI (partial bond charge increment) per atom type for fallback: `BCI_ij = pbci_i - pbci_j`
-3. Directional BCI lookup with sign convention: if i > j, swap and negate sign
-4. Full Eq. 15: `q_i = (1 - M_i * v_i) * q0_i + v_i * SUM(q0_j) + SUM(BCI_ij)`
-   - For neutral molecules with v_i = 0: `q_i = q0_i + SUM(BCI_ij)`
-   - q0_i = MMFF formal charge (usually 0 for neutral atoms)
-   - M_i = coordination number, v_i = formal charge adjustment factor
-5. No separate neutralization step needed - the formula inherently produces correct total charge
+### Step 1: Add enum variants
+- Add `NPYL`, `OFUR`, `C5A`, `C5B`, `N5A`, `N5B` to `MMFFAtomType` enum
+- Update `mmff_type_id()` mapping in `charges.rs`
+- Ensure existing `N_AR=38`, `O_R=70`, `S_AR=44` are correct
 
-### Key Differences for Acetic Acid
-For acetic acid (C_3-C_2(=O_2)-O_3-H_COOH):
-- Our O_3-H BCI: 0.40 (same for all H-O types)
-- RDKit O_3-H_COOH BCI: 0.50 (type 6,24 entry: +0.5000)
-- Our C_2=O_2 BCI: 0.42
-- RDKit C_2-O_2 BCI: -0.5700 (much larger magnitude, different sign convention)
-- Our C_2-O_3 BCI: 0.35
-- RDKit C_2-O_3 BCI: -0.1500
+### Step 2: Fix atom type assignment logic
+- **Water**: O with 2 H neighbors → `OH2` (70), not `O_3` (6)
+- **Alcohols**: H on O bonded to C → `HOR` (21), not `H_OH` (31)
+- **5-membered heteroaromatics**: 
+  - Detect 5-membered rings with heteroatoms (N, O, S)
+  - C bonded to heteroatom → `C5A` (63)
+  - C not bonded to heteroatom → `C5B` (64)
+  - N with H in 5-ring → `NPYL` (39)
+  - N without H, double-bonded in 5-ring → `N5B` (66)
+  - O in 5-ring → `OFUR` (59)
+  - S in 5-ring → `S_AR` (44) — already correct
 
-## Fix
+### Step 3: Update property table
+- Add property entries for new types in `atom_types.rs`
+- Use values from MMFF literature / RDKit reference
 
-### Step 1: Replace BCI table in `src/mmff/charges.rs`
-- Replace the 37-entry `get_bci()` function with a complete BCI table from RDKit's MMFFCHG.PAR
-- Use MMFF numeric atom types as keys (1-99)
-- Include bond type (0=single, 1=double, 4=aromatic) in lookup
-- Implement directional lookup with sign convention (swap + negate if i > j)
+### Step 4: Update parameter tables
+- Ensure bond, angle, torsion, VDW, OOP parameter lookups include new types
+- Add fallback/estimation rules for new type combinations
 
-### Step 2: Add PBCI table for fallback
-- Add PBCI values from RDKit's MMFFPBCI.PAR
-- When no explicit BCI exists, use: `BCI_ij = pbci_i - pbci_j`
-- Also store `fcadj` (formal charge adjustment) and `crd` (coordination number) per type
-
-### Step 3: Implement Eq. 15 charge calculation
-- For neutral molecules (v=0): `q_i = SUM(BCI_ij for all bonds j of atom i)`
-- Add MMFF formal charge handling for charged species
-- Remove old neutralization step
-
-### Step 4: Add atom type number mapping
-- Map our MMFFAtomType enum to RDKit numeric types (1-99)
-- Use this mapping for BCI/PBCI lookup
-
-### Step 5: Run tests and fix failures
-
-### Step 6: Rebuild WASM
-
-## Changes
-- `src/mmff/charges.rs`: Replace with RDKit-compatible BCI implementation
-- `src/mmff/atom_types.rs`: Add numeric type ID to AtomTypeProperties
-- `CODE_STATUS.md`: Update with changes
-
-## Reference Data
-RDKit MMFF94 BCI/PBCI parameters from Code/ForceField/MMFF/Params.cpp
+### Step 5: Validation
+- Compare our types vs RDKit for: pyrrole, furan, thiophene, imidazole, water, methanol, ethanol, phenol
+- All tests pass
+- WASM build verified

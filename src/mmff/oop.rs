@@ -29,10 +29,12 @@ pub fn oop_energy(
 ) -> f64 {
     let chi = calculate_oop_angle(coords, central, i, j, k);
 
-    // MMFF94 out-of-plane: E = 0.5 * k_oop * χ²
-    // Harmonic approximation using the Wilson out-of-plane coordinate χ (radians),
-    // which is 0 when the central atom lies in the plane of its three neighbors.
-    0.5 * params.k_oop * chi * chi
+    // MMFF94 out-of-plane: E = 0.5 * c2 * k_oop * χ²
+    // where c2 = 143.9324 * (π/180)² (converts mdyn·Å/rad² to kcal/mol)
+    // χ is the Wilson out-of-plane coordinate in radians,
+    // 0 when the central atom lies in the plane of its three neighbors.
+    let c2 = 143.9324 * (std::f64::consts::PI / 180.0).powi(2);
+    0.5 * c2 * params.k_oop * chi * chi
 }
 
 /// Calculate out-of-plane angle (deviation from plane)

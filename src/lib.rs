@@ -2710,3 +2710,609 @@ M  END"#;
         y.atan2(x).to_degrees()
     }
 }
+
+#[cfg(test)]
+mod planarity_tests {
+    use crate::molecule::parser::parse_sdf;
+    use crate::etkdg::generate_initial_coords;
+    use crate::etkdg::eigenvector_smallest_eigenvalue_3x3;
+
+    fn max_planar_deviation(coords: &[[f64; 3]], atoms: &[usize]) -> f64 {
+        let n = atoms.len() as f64;
+        let cx = atoms.iter().map(|&i| coords[i][0]).sum::<f64>() / n;
+        let cy = atoms.iter().map(|&i| coords[i][1]).sum::<f64>() / n;
+        let cz = atoms.iter().map(|&i| coords[i][2]).sum::<f64>() / n;
+        
+        let mut cov = [[0.0f64; 3]; 3];
+        for &idx in atoms {
+            let dx = coords[idx][0] - cx;
+            let dy = coords[idx][1] - cy;
+            let dz = coords[idx][2] - cz;
+            cov[0][0] += dx * dx;
+            cov[0][1] += dx * dy;
+            cov[0][2] += dx * dz;
+            cov[1][1] += dy * dy;
+            cov[1][2] += dy * dz;
+            cov[2][2] += dz * dz;
+        }
+        cov[1][0] = cov[0][1];
+        cov[2][0] = cov[0][2];
+        cov[2][1] = cov[1][2];
+        
+        let normal = eigenvector_smallest_eigenvalue_3x3(&cov);
+        
+        atoms.iter().map(|&idx| {
+            let dx = coords[idx][0] - cx;
+            let dy = coords[idx][1] - cy;
+            let dz = coords[idx][2] - cz;
+            (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs()
+        }).fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn test_benzene_planarity() {
+        let sdf = r#"Benzene
+     RDKit          3D
+
+  12 12  0  0  0  0  0  0  0  0999 V2000
+    1.2100    0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6060   -0.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6060   -0.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2100    0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6060    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6060    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1540    1.2470    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0770   -1.1780    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0770   -1.1780    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.1540    1.2470    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0770    2.5250    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0770    2.5250    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  1  1  0
+  1  7  1  0
+  2  8  1  0
+  3  9  1  0
+  4 10  1  0
+  5 11  1  0
+  6 12  1  0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("parse");
+        let coords = generate_initial_coords(&mol);
+        
+        let ring_atoms: Vec<usize> = vec![0, 1, 2, 3, 4, 5];
+        let ring_dev = max_planar_deviation(&coords, &ring_atoms);
+        eprintln!("benzene ring planar deviation: {:.6} Å", ring_dev);
+        assert!(ring_dev < 0.10, "benzene ring not planar: {:.6} Å", ring_dev);
+        
+        let all_atoms: Vec<usize> = (0..12).collect();
+        let all_dev = max_planar_deviation(&coords, &all_atoms);
+        eprintln!("benzene all-atom planar deviation: {:.6} Å", all_dev);
+        assert!(all_dev < 0.10, "benzene H atoms not planar: {:.6} Å", all_dev);
+    }
+
+    #[test]
+    fn test_benzene_planarity_stress() {
+        let sdf = r#"Benzene
+     RDKit          3D
+
+  12 12  0  0  0  0  0  0  0  0999 V2000
+    1.2100    0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6060   -0.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6060   -0.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2100    0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6060    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6060    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1540    1.2470    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0770   -1.1780    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0770   -1.1780    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.1540    1.2470    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0770    2.5250    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0770    2.5250    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  1  1  0
+  1  7  1  0
+  2  8  1  0
+  3  9  1  0
+  4 10  1  0
+  5 11  1  0
+  6 12  1  0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("parse");
+        
+        let mut max_ring_dev = 0.0;
+        let mut max_all_dev = 0.0;
+        
+        for _ in 0..20 {
+            let coords = generate_initial_coords(&mol);
+            let ring_atoms: Vec<usize> = vec![0, 1, 2, 3, 4, 5];
+            let ring_dev = max_planar_deviation(&coords, &ring_atoms);
+            let all_atoms: Vec<usize> = (0..12).collect();
+            let all_dev = max_planar_deviation(&coords, &all_atoms);
+            
+            if ring_dev > max_ring_dev { max_ring_dev = ring_dev; }
+            if all_dev > max_all_dev { max_all_dev = all_dev; }
+        }
+        
+        eprintln!("Stress test max ring deviation: {:.6} Å", max_ring_dev);
+        eprintln!("Stress test max all-atom deviation: {:.6} Å", max_all_dev);
+        
+        assert!(max_ring_dev < 0.10, "ring not planar over 20 runs: {:.6} Å", max_ring_dev);
+        assert!(max_all_dev < 0.10, "H atoms not planar over 20 runs: {:.6} Å", max_all_dev);
+    }
+}
+#[cfg(test)]
+mod debug_worst {
+    use crate::molecule::parser::parse_sdf;
+    use crate::etkdg::generate_initial_coords;
+    use crate::etkdg::eigenvector_smallest_eigenvalue_3x3;
+
+    fn max_planar_deviation(coords: &[[f64; 3]], atoms: &[usize]) -> f64 {
+        let n = atoms.len() as f64;
+        let cx = atoms.iter().map(|&i| coords[i][0]).sum::<f64>() / n;
+        let cy = atoms.iter().map(|&i| coords[i][1]).sum::<f64>() / n;
+        let cz = atoms.iter().map(|&i| coords[i][2]).sum::<f64>() / n;
+        
+        let mut cov = [[0.0f64; 3]; 3];
+        for &idx in atoms {
+            let dx = coords[idx][0] - cx;
+            let dy = coords[idx][1] - cy;
+            let dz = coords[idx][2] - cz;
+            cov[0][0] += dx * dx;
+            cov[0][1] += dx * dy;
+            cov[0][2] += dx * dz;
+            cov[1][1] += dy * dy;
+            cov[1][2] += dy * dz;
+            cov[2][2] += dz * dz;
+        }
+        cov[1][0] = cov[0][1];
+        cov[2][0] = cov[0][2];
+        cov[2][1] = cov[1][2];
+        
+        let normal = eigenvector_smallest_eigenvalue_3x3(&cov);
+        
+        atoms.iter().map(|&idx| {
+            let dx = coords[idx][0] - cx;
+            let dy = coords[idx][1] - cy;
+            let dz = coords[idx][2] - cz;
+            (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs()
+        }).fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn test_worst_run() {
+        let sdf = r#"Benzene
+     RDKit          3D
+
+  12 12  0  0  0  0  0  0  0  0999 V2000
+    1.2100    0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6060   -0.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6060   -0.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2100    0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6060    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6060    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1540    1.2470    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0770   -1.1780    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0770   -1.1780    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.1540    1.2470    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0770    2.5250    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0770    2.5250    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  1  1  0
+  1  7  1  0
+  2  8  1  0
+  3  9  1  0
+  4 10  1  0
+  5 11  1  0
+  6 12  1  0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("parse");
+        
+        let mut worst_coords = vec![];
+        let mut max_all_dev = 0.0;
+        
+        for _ in 0..100 {
+            let coords = generate_initial_coords(&mol);
+            let all_atoms: Vec<usize> = (0..12).collect();
+            let all_dev = max_planar_deviation(&coords, &all_atoms);
+            if all_dev > max_all_dev {
+                max_all_dev = all_dev;
+                worst_coords = coords;
+            }
+        }
+        
+        eprintln!("Max all-atom deviation: {:.6} Å", max_all_dev);
+        
+        // Compute ring plane
+        let ring_atoms = vec![0, 1, 2, 3, 4, 5];
+        let n = ring_atoms.len() as f64;
+        let cx = ring_atoms.iter().map(|&i| worst_coords[i][0]).sum::<f64>() / n;
+        let cy = ring_atoms.iter().map(|&i| worst_coords[i][1]).sum::<f64>() / n;
+        let cz = ring_atoms.iter().map(|&i| worst_coords[i][2]).sum::<f64>() / n;
+        let mut cov = [[0.0f64; 3]; 3];
+        for &idx in &ring_atoms {
+            let dx = worst_coords[idx][0] - cx;
+            let dy = worst_coords[idx][1] - cy;
+            let dz = worst_coords[idx][2] - cz;
+            cov[0][0] += dx * dx;
+            cov[0][1] += dx * dy;
+            cov[0][2] += dx * dz;
+            cov[1][1] += dy * dy;
+            cov[1][2] += dy * dz;
+            cov[2][2] += dz * dz;
+        }
+        cov[1][0] = cov[0][1];
+        cov[2][0] = cov[0][2];
+        cov[2][1] = cov[1][2];
+        let normal = eigenvector_smallest_eigenvalue_3x3(&cov);
+        
+        eprintln!("\nDeviations from ring plane:");
+        for i in 0..12 {
+            let dx = worst_coords[i][0] - cx;
+            let dy = worst_coords[i][1] - cy;
+            let dz = worst_coords[i][2] - cz;
+            let d = (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs();
+            let name = if i < 6 { "C" } else { "H" };
+            eprintln!("{} {:2}: {:10.6} Å  pos=[{:8.4}, {:8.4}, {:8.4}]", name, i, d, worst_coords[i][0], worst_coords[i][1], worst_coords[i][2]);
+        }
+    }
+}
+
+#[cfg(test)]
+
+
+#[cfg(test)]
+mod pyrrole_tests {
+    use crate::molecule::parser::parse_sdf;
+    use crate::molecule::graph::get_aromatic_atoms;
+    use crate::etkdg::generate_initial_coords;
+    use crate::etkdg::eigenvector_smallest_eigenvalue_3x3;
+    use std::collections::HashSet;
+
+    fn max_planar_deviation(coords: &[[f64; 3]], atoms: &[usize]) -> f64 {
+        let n = atoms.len() as f64;
+        let cx = atoms.iter().map(|&i| coords[i][0]).sum::<f64>() / n;
+        let cy = atoms.iter().map(|&i| coords[i][1]).sum::<f64>() / n;
+        let cz = atoms.iter().map(|&i| coords[i][2]).sum::<f64>() / n;
+        let mut cov = [[0.0f64; 3]; 3];
+        for &idx in atoms {
+            let dx = coords[idx][0] - cx;
+            let dy = coords[idx][1] - cy;
+            let dz = coords[idx][2] - cz;
+            cov[0][0] += dx * dx;
+            cov[0][1] += dx * dy;
+            cov[0][2] += dx * dz;
+            cov[1][1] += dy * dy;
+            cov[1][2] += dy * dz;
+            cov[2][2] += dz * dz;
+        }
+        cov[1][0] = cov[0][1];
+        cov[2][0] = cov[0][2];
+        cov[2][1] = cov[1][2];
+        let normal = eigenvector_smallest_eigenvalue_3x3(&cov);
+        atoms.iter().map(|&idx| {
+            let dx = coords[idx][0] - cx;
+            let dy = coords[idx][1] - cy;
+            let dz = coords[idx][2] - cz;
+            (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs()
+        }).fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn test_pyrrole_aromaticity_and_planarity() {
+        let sdf = r#"pyrrole
+     RDKit          3D
+
+ 10 10  0  0  0  0  0  0  0  0999 V2000
+    1.0443    0.2498    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2498    1.0443    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9353    0.7287    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.9353   -0.7287    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2498   -1.0443    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.9716    0.4814    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4814    1.9716    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.6833   -1.3656    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4814   -1.9716    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.6833    1.3656    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  1  0
+  4  5  2  0
+  5  1  1  0
+  1  6  1  0
+  2  7  1  0
+  4  8  1  0
+  5  9  1  0
+  3 10  1  0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("parse");
+        let aromatic = get_aromatic_atoms(&mol);
+        let expected: HashSet<usize> = [0, 1, 2, 3, 4].iter().cloned().collect();
+        assert_eq!(aromatic, expected, "Pyrrole ring atoms should all be aromatic");
+
+        let coords = generate_initial_coords(&mol);
+        let ring_atoms: Vec<usize> = vec![0, 1, 2, 3, 4];
+        let ring_dev = max_planar_deviation(&coords, &ring_atoms);
+        eprintln!("pyrrole ring planar deviation: {:.6} A", ring_dev);
+        assert!(ring_dev < 0.10, "pyrrole ring not planar: {:.6} A", ring_dev);
+
+        let all_atoms: Vec<usize> = (0..10).collect();
+        let all_dev = max_planar_deviation(&coords, &all_atoms);
+        eprintln!("pyrrole all-atom planar deviation: {:.6} A", all_dev);
+        assert!(all_dev < 0.10, "pyrrole H atoms not planar: {:.6} A", all_dev);
+    }
+
+
+}
+
+#[cfg(test)]
+mod aniline_tests {
+    use crate::molecule::parser::parse_sdf;
+    use crate::mmff::MMFFForceField;
+    use crate::MMFFVariant;
+
+    #[test]
+    fn test_aniline_mmff_types() {
+        let sdf = r#"Aniline
+     RDKit          3D
+
+ 13 13  0  0  0  0  0  0  0  0999 V2000
+   -1.2000    0.6930    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000   -0.6000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3000   -1.2000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0000   -0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3000    0.6000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.1500    1.3000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.2500    2.2800    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0000    0.8000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4000   -1.1000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3500   -2.2700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.7500   -1.5500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.3000    1.0500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  1  1  0
+  1  7  1  0
+  7  8  1  0
+  7  9  1  0
+  2 10  1  0
+  3 11  1  0
+  4 12  1  0
+  5 13  1  0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("parse");
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        for (i, atom) in mol.atoms.iter().enumerate() {
+            eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
+        }
+        let coords = crate::etkdg::generate_initial_coords(&mol);
+        let (energy, _) = ff.calculate_energy_and_gradient(&coords);
+        eprintln!("Aniline initial energy: {}", energy);
+    }
+}
+
+#[cfg(test)]
+mod type_audit {
+    use crate::molecule::parser::parse_sdf;
+    use crate::mmff::MMFFForceField;
+    use crate::MMFFVariant;
+
+    #[test]
+    fn test_5ring_mmff_types() {
+        let pyrrole_sdf = r#"Pyrrole
+     RDKit          3D
+
+ 10 10  0  0  0  0  0  0  0  0999 V2000
+    0.0000    1.0800    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0280    0.3300    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6420   -0.9400    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6420   -0.9400    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0280    0.3300    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0900    0.5700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2100   -1.8700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2100   -1.8700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.0900    0.5700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    2.1500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  1  1  0
+  2  6  1  0
+  3  7  1  0
+  4  8  1  0
+  5  9  1  0
+  1 10  1  0
+M  END"#;
+        let furan_sdf = r#"Furan
+     RDKit          3D
+
+  9  9  0  0  0  0  0  0  0  0999 V2000
+    0.0000    1.0800    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0280    0.3300    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6420   -0.9400    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6420   -0.9400    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0280    0.3300    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0900    0.5700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2100   -1.8700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2100   -1.8700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    2.1500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  1  1  0
+  2  6  1  0
+  3  7  1  0
+  4  8  1  0
+  1  9  1  0
+M  END"#;
+
+        for (name, sdf) in [("pyrrole", pyrrole_sdf), ("furan", furan_sdf)] {
+            let mol = parse_sdf(sdf).expect("parse");
+            let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+            eprintln!("\n=== {} ===", name);
+            for (i, atom) in mol.atoms.iter().enumerate() {
+                eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod type_audit2 {
+    use crate::molecule::parser::parse_sdf;
+    use crate::mmff::MMFFForceField;
+    use crate::MMFFVariant;
+
+    #[test]
+    fn test_simple_molecule_types() {
+        for (name, sdf) in [
+            ("water", r#"Water
+  CDK     1012182035
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9580    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2390    0.9270    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  1  3  1  0
+M  END"#),
+            ("methanol", r#"Methanol
+  CDK     1012182035
+
+  6  5  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4300    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3600    1.0300    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3600   -0.5100    0.8900 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.3600   -0.5100   -0.8900 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.7900   -0.9300    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  1  3  1  0
+  1  4  1  0
+  1  5  1  0
+  2  6  1  0
+M  END"#),
+            ("phenol", r#"Phenol
+  CDK     1012182035
+
+ 13 13  0  0  0  0  0  0  0  0999 V2000
+   -1.0500    0.9181    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.3201   -0.4503    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.2701   -1.3684    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0500   -0.9181    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.3201    0.4503    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2701    1.3684    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.8681    1.6334    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.3486   -0.8012    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4805   -2.4346    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.8681   -1.6334    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.3486    0.8012    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4805    2.4346    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.4730    1.0900    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  1  1  0
+  1  7  1  0
+  2  8  1  0
+  3  9  1  0
+  4 10  1  0
+  5 11  1  0
+  6 12  1  0
+  7 13  1  0
+M  END"#),
+        ] {
+            let mol = parse_sdf(sdf).expect("parse");
+            let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+            eprintln!("\n=== {} ===", name);
+            for (i, atom) in mol.atoms.iter().enumerate() {
+                eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod type_audit3 {
+    use crate::molecule::parser::parse_sdf;
+    use crate::mmff::MMFFForceField;
+    use crate::MMFFVariant;
+
+    #[test]
+    fn test_thiophene_imidazole_types() {
+        for (name, sdf) in [
+            ("thiophene", r#"Thiophene
+     RDKit          3D
+
+  9  9  0  0  0  0  0  0  0  0999 V2000
+    0.0000    1.0800    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0280    0.3300    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6420   -0.9400    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6420   -0.9400    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0280    0.3300    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0900    0.5700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2100   -1.8700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2100   -1.8700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    2.1500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  1  1  0
+  2  6  1  0
+  3  7  1  0
+  4  8  1  0
+  1  9  1  0
+M  END"#),
+            ("imidazole", r#"Imidazole
+     RDKit          3D
+
+  9  9  0  0  0  0  0  0  0  0999 V2000
+    0.0000    1.0800    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0280    0.3300    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.6420   -0.9400    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6420   -0.9400    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0280    0.3300    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0900    0.5700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2100   -1.8700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2100   -1.8700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    2.1500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  3  4  1  0
+  4  5  2  0
+  5  1  1  0
+  2  6  1  0
+  3  7  1  0
+  4  8  1  0
+  5  9  1  0
+M  END"#),
+        ] {
+            let mol = parse_sdf(sdf).expect("parse");
+            let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+            eprintln!("\n=== {} ===", name);
+            for (i, atom) in mol.atoms.iter().enumerate() {
+                eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
+            }
+        }
+    }
+}

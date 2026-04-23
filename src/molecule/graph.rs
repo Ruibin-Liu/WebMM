@@ -103,70 +103,179 @@ pub fn get_aromatic_atoms(mol: &Molecule) -> HashSet<usize> {
         .collect()
 }
 
-/// Check if atom is in an aromatic ring (ring membership + Huckel rule)
+/// Convert bonds in aromatic rings to BondType::Aromatic
+/// This matches RDKit behavior where Kekulé structures are perceived as aromatic
+pub fn perceive_aromatic_bonds(mol: &mut Molecule) {
+    let aromatic_atoms = get_aromatic_atoms(mol);
+    let rings = find_rings(mol);
+
+    for ring in &rings {
+        let ring_set: HashSet<usize> = ring.iter().copied().collect();
+        let all_aromatic = ring.iter().all(|a| aromatic_atoms.contains(a));
+        if !all_aromatic {
+            continue;
+        }
+
+        for bond in mol.bonds.iter_mut() {
+            if ring_set.contains(&bond.atom1) && ring_set.contains(&bond.atom2) {
+                bond.bond_type = BondType::Aromatic;
+            }
+        }
+    }
+}
+
+/// Check if atom has a multiple bond (double, triple, or aromatic) within the given ring
+fn has_multiple_bond_in_ring(atom_idx: usize, ring_set: &HashSet<usize>, mol: &Molecule) -> bool {
+    mol.bonds.iter().any(|bond| {
+        (bond.atom1 == atom_idx || bond.atom2 == atom_idx)
+            && ring_set.contains(&bond.atom1)
+            && ring_set.contains(&bond.atom2)
+            && matches!(bond.bond_type, BondType::Double | BondType::Triple | BondType::Aromatic)
+    })
+}
+
+/// Check if a ring contains a heteroatom that can donate lone pairs (N, O, S)
+fn ring_has_heteroatom(ring: &[usize], mol: &Molecule) -> bool {
+    ring.iter()
+        .any(|&a| matches!(mol.atoms[a].atomic_number, 7 | 8 | 16))
+}
+
+/// Estimate total neighbor count including implicit hydrogens
+fn estimate_total_neighbors(atom_idx: usize, mol: &Molecule) -> usize {
+    let explicit_neighbors = mol.adjacency[atom_idx].len();
+    let explicit_valence: u32 = mol
+        .bonds
+        .iter()
+        .filter(|b| b.atom1 == atom_idx || b.atom2 == atom_idx)
+        .map(|b| match b.bond_type {
+            BondType::Single => 1,
+            BondType::Double => 2,
+            BondType::Triple => 3,
+            BondType::Aromatic => 1,
+        })
+        .sum();
+
+    let typical_valence = match mol.atoms[atom_idx].atomic_number {
+        6 => 4,
+        7 => 3,
+        8 => 2,
+        16 => 2,
+        _ => return explicit_neighbors,
+    };
+
+    let implicit_h = (typical_valence as i32 - explicit_valence as i32).max(0) as usize;
+    explicit_neighbors + implicit_h
+}
+
+/// Determine if an atom is a candidate for aromaticity in the given ring.
+/// Matches RDKit behavior where only atoms that can contribute electrons
+/// (or have empty p-orbitals) are considered.
+fn is_aromatic_candidate(atom_idx: usize, ring: &[usize], mol: &Molecule) -> bool {
+    let atom = &mol.atoms[atom_idx];
+    let ring_set: HashSet<usize> = ring.iter().copied().collect();
+    let ring_bonds = mol.adjacency[atom_idx]
+        .iter()
+        .filter(|&&n| ring_set.contains(&n))
+        .count();
+    let has_multiple = has_multiple_bond_in_ring(atom_idx, &ring_set, mol);
+
+    match atom.atomic_number {
+        6 => {
+            if has_multiple {
+                true
+            } else if ring.len() == 5 && ring_has_heteroatom(ring, mol) {
+                // In 5-membered heteroaromatics (furan, thiophene, imidazole),
+                // a C with only single bonds may still be sp2 if the ring
+                // has enough multiple bonds to suggest conjugation.
+                let multiple_bonds_in_ring = mol
+                    .bonds
+                    .iter()
+                    .filter(|b| ring_set.contains(&b.atom1) && ring_set.contains(&b.atom2))
+                    .filter(|b| {
+                        matches!(
+                            b.bond_type,
+                            BondType::Double | BondType::Triple | BondType::Aromatic
+                        )
+                    })
+                    .count();
+                multiple_bonds_in_ring >= 2
+            } else {
+                // Saturated C (e.g. cyclohexane, cyclohexene sp3 C's)
+                estimate_total_neighbors(atom_idx, mol) <= 3
+            }
+        }
+        7 => {
+            ring.len() == 5 && ring_bonds == 2
+                || has_multiple
+                || (ring_bonds == 3 && !has_multiple)
+        }
+        8 | 16 => {
+            ring.len() == 5 && ring_bonds == 2 || has_multiple
+        }
+        _ => has_multiple,
+    }
+}
+
+/// Count pi electrons contributed by an atom to the aromatic ring.
+/// Assumes the atom is already confirmed as an aromatic candidate.
+/// Works correctly even after bonds have been upgraded to Aromatic.
+fn count_pi_electrons(atom_idx: usize, ring: &[usize], mol: &Molecule) -> i32 {
+    let atom = &mol.atoms[atom_idx];
+    let ring_set: HashSet<usize> = ring.iter().copied().collect();
+    let ring_bonds = mol.adjacency[atom_idx]
+        .iter()
+        .filter(|&&n| ring_set.contains(&n))
+        .count();
+    // Total neighbors (including explicit H/exocyclic substituents).
+    // Used to distinguish pyrrole-like N (3 neighbors) from pyridine-like N (2 neighbors).
+    let total_neighbors = mol.adjacency[atom_idx].len();
+
+    match atom.atomic_number {
+        6 => 1,
+        7 => {
+            if ring.len() == 5 && ring_bonds == 2 && total_neighbors >= 3 {
+                // Pyrrole-like N in 5-membered ring (has H or substituent)
+                2
+            } else if ring_bonds == 3 && total_neighbors >= 3 {
+                // Aniline-like N (3 ring bonds, has H or substituent)
+                2
+            } else {
+                1
+            }
+        }
+        8 | 16 => {
+            if ring.len() == 5 && ring_bonds == 2 {
+                // Furan/thiophene-like O/S always contributes lone pair
+                2
+            } else {
+                1
+            }
+        }
+        _ => 1,
+    }
+}
+
+/// Check if atom is in an aromatic ring (ring membership + Huckel rule).
+/// Uses RDKit-style aromaticity perception:
+/// - All atoms in the ring must be aromatic candidates.
+/// - Pi electrons are counted per atom based on donor type.
+/// - Huckel's 4n+2 rule is applied to the total.
 pub fn is_aromatic(atom_idx: usize, mol: &Molecule) -> bool {
     let rings = find_rings(mol);
-    let adj = &mol.adjacency;
 
     for ring in &rings {
         if !ring.contains(&atom_idx) {
             continue;
         }
 
+        // All atoms in the ring must be aromatic candidates
+        if !ring.iter().all(|&a| is_aromatic_candidate(a, ring, mol)) {
+            continue;
+        }
+
         let mut pi_electrons = 0i32;
-        let ring_set: HashSet<usize> = ring.iter().copied().collect();
-
         for &atom in ring {
-            let ring_bonds: usize = adj[atom].iter().filter(|&&n| ring_set.contains(&n)).count();
-
-            let mut double_bonds_in_ring = 0;
-            for bond in &mol.bonds {
-                if (bond.atom1 == atom || bond.atom2 == atom)
-                    && ring_set.contains(&bond.atom1)
-                    && ring_set.contains(&bond.atom2)
-                {
-                    match bond.bond_type {
-                        BondType::Double | BondType::Aromatic | BondType::Triple => {
-                            double_bonds_in_ring += 1;
-                        }
-                        BondType::Single => {}
-                    }
-                }
-            }
-
-            match mol.atoms[atom].atomic_number {
-                6 => {
-                    if double_bonds_in_ring >= 1 || ring_bonds == 3 {
-                        pi_electrons += 1;
-                    }
-                }
-                7 => {
-                    if ring_bonds == 3 && double_bonds_in_ring == 0 {
-                        pi_electrons += 2;
-                    } else if double_bonds_in_ring >= 1 {
-                        pi_electrons += 1;
-                    }
-                }
-                8 => {
-                    if ring.len() == 5 && ring_bonds == 2 {
-                        pi_electrons += 2;
-                    } else if double_bonds_in_ring >= 1 {
-                        pi_electrons += 1;
-                    }
-                }
-                16 => {
-                    if ring.len() == 5 && ring_bonds == 2 {
-                        pi_electrons += 2;
-                    } else if double_bonds_in_ring >= 1 {
-                        pi_electrons += 1;
-                    }
-                }
-                _ => {
-                    if double_bonds_in_ring >= 1 {
-                        pi_electrons += 1;
-                    }
-                }
-            }
+            pi_electrons += count_pi_electrons(atom, ring, mol);
         }
 
         if pi_electrons >= 6 && (pi_electrons - 2) % 4 == 0 {
@@ -397,6 +506,40 @@ pub fn find_torsions(mol: &Molecule) -> Vec<Torsion> {
     torsions
 }
 
+/// Find all 1-4 atom pairs (separated by exactly 3 bonds).
+/// Used for scaled VDW and electrostatic interactions.
+/// Includes pairs across non-rotatable bonds (double/triple bonds)
+/// which are excluded from find_torsions().
+pub fn find_one_four_pairs(mol: &Molecule) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // Use every bond as a potential central bond in a 3-bond path
+    for bond in &mol.bonds {
+        let i = bond.atom1;
+        let j = bond.atom2;
+        let neighbors_i = get_neighbors(i, mol);
+        let neighbors_j = get_neighbors(j, mol);
+
+        for &k in neighbors_i {
+            if k == j {
+                continue;
+            }
+            for &l in neighbors_j {
+                if l == i || l == k {
+                    continue;
+                }
+                let (a, b) = (k.min(l), k.max(l));
+                if seen.insert((a, b)) {
+                    pairs.push((a, b));
+                }
+            }
+        }
+    }
+
+    pairs
+}
+
 /// Out-of-plane (central atom with 3 bonded atoms)
 pub struct OutOfPlane {
     pub central: usize,
@@ -476,11 +619,13 @@ mod tests {
                 atom1: 0,
                 atom2: 1,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 1,
                 atom2: 2,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
         ];
 
@@ -522,6 +667,7 @@ mod tests {
                     atom1: i,
                     atom2: j,
                     bond_type: BondType::Single,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -551,6 +697,7 @@ mod tests {
                     atom1: i,
                     atom2: j,
                     bond_type: BondType::Aromatic,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -581,6 +728,7 @@ mod tests {
                 atom1: i,
                 atom2: j,
                 bond_type: BondType::Aromatic,
+                ..Default::default()
             });
         }
         // Ring 2: 5-6-7-8-9-4-5
@@ -591,6 +739,7 @@ mod tests {
                 atom1: i,
                 atom2: j,
                 bond_type: BondType::Aromatic,
+                ..Default::default()
             });
         }
 
@@ -618,11 +767,13 @@ mod tests {
                 atom1: 0,
                 atom2: 1,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
             Bond {
                 atom1: 0,
                 atom2: 2,
                 bond_type: BondType::Single,
+                ..Default::default()
             },
         ];
         let mol = Molecule {
@@ -649,6 +800,7 @@ mod tests {
                     atom1: i,
                     atom2: j,
                     bond_type: BondType::Aromatic,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -677,6 +829,7 @@ mod tests {
                     atom1: i,
                     atom2: j,
                     bond_type: BondType::Single,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -709,6 +862,7 @@ mod tests {
                 atom1: i,
                 atom2: j,
                 bond_type: BondType::Aromatic,
+                ..Default::default()
             });
         }
 
@@ -742,6 +896,7 @@ mod tests {
                 atom1: i,
                 atom2: j,
                 bond_type: BondType::Aromatic,
+                ..Default::default()
             });
         }
         // Alternating double bonds: 1=2, 3=4
@@ -758,4 +913,140 @@ mod tests {
         let aromatic = get_aromatic_atoms(&mol);
         assert_eq!(aromatic.len(), 5);
     }
+
+    #[test]
+    fn test_is_aromatic_furan_kekule() {
+        // Furan Kekule form: explicit single/double bonds
+        // O at position 4, double bonds at 0-1 and 2-3
+        let atoms: Vec<Atom> = vec![
+            make_atom("C", 6, 0),
+            make_atom("C", 6, 1),
+            make_atom("C", 6, 2),
+            make_atom("C", 6, 3),
+            make_atom("O", 8, 4),
+        ];
+        let mut adjacency = vec![vec![]; 5];
+        let mut bonds = Vec::new();
+
+        for (i, j, bt) in [
+            (0, 1, BondType::Double),
+            (1, 2, BondType::Single),
+            (2, 3, BondType::Double),
+            (3, 4, BondType::Single),
+            (4, 0, BondType::Single),
+        ] {
+            adjacency[i].push(j);
+            adjacency[j].push(i);
+            bonds.push(Bond {
+                atom1: i,
+                atom2: j,
+                bond_type: bt,
+                ..Default::default()
+            });
+        }
+
+        let mol = Molecule {
+            atoms,
+            bonds,
+            name: "Furan".to_string(),
+            adjacency,
+        };
+
+        let aromatic = get_aromatic_atoms(&mol);
+        assert_eq!(aromatic.len(), 5, "Furan should have 5 aromatic atoms");
+    }
+
+    #[test]
+    fn test_is_aromatic_imidazole_kekule() {
+        // Imidazole Kekule form: N0(pyrrole-like), C1=N2, N2-C3, C3=C4, C4-N0
+        let mut atoms: Vec<Atom> = vec![
+            make_atom("N", 7, 0),
+            make_atom("C", 6, 1),
+            make_atom("N", 7, 2),
+            make_atom("C", 6, 3),
+            make_atom("C", 6, 4),
+        ];
+        let mut adjacency = vec![vec![]; 6];
+        let mut bonds = Vec::new();
+
+        for (i, j, bt) in [
+            (0, 1, BondType::Single),
+            (1, 2, BondType::Double),
+            (2, 3, BondType::Single),
+            (3, 4, BondType::Double),
+            (4, 0, BondType::Single),
+        ] {
+            adjacency[i].push(j);
+            adjacency[j].push(i);
+            bonds.push(Bond {
+                atom1: i,
+                atom2: j,
+                bond_type: bt,
+                ..Default::default()
+            });
+        }
+        // Add explicit H on pyrrole-like N (atom 0)
+        atoms.push(make_atom("H", 1, 5));
+        adjacency[0].push(5);
+        adjacency[5].push(0);
+        bonds.push(Bond {
+            atom1: 0,
+            atom2: 5,
+            bond_type: BondType::Single,
+            ..Default::default()
+        });
+
+        let mol = Molecule {
+            atoms,
+            bonds,
+            name: "Imidazole".to_string(),
+            adjacency,
+        };
+
+        let aromatic = get_aromatic_atoms(&mol);
+        assert_eq!(aromatic.len(), 5, "Imidazole should have 5 aromatic atoms");
+    }
+
+    #[test]
+    fn test_is_aromatic_2_5_dihydrofuran() {
+        // 2,5-dihydrofuran: 5-membered with O and 1 double bond — NOT aromatic
+        let atoms: Vec<Atom> = vec![
+            make_atom("C", 6, 0),
+            make_atom("C", 6, 1),
+            make_atom("C", 6, 2),
+            make_atom("O", 8, 3),
+            make_atom("C", 6, 4),
+        ];
+        let mut adjacency = vec![vec![]; 5];
+        let mut bonds = Vec::new();
+
+        for (i, j, bt) in [
+            (0, 1, BondType::Double),
+            (1, 2, BondType::Single),
+            (2, 3, BondType::Single),
+            (3, 4, BondType::Single),
+            (4, 0, BondType::Single),
+        ] {
+            adjacency[i].push(j);
+            adjacency[j].push(i);
+            bonds.push(Bond {
+                atom1: i,
+                atom2: j,
+                bond_type: bt,
+                ..Default::default()
+            });
+        }
+
+        let mol = Molecule {
+            atoms,
+            bonds,
+            name: "2,5-dihydrofuran".to_string(),
+            adjacency,
+        };
+
+        let aromatic = get_aromatic_atoms(&mol);
+        assert!(aromatic.is_empty(), "2,5-dihydrofuran should not be aromatic");
+    }
+
+
 }

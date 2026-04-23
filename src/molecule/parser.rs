@@ -1,6 +1,6 @@
 //! SDF/MOL file parser
 
-use super::{Atom, Bond, BondType, Molecule};
+use super::{Atom, Bond, BondStereo, BondType, Molecule};
 
 /// Parse SDF/MOL file content into Molecule structure
 /// Supports both V2000 and V3000 formats
@@ -139,10 +139,22 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
                 _ => BondType::Single,
             };
 
+            let stereo = if line.len() >= 12 {
+                let stereo_code: i32 = line[9..12].trim().parse().unwrap_or(0);
+                match stereo_code {
+                    6 => BondStereo::Cis,
+                    7 => BondStereo::Trans,
+                    _ => BondStereo::None,
+                }
+            } else {
+                BondStereo::None
+            };
+
             bonds.push(Bond {
                 atom1,
                 atom2,
                 bond_type,
+                stereo,
             });
         }
     }
@@ -157,12 +169,14 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
 
     let adjacency = super::graph::build_adjacency_list_from_bonds(&atoms.len(), &bonds);
 
-    Ok(Molecule {
+    let mut mol = Molecule {
         atoms,
         bonds,
         name,
         adjacency,
-    })
+    };
+    super::graph::perceive_aromatic_bonds(&mut mol);
+    Ok(mol)
 }
 
 /// Parse V3000 format MOL/SDF file
@@ -259,6 +273,7 @@ fn parse_v3000(lines: &[&str]) -> Result<Molecule, String> {
                     atom1: atom1 - 1, // Convert to 0-based
                     atom2: atom2 - 1,
                     bond_type,
+                    ..Default::default()
                 });
             }
         }
@@ -274,12 +289,14 @@ fn parse_v3000(lines: &[&str]) -> Result<Molecule, String> {
 
     let adjacency = super::graph::build_adjacency_list_from_bonds(&atoms.len(), &bonds);
 
-    Ok(Molecule {
+    let mut mol = Molecule {
         atoms,
         bonds,
         name,
         adjacency,
-    })
+    };
+    super::graph::perceive_aromatic_bonds(&mut mol);
+    Ok(mol)
 }
 
 /// Get atomic number from element symbol

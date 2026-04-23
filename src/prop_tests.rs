@@ -99,8 +99,6 @@ M  END"#, x, y, z, x + 1.5, y, z);
             let params = VDWParams {
                 r0: 3.5,
                 epsilon: 0.1,
-                alpha: 12.0,
-                beta: 2.25,
             };
 
             let coords_close = vec![[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]; // Very close, repulsive

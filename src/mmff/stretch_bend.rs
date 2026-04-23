@@ -142,6 +142,7 @@ pub fn get_stretch_bend_params(
     Some(StretchBendParams { kba_ijk, kba_kji })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn stretch_bend_energy(
     coords: &[[f64; 3]],
     i: usize,
@@ -176,6 +177,7 @@ pub fn stretch_bend_energy(
     params.kba_ijk * dr_ij * dtheta + params.kba_kji * dr_kj * dtheta
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn stretch_bend_gradient(
     coords: &[[f64; 3]],
     i: usize,
