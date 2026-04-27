@@ -29,64 +29,83 @@ pub fn oop_energy(
 ) -> f64 {
     let chi = calculate_oop_angle(coords, central, i, j, k);
 
-    // MMFF94 out-of-plane: E = 0.5 * c2 * k_oop * χ²
-    // where c2 = 143.9324 * (π/180)² (converts mdyn·Å/rad² to kcal/mol)
-    // χ is the Wilson out-of-plane coordinate in radians,
-    // 0 when the central atom lies in the plane of its three neighbors.
-    let c2 = 143.9324 * (std::f64::consts::PI / 180.0).powi(2);
-    0.5 * c2 * params.k_oop * chi * chi
+    // MMFF94 out-of-plane: E = 0.5 * C * k_oop * χ²
+    // where C = 143.9324 converts mdyn·Å/rad² to kcal/mol,
+    // k_oop is the raw parameter table value in mdyn·Å/rad²,
+    // and χ is the Wilson out-of-plane angle in radians.
+    let c = 143.9324;
+    0.5 * c * params.k_oop * chi * chi
 }
 
-/// Calculate out-of-plane angle (deviation from plane)
+/// Calculate Wilson out-of-plane angle (RDKit-style)
+/// For atoms (i, central, j, k): angle between bond central→i and plane central→j→k
+/// Returns 0 when all four atoms are coplanar.
 fn calculate_oop_angle(coords: &[[f64; 3]], central: usize, i: usize, j: usize, k: usize) -> f64 {
-    let v1 = [
+    // Vectors from central atom to neighbors
+    let r_ci = [
         coords[i][0] - coords[central][0],
         coords[i][1] - coords[central][1],
         coords[i][2] - coords[central][2],
     ];
-    let v2 = [
+    let r_cj = [
         coords[j][0] - coords[central][0],
         coords[j][1] - coords[central][1],
         coords[j][2] - coords[central][2],
     ];
-    let v3 = [
+    let r_ck = [
         coords[k][0] - coords[central][0],
         coords[k][1] - coords[central][1],
         coords[k][2] - coords[central][2],
     ];
 
-    let diff12 = [v1[0] - v2[0], v1[1] - v2[1], v1[2] - v2[2]];
-    let diff13 = [v1[0] - v3[0], v1[1] - v3[1], v1[2] - v3[2]];
+    // Normalize vectors
+    let r_ci_norm = (r_ci[0].powi(2) + r_ci[1].powi(2) + r_ci[2].powi(2)).sqrt();
+    let r_cj_norm = (r_cj[0].powi(2) + r_cj[1].powi(2) + r_cj[2].powi(2)).sqrt();
+    let r_ck_norm = (r_ck[0].powi(2) + r_ck[1].powi(2) + r_ck[2].powi(2)).sqrt();
 
-    let normal = [
-        diff12[1] * diff13[2] - diff12[2] * diff13[1],
-        diff12[2] * diff13[0] - diff12[0] * diff13[2],
-        diff12[0] * diff13[1] - diff12[1] * diff13[0],
-    ];
-
-    let normal_norm = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
-
-    if normal_norm == 0.0 {
+    if r_ci_norm < 1e-10 || r_cj_norm < 1e-10 || r_ck_norm < 1e-10 {
         return 0.0;
     }
 
+    let u_ci = [
+        r_ci[0] / r_ci_norm,
+        r_ci[1] / r_ci_norm,
+        r_ci[2] / r_ci_norm,
+    ];
+    let u_cj = [
+        r_cj[0] / r_cj_norm,
+        r_cj[1] / r_cj_norm,
+        r_cj[2] / r_cj_norm,
+    ];
+    let u_ck = [
+        r_ck[0] / r_ck_norm,
+        r_ck[1] / r_ck_norm,
+        r_ck[2] / r_ck_norm,
+    ];
+
+    // Normal to plane defined by central→j and central→k
     let normal = [
+        u_cj[1] * u_ck[2] - u_cj[2] * u_ck[1],
+        u_cj[2] * u_ck[0] - u_cj[0] * u_ck[2],
+        u_cj[0] * u_ck[1] - u_cj[1] * u_ck[0],
+    ];
+
+    let normal_norm = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
+    if normal_norm < 1e-10 {
+        return 0.0;
+    }
+
+    let n_unit = [
         normal[0] / normal_norm,
         normal[1] / normal_norm,
         normal[2] / normal_norm,
     ];
 
-    let v1_norm = (v1[0].powi(2) + v1[1].powi(2) + v1[2].powi(2)).sqrt();
-    if v1_norm == 0.0 {
-        return 0.0;
-    }
+    // sin(χ) = dot(u_ci, n_unit)
+    let sin_chi =
+        (u_ci[0] * n_unit[0] + u_ci[1] * n_unit[1] + u_ci[2] * n_unit[2]).clamp(-1.0, 1.0);
 
-    let v1_unit = [v1[0] / v1_norm, v1[1] / v1_norm, v1[2] / v1_norm];
-
-    let dot = v1_unit[0] * normal[0] + v1_unit[1] * normal[1] + v1_unit[2] * normal[2];
-    let dist_from_plane = dot.abs();
-
-    dist_from_plane.asin()
+    sin_chi.asin()
 }
 
 pub fn oop_gradient(

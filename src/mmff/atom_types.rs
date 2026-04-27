@@ -103,7 +103,7 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
             vdw_r: 3.850,
             vdw_eps: 0.0678,
             vdw_alpha: 0.167,
-            oop_k: 0.008,
+            oop_k: 0.038,
         }),
         MMFFAtomType::C_1 => Some(AtomTypeProperties {
             bond_class: 10,

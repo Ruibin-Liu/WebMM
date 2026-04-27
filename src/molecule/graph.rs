@@ -85,11 +85,18 @@ pub fn determine_hybridization(atom_idx: usize, mol: &Molecule) -> Hybridization
         "P" => match num_bonds {
             2 => Hybridization::Sp2,
             3 => Hybridization::Sp3,
+            4 => Hybridization::Sp3,
+            5 => Hybridization::Sp3D,
+            _ if num_bonds > 5 => Hybridization::Sp3D2,
             _ => Hybridization::Sp3,
         },
         "S" => match num_bonds {
             2 => Hybridization::Sp2,
             3 => Hybridization::Sp3,
+            4 => Hybridization::Sp3D,
+            5 => Hybridization::Sp3D,
+            6 => Hybridization::Sp3D2,
+            _ if num_bonds > 6 => Hybridization::Sp3D2,
             _ => Hybridization::Sp3,
         },
         _ => Hybridization::Sp3,
@@ -130,7 +137,10 @@ fn has_multiple_bond_in_ring(atom_idx: usize, ring_set: &HashSet<usize>, mol: &M
         (bond.atom1 == atom_idx || bond.atom2 == atom_idx)
             && ring_set.contains(&bond.atom1)
             && ring_set.contains(&bond.atom2)
-            && matches!(bond.bond_type, BondType::Double | BondType::Triple | BondType::Aromatic)
+            && matches!(
+                bond.bond_type,
+                BondType::Double | BondType::Triple | BondType::Aromatic
+            )
     })
 }
 
@@ -205,13 +215,9 @@ fn is_aromatic_candidate(atom_idx: usize, ring: &[usize], mol: &Molecule) -> boo
             }
         }
         7 => {
-            ring.len() == 5 && ring_bonds == 2
-                || has_multiple
-                || (ring_bonds == 3 && !has_multiple)
+            ring.len() == 5 && ring_bonds == 2 || has_multiple || (ring_bonds == 3 && !has_multiple)
         }
-        8 | 16 => {
-            ring.len() == 5 && ring_bonds == 2 || has_multiple
-        }
+        8 | 16 => ring.len() == 5 && ring_bonds == 2 || has_multiple,
         _ => has_multiple,
     }
 }
@@ -427,6 +433,8 @@ pub enum Hybridization {
     Sp3,
     Sp2,
     Sp1,
+    Sp3D,
+    Sp3D2,
 }
 
 /// Angle in molecule (for angle bending term)
@@ -1045,8 +1053,9 @@ mod tests {
         };
 
         let aromatic = get_aromatic_atoms(&mol);
-        assert!(aromatic.is_empty(), "2,5-dihydrofuran should not be aromatic");
+        assert!(
+            aromatic.is_empty(),
+            "2,5-dihydrofuran should not be aromatic"
+        );
     }
-
-
 }
