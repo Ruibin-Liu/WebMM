@@ -40,9 +40,6 @@ jobs:
     - name: Build WASM
       run: wasm-pack build --target web --release
 
-    - name: Copy site files
-      run: cp site/index.html pkg/
-
     - name: Setup Pages
       uses: actions/configure-pages@v5
 

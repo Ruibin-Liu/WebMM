@@ -18,6 +18,7 @@
 
 use crate::molecule::{BondStereo, BondType, Hybridization, Molecule};
 use std::collections::HashSet;
+use web_time::Instant;
 
 // ============================================================================
 // Constants (matching RDKit)
@@ -105,6 +106,9 @@ pub struct ETKDGConfig {
     pub use_small_ring_torsions: bool,
     pub use_macrocycle_torsions: bool,
     pub et_version: u32,
+    pub triangle_smoothing_epsilon: f64,
+    pub timeout_ms: u64,
+    pub coord_map: std::collections::HashMap<usize, [f64; 3]>,
 }
 
 impl Default for ETKDGConfig {
@@ -120,6 +124,9 @@ impl Default for ETKDGConfig {
             use_small_ring_torsions: false,
             use_macrocycle_torsions: true,
             et_version: 2,
+            triangle_smoothing_epsilon: 1e-6,
+            timeout_ms: 0,
+            coord_map: std::collections::HashMap::new(),
         }
     }
 }
@@ -183,9 +190,8 @@ impl DistanceBounds {
         }
     }
 
-    pub fn smooth_triangle_inequality(&mut self) {
+    pub fn smooth_triangle_inequality(&mut self, epsilon: f64) {
         let mut changed = true;
-        let epsilon = 1e-6;
         let n = self.n_atoms;
         while changed {
             changed = false;
@@ -791,34 +797,89 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                     if accum.bond_angles[bid1][bid2] >= 0.0 {
                         continue;
                     }
-                    let angle = if visited_centers[aid2] >= 1 {
-                        if matches!(hyb, Hybridization::Sp2) {
-                            (2.0 * std::f64::consts::PI - angle_taken[aid2])
-                                / (n13 - visited_centers[aid2]) as f64
-                        } else if matches!(hyb, Hybridization::Sp3) {
-                            let mut a = 109.5_f64.to_radians();
-                            for ring in &rings {
-                                if ring.contains(&aid2) && ring.len() == 3 {
-                                    a = 116.0_f64.to_radians();
-                                } else if ring.contains(&aid2) && ring.len() == 4 {
-                                    a = 112.0_f64.to_radians();
+                    let angle = {
+                        // Helper to detect double bonds at central atom
+                        let is_double = |a: usize| -> bool {
+                            mol.bonds.iter().any(|b| {
+                                (b.atom1 == aid2 && b.atom2 == a || b.atom2 == aid2 && b.atom1 == a)
+                                    && (b.bond_type == BondType::Double
+                                        || b.bond_type == BondType::Aromatic)
+                            })
+                        };
+
+                        if visited_centers[aid2] >= 1 {
+                            if matches!(hyb, Hybridization::Sp2) {
+                                // For sp2 with mixed single/double bonds, distribute
+                                // remaining angle intelligently
+                                let remaining = 2.0 * std::f64::consts::PI - angle_taken[aid2];
+                                let remaining_pairs = n13 - visited_centers[aid2];
+
+                                if is_double(aid1) || is_double(aid3) {
+                                    // This pair involves the double bond
+                                    // Give it a larger share if the other remaining pair
+                                    // is the single-single pair
+                                    let other_is_single_single = if is_double(aid1) {
+                                        !is_double(aid3) && remaining_pairs > 1
+                                    } else {
+                                        !is_double(aid1) && remaining_pairs > 1
+                                    };
+                                    if other_is_single_single {
+                                        // Double-single angles get ~123° each
+                                        123.0_f64.to_radians()
+                                    } else {
+                                        remaining / remaining_pairs as f64
+                                    }
+                                } else {
+                                    // Single-single pair gets the smaller angle
+                                    // (~114°, or whatever is left)
+                                    if remaining_pairs == 1 {
+                                        remaining
+                                    } else {
+                                        114.0_f64.to_radians()
+                                    }
                                 }
+                            } else if matches!(hyb, Hybridization::Sp3) {
+                                let mut a = 109.5_f64.to_radians();
+                                for ring in &rings {
+                                    if ring.contains(&aid2) && ring.len() == 3 {
+                                        a = 116.0_f64.to_radians();
+                                    } else if ring.contains(&aid2) && ring.len() == 4 {
+                                        a = 112.0_f64.to_radians();
+                                    }
+                                }
+                                a
+                            } else if matches!(hyb, Hybridization::Sp3D) {
+                                105.0_f64.to_radians()
+                            } else if matches!(hyb, Hybridization::Sp3D2) {
+                                90.0_f64.to_radians()
+                            } else {
+                                120.0_f64.to_radians()
                             }
-                            a
-                        } else if matches!(hyb, Hybridization::Sp3D) {
-                            105.0_f64.to_radians()
-                        } else if matches!(hyb, Hybridization::Sp3D2) {
-                            90.0_f64.to_radians()
                         } else {
-                            120.0_f64.to_radians()
-                        }
-                    } else {
-                        match hyb {
-                            Hybridization::Sp1 => std::f64::consts::PI,
-                            Hybridization::Sp2 => 120.0_f64.to_radians(),
-                            Hybridization::Sp3 => 109.5_f64.to_radians(),
-                            Hybridization::Sp3D => 105.0_f64.to_radians(),
-                            Hybridization::Sp3D2 => 90.0_f64.to_radians(),
+                            match hyb {
+                                Hybridization::Sp1 => std::f64::consts::PI,
+                                Hybridization::Sp2 => {
+                                    let nbrs = &mol.adjacency[aid2];
+                                    let double_nbrs: Vec<usize> =
+                                        nbrs.iter().filter(|&&n| is_double(n)).copied().collect();
+                                    let single_nbrs: Vec<usize> =
+                                        nbrs.iter().filter(|&&n| !is_double(n)).copied().collect();
+
+                                    if double_nbrs.len() == 1 && single_nbrs.len() == 2 {
+                                        let is_single_pair = !is_double(aid1) && !is_double(aid3);
+                                        if is_single_pair {
+                                            114.0_f64.to_radians()
+                                        } else {
+                                            123.0_f64.to_radians()
+                                        }
+                                    } else {
+                                        120.0_f64.to_radians()
+                                    }
+                                }
+                                Hybridization::Sp3 => 109.5_f64.to_radians(),
+                                Hybridization::Sp3D => 105.0_f64.to_radians(),
+                                Hybridization::Sp3D2 => 90.0_f64.to_radians(),
+                            }
                         }
                     };
                     let pid = aid1.min(aid3) * n_atoms + aid1.max(aid3);
@@ -1857,7 +1918,7 @@ fn find_chiral_centers(mol: &Molecule) -> (Vec<ChiralCenter>, Vec<ChiralCenter>)
     (chiral, tetrahedral)
 }
 
-fn chiral_volume(coords: &[[f64; 3]], c: usize, n1: usize, n2: usize, n3: usize) -> f64 {
+pub(crate) fn chiral_volume(coords: &[[f64; 3]], c: usize, n1: usize, n2: usize, n3: usize) -> f64 {
     let v1 = [
         coords[n1][0] - coords[c][0],
         coords[n1][1] - coords[c][1],
@@ -2070,43 +2131,93 @@ struct StereoDoubleBond {
     sign: i8,
 }
 
-fn find_stereo_double_bonds(mol: &Molecule) -> (Vec<(usize, usize, usize)>, Vec<StereoDoubleBond>) {
+#[derive(Debug, Clone)]
+struct Atropisomer {
+    _bond: (usize, usize),
+    substituents: (usize, usize, usize, usize),
+    _sign: f64,
+    vol_lower: f64,
+    vol_upper: f64,
+}
+
+fn find_stereo_bonds(
+    mol: &Molecule,
+) -> (
+    Vec<(usize, usize, usize)>,
+    Vec<StereoDoubleBond>,
+    Vec<Atropisomer>,
+) {
     let mut double_bond_ends = Vec::new();
     let mut stereo_db = Vec::new();
+    let mut atropisomers = Vec::new();
     for bond in &mol.bonds {
-        if bond.bond_type != BondType::Double {
-            continue;
-        }
-        let a1 = bond.atom1;
-        let a2 = bond.atom2;
-        for &nbr in &mol.adjacency[a1] {
-            if nbr != a2 && !is_double_bond(mol, a1, nbr) {
-                double_bond_ends.push((nbr, a1, a2));
+        if bond.bond_type == BondType::Double {
+            let a1 = bond.atom1;
+            let a2 = bond.atom2;
+            for &nbr in &mol.adjacency[a1] {
+                if nbr != a2 && !is_double_bond(mol, a1, nbr) {
+                    double_bond_ends.push((nbr, a1, a2));
+                }
+            }
+            for &nbr in &mol.adjacency[a2] {
+                if nbr != a1 && !is_double_bond(mol, a2, nbr) {
+                    double_bond_ends.push((nbr, a2, a1));
+                }
+            }
+            if bond.stereo != BondStereo::None {
+                if let (Some(n1), Some(n2)) = (
+                    find_non_double_neighbor(mol, a1, a2),
+                    find_non_double_neighbor(mol, a2, a1),
+                ) {
+                    let sign = match bond.stereo {
+                        BondStereo::Trans => 1,
+                        BondStereo::Cis => -1,
+                        _ => 1,
+                    };
+                    stereo_db.push(StereoDoubleBond {
+                        atoms: [n1, a1, a2, n2],
+                        sign,
+                    });
+                }
             }
         }
-        for &nbr in &mol.adjacency[a2] {
-            if nbr != a1 && !is_double_bond(mol, a2, nbr) {
-                double_bond_ends.push((nbr, a2, a1));
-            }
-        }
-        if bond.stereo != BondStereo::None {
-            if let (Some(n1), Some(n2)) = (
-                find_non_double_neighbor(mol, a1, a2),
-                find_non_double_neighbor(mol, a2, a1),
-            ) {
-                let sign = match bond.stereo {
-                    BondStereo::Trans => 1,
-                    BondStereo::Cis => -1,
-                    _ => 1,
+
+        // Atropisomer detection
+        if bond.stereo == BondStereo::AtropCW || bond.stereo == BondStereo::AtropCCW {
+            let a1 = bond.atom1;
+            let a2 = bond.atom2;
+            let nbrs1: Vec<usize> = mol.adjacency[a1]
+                .iter()
+                .filter(|&&n| n != a2)
+                .copied()
+                .collect();
+            let nbrs2: Vec<usize> = mol.adjacency[a2]
+                .iter()
+                .filter(|&&n| n != a1)
+                .copied()
+                .collect();
+
+            if nbrs1.len() >= 2 && nbrs2.len() >= 2 {
+                let (vol_lower, vol_upper) = match bond.stereo {
+                    BondStereo::AtropCW => (-100.0, -1.0),
+                    BondStereo::AtropCCW => (1.0, 100.0),
+                    _ => (0.0, 0.0),
                 };
-                stereo_db.push(StereoDoubleBond {
-                    atoms: [n1, a1, a2, n2],
-                    sign,
+                atropisomers.push(Atropisomer {
+                    _bond: (a1, a2),
+                    substituents: (nbrs1[0], nbrs1[1], nbrs2[0], nbrs2[1]),
+                    _sign: if bond.stereo == BondStereo::AtropCW {
+                        -1.0
+                    } else {
+                        1.0
+                    },
+                    vol_lower,
+                    vol_upper,
                 });
             }
         }
     }
-    (double_bond_ends, stereo_db)
+    (double_bond_ends, stereo_db, atropisomers)
 }
 
 fn dihedral_angle(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
@@ -2147,6 +2258,17 @@ fn check_double_bond_stereo(coords: &[[f64; 3]], stereo_dbs: &[StereoDoubleBond]
             sdb.atoms[3],
         );
         if (dihedral - std::f64::consts::FRAC_PI_2) * (sdb.sign as f64) < 0.0 {
+            return false;
+        }
+    }
+    true
+}
+
+fn check_atropisomers(coords: &[[f64; 3]], atropisomers: &[Atropisomer]) -> bool {
+    for atrop in atropisomers {
+        let (a, b, c, d) = atrop.substituents;
+        let vol = chiral_volume(coords, a, b, c, d);
+        if vol < atrop.vol_lower || vol > atrop.vol_upper {
             return false;
         }
     }
@@ -2245,6 +2367,63 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         if ring_neighbors.len() >= 2 {
             for &exo in &exo_neighbors {
                 exocyclic_torsions.push((exo, atom_idx, ring_neighbors[0], ring_neighbors[1]));
+            }
+        }
+    }
+
+    // Non-aromatic sp2 atoms: carboxyl, carbonyl, amide, etc.
+    for atom_idx in 0..mol.atoms.len() {
+        if aromatic_atoms.contains(&atom_idx) {
+            continue; // already handled above
+        }
+        let hyb = crate::molecule::graph::determine_hybridization(atom_idx, mol);
+        if !matches!(hyb, Hybridization::Sp2) {
+            continue;
+        }
+        let neighbors = get_neighbors(atom_idx, mol);
+        if neighbors.len() >= 3 {
+            let k_improper = improper_k_for_atom(atom_idx, mol);
+            for i in 0..neighbors.len() {
+                for j in (i + 1)..neighbors.len() {
+                    for k in (j + 1)..neighbors.len() {
+                        impropers.push((
+                            atom_idx,
+                            neighbors[i],
+                            neighbors[j],
+                            neighbors[k],
+                            k_improper,
+                        ));
+                    }
+                }
+            }
+        }
+        // Exocyclic torsions for sp2 atoms with double bonds
+        // Keep substituents planar with the double bond
+        let double_bond_neighbors: Vec<usize> = neighbors
+            .iter()
+            .filter(|&&n| {
+                mol.bonds.iter().any(|b| {
+                    (b.atom1 == atom_idx && b.atom2 == n || b.atom2 == atom_idx && b.atom1 == n)
+                        && (b.bond_type == BondType::Double || b.bond_type == BondType::Aromatic)
+                })
+            })
+            .copied()
+            .collect();
+        if double_bond_neighbors.len() >= 1 && neighbors.len() >= 3 {
+            let other_neighbors: Vec<usize> = neighbors
+                .iter()
+                .filter(|&&n| !double_bond_neighbors.contains(&n))
+                .copied()
+                .collect();
+            if other_neighbors.len() >= 2 {
+                for &db_nbr in &double_bond_neighbors {
+                    exocyclic_torsions.push((
+                        other_neighbors[0],
+                        atom_idx,
+                        db_nbr,
+                        other_neighbors[1],
+                    ));
+                }
             }
         }
     }
@@ -2634,6 +2813,7 @@ fn match_torsion_pattern(
     a3: usize,
     a4: usize,
     rings: &[Vec<usize>],
+    et_version: u32,
 ) -> Option<([i32; 6], [f64; 6])> {
     let s1 = sym(mol, a1);
     let s2 = sym(mol, a2);
@@ -2655,6 +2835,10 @@ fn match_torsion_pattern(
 
     let sp2 = |h: Hybridization| matches!(h, Hybridization::Sp2);
     let sp3 = |h: Hybridization| matches!(h, Hybridization::Sp3);
+
+    // ETversion-specific parameter adjustments
+    let sp3_sp3_v3 = if et_version >= 2 { 5.0 } else { 7.0 };
+    let sp3_sp3_ring_v3 = if et_version >= 2 { 1.5 } else { 2.0 };
 
     if b23_ring {
         if let Some(rsize) = ring_size_of_bond(rings, a2, a3) {
@@ -2940,15 +3124,21 @@ fn match_torsion_pattern(
     if sp3(h2) && sp3(h3) {
         // *-CH2-CH2-* (ethylene bridge)
         if is_ch2(mol, a2) && is_ch2(mol, a3) {
-            return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 4.0, 0.0, 0.0, 0.0]));
+            return Some((
+                [1, 0, 1, 1, 1, 1],
+                [0.0, 0.0, sp3_sp3_v3 - 3.0, 0.0, 0.0, 0.0],
+            ));
         }
         // Ring sp3
         let a2_in_ring = rings.iter().any(|r| r.contains(&a2));
         let a3_in_ring = rings.iter().any(|r| r.contains(&a3));
         if a2_in_ring || a3_in_ring {
-            return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 2.0, 0.0, 0.0, 0.0]));
+            return Some((
+                [1, 0, 1, 1, 1, 1],
+                [0.0, 0.0, sp3_sp3_ring_v3, 0.0, 0.0, 0.0],
+            ));
         }
-        return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 7.0, 0.0, 0.0, 0.0]));
+        return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, sp3_sp3_v3, 0.0, 0.0, 0.0]));
     }
 
     // 24. Aromatic-C(sp3) (aryl-alkyl)
@@ -2975,9 +3165,13 @@ fn match_torsion_pattern(
     None
 }
 
-fn build_torsion_preferences(mol: &Molecule) -> Vec<TorsionPreference> {
+fn build_torsion_preferences(mol: &Molecule, et_version: u32) -> Vec<TorsionPreference> {
     let rings = crate::molecule::graph::find_rings(mol);
     let mut prefs = Vec::new();
+
+    // ETversion-specific parameter adjustments
+    let sp3_sp3_v3 = if et_version >= 2 { 5.0 } else { 7.0 };
+    let sp3_sp3_ring_v3 = if et_version >= 2 { 1.5 } else { 2.0 };
     let mut done_bonds = vec![false; mol.bonds.len()];
 
     // Bridged ring exclusion: bonds shared by >1 ring where at least one is small (<9)
@@ -3028,7 +3222,9 @@ fn build_torsion_preferences(mol: &Molecule) -> Vec<TorsionPreference> {
                 if a4 == a2 || a4 == a1 {
                     continue;
                 }
-                if let Some((signs, v)) = match_torsion_pattern(mol, a1, a2, a3, a4, &rings) {
+                if let Some((signs, v)) =
+                    match_torsion_pattern(mol, a1, a2, a3, a4, &rings, et_version)
+                {
                     if !done_bonds[bond_idx] {
                         prefs.push(TorsionPreference {
                             i: a1,
@@ -3449,6 +3645,7 @@ fn minimize_etkdg(
     angles_13: &[(usize, usize, usize)],
     max_iter: usize,
     force_tol: f64,
+    coord_map: &std::collections::HashMap<usize, [f64; 3]>,
 ) -> f64 {
     let n = coords.len();
     if n == 0 {
@@ -3485,9 +3682,11 @@ fn minimize_etkdg(
         }
         let step = 0.1 / max_g.max(1e-10);
         for i in 0..n {
-            coords[i][0] -= step * grad[i][0];
-            coords[i][1] -= step * grad[i][1];
-            coords[i][2] -= step * grad[i][2];
+            if !coord_map.contains_key(&i) {
+                coords[i][0] -= step * grad[i][0];
+                coords[i][1] -= step * grad[i][1];
+                coords[i][2] -= step * grad[i][2];
+            }
         }
         let energy = etkdg_energy(
             coords,
@@ -3558,6 +3757,80 @@ fn collect_angles(mol: &Molecule) -> Vec<(usize, usize, usize)> {
 }
 
 // ============================================================================
+// Fragment Embedding Helpers
+// ============================================================================
+
+fn find_connected_components(mol: &Molecule) -> Vec<Vec<usize>> {
+    let n = mol.atoms.len();
+    let mut visited = vec![false; n];
+    let mut components = Vec::new();
+
+    for start in 0..n {
+        if visited[start] {
+            continue;
+        }
+        let mut comp = Vec::new();
+        let mut stack = vec![start];
+        visited[start] = true;
+
+        while let Some(atom) = stack.pop() {
+            comp.push(atom);
+            for &nbr in &mol.adjacency[atom] {
+                if !visited[nbr] {
+                    visited[nbr] = true;
+                    stack.push(nbr);
+                }
+            }
+        }
+        components.push(comp);
+    }
+    components
+}
+
+fn extract_submol(mol: &Molecule, atoms: &[usize]) -> Molecule {
+    let mut atom_map = std::collections::HashMap::new();
+    let mut new_atoms = Vec::new();
+    for (new_idx, &old_idx) in atoms.iter().enumerate() {
+        atom_map.insert(old_idx, new_idx);
+        new_atoms.push(mol.atoms[old_idx].clone());
+    }
+
+    let mut new_bonds = Vec::new();
+    for bond in &mol.bonds {
+        if let (Some(&a1), Some(&a2)) = (atom_map.get(&bond.atom1), atom_map.get(&bond.atom2)) {
+            let mut new_bond = bond.clone();
+            new_bond.atom1 = a1;
+            new_bond.atom2 = a2;
+            new_bonds.push(new_bond);
+        }
+    }
+
+    let n_atoms = new_atoms.len();
+    let adjacency = crate::molecule::graph::build_adjacency_list_from_bonds(&n_atoms, &new_bonds);
+    Molecule {
+        atoms: new_atoms,
+        bonds: new_bonds,
+        name: mol.name.clone(),
+        adjacency,
+    }
+}
+
+fn spread_fragments(coords: &mut [[f64; 3]], components: &[Vec<usize>]) {
+    let mut offset_x = 0.0;
+    for comp in components {
+        let xs: Vec<f64> = comp.iter().map(|&i| coords[i][0]).collect();
+        let min_x = xs.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+        let max_x = xs.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let width = max_x - min_x;
+
+        for &atom_idx in comp {
+            coords[atom_idx][0] += offset_x - min_x;
+        }
+        offset_x += width + 5.0; // 5Å gap
+    }
+}
+
+// ============================================================================
 // Main Public API
 // ============================================================================
 
@@ -3570,6 +3843,26 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
     if mol.atoms.is_empty() {
         return Vec::new();
     }
+
+    // Handle multi-fragment molecules
+    let components = find_connected_components(mol);
+    if components.len() > 1 {
+        let mut all_coords = vec![[0.0; 3]; mol.atoms.len()];
+
+        for comp in &components {
+            let submol = extract_submol(mol, comp);
+            let subcoords = generate_initial_coords_with_config(&submol, config);
+            for (i, &atom_idx) in comp.iter().enumerate() {
+                if i < subcoords.len() {
+                    all_coords[atom_idx] = subcoords[i];
+                }
+            }
+        }
+
+        spread_fragments(&mut all_coords, &components);
+        return all_coords;
+    }
+
     let n_atoms = mol.atoms.len();
 
     let mut rng = if config.random_seed >= 0 {
@@ -3583,12 +3876,12 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
     };
 
     let mut bounds = build_distance_bounds(mol, config);
-    bounds.smooth_triangle_inequality();
+    bounds.smooth_triangle_inequality(config.triangle_smoothing_epsilon);
 
     let pc = build_planarity_constraints(mol);
     let (chiral_centers, tetrahedral) = find_chiral_centers(mol);
-    let (double_bond_ends, stereo_dbs) = find_stereo_double_bonds(mol);
-    let torsion_prefs = build_torsion_preferences(mol);
+    let (double_bond_ends, stereo_dbs, atropisomers) = find_stereo_bonds(mol);
+    let torsion_prefs = build_torsion_preferences(mol, config.et_version);
     let bonds_12 = collect_bonds(mol);
     let angles_13 = collect_angles(mol);
 
@@ -3600,8 +3893,29 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
         (10 * n_atoms).max(10)
     };
 
+    let start_time = Instant::now();
+    let timeout_duration = if config.timeout_ms > 0 {
+        Some(std::time::Duration::from_millis(config.timeout_ms))
+    } else {
+        None
+    };
+
     for _attempt in 0..max_attempts {
+        // Check timeout
+        if let Some(duration) = timeout_duration {
+            if start_time.elapsed() > duration {
+                eprintln!("ETKDG timeout after {} attempts", _attempt);
+                break;
+            }
+        }
         let mut coords_4d = generate_initial_coords_from_bounds(&bounds, &mut rng);
+
+        // Apply coord_map constraints
+        for (&atom_idx, &fixed_pos) in &config.coord_map {
+            if atom_idx < coords_4d.len() {
+                coords_4d[atom_idx] = [fixed_pos[0], fixed_pos[1], fixed_pos[2], 0.0];
+            }
+        }
 
         // Step 1: First 4D minimization — distance bounds + chirality + light 4th-dim penalty
         let first_e = minimize_4d_first(&mut coords_4d, &bounds, &chiral_centers, 400);
@@ -3642,6 +3956,13 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
             flatten_aromatic_rings(&mut coords_3d, mol, &pc);
         }
 
+        // Re-apply coord_map after projection to 3D
+        for (&atom_idx, &fixed_pos) in &config.coord_map {
+            if atom_idx < coords_3d.len() {
+                coords_3d[atom_idx] = fixed_pos;
+            }
+        }
+
         let energy = minimize_etkdg(
             &mut coords_3d,
             &bounds,
@@ -3653,6 +3974,7 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
             &angles_13,
             300,
             1e-3,
+            &config.coord_map,
         );
 
         let planar = check_planarity(&coords_3d, mol, &pc, 0.1);
@@ -3689,10 +4011,11 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
 
         let db_stereo_ok =
             stereo_dbs.is_empty() || check_double_bond_stereo(&coords_3d, &stereo_dbs);
+        let atrop_ok = atropisomers.is_empty() || check_atropisomers(&coords_3d, &atropisomers);
         let no_clash = !has_vdw_clash(&coords_3d, mol);
         let bonds_ok = bond_lengths_reasonable(&coords_3d, mol);
 
-        if planar && db_geom_ok && chiral_ok && db_stereo_ok && no_clash && bonds_ok {
+        if planar && db_geom_ok && chiral_ok && db_stereo_ok && atrop_ok && no_clash && bonds_ok {
             let e_per_atom = energy / coords_3d.len() as f64;
             if e_per_atom < MAX_MINIMIZED_E_PER_ATOM {
                 return coords_3d;

@@ -75,14 +75,35 @@ webmm/
 
 ### Build
 
+**Option 1: Manual (uses wasm-bindgen-cli)**
+
 ```bash
 # Build native library
 cargo build --release
 
 # Build WASM library
 cargo build --release --target wasm32-unknown-unknown
-wasm-bindgen --out-dir pkg target/wasm32-unknown-unknown/release/webmm.wasm
+wasm-bindgen --out-dir pkg --target web target/wasm32-unknown-unknown/release/webmm.wasm
 ```
+
+**Option 2: Using wasm-pack**
+
+```bash
+# Install wasm-pack if you haven't already
+cargo install wasm-pack
+
+# Build and generate bindings in one step
+wasm-pack build --target web --out-dir pkg
+```
+
+### Serve
+
+```bash
+# Start the dev server (serves pkg/ directory on port 8000)
+python3 pkg/server.py
+```
+
+Then open http://localhost:8000 in your browser.
 
 ### Test
 

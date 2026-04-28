@@ -273,6 +273,7 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
 
 #[cfg(test)]
 mod tests {
+    use crate::acetic_debug::dihedral;
     use crate::mmff::MMFFForceField;
     use crate::molecule::parse_sdf;
     use crate::ConvergenceOptions;
@@ -1165,6 +1166,238 @@ M  END"#;
     }
 
     #[test]
+    fn test_sp3d_typing() {
+        let sdf = r#"PF5
+     RDKit          3D
+  6  5  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 P   0  0  0  0  0  0  0  0  0
+    1.5000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0
+    0.0000    1.5000    0.0000 F   0  0  0  0  0  0  0  0  0
+    0.0000   -1.5000    0.0000 F   0  0  0  0  0  0  0  0  0
+    0.0000    0.0000    1.8000 F   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+  1  6  1  0  0  0  0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("parse failed");
+        let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        assert_eq!(ff.atom_types[0], crate::mmff::MMFFAtomType::P_3D);
+        assert!(ff.angles.len() > 0);
+    }
+
+    #[test]
+    fn test_coord_map_water() {
+        let sdf = r#"Water
+     RDKit          3D
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+    0.9572    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.2390    0.9260    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("parse failed");
+        let mut config = crate::etkdg::ETKDGConfig::default();
+        config.random_seed = 42;
+        // Fix oxygen at origin
+        config.coord_map.insert(0, [0.0, 0.0, 0.0]);
+        let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &config);
+        assert_eq!(
+            coords[0],
+            [0.0, 0.0, 0.0],
+            "Oxygen should be fixed at origin"
+        );
+        // Check that H atoms are roughly 0.96A from O
+        let d1 = ((coords[1][0] - coords[0][0]).powi(2)
+            + (coords[1][1] - coords[0][1]).powi(2)
+            + (coords[1][2] - coords[0][2]).powi(2))
+        .sqrt();
+        let d2 = ((coords[2][0] - coords[0][0]).powi(2)
+            + (coords[2][1] - coords[0][1]).powi(2)
+            + (coords[2][2] - coords[0][2]).powi(2))
+        .sqrt();
+        assert!(
+            d1 > 0.8 && d1 < 1.1,
+            "H1 should be ~0.96A from O, got {}",
+            d1
+        );
+        assert!(
+            d2 > 0.8 && d2 < 1.1,
+            "H2 should be ~0.96A from O, got {}",
+            d2
+        );
+    }
+
+    #[test]
+    fn test_fragment_embedding_water_dimer() {
+        // Two water molecules (no bonds between them)
+        let sdf = r#"Water dimer
+     RDKit          3D
+  6  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+    0.9572    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+   -0.2390    0.9260    0.0000 H   0  0  0  0  0  0  0  0  0
+    3.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0
+    3.9572    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0
+    2.7610    0.9260    0.0000 H   0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+  4  5  1  0  0  0  0
+  4  6  1  0  0  0  0
+M  END"#;
+        let mol = parse_sdf(sdf).expect("parse failed");
+        let config = crate::etkdg::ETKDGConfig {
+            random_seed: 42,
+            ..Default::default()
+        };
+        let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &config);
+        assert_eq!(coords.len(), 6);
+        // Check O-O distance is reasonable (should be > 2.5A for separated fragments)
+        let dx = coords[0][0] - coords[3][0];
+        let dy = coords[0][1] - coords[3][1];
+        let dz = coords[0][2] - coords[3][2];
+        let d_oo = (dx * dx + dy * dy + dz * dz).sqrt();
+        assert!(
+            d_oo > 2.0,
+            "Water fragments should be separated by >2A, got {}",
+            d_oo
+        );
+        // Check each water has reasonable O-H distances
+        for water_start in [0, 3] {
+            for h in [1, 2] {
+                let h_idx = water_start + h;
+                let d = ((coords[h_idx][0] - coords[water_start][0]).powi(2)
+                    + (coords[h_idx][1] - coords[water_start][1]).powi(2)
+                    + (coords[h_idx][2] - coords[water_start][2]).powi(2))
+                .sqrt();
+                assert!(
+                    d > 0.8 && d < 1.1,
+                    "O-H distance should be ~0.96A, got {}",
+                    d
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_atropisomer_simple() {
+        // Create a simple atropisomer: two sp2 carbons with substituents
+        // C1(F)(H)-C2(Cl)(Br) with AtropCW stereochemistry
+        let mol = crate::molecule::Molecule {
+            name: "atrop_test".to_string(),
+            atoms: vec![
+                crate::molecule::Atom {
+                    index: 0,
+                    atomic_number: 6,
+                    symbol: "C".to_string(),
+                    mass: 12.0,
+                    position: [0.0, 0.0, 0.0],
+                    charge: 0.0,
+                },
+                crate::molecule::Atom {
+                    index: 1,
+                    atomic_number: 6,
+                    symbol: "C".to_string(),
+                    mass: 12.0,
+                    position: [0.0, 0.0, 0.0],
+                    charge: 0.0,
+                },
+                crate::molecule::Atom {
+                    index: 2,
+                    atomic_number: 9,
+                    symbol: "F".to_string(),
+                    mass: 19.0,
+                    position: [0.0, 0.0, 0.0],
+                    charge: 0.0,
+                },
+                crate::molecule::Atom {
+                    index: 3,
+                    atomic_number: 1,
+                    symbol: "H".to_string(),
+                    mass: 1.0,
+                    position: [0.0, 0.0, 0.0],
+                    charge: 0.0,
+                },
+                crate::molecule::Atom {
+                    index: 4,
+                    atomic_number: 17,
+                    symbol: "Cl".to_string(),
+                    mass: 35.5,
+                    position: [0.0, 0.0, 0.0],
+                    charge: 0.0,
+                },
+                crate::molecule::Atom {
+                    index: 5,
+                    atomic_number: 35,
+                    symbol: "Br".to_string(),
+                    mass: 79.9,
+                    position: [0.0, 0.0, 0.0],
+                    charge: 0.0,
+                },
+            ],
+            bonds: vec![
+                crate::molecule::Bond {
+                    atom1: 0,
+                    atom2: 1,
+                    bond_type: crate::molecule::BondType::Single,
+                    stereo: crate::molecule::BondStereo::AtropCW,
+                },
+                crate::molecule::Bond {
+                    atom1: 0,
+                    atom2: 2,
+                    bond_type: crate::molecule::BondType::Single,
+                    stereo: crate::molecule::BondStereo::None,
+                },
+                crate::molecule::Bond {
+                    atom1: 0,
+                    atom2: 3,
+                    bond_type: crate::molecule::BondType::Single,
+                    stereo: crate::molecule::BondStereo::None,
+                },
+                crate::molecule::Bond {
+                    atom1: 1,
+                    atom2: 4,
+                    bond_type: crate::molecule::BondType::Single,
+                    stereo: crate::molecule::BondStereo::None,
+                },
+                crate::molecule::Bond {
+                    atom1: 1,
+                    atom2: 5,
+                    bond_type: crate::molecule::BondType::Single,
+                    stereo: crate::molecule::BondStereo::None,
+                },
+            ],
+            adjacency: vec![
+                vec![1, 2, 3],
+                vec![0, 4, 5],
+                vec![0],
+                vec![0],
+                vec![1],
+                vec![1],
+            ],
+        };
+
+        let config = crate::etkdg::ETKDGConfig {
+            random_seed: 42,
+            ..Default::default()
+        };
+        let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &config);
+        assert_eq!(coords.len(), 6);
+
+        // Check that the chiral volume has the correct sign for AtropCW
+        // AtropCW should give negative chiral volume
+        let vol = crate::etkdg::chiral_volume(&coords, 2, 3, 4, 5);
+        assert!(
+            vol < -0.5 || vol > 0.5,
+            "Atropisomer should have significant chiral volume, got {}",
+            vol
+        );
+    }
+
+    #[test]
     fn test_optimizer_convergence_improves_energy() {
         let sdf = r#"Ethanol
      RDKit          3D
@@ -2002,7 +2235,6 @@ M  END"#;
     }
 
     #[test]
-    #[ignore = "ETKDG geometry accuracy for carboxyl groups needs improvement"]
     fn test_etkdg_acetic_acid_geometry() {
         let sdf = r#"Acetic Acid
      RDKit          3D
@@ -2039,7 +2271,27 @@ M  END"#;
                 (1, 3, 7, 104.05), // C-O-H
             ],
             0.05,
-            5.0, // slightly looser angle tol for carboxyl
+            5.0, // angle tol for carboxyl
+        );
+
+        // Verify carboxyl planarity: key dihedrals should be ~0° or ~180°
+        let mol = parse_sdf(sdf).unwrap();
+        let config = crate::etkdg::ETKDGConfig {
+            random_seed: 42,
+            ..Default::default()
+        };
+        let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &config);
+        let d1 = dihedral(&coords, 2, 1, 3, 7).abs();
+        let d2 = dihedral(&coords, 0, 1, 2, 3).abs();
+        assert!(
+            d1 < 15.0 || d1 > 165.0,
+            "O=C-O-H dihedral should be planar, got {:.1}°",
+            d1
+        );
+        assert!(
+            d2 < 15.0 || d2 > 165.0,
+            "C-C(=O)-O dihedral should be planar, got {:.1}°",
+            d2
         );
     }
 
@@ -3408,23 +3660,49 @@ M  END"#,
 
 #[cfg(test)]
 mod acetic_debug {
-    use crate::molecule::parser::parse_sdf;
-    use crate::etkdg::{ETKDGConfig, generate_initial_coords_with_config};
+    use crate::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
     use crate::mmff::MMFFForceField;
-    use crate::{MMFFVariant, ConvergenceOptions};
+    use crate::molecule::parser::parse_sdf;
     use crate::optimizer;
+    use crate::{ConvergenceOptions, MMFFVariant};
 
-    fn dihedral(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
-        let b1 = [coords[j][0]-coords[i][0], coords[j][1]-coords[i][1], coords[j][2]-coords[i][2]];
-        let b2 = [coords[k][0]-coords[j][0], coords[k][1]-coords[j][1], coords[k][2]-coords[j][2]];
-        let b3 = [coords[l][0]-coords[k][0], coords[l][1]-coords[k][1], coords[l][2]-coords[k][2]];
-        let n1 = [b1[1]*b2[2]-b1[2]*b2[1], b1[2]*b2[0]-b1[0]*b2[2], b1[0]*b2[1]-b1[1]*b2[0]];
-        let n2 = [b2[1]*b3[2]-b2[2]*b3[1], b2[2]*b3[0]-b2[0]*b3[2], b2[0]*b3[1]-b2[1]*b3[0]];
-        let m1 = [n1[1]*b2[2]-n1[2]*b2[1], n1[2]*b2[0]-n1[0]*b2[2], n1[0]*b2[1]-n1[1]*b2[0]];
-        let b2n = (b2[0]*b2[0]+b2[1]*b2[1]+b2[2]*b2[2]).sqrt();
-        if b2n < 1e-10 { return 0.0; }
-        let x = n1[0]*n2[0]+n1[1]*n2[1]+n1[2]*n2[2];
-        let y = (m1[0]*n2[0]+m1[1]*n2[1]+m1[2]*n2[2]) / b2n;
+    pub fn dihedral(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
+        let b1 = [
+            coords[j][0] - coords[i][0],
+            coords[j][1] - coords[i][1],
+            coords[j][2] - coords[i][2],
+        ];
+        let b2 = [
+            coords[k][0] - coords[j][0],
+            coords[k][1] - coords[j][1],
+            coords[k][2] - coords[j][2],
+        ];
+        let b3 = [
+            coords[l][0] - coords[k][0],
+            coords[l][1] - coords[k][1],
+            coords[l][2] - coords[k][2],
+        ];
+        let n1 = [
+            b1[1] * b2[2] - b1[2] * b2[1],
+            b1[2] * b2[0] - b1[0] * b2[2],
+            b1[0] * b2[1] - b1[1] * b2[0],
+        ];
+        let n2 = [
+            b2[1] * b3[2] - b2[2] * b3[1],
+            b2[2] * b3[0] - b2[0] * b3[2],
+            b2[0] * b3[1] - b2[1] * b3[0],
+        ];
+        let m1 = [
+            n1[1] * b2[2] - n1[2] * b2[1],
+            n1[2] * b2[0] - n1[0] * b2[2],
+            n1[0] * b2[1] - n1[1] * b2[0],
+        ];
+        let b2n = (b2[0] * b2[0] + b2[1] * b2[1] + b2[2] * b2[2]).sqrt();
+        if b2n < 1e-10 {
+            return 0.0;
+        }
+        let x = n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2];
+        let y = (m1[0] * n2[0] + m1[1] * n2[1] + m1[2] * n2[2]) / b2n;
         y.atan2(x).to_degrees()
     }
 
@@ -3452,19 +3730,37 @@ mod acetic_debug {
   4  8  1  0
 M  END"#;
         let mol = parse_sdf(sdf).unwrap();
-        let config = ETKDGConfig { random_seed: 42, ..Default::default() };
+        let config = ETKDGConfig {
+            random_seed: 42,
+            ..Default::default()
+        };
         let coords = generate_initial_coords_with_config(&mol, &config);
 
         eprintln!("=== ETKDG geometry ===");
         for i in 0..8 {
-            eprintln!("  {} {}: {:.4} {:.4} {:.4}", i, mol.atoms[i].symbol, coords[i][0], coords[i][1], coords[i][2]);
+            eprintln!(
+                "  {} {}: {:.4} {:.4} {:.4}",
+                i, mol.atoms[i].symbol, coords[i][0], coords[i][1], coords[i][2]
+            );
         }
         // Key dihedrals for carboxyl planarity:
         // H7-O3-C2-C1 (should be ~0 or ~180 for planar)
-        eprintln!("  dihedral O(=O)-C-C(=O)-O(H): {:.1}°", dihedral(&coords, 2, 1, 0, 3));
-        eprintln!("  dihedral O(=O)-C-OH-H:      {:.1}°", dihedral(&coords, 2, 1, 3, 7));
-        eprintln!("  dihedral C(methyl)-C-O-H:    {:.1}°", dihedral(&coords, 0, 1, 3, 7));
-        eprintln!("  dihedral O(=O)-C-C-H(meth):  {:.1}°", dihedral(&coords, 2, 1, 0, 4));
+        eprintln!(
+            "  dihedral O(=O)-C-C(=O)-O(H): {:.1}°",
+            dihedral(&coords, 2, 1, 0, 3)
+        );
+        eprintln!(
+            "  dihedral O(=O)-C-OH-H:      {:.1}°",
+            dihedral(&coords, 2, 1, 3, 7)
+        );
+        eprintln!(
+            "  dihedral C(methyl)-C-O-H:    {:.1}°",
+            dihedral(&coords, 0, 1, 3, 7)
+        );
+        eprintln!(
+            "  dihedral O(=O)-C-C-H(meth):  {:.1}°",
+            dihedral(&coords, 2, 1, 0, 4)
+        );
 
         let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
         let result = optimizer::optimize(&ff, &coords, &ConvergenceOptions::default());
@@ -3472,16 +3768,34 @@ M  END"#;
 
         eprintln!("\n=== After MMFF94s optimization ===");
         for i in 0..8 {
-            eprintln!("  {} {}: {:.4} {:.4} {:.4}", i, mol.atoms[i].symbol, opt[i][0], opt[i][1], opt[i][2]);
+            eprintln!(
+                "  {} {}: {:.4} {:.4} {:.4}",
+                i, mol.atoms[i].symbol, opt[i][0], opt[i][1], opt[i][2]
+            );
         }
-        eprintln!("  dihedral O(=O)-C-C(=O)-O(H): {:.1}°", dihedral(opt, 2, 1, 0, 3));
-        eprintln!("  dihedral O(=O)-C-OH-H:      {:.1}°", dihedral(opt, 2, 1, 3, 7));
-        eprintln!("  dihedral C(methyl)-C-O-H:    {:.1}°", dihedral(opt, 0, 1, 3, 7));
-        eprintln!("  Energy: {:.4}, converged: {}", result.final_energy, result.converged);
+        eprintln!(
+            "  dihedral O(=O)-C-C(=O)-O(H): {:.1}°",
+            dihedral(opt, 2, 1, 0, 3)
+        );
+        eprintln!(
+            "  dihedral O(=O)-C-OH-H:      {:.1}°",
+            dihedral(opt, 2, 1, 3, 7)
+        );
+        eprintln!(
+            "  dihedral C(methyl)-C-O-H:    {:.1}°",
+            dihedral(opt, 0, 1, 3, 7)
+        );
+        eprintln!(
+            "  Energy: {:.4}, converged: {}",
+            result.final_energy, result.converged
+        );
 
         // The carboxyl group should be planar: dihedral ~0 or ~180
         let d = dihedral(opt, 2, 1, 3, 7);
-        assert!(d.abs() < 15.0 || (d - 180.0).abs() < 15.0 || (d + 180.0).abs() < 15.0,
-            "Carboxyl OH not planar: dihedral O=C-O-H = {:.1}°", d);
+        assert!(
+            d.abs() < 15.0 || (d - 180.0).abs() < 15.0 || (d + 180.0).abs() < 15.0,
+            "Carboxyl OH not planar: dihedral O=C-O-H = {:.1}°",
+            d
+        );
     }
 }

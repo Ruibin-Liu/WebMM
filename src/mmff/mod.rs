@@ -45,6 +45,9 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::OFUR => MMFFAtomType::O_3,
         // Water oxygen uses same params as generic sp3 oxygen
         MMFFAtomType::OH2 => MMFFAtomType::O_3,
+        // SP3D/SP3D2 types fall back to base sp3 types for parameters
+        MMFFAtomType::P_3D => MMFFAtomType::P_3,
+        MMFFAtomType::S_3D | MMFFAtomType::S_3D2 => MMFFAtomType::S_3,
         other => other,
     }
 }
@@ -67,8 +70,8 @@ pub enum MMFFAtomType {
     C_2,
     C_1,
     C_AR,
-    C5A,    // Alpha C in 5-membered heteroaromatic ring (MMFF 63)
-    C5B,    // Beta C in 5-membered heteroaromatic ring (MMFF 64)
+    C5A, // Alpha C in 5-membered heteroaromatic ring (MMFF 63)
+    C5B, // Beta C in 5-membered heteroaromatic ring (MMFF 64)
     C_CAT,
     C_AN,
 
@@ -76,22 +79,22 @@ pub enum MMFFAtomType {
     N_3,
     N_2,
     N_1,
-    N_AR,   // Pyridine-type N in 6-membered ring (MMFF 38)
-    NPYL,   // Pyrrole-type N in 5-membered ring (MMFF 39)
+    N_AR, // Pyridine-type N in 6-membered ring (MMFF 38)
+    NPYL, // Pyrrole-type N in 5-membered ring (MMFF 39)
     N_PL3,
     N_AM,
     N_4,
     N_2Z,
     N_SOM,
-    N5A,    // Alpha N in 5-membered heteroaromatic ring (MMFF 65)
-    N5B,    // Beta N in 5-membered heteroaromatic ring (MMFF 66)
+    N5A, // Alpha N in 5-membered heteroaromatic ring (MMFF 65)
+    N5B, // Beta N in 5-membered heteroaromatic ring (MMFF 66)
 
     // Oxygens
     O_3,
     O_2,
-    O_R,    // Ether/alcohol O (MMFF 6) — note: water uses OH2 (70)
-    OH2,    // Water oxygen (MMFF 70)
-    OFUR,   // Furan oxygen (MMFF 59)
+    O_R,  // Ether/alcohol O (MMFF 6) — note: water uses OH2 (70)
+    OH2,  // Water oxygen (MMFF 70)
+    OFUR, // Furan oxygen (MMFF 59)
     O_CO2,
     O_3_Z,
 
@@ -107,6 +110,11 @@ pub enum MMFFAtomType {
     S_AR,
     P_3,
     P_4,
+
+    // SP3D / SP3D2 (trigonal bipyramidal / octahedral)
+    P_3D,  // Phosphorus in trigonal bipyramidal geometry (e.g., PF5)
+    S_3D,  // Sulfur in trigonal bipyramidal geometry
+    S_3D2, // Sulfur in octahedral geometry (e.g., SF6)
 
     // Ions
     Fe_P2,
@@ -191,30 +199,48 @@ impl MMFFForceField {
     }
 
     fn assign_atom_types(mol: &Molecule) -> Vec<MMFFAtomType> {
-        use crate::molecule::graph::{determine_hybridization, get_aromatic_atoms, find_rings};
+        use crate::molecule::graph::{determine_hybridization, find_rings, get_aromatic_atoms};
 
         let aromatic_atoms = get_aromatic_atoms(mol);
         let rings = find_rings(mol);
-        
+
         // Detect 5-membered heteroaromatic rings and classify their atoms
-        let mut atom_5ring_type: std::collections::HashMap<usize, MMFFAtomType> = std::collections::HashMap::new();
+        let mut atom_5ring_type: std::collections::HashMap<usize, MMFFAtomType> =
+            std::collections::HashMap::new();
         for ring in &rings {
-            if ring.len() != 5 { continue; }
+            if ring.len() != 5 {
+                continue;
+            }
             let all_aromatic = ring.iter().all(|a| aromatic_atoms.contains(a));
-            if !all_aromatic { continue; }
-            let hetero_atoms: Vec<usize> = ring.iter().filter(|&&a| {
-                let an = mol.atoms[a].atomic_number;
-                an == 7 || an == 8 || an == 16
-            }).copied().collect();
-            if hetero_atoms.is_empty() { continue; }
-            
+            if !all_aromatic {
+                continue;
+            }
+            let hetero_atoms: Vec<usize> = ring
+                .iter()
+                .filter(|&&a| {
+                    let an = mol.atoms[a].atomic_number;
+                    an == 7 || an == 8 || an == 16
+                })
+                .copied()
+                .collect();
+            if hetero_atoms.is_empty() {
+                continue;
+            }
+
             for &atom_idx in ring {
                 let an = mol.atoms[atom_idx].atomic_number;
-                let hetero_neighbors_in_ring: Vec<usize> = ring.iter().filter(|&&n| {
-                    n != atom_idx && mol.adjacency[atom_idx].contains(&n) && 
-                    (mol.atoms[n].atomic_number == 7 || mol.atoms[n].atomic_number == 8 || mol.atoms[n].atomic_number == 16)
-                }).copied().collect();
-                
+                let hetero_neighbors_in_ring: Vec<usize> = ring
+                    .iter()
+                    .filter(|&&n| {
+                        n != atom_idx
+                            && mol.adjacency[atom_idx].contains(&n)
+                            && (mol.atoms[n].atomic_number == 7
+                                || mol.atoms[n].atomic_number == 8
+                                || mol.atoms[n].atomic_number == 16)
+                    })
+                    .copied()
+                    .collect();
+
                 let typ = match an {
                     6 => {
                         if hetero_neighbors_in_ring.len() == 1 {
@@ -224,7 +250,10 @@ impl MMFFForceField {
                         }
                     }
                     7 => {
-                        let h_count = mol.adjacency[atom_idx].iter().filter(|&&n| mol.atoms[n].atomic_number == 1).count();
+                        let h_count = mol.adjacency[atom_idx]
+                            .iter()
+                            .filter(|&&n| mol.atoms[n].atomic_number == 1)
+                            .count();
                         if h_count >= 1 {
                             MMFFAtomType::NPYL
                         } else {
@@ -246,12 +275,12 @@ impl MMFFForceField {
             .iter()
             .map(|atom| {
                 let idx = atom.index;
-                
+
                 // Check if atom is in a 5-membered heteroaromatic ring
                 if let Some(&typ) = atom_5ring_type.get(&idx) {
                     return typ;
                 }
-                
+
                 let hybrid = determine_hybridization(idx, mol);
                 let aromatic = aromatic_atoms.contains(&idx);
                 let num_bonds = crate::molecule::graph::get_neighbors(idx, mol).len();
@@ -331,7 +360,13 @@ impl MMFFForceField {
 
                     // N_PL3: sp3 N bonded to C=O or to aromatic carbon (aniline)
                     (7, Hybridization::Sp3, false, _) if has_c_o_neighbor => MMFFAtomType::N_PL3,
-                    (7, Hybridization::Sp3, false, _) if carbon_neighbors.iter().any(|&c| aromatic_atoms.contains(&c)) => MMFFAtomType::N_PL3,
+                    (7, Hybridization::Sp3, false, _)
+                        if carbon_neighbors
+                            .iter()
+                            .any(|&c| aromatic_atoms.contains(&c)) =>
+                    {
+                        MMFFAtomType::N_PL3
+                    }
 
                     // Nitrogen types — aromatic takes priority
                     (7, _, true, 2..=3) => MMFFAtomType::N_AR,
@@ -371,6 +406,11 @@ impl MMFFForceField {
                     // Phosphorus types
                     (15, Hybridization::Sp3, _, 3..=4) => MMFFAtomType::P_3,
                     (15, Hybridization::Sp2, _, _) => MMFFAtomType::P_4,
+                    (15, Hybridization::Sp3D, _, 5) => MMFFAtomType::P_3D,
+
+                    // Sulfur types
+                    (16, Hybridization::Sp3D, _, 4..=5) => MMFFAtomType::S_3D,
+                    (16, Hybridization::Sp3D2, _, 6) => MMFFAtomType::S_3D2,
 
                     // Halogens
                     (9, _, _, _) => MMFFAtomType::F,
@@ -449,11 +489,12 @@ impl MMFFForceField {
             7 => {
                 // H_NAM for H bonded to N that is conjugated: aromatic N, amide N (double bond),
                 // or aniline N (bonded to aromatic carbon)
-                let n_is_aniline = mol.adjacency[neighbor_idx].iter().any(|&nbr| {
-                    aromatic_atoms.contains(&nbr) && mol.atoms[nbr].atomic_number == 6
-                });
+                let n_is_aniline = mol.adjacency[neighbor_idx]
+                    .iter()
+                    .any(|&nbr| aromatic_atoms.contains(&nbr) && mol.atoms[nbr].atomic_number == 6);
                 let n_is_amide = mol.bonds.iter().any(|b| {
-                    (b.atom1 == neighbor_idx || b.atom2 == neighbor_idx) && b.bond_type == BondType::Double
+                    (b.atom1 == neighbor_idx || b.atom2 == neighbor_idx)
+                        && b.bond_type == BondType::Double
                 });
                 let n_is_aromatic = aromatic_atoms.contains(&neighbor_idx);
                 if n_is_aniline || n_is_amide || n_is_aromatic {

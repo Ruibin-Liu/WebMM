@@ -17,8 +17,32 @@ pub fn get_torsion_params(
     type2: MMFFAtomType,
     type3: MMFFAtomType,
     type4: MMFFAtomType,
-    _mmff_variant: MMFFVariant,
+    mmff_variant: MMFFVariant,
 ) -> Option<TorsionParams> {
+    // MMFF94s overrides for key torsion types
+    if mmff_variant == MMFFVariant::MMFF94s {
+        // Amide torsions: larger V2 barrier to enforce planarity
+        if (type2 == MMFFAtomType::C_2 && type3 == MMFFAtomType::N_AM)
+            || (type2 == MMFFAtomType::N_AM && type3 == MMFFAtomType::C_2)
+        {
+            return Some(TorsionParams {
+                v1: 0.0,
+                v2: 15.0,
+                v3: 0.0,
+            });
+        }
+        // Peptide-like N-C torsions
+        if (type2 == MMFFAtomType::N_AM && type3 == MMFFAtomType::C_3)
+            || (type2 == MMFFAtomType::C_3 && type3 == MMFFAtomType::N_AM)
+        {
+            return Some(TorsionParams {
+                v1: 0.0,
+                v2: 0.3,
+                v3: 0.0,
+            });
+        }
+    }
+
     match (type1, type2, type3, type4) {
         (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => {
             Some(TorsionParams {
@@ -185,7 +209,9 @@ pub fn torsion_energy(
     let cos_2phi = (2.0 * phi).cos();
     let cos_3phi = (3.0 * phi).cos();
 
-    0.5 * (params.v1 * (1.0 + cos_phi) + params.v2 * (1.0 - cos_2phi) + params.v3 * (1.0 + cos_3phi))
+    0.5 * (params.v1 * (1.0 + cos_phi)
+        + params.v2 * (1.0 - cos_2phi)
+        + params.v3 * (1.0 + cos_3phi))
 }
 
 /// Calculate dihedral angle between four atoms

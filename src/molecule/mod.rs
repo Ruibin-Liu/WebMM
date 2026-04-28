@@ -31,6 +31,8 @@ pub enum BondStereo {
     None,
     Cis,
     Trans,
+    AtropCW,
+    AtropCCW,
 }
 
 /// Bond between two atoms

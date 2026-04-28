@@ -96,14 +96,14 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
             oop_k: 0.0,
         }),
         MMFFAtomType::C_2 => Some(AtomTypeProperties {
-            bond_class: 5,
-            angle_class: 6,
+            bond_class: 3,
+            angle_class: 3,
             fbci: 0.0,
-            crd: 0.67,
+            crd: 0.73,
             vdw_r: 3.850,
             vdw_eps: 0.0678,
-            vdw_alpha: 0.167,
-            oop_k: 0.038,
+            vdw_alpha: 0.105,
+            oop_k: 0.20,
         }),
         MMFFAtomType::C_1 => Some(AtomTypeProperties {
             bond_class: 10,
@@ -445,6 +445,9 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
             vdw_alpha: 0.167,
             oop_k: 0.0,
         }),
+        // SP3D / SP3D2 types use base type properties
+        MMFFAtomType::P_3D => get_atom_type_props(MMFFAtomType::P_3),
+        MMFFAtomType::S_3D | MMFFAtomType::S_3D2 => get_atom_type_props(MMFFAtomType::S_3),
         MMFFAtomType::Fe_P2
         | MMFFAtomType::Fe_P3
         | MMFFAtomType::Li

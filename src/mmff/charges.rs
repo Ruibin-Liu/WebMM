@@ -32,7 +32,7 @@ fn mmff_type_id(t: MMFFAtomType) -> u8 {
         MMFFAtomType::N5B => 66,
         MMFFAtomType::O_3 => 6,
         MMFFAtomType::O_2 => 7,
-        MMFFAtomType::O_R => 6,  // alcohol/ether O is type 6, not 70
+        MMFFAtomType::O_R => 6, // alcohol/ether O is type 6, not 70
         MMFFAtomType::OH2 => 70,
         MMFFAtomType::OFUR => 59,
         MMFFAtomType::O_CO2 => 32,
@@ -46,6 +46,9 @@ fn mmff_type_id(t: MMFFAtomType) -> u8 {
         MMFFAtomType::S_AR => 44,
         MMFFAtomType::P_3 => 26,
         MMFFAtomType::P_4 => 25,
+        MMFFAtomType::P_3D => 26,  // same as P_3
+        MMFFAtomType::S_3D => 15,  // same as S_3
+        MMFFAtomType::S_3D2 => 15, // same as S_3
         MMFFAtomType::Fe_P2 => 87,
         MMFFAtomType::Fe_P3 => 88,
         MMFFAtomType::Li => 92,

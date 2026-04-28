@@ -174,7 +174,10 @@ pub fn stretch_bend_energy(
     let dr_kj = r_kj - r0_kj;
     let dtheta = theta - theta0_rad;
 
-    params.kba_ijk * dr_ij * dtheta + params.kba_kji * dr_kj * dtheta
+    // MMFF stretch-bend: E = 0.5 * C * (kba_ijk * dr_ij + kba_kji * dr_kj) * dtheta
+    // where C = MDYNE_A_TO_KCAL_MOL * DEG2RAD ≈ 2.512
+    const C_SB: f64 = 143.9324 * std::f64::consts::PI / 180.0;
+    0.5 * C_SB * (params.kba_ijk * dr_ij + params.kba_kji * dr_kj) * dtheta
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -280,31 +283,38 @@ pub fn stretch_bend_gradient(
     let c_ijk = params.kba_ijk;
     let c_kji = params.kba_kji;
 
+    // MMFF stretch-bend: E = 0.5 * C * (kba_ijk * dr_ij + kba_kji * dr_kj) * dtheta
+    const C_SB: f64 = 143.9324 * std::f64::consts::PI / 180.0;
+    const SCALE: f64 = 0.5 * C_SB;
+
     // Gradient for atom i:
-    // c_ijk * (uij * dtheta + dr_ij * dtheta_di) + c_kji * (0 * dtheta + dr_kj * dtheta_di)
+    // dE/dx_i = SCALE * [c_ijk * (uij * dtheta + dr_ij * dtheta_di) + c_kji * dr_kj * dtheta_di]
     let gi: [f64; 3] = [
-        c_ijk * (uij[0] * dtheta + dr_ij * dtheta_di[0]) + c_kji * dr_kj * dtheta_di[0],
-        c_ijk * (uij[1] * dtheta + dr_ij * dtheta_di[1]) + c_kji * dr_kj * dtheta_di[1],
-        c_ijk * (uij[2] * dtheta + dr_ij * dtheta_di[2]) + c_kji * dr_kj * dtheta_di[2],
+        SCALE * (c_ijk * (uij[0] * dtheta + dr_ij * dtheta_di[0]) + c_kji * dr_kj * dtheta_di[0]),
+        SCALE * (c_ijk * (uij[1] * dtheta + dr_ij * dtheta_di[1]) + c_kji * dr_kj * dtheta_di[1]),
+        SCALE * (c_ijk * (uij[2] * dtheta + dr_ij * dtheta_di[2]) + c_kji * dr_kj * dtheta_di[2]),
     ];
 
     // Gradient for atom j:
-    // c_ijk * (-uij * dtheta + dr_ij * dtheta_dj) + c_kji * (-ukj * dtheta + dr_kj * dtheta_dj)
+    // dE/dx_j = SCALE * [c_ijk * (-uij * dtheta + dr_ij * dtheta_dj) + c_kji * (-ukj * dtheta + dr_kj * dtheta_dj)]
     let gj: [f64; 3] = [
-        c_ijk * (-uij[0] * dtheta + dr_ij * dtheta_dj[0])
-            + c_kji * (-ukj[0] * dtheta + dr_kj * dtheta_dj[0]),
-        c_ijk * (-uij[1] * dtheta + dr_ij * dtheta_dj[1])
-            + c_kji * (-ukj[1] * dtheta + dr_kj * dtheta_dj[1]),
-        c_ijk * (-uij[2] * dtheta + dr_ij * dtheta_dj[2])
-            + c_kji * (-ukj[2] * dtheta + dr_kj * dtheta_dj[2]),
+        SCALE
+            * (c_ijk * (-uij[0] * dtheta + dr_ij * dtheta_dj[0])
+                + c_kji * (-ukj[0] * dtheta + dr_kj * dtheta_dj[0])),
+        SCALE
+            * (c_ijk * (-uij[1] * dtheta + dr_ij * dtheta_dj[1])
+                + c_kji * (-ukj[1] * dtheta + dr_kj * dtheta_dj[1])),
+        SCALE
+            * (c_ijk * (-uij[2] * dtheta + dr_ij * dtheta_dj[2])
+                + c_kji * (-ukj[2] * dtheta + dr_kj * dtheta_dj[2])),
     ];
 
     // Gradient for atom k:
-    // c_ijk * (0 * dtheta + dr_ij * dtheta_dk) + c_kji * (ukj * dtheta + dr_kj * dtheta_dk)
+    // dE/dx_k = SCALE * [c_ijk * dr_ij * dtheta_dk + c_kji * (ukj * dtheta + dr_kj * dtheta_dk)]
     let gk: [f64; 3] = [
-        c_ijk * dr_ij * dtheta_dk[0] + c_kji * (ukj[0] * dtheta + dr_kj * dtheta_dk[0]),
-        c_ijk * dr_ij * dtheta_dk[1] + c_kji * (ukj[1] * dtheta + dr_kj * dtheta_dk[1]),
-        c_ijk * dr_ij * dtheta_dk[2] + c_kji * (ukj[2] * dtheta + dr_kj * dtheta_dk[2]),
+        SCALE * (c_ijk * dr_ij * dtheta_dk[0] + c_kji * (ukj[0] * dtheta + dr_kj * dtheta_dk[0])),
+        SCALE * (c_ijk * dr_ij * dtheta_dk[1] + c_kji * (ukj[1] * dtheta + dr_kj * dtheta_dk[1])),
+        SCALE * (c_ijk * dr_ij * dtheta_dk[2] + c_kji * (ukj[2] * dtheta + dr_kj * dtheta_dk[2])),
     ];
 
     (gi, gj, gk)

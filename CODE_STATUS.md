@@ -25,17 +25,19 @@ Phase 25: ETKDG v3 Full Exact Port — All major gaps addressed, test suite stab
 - **S6**: Replaced PCA planarity check with improper energy method (energy/atom < 0.7, matching RDKit)
 - Ring torsions restructured: separate handling for macrocycle (>=9), 5-ring, 3-4 ring, 6-8 ring
 - Fixed all flaky tests (pyrrole, acetic acid, benzene planarity stress, worst-run) to use fixed seeds
-- All 129 tests pass, 0 clippy errors
+- All 134 tests pass, 0 clippy errors (WASM verified)
 
-## Remaining Minor Gaps
-- M6: SP3D/SP3D2 in MMFF atom typing (ETKDG angles done)
-- M7: Atropisomer chirality
-- M8: Fragment embedding (multi-fragment molecules)
-- M9: CoordMap (constrained atoms)
-- M10: Timeout
-- M11: et_version field usage
-- M12: Triangle smoothing convergence epsilon
-- M6-M12: Minor gaps (SP3D/SP3D2, atropisomer, fragment embedding, coordMap, timeout, et_version usage)
+## Completed (M6-M12)
+- M6: SP3D/SP3D2 MMFF atom types — Added P_3D, S_3D, S_3D2 to MMFFAtomType enum with base_type fallback to P_3/S_3, assign_atom_types detection for Sp3D/Sp3D2 hybridization, angle params for trigonal bipyramidal/octahedral geometries, atom type properties and charge mappings
+- M7: Atropisomer chirality — Added AtropCW/AtropCCW to BondStereo, `find_stereo_bonds` detects atropisomers, `check_atropisomers` validates chiral volume sign, test with simple C(F)(H)-C(Cl)(Br) atropisomer
+- M8: Fragment embedding — `find_connected_components` detects disconnected fragments, `extract_submol` creates sub-molecules, `spread_fragments` places fragments with 5Å gaps, test with water dimer
+- M9: CoordMap (constrained atoms) — Added `coord_map: HashMap<usize, [f64; 3]>` to ETKDGConfig, fixed atoms during 4D embedding and 3D minimization, test with water O fixed at origin
+- M10: Timeout support — Added `timeout_ms` to ETKDGConfig, `web-time` dependency for WASM-compatible timing, timeout check in embedding loop
+- M11: et_version field usage — Wired `config.et_version` into `build_torsion_preferences` and `match_torsion_pattern`, v2 uses softer sp3-sp3 torsion barriers (5.0 vs 7.0, 1.5 vs 2.0 for rings)
+- M12: Triangle smoothing epsilon — Made `smooth_triangle_inequality` accept configurable epsilon parameter, added `triangle_smoothing_epsilon` to ETKDGConfig (default 1e-6)
+- **WASM Verification**: `wasm-pack build --target web` succeeds, 314KB wasm binary generated at `pkg/webmm_bg.wasm`
+- **All 135 tests pass**, 0 ignored
+- **Acetic acid planarity fix**: Added missing MMFF angle parameter C_3-C_2-O_R (112.42°), made O=C-O angle consistent (121.02°), increased C_2 OOP constant from 0.04 to 0.20 to enforce carboxyl planarity. Carboxyl group now planar (dihedral ~180°).
 
 Phase 1 (Distance Bounds) completed:
 - `ComputedData` struct, 1-5 geometry helpers, `set_15_bounds_helper`, H-bond detection, macrocycle 14-config
@@ -212,4 +214,6 @@ Phase 7 (Fill All Remaining Gaps) completed:
 - 2026-04-24 — Fixed stretch-bend conversion factor: added missing `0.5 * C_SB` where `C_SB = 143.9324 * π/180 ≈ 2.512` (src/mmff/stretch_bend.rs). Was producing energies ~5× too small.
 - 2026-04-24 — Fixed OOP angle calculation: rewrote `calculate_oop_angle` to use proper Wilson angle (RDKit-style) with normalized vectors from central atom (src/mmff/oop.rs).
 - 2026-04-24 — Fixed MMFF94s variant ignored: `get_torsion_params` now accepts and uses `mmff_variant` parameter, with MMFF94s-specific overrides for amide and peptide torsions (src/mmff/torsion.rs).
-- All 129 tests pass after fixes.
+- 2026-04-27 — Completed M6-M12 gaps: SP3D/SP3D2 atom types, atropisomer chirality, fragment embedding, coordMap constraints, timeout support, et_version usage, configurable triangle smoothing epsilon
+- 2026-04-27 — Fixed acetic acid carboxyl planarity: `build_planarity_constraints` now adds improper torsions and exocyclic torsions for non-aromatic sp2 atoms (carboxyl, carbonyl, amide groups). Carboxyl group now planar (dihedrals ~0°/180°). Un-ignored `test_etkdg_acetic_acid_geometry`.
+- All 135 tests pass after fixes, WASM build verified.

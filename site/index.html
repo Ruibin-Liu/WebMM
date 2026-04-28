@@ -206,7 +206,7 @@
 
         async function initWasm() {
             try {
-                const wasmModule = await import('./pkg/webmm.js');
+                const wasmModule = await import('../pkg/webmm.js');
                 if (wasmModule.default) await wasmModule.default();
                 optimize_from_sdf = wasmModule.optimize_from_sdf;
                 generate_initial_coordinates_wasm = wasmModule.generate_initial_coordinates_wasm;

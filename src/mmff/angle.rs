@@ -15,6 +15,32 @@ pub fn get_angle_params(
     type2: MMFFAtomType,
     type3: MMFFAtomType,
 ) -> Option<AngleParams> {
+    // Check for specific SP3D/SP3D2 angle parameters first
+    match (type1, type2, type3) {
+        // SP3D angles (trigonal bipyramidal, e.g., PF5)
+        (MMFFAtomType::F, MMFFAtomType::P_3D, MMFFAtomType::F) => {
+            return Some(AngleParams {
+                k_theta: 0.80,
+                theta0: 180.0,
+            });
+        }
+        (MMFFAtomType::F, MMFFAtomType::P_3D, MMFFAtomType::C_3)
+        | (MMFFAtomType::C_3, MMFFAtomType::P_3D, MMFFAtomType::F) => {
+            return Some(AngleParams {
+                k_theta: 0.80,
+                theta0: 90.0,
+            });
+        }
+        // SP3D2 angles (octahedral, e.g., SF6)
+        (MMFFAtomType::F, MMFFAtomType::S_3D2, MMFFAtomType::F) => {
+            return Some(AngleParams {
+                k_theta: 0.80,
+                theta0: 90.0,
+            });
+        }
+        _ => {}
+    }
+
     let type1 = super::base_type(type1);
     let type2 = super::base_type(type2);
     let type3 = super::base_type(type3);
@@ -84,6 +110,11 @@ pub fn get_angle_params(
         | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
             k_theta: 1.043,
             theta0: 109.716,
+        }),
+        (MMFFAtomType::O_R, MMFFAtomType::C_2, MMFFAtomType::C_3)
+        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_R) => Some(AngleParams {
+            k_theta: 1.043,
+            theta0: 112.42,
         }),
         (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_2) => Some(AngleParams {
             k_theta: 1.30,
@@ -261,7 +292,7 @@ pub fn get_angle_params(
         (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::O_3)
         | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some(AngleParams {
             k_theta: 1.155,
-            theta0: 124.425,
+            theta0: 121.02,
         }),
 
         // C-S-C angles
