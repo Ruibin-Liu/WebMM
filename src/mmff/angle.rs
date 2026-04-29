@@ -108,13 +108,24 @@ pub fn get_angle_params(
         }),
         (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_3)
         | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
+            k_theta: 0.938,
+            theta0: 124.410,
+        }),
+        (MMFFAtomType::O_R, MMFFAtomType::C_2, MMFFAtomType::C_3)
+        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_R)
+        | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::C_3)
+        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_3) => Some(AngleParams {
             k_theta: 1.043,
             theta0: 109.716,
         }),
-        (MMFFAtomType::O_R, MMFFAtomType::C_2, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_R) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 112.42,
+        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::O_3)
+        | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
+            k_theta: 1.155,
+            theta0: 124.425,
+        }),
+        (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::O_3) => Some(AngleParams {
+            k_theta: 1.678,
+            theta0: 109.094,
         }),
         (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_2) => Some(AngleParams {
             k_theta: 1.30,
@@ -245,16 +256,21 @@ pub fn get_angle_params(
 
         // Alcohol/phenol angles (O_R centered) — same params as O_3 since both are MMFF type 6
         (MMFFAtomType::H, MMFFAtomType::O_R, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::O_R, MMFFAtomType::H) => Some(AngleParams {
+        | (MMFFAtomType::C_3, MMFFAtomType::O_R, MMFFAtomType::H)
+        | (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_3)
+        | (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
             k_theta: 0.793,
             theta0: 106.503,
         }),
         (MMFFAtomType::H, MMFFAtomType::O_R, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::O_R, MMFFAtomType::H) => Some(AngleParams {
+        | (MMFFAtomType::C_2, MMFFAtomType::O_R, MMFFAtomType::H)
+        | (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_2)
+        | (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
             k_theta: 0.793,
             theta0: 104.05,
         }),
-        (MMFFAtomType::H, MMFFAtomType::O_R, MMFFAtomType::H) => Some(AngleParams {
+        (MMFFAtomType::H, MMFFAtomType::O_R, MMFFAtomType::H)
+        | (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
             k_theta: 0.658,
             theta0: 103.978,
         }),
@@ -402,8 +418,13 @@ pub fn get_angle_params(
         }),
         (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::O_2)
         | (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.808,
-            theta0: 117.28,
+            k_theta: 0.670,
+            theta0: 123.439,
+        }),
+        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::O_3)
+        | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
+            k_theta: 0.819,
+            theta0: 108.253,
         }),
         (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::N_2)
         | (MMFFAtomType::N_2, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
@@ -899,24 +920,32 @@ pub fn get_angle_params(
 ///
 /// MMFF94 anharmonic angle bend (RDKit-compatible):
 ///   E = 0.5 * c2 * ka * dtheta^2 * (1 + cb * dtheta)
-/// where cb = -0.006981317, c2 = 143.9324 * (pi/180)^2 = 0.04385
+/// where cb = -0.006981317, c2 = 143.9325 * (pi/180)^2 = 0.04385
 /// dtheta is in degrees
+///
+/// For linear angles (theta0 >= 179.0), uses:
+///   E = 143.9325 * ka * (1 + cos(theta))
 pub fn angle_energy(
     coords: &[[f64; 3]],
     i: usize,
-    j: usize, // Central atom
+    j: usize,
     k: usize,
     params: &AngleParams,
 ) -> f64 {
     let theta_rad = calculate_angle(coords, i, j, k);
-    let theta_deg = theta_rad.to_degrees();
-    let dtheta = theta_deg - params.theta0;
 
-    // RDKit anharmonic angle bend
-    let c2 = 143.9324 * (std::f64::consts::PI / 180.0).powi(2); // = 0.04385
-    let cb = -0.006981317;
+    if params.theta0 >= 179.0 {
+        let cos_theta = theta_rad.cos();
+        143.9325 * params.k_theta * (1.0 + cos_theta)
+    } else {
+        let theta_deg = theta_rad.to_degrees();
+        let dtheta = theta_deg - params.theta0;
 
-    0.5 * c2 * params.k_theta * dtheta * dtheta * (1.0 + cb * dtheta)
+        let c2 = 143.9325 * (std::f64::consts::PI / 180.0).powi(2);
+        let cb = -0.006981317;
+
+        0.5 * c2 * params.k_theta * dtheta * dtheta * (1.0 + cb * dtheta)
+    }
 }
 
 /// Calculate angle between three atoms
@@ -981,17 +1010,16 @@ pub fn angle_gradient(
         return ([0.0; 3], [0.0; 3], [0.0; 3]);
     }
 
-    // RDKit anharmonic angle gradient:
-    // angleTerm = theta (degrees) - theta0 (degrees)
-    // dE/dTheta = RAD2DEG * c2 * ka * angleTerm * (1.0 + 1.5 * cb * angleTerm)
-    // where c2 = 143.9324 * (pi/180)^2
-    let theta_deg = theta.to_degrees();
-    let angle_term = theta_deg - params.theta0;
-    let c2 = 143.9324 * (std::f64::consts::PI / 180.0).powi(2);
-    let cb = -0.006981317;
-    let rad2deg = 180.0 / std::f64::consts::PI;
-
-    let d_e_dtheta = rad2deg * c2 * params.k_theta * angle_term * (1.0 + 1.5 * cb * angle_term);
+    let d_e_dtheta = if params.theta0 >= 179.0 {
+        -143.9325 * params.k_theta * sin_theta
+    } else {
+        let theta_deg = theta.to_degrees();
+        let angle_term = theta_deg - params.theta0;
+        let c2 = 143.9325 * (std::f64::consts::PI / 180.0).powi(2);
+        let cb = -0.006981317;
+        let rad2deg = 180.0 / std::f64::consts::PI;
+        rad2deg * c2 * params.k_theta * angle_term * (1.0 + 1.5 * cb * angle_term)
+    };
 
     // dtheta/dr1 = -1/(|r1|*sin(theta)) * (r2/|r2| - cos(theta)*r1/|r1|)
     // dtheta/dr3 = -1/(|r2|*sin(theta)) * (r1/|r1| - cos(theta)*r2/|r2|)

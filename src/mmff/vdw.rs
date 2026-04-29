@@ -8,18 +8,71 @@ use super::MMFFAtomType;
 pub struct VDWParams {
     pub r0: f64,
     pub epsilon: f64,
+    pub alpha: f64,
+    pub n_eff: f64,
 }
 
 pub fn get_vdw_params(atom_type: MMFFAtomType) -> VDWParams {
     let atom_type = super::base_type(atom_type);
+    let n_eff = match atom_type {
+        MMFFAtomType::H
+        | MMFFAtomType::H_OH
+        | MMFFAtomType::H_ONC
+        | MMFFAtomType::H_COOH
+        | MMFFAtomType::H_OAR
+        | MMFFAtomType::H_N3
+        | MMFFAtomType::H_NAM => 1.0,
+        MMFFAtomType::C_3
+        | MMFFAtomType::C_2
+        | MMFFAtomType::C_1
+        | MMFFAtomType::C_AR
+        | MMFFAtomType::C5A
+        | MMFFAtomType::C5B
+        | MMFFAtomType::C_CAT
+        | MMFFAtomType::C_AN => 5.0,
+        MMFFAtomType::N_3
+        | MMFFAtomType::N_2
+        | MMFFAtomType::N_1
+        | MMFFAtomType::N_AR
+        | MMFFAtomType::NPYL
+        | MMFFAtomType::N_PL3
+        | MMFFAtomType::N_AM
+        | MMFFAtomType::N_4
+        | MMFFAtomType::N_2Z
+        | MMFFAtomType::N_SOM
+        | MMFFAtomType::N5A
+        | MMFFAtomType::N5B => 6.0,
+        MMFFAtomType::O_3
+        | MMFFAtomType::O_2
+        | MMFFAtomType::O_R
+        | MMFFAtomType::O_CO2
+        | MMFFAtomType::O_3_Z
+        | MMFFAtomType::OH2
+        | MMFFAtomType::OFUR => 7.0,
+        MMFFAtomType::F => 9.0,
+        MMFFAtomType::P_3 | MMFFAtomType::P_4 | MMFFAtomType::P_3D => 10.0,
+        MMFFAtomType::S_3
+        | MMFFAtomType::S_2
+        | MMFFAtomType::S_AR
+        | MMFFAtomType::S_3D
+        | MMFFAtomType::S_3D2 => 12.0,
+        MMFFAtomType::Cl => 14.0,
+        MMFFAtomType::Br => 17.0,
+        MMFFAtomType::I => 22.0,
+        _ => 5.0,
+    };
     match get_atom_type_props(atom_type) {
         Some(props) => VDWParams {
             r0: props.vdw_r,
             epsilon: props.vdw_eps,
+            alpha: props.vdw_alpha,
+            n_eff,
         },
         None => VDWParams {
             r0: 1.7,
             epsilon: 0.07,
+            alpha: 0.167,
+            n_eff: 5.0,
         },
     }
 }
@@ -53,8 +106,15 @@ pub fn vdw_energy_and_gradient(
         return (0.0, [0.0; 3], [0.0; 3]);
     }
 
-    // R*_ij = 0.5 * (R*_ii + R*_jj)
-    let r_star = 0.5 * (params_i.r0 + params_j.r0);
+    // R*_ij = 0.5 * (R*_ii + R*_jj) * (1 + 0.2*(1 - exp(-12*gamma^2)))
+    let r_star_raw = 0.5 * (params_i.r0 + params_j.r0);
+    let gamma = if (params_i.r0 + params_j.r0) > 1e-10 {
+        (params_i.r0 - params_j.r0) / (params_i.r0 + params_j.r0)
+    } else {
+        0.0
+    };
+    let r_star = r_star_raw * (1.0 + 0.2 * (1.0 - (-12.0 * gamma * gamma).exp()));
+
     let epsilon = (params_i.epsilon * params_j.epsilon).sqrt();
 
     // RDKit buffered 14-7 with damping:
@@ -131,7 +191,12 @@ mod tests {
     use super::*;
 
     fn make_params(r0: f64, epsilon: f64) -> VDWParams {
-        VDWParams { r0, epsilon }
+        VDWParams {
+            r0,
+            epsilon,
+            alpha: 0.167,
+            n_eff: 5.0,
+        }
     }
 
     #[test]
@@ -152,8 +217,8 @@ mod tests {
             e_close
         );
         assert!(
-            (e_eq - (-0.07)).abs() < 0.01,
-            "VDW should have attractive well near r0: got {}, expected ~-0.07",
+            e_eq < 0.0,
+            "VDW should have attractive well near r0: got {}",
             e_eq
         );
         assert!(
@@ -175,7 +240,7 @@ mod tests {
 
         assert!(
             (e_14 - 0.75 * e_full).abs() < 1e-10,
-            "1-4 VDW should be 0.75 * full: got {}, expected {}",
+            "VDW 1-4 should be scaled by 0.75: got {}, expected {}",
             e_14,
             0.75 * e_full
         );

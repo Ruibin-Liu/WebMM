@@ -14,6 +14,7 @@ pub mod charges;
 pub mod electrostatics;
 pub mod estimation;
 pub mod oop;
+pub mod params;
 pub mod stretch_bend;
 pub mod torsion;
 pub mod vdw;
@@ -25,6 +26,7 @@ pub use charges::*;
 pub use electrostatics::*;
 pub use estimation::*;
 pub use oop::*;
+pub use params::*;
 pub use stretch_bend::*;
 pub use torsion::*;
 pub use vdw::*;
@@ -43,6 +45,8 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::C5A | MMFFAtomType::C5B => MMFFAtomType::C_AR,
         MMFFAtomType::NPYL | MMFFAtomType::N5A | MMFFAtomType::N5B => MMFFAtomType::N_AR,
         MMFFAtomType::OFUR => MMFFAtomType::O_3,
+        MMFFAtomType::O_R => MMFFAtomType::O_3,
+        MMFFAtomType::O_3_Z => MMFFAtomType::O_3,
         // Water oxygen uses same params as generic sp3 oxygen
         MMFFAtomType::OH2 => MMFFAtomType::O_3,
         // SP3D/SP3D2 types fall back to base sp3 types for parameters
@@ -375,8 +379,37 @@ impl MMFFForceField {
                     (7, Hybridization::Sp2, false, 2..) => MMFFAtomType::N_2,
                     (7, Hybridization::Sp1, false, 1..=2) => MMFFAtomType::N_1,
 
-                    // O_CO2: sp2 O double-bonded to carbon
-                    (8, _, _, _) if has_double_bond_to_c => MMFFAtomType::O_CO2,
+                    // O_CO2: O double-bonded to C that is also double-bonded to another O (CO2)
+                    (8, _, _, _) if has_double_bond_to_c => {
+                        let is_co2 = mol.bonds.iter().any(|b| {
+                            if b.bond_type != BondType::Double {
+                                return false;
+                            }
+                            let c_idx = if b.atom1 == idx {
+                                b.atom2
+                            } else if b.atom2 == idx {
+                                b.atom1
+                            } else {
+                                return false;
+                            };
+                            if mol.atoms[c_idx].atomic_number != 6 {
+                                return false;
+                            }
+                            mol.bonds.iter().any(|b2| {
+                                b2.bond_type == BondType::Double
+                                    && b2.atom1 != idx
+                                    && b2.atom2 != idx
+                                    && (b2.atom1 == c_idx || b2.atom2 == c_idx)
+                                    && (mol.atoms[b2.atom1].atomic_number == 8
+                                        || mol.atoms[b2.atom2].atomic_number == 8)
+                            })
+                        });
+                        if is_co2 {
+                            MMFFAtomType::O_CO2
+                        } else {
+                            MMFFAtomType::O_2
+                        }
+                    }
 
                     // Water O: two H neighbors
                     (8, Hybridization::Sp3, _, 2) if carbon_neighbors.is_empty() => {
@@ -611,11 +644,24 @@ impl MMFFForceField {
 
         // Torsion
         for torsion in &self.torsions {
+            let bond_key = (
+                torsion.atom2.min(torsion.atom3),
+                torsion.atom2.max(torsion.atom3),
+            );
+            let bond_type = self
+                .bond_map
+                .get(&bond_key)
+                .map(|b| b.bond_type)
+                .unwrap_or(BondType::Single);
+            let is_in_ring =
+                crate::molecule::graph::is_in_ring(torsion.atom2, torsion.atom3, &self.mol);
+            let tor_type = classify_torsion_type(bond_type, is_in_ring);
             if let Some(params) = get_torsion_params(
                 self.atom_types[torsion.atom1],
                 self.atom_types[torsion.atom2],
                 self.atom_types[torsion.atom3],
                 self.atom_types[torsion.atom4],
+                tor_type,
                 self.variant,
             ) {
                 energy += torsion_energy(
@@ -651,7 +697,13 @@ impl MMFFForceField {
 
         // Out-of-plane
         for oop in &self.oops {
-            let params = get_oop_params(self.atom_types[oop.central], self.variant);
+            let params = get_oop_params(
+                self.atom_types[oop.atom1],
+                self.atom_types[oop.central],
+                self.atom_types[oop.atom2],
+                self.atom_types[oop.atom3],
+                self.variant,
+            );
             energy += oop_energy(
                 coords,
                 oop.central,
@@ -799,11 +851,24 @@ impl MMFFForceField {
         }
 
         for torsion in &self.torsions {
+            let bond_key = (
+                torsion.atom2.min(torsion.atom3),
+                torsion.atom2.max(torsion.atom3),
+            );
+            let bond_type = self
+                .bond_map
+                .get(&bond_key)
+                .map(|b| b.bond_type)
+                .unwrap_or(BondType::Single);
+            let is_in_ring =
+                crate::molecule::graph::is_in_ring(torsion.atom2, torsion.atom3, &self.mol);
+            let tor_type = classify_torsion_type(bond_type, is_in_ring);
             if let Some(params) = get_torsion_params(
                 self.atom_types[torsion.atom1],
                 self.atom_types[torsion.atom2],
                 self.atom_types[torsion.atom3],
                 self.atom_types[torsion.atom4],
+                tor_type,
                 self.variant,
             ) {
                 bd.torsion += torsion_energy(
@@ -818,7 +883,13 @@ impl MMFFForceField {
         }
 
         for oop in &self.oops {
-            let params = get_oop_params(self.atom_types[oop.central], self.variant);
+            let params = get_oop_params(
+                self.atom_types[oop.atom1],
+                self.atom_types[oop.central],
+                self.atom_types[oop.atom2],
+                self.atom_types[oop.atom3],
+                self.variant,
+            );
             bd.oop += oop_energy(
                 coords,
                 oop.central,

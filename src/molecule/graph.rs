@@ -400,6 +400,19 @@ pub fn find_rings(mol: &Molecule) -> Vec<Vec<usize>> {
     primitive
 }
 
+/// Check if a bond between two atoms is in a ring
+pub fn is_in_ring(atom1: usize, atom2: usize, mol: &Molecule) -> bool {
+    let rings = find_rings(mol);
+    for ring in &rings {
+        let has_a = ring.contains(&atom1);
+        let has_b = ring.contains(&atom2);
+        if has_a && has_b && mol.adjacency[atom1].contains(&atom2) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Find rotatable bonds (for torsion angles)
 pub fn find_rotatable_bonds(mol: &Molecule) -> Vec<(usize, usize)> {
     let mut rotatable = Vec::new();
@@ -448,27 +461,19 @@ pub struct Angle {
 pub fn find_angles(mol: &Molecule) -> Vec<Angle> {
     let mut angles = Vec::new();
 
-    for bond in &mol.bonds {
-        let neighbors1 = get_neighbors(bond.atom1, mol);
-        let neighbors2 = get_neighbors(bond.atom2, mol);
-
-        // Find angles centered on each atom of the bond
-        for &n1 in neighbors1 {
-            if n1 != bond.atom2 {
-                angles.push(Angle {
-                    atom1: n1,
-                    atom2: bond.atom1,
-                    atom3: bond.atom2,
-                });
-            }
+    for j in 0..mol.atoms.len() {
+        let neighbors: Vec<usize> = get_neighbors(j, mol).to_vec();
+        if neighbors.len() < 2 {
+            continue;
         }
-
-        for &n2 in neighbors2 {
-            if n2 != bond.atom1 {
+        for idx1 in 0..neighbors.len() {
+            for idx2 in (idx1 + 1)..neighbors.len() {
+                let i = neighbors[idx1];
+                let k = neighbors[idx2];
                 angles.push(Angle {
-                    atom1: bond.atom1,
-                    atom2: bond.atom2,
-                    atom3: n2,
+                    atom1: i,
+                    atom2: j,
+                    atom3: k,
                 });
             }
         }
@@ -603,6 +608,7 @@ mod tests {
                 charge: 0.0,
                 position: [0.0; 3],
                 index: 0,
+                stereo_parity: 0,
             },
             Atom {
                 symbol: "C".to_string(),
@@ -611,6 +617,7 @@ mod tests {
                 charge: 0.0,
                 position: [0.0; 3],
                 index: 1,
+                stereo_parity: 0,
             },
             Atom {
                 symbol: "H".to_string(),
@@ -619,6 +626,7 @@ mod tests {
                 charge: 0.0,
                 position: [0.0; 3],
                 index: 2,
+                stereo_parity: 0,
             },
         ];
 
@@ -659,6 +667,7 @@ mod tests {
             charge: 0.0,
             position: [0.0; 3],
             index,
+            stereo_parity: 0,
         }
     }
 

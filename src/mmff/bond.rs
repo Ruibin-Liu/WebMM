@@ -16,8 +16,30 @@ pub fn get_bond_params(
     type2: MMFFAtomType,
     bond_type: BondType,
 ) -> Option<BondParams> {
-    let type1 = super::base_type(type1);
-    let type2 = super::base_type(type2);
+    if let Some(p) = lookup_bond_params_exact(type1, type2, bond_type) {
+        return Some(p);
+    }
+    let base1 = super::base_type(type1);
+    let base2 = super::base_type(type2);
+    if base1 != type1 || base2 != type2 {
+        if let Some(p) = lookup_bond_params_exact(base1, base2, bond_type) {
+            return Some(p);
+        }
+    }
+    if let Some((kb, r0)) = super::estimation::estimate_bond_params(base1, base2, bond_type) {
+        return Some(BondParams { k_bond: kb, r0 });
+    }
+    let t1_name = format!("{:?}", base1);
+    let t2_name = format!("{:?}", base2);
+    let bt_name = format!("{:?}", bond_type);
+    crate::utils::get_bond_params_from_json(&t1_name, &t2_name, &bt_name)
+}
+
+fn lookup_bond_params_exact(
+    type1: MMFFAtomType,
+    type2: MMFFAtomType,
+    bond_type: BondType,
+) -> Option<BondParams> {
     match (type1, type2, bond_type) {
         // C-C bonds
         (MMFFAtomType::C_3, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
@@ -251,6 +273,21 @@ pub fn get_bond_params(
         }),
 
         // O-H bonds (symmetric)
+        (MMFFAtomType::H_OH, MMFFAtomType::OH2, BondType::Single)
+        | (MMFFAtomType::OH2, MMFFAtomType::H_OH, BondType::Single) => Some(BondParams {
+            k_bond: 7.88,
+            r0: 0.969,
+        }),
+        (MMFFAtomType::H_ONC, MMFFAtomType::O_3, BondType::Single)
+        | (MMFFAtomType::O_3, MMFFAtomType::H_ONC, BondType::Single) => Some(BondParams {
+            k_bond: 7.794,
+            r0: 0.972,
+        }),
+        (MMFFAtomType::H_OH, MMFFAtomType::O_3, BondType::Single)
+        | (MMFFAtomType::O_3, MMFFAtomType::H_OH, BondType::Single) => Some(BondParams {
+            k_bond: 7.88,
+            r0: 0.969,
+        }),
         (MMFFAtomType::H, MMFFAtomType::O_3, BondType::Single)
         | (MMFFAtomType::O_3, MMFFAtomType::H, BondType::Single) => Some(BondParams {
             k_bond: 7.794,
@@ -378,17 +415,7 @@ pub fn get_bond_params(
             r0: 1.48,
         }),
 
-        _ => {
-            if let Some((kb, r0)) = super::estimation::estimate_bond_params(type1, type2, bond_type)
-            {
-                Some(BondParams { k_bond: kb, r0 })
-            } else {
-                let t1_name = format!("{:?}", type1);
-                let t2_name = format!("{:?}", type2);
-                let bt_name = format!("{:?}", bond_type);
-                crate::utils::get_bond_params_from_json(&t1_name, &t2_name, &bt_name)
-            }
-        }
+        _ => None,
     }
 }
 
@@ -407,7 +434,7 @@ pub fn bond_energy(coords: &[[f64; 3]], i: usize, j: usize, params: &BondParams)
     let dr = r - params.r0;
 
     // RDKit anharmonic bond stretch
-    let c1 = 143.9324;
+    let c1 = 143.9325;
     let cs = -2.0;
     let c3 = 7.0 / 12.0;
     let dr2 = dr * dr;
@@ -439,7 +466,7 @@ pub fn bond_gradient(
     // dE/dr for anharmonic bond:
     // E = 0.5 * c1 * kb * dr² * (1 + cs * dr + c3 * cs² * dr²)
     // dE/dr = c1 * kb * dr * (1 + 1.5 * cs * dr + 2.0 * c3 * cs² * dr²)
-    let c1 = 143.9324;
+    let c1 = 143.9325;
     let cs = -2.0;
     let c3 = 7.0 / 12.0;
 

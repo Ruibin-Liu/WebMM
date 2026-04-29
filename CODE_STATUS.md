@@ -4,7 +4,53 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-Phase 25: ETKDG v3 Full Exact Port — All major gaps addressed, test suite stable
+MMFF94s energy calculation accuracy — fixing angle parameters to match RDKit's tabulated values.
+
+## Recently Completed
+- **Angle parameters corrected from RDKit Params.cpp**: Fixed C_3-C_2-O_2 (ktheta=0.938, theta0=124.410), C_3-C_2-O_3 (ktheta=1.043, theta0=109.716), added O_2-C_2-O_3 (ktheta=1.155, theta0=124.425), O_3-C_2-O_3 (ktheta=1.678, theta0=109.094), H-C_2-O_3 (ktheta=0.819, theta0=108.253)
+- **O_CO2 type assignment verified**: RDKit assigns O_CO2 (type 32) only when carbon has 2 terminal oxygens (totalDegree==1). Carboxylic acid -OH oxygen has degree 2, so carbonyl O gets O_2 (type 7), not O_CO2
+- **O_R angle entries fixed**: base_type() normalizes O_R→O_3 before matching, making O_R-specific entries dead code. Added O_3 equivalents for all critical O_R-centered entries (H-O-C, H-O=C, C-C-O)
+- **VDW 1-4 scaling test updated**: Changed from asserting no scaling to asserting 0.75x scaling
+- **Formaldehyde test updated**: Carbonyl O correctly typed as O_2 (formaldehyde has no second O neighbor)
+- **Acetic acid angle energy**: Dropped from 5.78 to 0.61 kcal/mol at RDKit reference geometry
+- **All 144 tests pass**, 0 clippy errors, WASM build verified
+- **E10 Timeout**: Changed `timeout_ms: u64` to `timeout_s: f64` to match RDKit's seconds-based timeout
+- **E11 RNG**: Replaced Xoshiro256** with MT19937 Mersenne Twister matching `std::mt19937` — same seed now produces same sequence as RDKit
+- **M5 Torsion**: Replaced approximate 20-entry torsion parameter table with full 926-entry RDKit parameter set + 5-stage equivalence protocol:
+  - Added `TOR94_TABLE` and `TOR94S_TABLE` const arrays (926 entries each, sorted by (tor_type, j, k, i, l))
+  - `get_torsion_params` now takes (type1, type2, type3, type4, tor_type, variant) instead of (type1, type2, type3, type4, variant)
+  - Torsion type classified from bond type + ring membership: single→0/4(ring), aromatic→1, double→2, fallback→5
+  - 5-stage equivalence lookup: iter 0=exact, iter 1/2=half-wildcard, iter 3=full wildcard, iter 4=retry with fallback tor type
+  - Table entries with iType=0 or lType=0 are wildcards (match any type) — 4-way binary search per iteration
+  - MMFF94s differs from MMFF94 in 42 entries (types 10=N_AM and 40=N_PL3)
+  - Added `is_in_ring(atom1, atom2, mol)` function to `src/molecule/graph.rs`
+  - Updated both call sites in `src/mmff/mod.rs` (energy+gradient and energy_breakdown)
+  - If no match found (all 5 stages + fallback fail), returns `None` (torsion skipped) instead of `Some(TorsionParams{0,0,0})`
+  - 6 tests: exact match, aromatic lookup, no-match fallback, MMFF94 vs MMFF94s difference, energy, gradient
+- **M6 OOP**: Replaced single-k-per-type OOP lookup with full 117-entry parameter tables + 4-stage equivalence protocol:
+  - Added `OOP94_TABLE` and `OOP94S_TABLE` (117 entries each, 11 differ for MMFF94s)
+  - `get_oop_params` now takes (i_type, central_type, k_type, l_type, variant) — 4-type lookup instead of central-only
+  - 4-stage equivalence: iter 0=exact, iter 1-3=generalize peripheral i,k,l via eq levels, central j always exact
+  - Peripheral atoms sorted before lookup (matching RDKit's protocol)
+  - Both call sites in `mod.rs` updated to pass all 4 atom types
+  - 4 new tests: exact match, aromatic, no-match fallback, MMFF94 vs MMFF94s
+- **M7 BCI**: Expanded BCI charge table from 32 to 498 entries (full RDKit coverage):
+  - Replaced `BciEntries` match-arm struct with sorted `BCI_TABLE` const slice
+  - `lookup_bci_canonical` uses `binary_search_by_key` on `(bt, i, j)` for O(log n) lookup
+  - All RDKit BCI entries included (bond types 0/1/2/4, types 1-99)
+- **Shared infrastructure** (`src/mmff/params.rs`):
+  - Moved `mmff_type_id` from charges.rs to shared location
+  - Added `EQ_LEVELS` table (100 entries × 4 equivalence levels from RDKit's defaultMMFFDef)
+  - Added `classify_torsion_type(bond_type, is_in_ring) -> (primary, fallback)` for torsion bond classification
+  - All 143 tests pass, 0 clippy errors, WASM build verified
+- **E3**: Fixed chiral center R/S stereochemistry detection:
+  - Added `stereo_parity` field to `Atom` struct (0=unspecified, 1=odd/CCW/R, 2=even/CW/S, 3=either)
+  - V2000 parser reads stereo parity from column 39-42 of atom lines
+  - V3000 parser reads CFG=n field from atom lines
+  - `find_chiral_centers()` uses stereo parity to set negative volume bounds for S/CW centers
+  - S (CW) centers: (-100.0, -5.0) for 4-neighbor, (-100.0, -2.0) for 3-neighbor
+  - R (CCW) centers: (5.0, 100.0) for 4-neighbor, (2.0, 100.0) for 3-neighbor
+  - Falls back to positive bounds when stereo_parity is 0 (unspecified)
 
 ## Recently Completed (ETKDGv3 Gap Fixes)
 - **C5**: Added basin threshold (BASIN_THRESH = 5.0) to all force field functions
@@ -36,7 +82,7 @@ Phase 25: ETKDG v3 Full Exact Port — All major gaps addressed, test suite stab
 - M11: et_version field usage — Wired `config.et_version` into `build_torsion_preferences` and `match_torsion_pattern`, v2 uses softer sp3-sp3 torsion barriers (5.0 vs 7.0, 1.5 vs 2.0 for rings)
 - M12: Triangle smoothing epsilon — Made `smooth_triangle_inequality` accept configurable epsilon parameter, added `triangle_smoothing_epsilon` to ETKDGConfig (default 1e-6)
 - **WASM Verification**: `wasm-pack build --target web` succeeds, 314KB wasm binary generated at `pkg/webmm_bg.wasm`
-- **All 135 tests pass**, 0 ignored
+- **All 139 tests pass**, 0 ignored
 - **Acetic acid planarity fix**: Added missing MMFF angle parameter C_3-C_2-O_R (112.42°), made O=C-O angle consistent (121.02°), increased C_2 OOP constant from 0.04 to 0.20 to enforce carboxyl planarity. Carboxyl group now planar (dihedral ~180°).
 
 Phase 1 (Distance Bounds) completed:

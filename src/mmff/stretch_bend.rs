@@ -11,9 +11,15 @@ fn get_sb_kba(
     type_j: MMFFAtomType,
     type_k: MMFFAtomType,
 ) -> Option<(f64, f64)> {
-    let bi = base_type(type_i);
-    let bj = base_type(type_j);
-    let bk = base_type(type_k);
+    let normalize = |t: MMFFAtomType| -> MMFFAtomType {
+        match base_type(t) {
+            MMFFAtomType::O_R => MMFFAtomType::O_3,
+            other => other,
+        }
+    };
+    let bi = normalize(type_i);
+    let bj = normalize(type_j);
+    let bk = normalize(type_k);
 
     match (bi, bj, bk) {
         // H-C_3-H (methane tetrahedral)
@@ -23,40 +29,40 @@ fn get_sb_kba(
         (MMFFAtomType::C_3, MMFFAtomType::H, MMFFAtomType::H) => Some((0.0700, 0.2270)),
 
         // H-C_3-C_3 (ethane-like)
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some((0.2270, 0.0700)),
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some((0.0700, 0.2270)),
+        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some((0.0700, 0.2270)),
+        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some((0.2270, 0.0700)),
 
         // C_3-C_3-O_3 (ethanol C-C-O)
         (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::O_3) => Some((0.1730, 0.4170)),
         (MMFFAtomType::O_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some((0.4170, 0.1730)),
 
-        // C_3-O_3-H_OH (water-like O-H)
-        (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::H_OH) => Some((0.2560, 0.1430)),
-        (MMFFAtomType::H_OH, MMFFAtomType::O_3, MMFFAtomType::C_3) => Some((0.1430, 0.2560)),
+        // C_3-O_3-H (water-like O-H)
+        (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::H) => Some((0.2560, 0.1430)),
+        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_3) => Some((0.1430, 0.2560)),
 
         // H-C_2-H (formaldehyde H-C-H)
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::H) => Some((0.2070, 0.1570)),
+        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::H) => Some((0.1260, 0.1260)),
 
         // H-C_2=O_2 (formaldehyde H-C=O)
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some((0.1540, 0.8560)),
-        (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::H) => Some((0.8560, 0.1540)),
+        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some((0.0320, 0.8050)),
+        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::H) => Some((0.8050, 0.0320)),
 
         // C_3-C_2=O_2 (acetic acid/acetamide C-C=O)
         (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some((0.3380, 0.7320)),
         (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::C_3) => Some((0.7320, 0.3380)),
 
         // C_2-O_3-H (carboxylic acid O-H)
-        (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::H_COOH) => Some((0.2150, 0.0640)),
+        (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::H) => Some((0.2150, 0.0640)),
 
         // C_3-C_2-N_AM (acetamide C-C-N)
         (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::N_AM) => Some((0.2230, 0.7320)),
         (MMFFAtomType::N_AM, MMFFAtomType::C_2, MMFFAtomType::C_3) => Some((0.7320, 0.2230)),
 
-        // C_2-N_AM-H_NAM (acetamide N-H)
-        (MMFFAtomType::C_2, MMFFAtomType::N_AM, MMFFAtomType::H_NAM) => Some((0.1370, 0.0660)),
+        // C_2-N_AM-H (acetamide N-H)
+        (MMFFAtomType::C_2, MMFFAtomType::N_AM, MMFFAtomType::H) => Some((0.1370, 0.0660)),
 
-        // H_OH-O_3-H_OH (water H-O-H)
-        (MMFFAtomType::H_OH, MMFFAtomType::O_3, MMFFAtomType::H_OH) => Some((0.2100, 0.2100)),
+        // H-O_3-H (water H-O-H)
+        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::H) => Some((0.2100, 0.2100)),
 
         // C_3-C_3-H (propane-like)
         (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some((0.4360, 0.0130)),
@@ -75,17 +81,17 @@ fn get_sb_kba(
         (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::O_3) => Some((0.4230, 0.1860)),
         (MMFFAtomType::O_3, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some((0.1860, 0.4230)),
 
-        // H_N3-N_3-H_N3 (ammonia H-N-H)
-        (MMFFAtomType::H_N3, MMFFAtomType::N_3, MMFFAtomType::H_N3) => Some((0.1900, 0.1900)),
+        // H-N_3-H (ammonia H-N-H)
+        (MMFFAtomType::H, MMFFAtomType::N_3, MMFFAtomType::H) => Some((0.1900, 0.1900)),
 
         // N_AR-C_AR-H (aniline N-C-H)
         (MMFFAtomType::N_AR, MMFFAtomType::C_AR, MMFFAtomType::H) => Some((0.0940, 0.0940)),
 
-        // H_NAM-N_AR-C_AR (aniline H-N-C)
-        (MMFFAtomType::H_NAM, MMFFAtomType::N_AR, MMFFAtomType::C_AR) => Some((0.0810, 0.0810)),
+        // H-N_AR-C_AR (aniline H-N-C)
+        (MMFFAtomType::H, MMFFAtomType::N_AR, MMFFAtomType::C_AR) => Some((0.0810, 0.0810)),
 
-        // H_NAM-N_AM-C_2 (amide H-N-C)
-        (MMFFAtomType::H_NAM, MMFFAtomType::N_AM, MMFFAtomType::C_2) => Some((0.0940, 0.0940)),
+        // H-N_AM-C_2 (amide H-N-C)
+        (MMFFAtomType::H, MMFFAtomType::N_AM, MMFFAtomType::C_2) => Some((0.0940, 0.0940)),
 
         // C_AR-C_AR-N_AR (aniline C-C-N)
         (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::N_AR) => Some((0.9010, 0.4290)),
@@ -95,7 +101,7 @@ fn get_sb_kba(
         (MMFFAtomType::C_3, MMFFAtomType::H, MMFFAtomType::C_3) => Some((0.0700, 0.2270)),
 
         // H-N_3-C_3 (ammonia-like N-H-C)
-        (MMFFAtomType::H_N3, MMFFAtomType::N_3, MMFFAtomType::C_3) => Some((0.0320, 0.8050)),
+        (MMFFAtomType::H, MMFFAtomType::N_3, MMFFAtomType::C_3) => Some((0.0320, 0.8050)),
 
         // C_3-N_3-C_3
         (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::C_3) => Some((0.5780, 0.4940)),
@@ -174,10 +180,8 @@ pub fn stretch_bend_energy(
     let dr_kj = r_kj - r0_kj;
     let dtheta = theta - theta0_rad;
 
-    // MMFF stretch-bend: E = 0.5 * C * (kba_ijk * dr_ij + kba_kji * dr_kj) * dtheta
-    // where C = MDYNE_A_TO_KCAL_MOL * DEG2RAD ≈ 2.512
-    const C_SB: f64 = 143.9324 * std::f64::consts::PI / 180.0;
-    0.5 * C_SB * (params.kba_ijk * dr_ij + params.kba_kji * dr_kj) * dtheta
+    const MDYNE_A_TO_KCAL_MOL: f64 = 143.9325;
+    MDYNE_A_TO_KCAL_MOL * (params.kba_ijk * dr_ij + params.kba_kji * dr_kj) * dtheta
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -283,9 +287,7 @@ pub fn stretch_bend_gradient(
     let c_ijk = params.kba_ijk;
     let c_kji = params.kba_kji;
 
-    // MMFF stretch-bend: E = 0.5 * C * (kba_ijk * dr_ij + kba_kji * dr_kj) * dtheta
-    const C_SB: f64 = 143.9324 * std::f64::consts::PI / 180.0;
-    const SCALE: f64 = 0.5 * C_SB;
+    const SCALE: f64 = 143.9325;
 
     // Gradient for atom i:
     // dE/dx_i = SCALE * [c_ijk * (uij * dtheta + dr_ij * dtheta_di) + c_kji * dr_kj * dtheta_di]
