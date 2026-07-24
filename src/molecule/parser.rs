@@ -77,7 +77,7 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
 
     for (i, line) in lines[atom_start..atom_end].iter().enumerate() {
         // Extract coordinates using whitespace splitting (more robust than fixed columns)
-        let prefix = if line.len() > 34 { &line[..34] } else { line };
+        let prefix = if line.len() > 40 { &line[..40] } else { line };
         let parts: Vec<&str> = prefix.split_whitespace().collect();
         if parts.len() < 4 {
             return Err(format!("Atom line {} has too few fields: {}", i + 1, line));
@@ -90,6 +90,7 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
         let atomic_number = get_atomic_number(&symbol);
         let mass = get_atomic_mass(atomic_number);
         let charge = parse_charge(line);
+        let stereo_parity = parse_stereo_parity(line);
 
         atoms.push(Atom {
             symbol,
@@ -98,6 +99,7 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
             charge,
             position: [x, y, z],
             index: i,
+            stereo_parity,
         });
     }
 
@@ -156,6 +158,31 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
                 bond_type,
                 stereo,
             });
+        }
+    }
+
+    // Parse M  CHG property records (authoritative formal charges in modern
+    // V2000 SDFs, e.g. all RDKit-generated files; atom-line charge codes are 0)
+    if lines.len() >= bond_end {
+        for line in lines[bond_end..].iter() {
+            let trimmed = line.trim_end();
+            if trimmed.starts_with("M  END") {
+                break;
+            }
+            if let Some(rest) = trimmed.strip_prefix("M  CHG") {
+                let nums: Vec<i64> = rest
+                    .split_whitespace()
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                let Some(&count) = nums.first() else { continue };
+                for pair in nums[1..].chunks(2).take(count as usize) {
+                    if let [atom_num, chg] = pair {
+                        if *atom_num >= 1 && (*atom_num as usize) <= atoms.len() {
+                            atoms[(*atom_num - 1) as usize].charge = *chg as f64;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -243,6 +270,7 @@ fn parse_v3000(lines: &[&str]) -> Result<Molecule, String> {
                 let atomic_number = get_atomic_number(&symbol);
                 let mass = get_atomic_mass(atomic_number);
                 let charge = 0.0; // V3000 stores charge separately
+                let stereo_parity = parse_v3000_stereo_parity(data);
 
                 atoms.push(Atom {
                     symbol,
@@ -251,6 +279,7 @@ fn parse_v3000(lines: &[&str]) -> Result<Molecule, String> {
                     charge,
                     position: [x, y, z],
                     index: index - 1, // Convert to 0-based
+                    stereo_parity,
                 });
             }
         } else if in_bond_block {
@@ -312,6 +341,15 @@ fn get_atomic_number(symbol: &str) -> u8 {
         "Cl" => 17,
         "Br" => 35,
         "I" => 53,
+        "Li" => 3,
+        "Na" => 11,
+        "K" => 19,
+        "Mg" => 12,
+        "Ca" => 20,
+        "Zn" => 30,
+        "Fe" => 26,
+        "Cu" => 29,
+        "Si" => 14,
         _ => 0,
     }
 }
@@ -329,6 +367,15 @@ fn get_atomic_mass(atomic_number: u8) -> f64 {
         17 => 35.4527,
         35 => 79.9040,
         53 => 126.9045,
+        3 => 6.941,
+        11 => 22.9898,
+        19 => 39.0983,
+        12 => 24.305,
+        20 => 40.078,
+        30 => 65.38,
+        26 => 55.845,
+        29 => 63.546,
+        14 => 28.0855,
         _ => 12.0107,
     }
 }
@@ -353,6 +400,33 @@ fn parse_charge(line: &str) -> f64 {
     } else {
         0.0
     }
+}
+
+fn parse_stereo_parity(line: &str) -> u8 {
+    // V2000 atom stereo parity field (column 39-42)
+    // 0=not specified, 1=odd (CCW), 2=even (CW), 3=either
+    if line.len() > 42 {
+        line[39..42].trim().parse().unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+fn parse_v3000_stereo_parity(data: &str) -> u8 {
+    // V3000: CFG=n field in atom line
+    // 1=odd (CCW/R), 2=even (CW/S), 3=either
+    for part in data.split_whitespace() {
+        if let Some(val) = part.strip_prefix("CFG=") {
+            let cfg: u8 = val.parse().unwrap_or(0);
+            return match cfg {
+                1 => 1,
+                2 => 2,
+                3 => 3,
+                _ => 0,
+            };
+        }
+    }
+    0
 }
 
 #[cfg(test)]

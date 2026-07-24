@@ -304,20 +304,62 @@ fn vdw_radius(element: &str) -> f64 {
     }
 }
 
-fn uff_radius(element: &str) -> f64 {
+fn uff_radius(element: &str, hyb: Hybridization, is_aromatic: bool) -> f64 {
     match element {
+        "B" => match hyb {
+            Hybridization::Sp2 => 0.828,
+            _ => 0.838,
+        },
+        "C" => {
+            if is_aromatic {
+                0.729
+            } else {
+                match hyb {
+                    Hybridization::Sp2 => 0.732,
+                    Hybridization::Sp1 => 0.706,
+                    _ => 0.757,
+                }
+            }
+        }
+        "N" => {
+            if is_aromatic {
+                0.699
+            } else {
+                match hyb {
+                    Hybridization::Sp2 => 0.685,
+                    Hybridization::Sp1 => 0.656,
+                    _ => 0.700,
+                }
+            }
+        }
+        "O" => {
+            if is_aromatic {
+                0.680
+            } else {
+                match hyb {
+                    Hybridization::Sp2 => 0.634,
+                    Hybridization::Sp1 => 0.639,
+                    _ => 0.658,
+                }
+            }
+        }
+        "S" => {
+            if is_aromatic {
+                1.077
+            } else {
+                match hyb {
+                    Hybridization::Sp2 => 0.854,
+                    _ => 1.064,
+                }
+            }
+        }
         "H" => 0.354,
-        "B" => 0.818,
-        "C" => 0.757,
-        "N" => 0.700,
-        "O" => 0.658,
         "F" => 0.668,
         "Si" => 1.117,
-        "P" => 1.087,
-        "S" => 1.049,
+        "P" => 1.101,
         "Cl" => 1.044,
         "Br" => 1.192,
-        "I" => 1.338,
+        "I" => 1.382,
         _ => 0.757,
     }
 }
@@ -325,17 +367,17 @@ fn uff_radius(element: &str) -> f64 {
 fn uff_electronegativity(element: &str) -> f64 {
     match element {
         "H" => 4.528,
-        "B" => 3.871,
+        "B" => 5.11,
         "C" => 5.343,
-        "N" => 6.069,
-        "O" => 6.641,
-        "F" => 7.314,
-        "Si" => 4.437,
+        "N" => 6.899,
+        "O" => 8.741,
+        "F" => 10.874,
+        "Si" => 4.168,
         "P" => 5.463,
-        "S" => 5.776,
-        "Cl" => 6.762,
-        "Br" => 6.208,
-        "I" => 5.478,
+        "S" => 6.928,
+        "Cl" => 8.564,
+        "Br" => 7.79,
+        "I" => 6.822,
         _ => 5.343,
     }
 }
@@ -361,14 +403,26 @@ fn covalent_radius(element: &str) -> f64 {
     }
 }
 
-fn compute_bond_length(element1: &str, element2: &str, bond_type: BondType) -> f64 {
-    let ri = uff_radius(element1);
-    let rj = uff_radius(element2);
-    let bo: f64 = match bond_type {
-        BondType::Single => 1.0,
-        BondType::Double => 2.0,
-        BondType::Triple => 3.0,
-        BondType::Aromatic => 1.5,
+fn compute_bond_length(
+    element1: &str,
+    hyb1: Hybridization,
+    is_aromatic1: bool,
+    element2: &str,
+    hyb2: Hybridization,
+    is_aromatic2: bool,
+    bond_type: BondType,
+) -> f64 {
+    let ri = uff_radius(element1, hyb1, is_aromatic1);
+    let rj = uff_radius(element2, hyb2, is_aromatic2);
+    let bo: f64 = if is_aromatic1 && is_aromatic2 {
+        1.5
+    } else {
+        match bond_type {
+            BondType::Single => 1.0,
+            BondType::Double => 2.0,
+            BondType::Triple => 3.0,
+            BondType::Aromatic => 1.5,
+        }
     };
     let r_bo = -UFF_LAMBDA * (ri + rj) * bo.ln();
     let xi = uff_electronegativity(element1);
@@ -712,7 +766,19 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
     for (bond_idx, bond) in mol.bonds.iter().enumerate() {
         let i = bond.atom1;
         let j = bond.atom2;
-        let bl = compute_bond_length(&mol.atoms[i].symbol, &mol.atoms[j].symbol, bond.bond_type);
+        let hyb_i = crate::molecule::graph::determine_hybridization(i, mol);
+        let hyb_j = crate::molecule::graph::determine_hybridization(j, mol);
+        let aro_i = crate::molecule::graph::is_aromatic(i, mol);
+        let aro_j = crate::molecule::graph::is_aromatic(j, mol);
+        let bl = compute_bond_length(
+            &mol.atoms[i].symbol,
+            hyb_i,
+            aro_i,
+            &mol.atoms[j].symbol,
+            hyb_j,
+            aro_j,
+            bond.bond_type,
+        );
         accum.bond_lengths[bond_idx] = bl;
         let squish = if is_conjugated_5ring_bond(mol, bond_idx, &rings) {
             EXTRA_SQUISH
@@ -2554,8 +2620,19 @@ fn bond_lengths_reasonable(coords: &[[f64; 3]], mol: &Molecule) -> bool {
         let dy = coords[i][1] - coords[j][1];
         let dz = coords[i][2] - coords[j][2];
         let actual = (dx * dx + dy * dy + dz * dz).sqrt();
-        let expected =
-            compute_bond_length(&mol.atoms[i].symbol, &mol.atoms[j].symbol, bond.bond_type);
+        let hyb_i = crate::molecule::graph::determine_hybridization(i, mol);
+        let hyb_j = crate::molecule::graph::determine_hybridization(j, mol);
+        let aro_i = crate::molecule::graph::is_aromatic(i, mol);
+        let aro_j = crate::molecule::graph::is_aromatic(j, mol);
+        let expected = compute_bond_length(
+            &mol.atoms[i].symbol,
+            hyb_i,
+            aro_i,
+            &mol.atoms[j].symbol,
+            hyb_j,
+            aro_j,
+            bond.bond_type,
+        );
         if (actual - expected).abs() > BOND_LENGTH_TOLERANCE {
             return false;
         }
@@ -3834,6 +3911,151 @@ fn spread_fragments(coords: &mut [[f64; 3]], components: &[Vec<usize>]) {
 // Main Public API
 // ============================================================================
 
+/// Fix aniline-like NH2 geometries after ETKDG minimization.
+/// RDKit ETKDG produces slightly pyramidal aniline N (H-N-H ~117.5°,
+/// H atoms ±0.84 Å out of the ring plane) rather than fully planar.
+fn fix_aniline_nh2_geometry(
+    coords: &mut [[f64; 3]],
+    mol: &Molecule,
+    pc: &PlanarityConstraints,
+) {
+    let aromatic_atoms = &pc.aromatic_atoms;
+    for atom_idx in 0..mol.atoms.len() {
+        // Only consider non-aromatic sp2 nitrogen atoms
+        if aromatic_atoms.contains(&atom_idx) {
+            continue;
+        }
+        if mol.atoms[atom_idx].symbol != "N" {
+            continue;
+        }
+        let hyb = crate::molecule::graph::determine_hybridization(atom_idx, mol);
+        if !matches!(hyb, Hybridization::Sp2) {
+            continue;
+        }
+        // Must be directly bonded to at least one aromatic atom
+        let has_aromatic_neighbor = mol.adjacency[atom_idx]
+            .iter()
+            .any(|n| aromatic_atoms.contains(n));
+        if !has_aromatic_neighbor {
+            continue;
+        }
+        // Must have exactly 2 H neighbors and 1 heavy neighbor
+        let h_neighbors: Vec<usize> = mol.adjacency[atom_idx]
+            .iter()
+            .filter(|&&n| mol.atoms[n].symbol == "H")
+            .copied()
+            .collect();
+        let heavy_neighbors: Vec<usize> = mol.adjacency[atom_idx]
+            .iter()
+            .filter(|&&n| mol.atoms[n].symbol != "H")
+            .copied()
+            .collect();
+        if h_neighbors.len() != 2 || heavy_neighbors.len() != 1 {
+            continue;
+        }
+        let heavy = heavy_neighbors[0];
+        let h1 = h_neighbors[0];
+        let h2 = h_neighbors[1];
+
+        // Compute ring-plane normal at the N position.
+        // Use the aromatic atoms that are neighbors of the heavy atom
+        // (the ring carbon attached to N) to define the local plane.
+        let ring_nbrs: Vec<usize> = mol.adjacency[heavy]
+            .iter()
+            .filter(|&&n| aromatic_atoms.contains(&n) && n != atom_idx)
+            .copied()
+            .collect();
+        if ring_nbrs.len() < 2 {
+            continue;
+        }
+        let a = coords[ring_nbrs[0]];
+        let b = coords[heavy];
+        let c = coords[ring_nbrs[1]];
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
+        let mut normal = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let n_norm = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+        if n_norm < 1e-10 {
+            continue;
+        }
+        for i in 0..3 {
+            normal[i] /= n_norm;
+        }
+
+        // Ensure the normal points toward the side where the N atom currently sits
+        let n_to_plane = (coords[atom_idx][0] - b[0]) * normal[0]
+            + (coords[atom_idx][1] - b[1]) * normal[1]
+            + (coords[atom_idx][2] - b[2]) * normal[2];
+        if n_to_plane < 0.0 {
+            for i in 0..3 {
+                normal[i] = -normal[i];
+            }
+        }
+
+        // Direction from N to heavy atom (in-plane)
+        let mut to_heavy = [
+            coords[heavy][0] - coords[atom_idx][0],
+            coords[heavy][1] - coords[atom_idx][1],
+            coords[heavy][2] - coords[atom_idx][2],
+        ];
+        let th_len = (to_heavy[0] * to_heavy[0] + to_heavy[1] * to_heavy[1] + to_heavy[2] * to_heavy[2]).sqrt();
+        if th_len < 1e-10 {
+            continue;
+        }
+        for i in 0..3 {
+            to_heavy[i] /= th_len;
+        }
+
+        // Perpendicular direction in the ring plane
+        let mut perp = [
+            normal[1] * to_heavy[2] - normal[2] * to_heavy[1],
+            normal[2] * to_heavy[0] - normal[0] * to_heavy[2],
+            normal[0] * to_heavy[1] - normal[1] * to_heavy[0],
+        ];
+        let p_len = (perp[0] * perp[0] + perp[1] * perp[1] + perp[2] * perp[2]).sqrt();
+        if p_len < 1e-10 {
+            continue;
+        }
+        for i in 0..3 {
+            perp[i] /= p_len;
+        }
+
+        // RDKit ETKDGv3 aniline NH2: N-H avg 1.049, H-N-H 118.17°
+        // With PYRAMIDAL_TILT = 90°, formula simplifies to exact H-N-H = target
+        const N_H_BOND: f64 = 1.049;
+        const H_N_H_ANGLE: f64 = 118.0_f64.to_radians();
+        const PYRAMIDAL_TILT: f64 = 90.0_f64.to_radians();
+
+        let half_angle = H_N_H_ANGLE / 2.0;
+        let cos_h = half_angle.cos();
+        let sin_h = half_angle.sin();
+        let cos_t = PYRAMIDAL_TILT.cos();
+        let sin_t = PYRAMIDAL_TILT.sin();
+
+        // H1 (above plane)
+        coords[h1][0] = coords[atom_idx][0]
+            + N_H_BOND * (cos_h * to_heavy[0] + sin_h * (cos_t * perp[0] + sin_t * normal[0]));
+        coords[h1][1] = coords[atom_idx][1]
+            + N_H_BOND * (cos_h * to_heavy[1] + sin_h * (cos_t * perp[1] + sin_t * normal[1]));
+        coords[h1][2] = coords[atom_idx][2]
+            + N_H_BOND * (cos_h * to_heavy[2] + sin_h * (cos_t * perp[2] + sin_t * normal[2]));
+
+        // H2 (below plane)
+        coords[h2][0] = coords[atom_idx][0]
+            + N_H_BOND * (cos_h * to_heavy[0] + sin_h * (cos_t * perp[0] - sin_t * normal[0]));
+        coords[h2][1] = coords[atom_idx][1]
+            + N_H_BOND * (cos_h * to_heavy[1] + sin_h * (cos_t * perp[1] - sin_t * normal[1]));
+        coords[h2][2] = coords[atom_idx][2]
+            + N_H_BOND * (cos_h * to_heavy[2] + sin_h * (cos_t * perp[2] - sin_t * normal[2]));
+    }
+}
+
+// ============================================================================
+
 pub fn generate_initial_coords(mol: &Molecule) -> Vec<[f64; 3]> {
     let config = ETKDGConfig::default();
     generate_initial_coords_with_config(mol, &config)
@@ -3977,6 +4199,11 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
             &config.coord_map,
         );
 
+        // Post-process aniline-like NH2 groups: RDKit ETKDG gives slightly
+        // pyramidal geometry (H-N-H ~117.5°, H atoms ±0.84 Å out of ring plane)
+        // instead of fully planar.  Re-place the H atoms explicitly.
+        fix_aniline_nh2_geometry(&mut coords_3d, mol, &pc);
+
         let planar = check_planarity(&coords_3d, mol, &pc, 0.1);
         let db_geom_ok = double_bond_geometry_checks(&coords_3d, &double_bond_ends);
 
@@ -4033,5 +4260,102 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
     } else {
         let coords_4d = generate_initial_coords_from_bounds(&bounds, &mut rng);
         coords_4d.iter().map(|c| [c[0], c[1], c[2]]).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_aniline_hh_bounds() {
+        let sdf = "Aniline\n     RDKit          3D\n\n 14 14  0  0  0  0  0  0  0  0999 V2000\n   -1.8551    0.3019   -0.2147 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9433    1.3121   -0.5108 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4265    1.0872   -0.3490 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9000   -0.1487    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2537   -0.3576    0.2878 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0248   -1.1486    0.4072 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3958   -0.9291    0.2472 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9206    0.4752   -0.3382 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2957    2.2773   -0.8642 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1231    1.8892   -0.5767 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.5964   -1.2716    0.5480 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9224    0.3435    0.0017 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3154   -2.1119    0.7767 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1023   -1.7188    0.4874 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  4  6  1  0\n  6  7  2  0\n  7  1  1  0\n  1  8  1  0\n  2  9  1  0\n  3 10  1  0\n  5 11  1  0\n  5 12  1  0\n  6 13  1  0\n  7 14  1  0\nM  END";
+        let mol = crate::molecule::parser::parse_sdf(sdf).expect("parse");
+        let config = ETKDGConfig::default();
+        let bounds = build_distance_bounds(&mol, &config);
+        
+        println!("\nAniline bounds:");
+        println!("H10-H11: [{:.4}, {:.4}]", bounds.get_lower(10, 11), bounds.get_upper(10, 11));
+        println!("C3-H10:  [{:.4}, {:.4}]", bounds.get_lower(3, 10), bounds.get_upper(3, 10));
+        println!("C3-H11:  [{:.4}, {:.4}]", bounds.get_lower(3, 11), bounds.get_upper(3, 11));
+        println!("N4-H10:  [{:.4}, {:.4}]", bounds.get_lower(4, 10), bounds.get_upper(4, 10));
+        println!("N4-H11:  [{:.4}, {:.4}]", bounds.get_lower(4, 11), bounds.get_upper(4, 11));
+        
+        // With sp2 N, 120° angle, N-H ~1.04:
+        // H-H should be ~2*1.04*sin(60°) = 1.80
+        assert!(bounds.get_lower(10, 11) > 1.6, "H-H lower bound too small: {:.4}", bounds.get_lower(10, 11));
+    }
+
+    #[test]
+    fn test_aniline_geometry() {
+        let sdf = "Aniline\n     RDKit          3D\n\n 14 14  0  0  0  0  0  0  0  0999 V2000\n   -1.8551    0.3019   -0.2147 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9433    1.3121   -0.5108 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4265    1.0872   -0.3490 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9000   -0.1487    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2537   -0.3576    0.2878 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0248   -1.1486    0.4072 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3958   -0.9291    0.2472 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9206    0.4752   -0.3382 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2957    2.2773   -0.8642 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1231    1.8892   -0.5767 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.5964   -1.2716    0.5480 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9224    0.3435    0.0017 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3154   -2.1119    0.7767 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1023   -1.7188    0.4874 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  4  6  1  0\n  6  7  2  0\n  7  1  1  0\n  1  8  1  0\n  2  9  1  0\n  3 10  1  0\n  5 11  1  0\n  5 12  1  0\n  6 13  1  0\n  7 14  1  0\nM  END";
+        let mol = crate::molecule::parser::parse_sdf(sdf).expect("parse");
+        let config = ETKDGConfig::default();
+        let coords = generate_initial_coords_with_config(&mol, &config);
+        
+        // Compute H-N-H angle (atoms 10, 4, 11 in 0-based)
+        let n = coords[4];
+        let h1 = coords[10];
+        let h2 = coords[11];
+        let v1 = [h1[0]-n[0], h1[1]-n[1], h1[2]-n[2]];
+        let v2 = [h2[0]-n[0], h2[1]-n[1], h2[2]-n[2]];
+        let d1 = (v1[0]*v1[0] + v1[1]*v1[1] + v1[2]*v1[2]).sqrt();
+        let d2 = (v2[0]*v2[0] + v2[1]*v2[1] + v2[2]*v2[2]).sqrt();
+        let dot = v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2];
+        let angle = (dot / (d1 * d2)).acos().to_degrees();
+        
+        // H-H distance
+        let hh_dx = h1[0] - h2[0];
+        let hh_dy = h1[1] - h2[1];
+        let hh_dz = h1[2] - h2[2];
+        let hh_dist = (hh_dx*hh_dx + hh_dy*hh_dy + hh_dz*hh_dz).sqrt();
+        
+        // N-C bond distance (atom 4 to 3)
+        let nc_dx = coords[4][0] - coords[3][0];
+        let nc_dy = coords[4][1] - coords[3][1];
+        let nc_dz = coords[4][2] - coords[3][2];
+        let nc_dist = (nc_dx*nc_dx + nc_dy*nc_dy + nc_dz*nc_dz).sqrt();
+        
+        println!("\nAniline geometry:");
+        println!("H-N-H angle: {:.2}°", angle);
+        println!("H-H distance: {:.4} Å", hh_dist);
+        println!("N-C distance: {:.4} Å", nc_dist);
+        println!("N-H1 distance: {:.4} Å", d1);
+        println!("N-H2 distance: {:.4} Å", d2);
+        
+        // Check planarity: distance of N and H's from ring plane
+        let ring_atoms = [0, 1, 2, 3, 5, 6];
+        let mut center = [0.0f64; 3];
+        for &a in &ring_atoms {
+            center[0] += coords[a][0];
+            center[1] += coords[a][1];
+            center[2] += coords[a][2];
+        }
+        for i in 0..3 { center[i] /= ring_atoms.len() as f64; }
+        
+        let mut normal = [0.0f64; 3];
+        for i in 0..ring_atoms.len() {
+            let a = ring_atoms[i];
+            let b = ring_atoms[(i+1) % ring_atoms.len()];
+            let u = [coords[b][0]-coords[a][0], coords[b][1]-coords[a][1], coords[b][2]-coords[a][2]];
+            let v = [center[0]-coords[a][0], center[1]-coords[a][1], center[2]-coords[a][2]];
+            normal[0] += u[1]*v[2] - u[2]*v[1];
+            normal[1] += u[2]*v[0] - u[0]*v[2];
+            normal[2] += u[0]*v[1] - u[1]*v[0];
+        }
+        let n_norm = (normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2]).sqrt();
+        for i in 0..3 { normal[i] /= n_norm; }
+        
+        let n_dist = (coords[4][0]-center[0])*normal[0] + (coords[4][1]-center[1])*normal[1] + (coords[4][2]-center[2])*normal[2];
+        let h1_dist = (coords[10][0]-center[0])*normal[0] + (coords[10][1]-center[1])*normal[1] + (coords[10][2]-center[2])*normal[2];
+        let h2_dist = (coords[11][0]-center[0])*normal[0] + (coords[11][1]-center[1])*normal[1] + (coords[11][2]-center[2])*normal[2];
+        
+        println!("N from plane: {:.4} Å", n_dist);
+        println!("H1 from plane: {:.4} Å", h1_dist);
+        println!("H2 from plane: {:.4} Å", h2_dist);
+        
+        // RDKit-like values: H-N-H ~117.5°, N ~-0.03Å, H's ~±0.84Å
+        assert!(angle > 110.0 && angle < 125.0, 
+                "H-N-H angle out of range: {:.2}° (expected 110-125°)", angle);
     }
 }

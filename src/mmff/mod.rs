@@ -13,6 +13,7 @@ pub mod bond;
 pub mod charges;
 pub mod electrostatics;
 pub mod estimation;
+pub mod mmff_tables;
 pub mod oop;
 pub mod params;
 pub mod stretch_bend;
@@ -40,7 +41,8 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         | MMFFAtomType::H_COOH
         | MMFFAtomType::H_OAR
         | MMFFAtomType::H_N3
-        | MMFFAtomType::H_NAM => MMFFAtomType::H,
+        | MMFFAtomType::H_NAM
+        | MMFFAtomType::H_NIM => MMFFAtomType::H,
         // 5-membered heteroaromatic ring atoms use same params as generic aromatic
         MMFFAtomType::C5A | MMFFAtomType::C5B => MMFFAtomType::C_AR,
         MMFFAtomType::NPYL | MMFFAtomType::N5A | MMFFAtomType::N5B => MMFFAtomType::N_AR,
@@ -68,10 +70,13 @@ pub enum MMFFAtomType {
     H_OAR,  // H bonded to O_3 where O bonded to C_AR (phenol)
     H_N3,   // H bonded to N_3 (ammonia)
     H_NAM,  // H bonded to N_AM or N_AR (aniline, acetamide)
+    H_NIM,  // H bonded to sp2 imine N with C=N double bond (MMFF 27)
 
     // Carbons
     C_3,
     C_2,
+    C_VIN, // Generic sp2 alkene carbon, double bond(s) only to C (MMFF 2)
+    C_CO2, // Carboxylate carbon, sp2 C with C=O + C-[O-] (MMFF 41)
     C_1,
     C_AR,
     C5A, // Alpha C in 5-membered heteroaromatic ring (MMFF 63)
@@ -90,8 +95,11 @@ pub enum MMFFAtomType {
     N_4,
     N_2Z,
     N_SOM,
+    N_NO2, // Nitro group nitrogen (MMFF 45)
+    N_SO2, // Sulfonamide nitrogen, N bonded to SO2 sulfur (MMFF 43)
     N5A, // Alpha N in 5-membered heteroaromatic ring (MMFF 65)
     N5B, // Beta N in 5-membered heteroaromatic ring (MMFF 66)
+    N_POX, // Pyridine N-oxide nitrogen (MMFF 69)
 
     // Oxygens
     O_3,
@@ -107,13 +115,19 @@ pub enum MMFFAtomType {
     Cl,
     Br,
     I,
+    F_M,  // Fluoride anion (MMFF 89)
+    CL_M, // Chloride anion (MMFF 90)
+    BR_M, // Bromide anion (MMFF 91)
 
     // Sulfur, Phosphorus
     S_3,
     S_2,
     S_AR,
+    S_OX, // Sulfoxide sulfur, one double bond to O (MMFF 17)
+    S_O2, // Sulfone/sulfonamide sulfur, two double bonds to O (MMFF 18)
     P_3,
     P_4,
+    Si, // Silicon (MMFF 19)
 
     // SP3D / SP3D2 (trigonal bipyramidal / octahedral)
     P_3D,  // Phosphorus in trigonal bipyramidal geometry (e.g., PF5)
@@ -137,14 +151,17 @@ pub enum MMFFAtomType {
 pub struct MMFFForceField {
     pub mol: Molecule,
     pub atom_types: Vec<MMFFAtomType>,
+    pub type_ids: Vec<u8>,
     pub charges: Vec<f64>,
     pub variant: MMFFVariant,
     pub angles: Vec<crate::molecule::Angle>,
     pub torsions: Vec<crate::molecule::Torsion>,
+    pub torsion_types: Vec<(u8, u8)>,
     pub oops: Vec<crate::molecule::OutOfPlane>,
     pub excluded_pairs: HashSet<(usize, usize)>,
     pub one_four_pairs: HashSet<(usize, usize)>,
     pub bond_map: HashMap<(usize, usize), Bond>,
+    pub rings: Vec<Vec<usize>>,
 }
 
 impl MMFFForceField {
@@ -188,18 +205,89 @@ impl MMFFForceField {
             one_four_pairs.insert((a, d));
         }
 
+        // Compute torsion types using RDKit's classification
+        let rings = crate::molecule::graph::find_rings(mol);
+        let type_ids: Vec<u8> = atom_types
+            .iter()
+            .map(|&at| mmff_type_id(base_type(at)))
+            .collect();
+
+        let torsion_types: Vec<(u8, u8)> = torsions
+            .iter()
+            .map(|t| {
+                let i = t.atom1;
+                let j = t.atom2;
+                let k = t.atom3;
+                let l = t.atom4;
+
+                let bond_ij_type = bond_map
+                    .get(&(i.min(j), i.max(j)))
+                    .map(|b| get_mmff_bond_type(b.bond_type, type_ids[i], type_ids[j]))
+                    .unwrap_or(0);
+                let bond_jk_type = bond_map
+                    .get(&(j.min(k), j.max(k)))
+                    .map(|b| get_mmff_bond_type(b.bond_type, type_ids[j], type_ids[k]))
+                    .unwrap_or(0);
+                let bond_kl_type = bond_map
+                    .get(&(k.min(l), k.max(l)))
+                    .map(|b| get_mmff_bond_type(b.bond_type, type_ids[k], type_ids[l]))
+                    .unwrap_or(0);
+
+                let bond_jk_actual = bond_map
+                    .get(&(j.min(k), j.max(k)))
+                    .map(|b| b.bond_type)
+                    .unwrap_or(BondType::Single);
+
+                let torsion_set: HashSet<usize> = [i, j, k, l].iter().copied().collect();
+
+                let ring4 = rings
+                    .iter()
+                    .any(|r| r.len() == 4 && torsion_set.iter().all(|a| r.contains(a)));
+
+                let ring5 = rings
+                    .iter()
+                    .any(|r| r.len() == 5 && torsion_set.iter().all(|a| r.contains(a)));
+
+                get_mmff_torsion_type(
+                    bond_ij_type,
+                    bond_jk_type,
+                    bond_kl_type,
+                    bond_jk_actual,
+                    ring4,
+                    ring5,
+                    type_ids[i],
+                    type_ids[j],
+                    type_ids[k],
+                    type_ids[l],
+                )
+            })
+            .collect();
+
         Self {
             mol: mol.clone(),
             atom_types,
+            type_ids,
             charges,
             variant,
             angles,
             torsions,
+            torsion_types,
             oops,
             excluded_pairs,
             one_four_pairs,
             bond_map,
+            rings,
         }
+    }
+
+    pub fn angle_ring_size(&self, i: usize, j: usize, k: usize) -> u8 {
+        let angle_set: HashSet<usize> = [i, j, k].iter().copied().collect();
+        for ring in &self.rings {
+            if (ring.len() == 3 || ring.len() == 4) && angle_set.iter().all(|a| ring.contains(a)) {
+                return ring.len() as u8;
+            }
+        }
+        0
     }
 
     fn assign_atom_types(mol: &Molecule) -> Vec<MMFFAtomType> {
@@ -329,6 +417,139 @@ impl MMFFForceField {
                     .copied()
                     .collect();
 
+                let oxygen_neighbors: Vec<usize> = mol.adjacency[idx]
+                    .iter()
+                    .filter(|&&n| mol.atoms[n].atomic_number == 8)
+                    .copied()
+                    .collect();
+
+                let h_neighbor_count = mol.adjacency[idx]
+                    .iter()
+                    .filter(|&&n| mol.atoms[n].atomic_number == 1)
+                    .count();
+
+                // Counts double bonds from `center` to oxygen atoms
+                let count_double_o = |center: usize| -> usize {
+                    mol.bonds
+                        .iter()
+                        .filter(|b| b.bond_type == BondType::Double)
+                        .filter(|b| {
+                            let other = if b.atom1 == center {
+                                b.atom2
+                            } else if b.atom2 == center {
+                                b.atom1
+                            } else {
+                                return false;
+                            };
+                            mol.atoms[other].atomic_number == 8
+                        })
+                        .count()
+                };
+
+                // Atomic numbers of this atom's double-bond partners
+                let double_bond_partners: Vec<u8> = mol
+                    .bonds
+                    .iter()
+                    .filter(|b| b.bond_type == BondType::Double)
+                    .filter_map(|b| {
+                        if b.atom1 == idx {
+                            Some(b.atom2)
+                        } else if b.atom2 == idx {
+                            Some(b.atom1)
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|o| mol.atoms[o].atomic_number)
+                    .collect();
+
+                let double_o_count = double_bond_partners.iter().filter(|&&an| an == 8).count();
+                let has_double_to_nos = double_bond_partners
+                    .iter()
+                    .any(|&an| an == 7 || an == 8 || an == 16);
+
+                // Bond order to a neighboring SO2 sulfur (S with >=2 double-bonded O's)
+                let so2_s_bond_order: Option<u8> = mol.adjacency[idx].iter().find_map(|&n| {
+                    if mol.atoms[n].atomic_number != 16 || count_double_o(n) < 2 {
+                        return None;
+                    }
+                    mol.bonds
+                        .iter()
+                        .find(|b| {
+                            (b.atom1 == idx && b.atom2 == n) || (b.atom1 == n && b.atom2 == idx)
+                        })
+                        .map(|b| match b.bond_type {
+                            BondType::Single => 1u8,
+                            BondType::Double => 2u8,
+                            _ => 0u8,
+                        })
+                });
+                let bonded_to_so2_s = so2_s_bond_order.is_some();
+
+                // Nitro N: exactly 2 O neighbors, >=1 double bond to O, no H neighbors
+                let is_nitro_n = atom.atomic_number == 7
+                    && oxygen_neighbors.len() == 2
+                    && h_neighbor_count == 0
+                    && double_o_count >= 1;
+
+                // Bonded (single or double) to a nitro-group N
+                let bonded_to_nitro_n = atom.atomic_number == 8
+                    && mol.adjacency[idx].iter().any(|&n| {
+                        mol.atoms[n].atomic_number == 7
+                            && mol.adjacency[n]
+                                .iter()
+                                .filter(|&&m| mol.atoms[m].atomic_number == 8)
+                                .count()
+                                == 2
+                            && count_double_o(n) >= 1
+                    });
+
+                // Carboxylate C: sp2 C with >=1 C=O double bond AND >=1 single bond to O,
+                // where at least one O neighbor has formal charge < -0.5 (RDKit-verified)
+                let is_carboxylate_c = atom.atomic_number == 6
+                    && double_o_count >= 1
+                    && mol.bonds.iter().any(|b| {
+                        b.bond_type == BondType::Single
+                            && (b.atom1 == idx || b.atom2 == idx)
+                            && {
+                                let o_idx = if b.atom1 == idx { b.atom2 } else { b.atom1 };
+                                mol.atoms[o_idx].atomic_number == 8
+                            }
+                    })
+                    && mol.adjacency[idx].iter().any(|&n| {
+                        mol.atoms[n].atomic_number == 8 && mol.atoms[n].charge < -0.5
+                    });
+
+                // O bonded to a carboxylate C (for carboxylate O typing)
+                let o_bonded_to_carboxylate_c = atom.atomic_number == 8
+                    && carbon_neighbors.iter().any(|&c| {
+                        mol.atoms[c].atomic_number == 6
+                            && count_double_o(c) >= 1
+                            && mol.bonds.iter().any(|b| {
+                                b.bond_type == BondType::Single
+                                    && (b.atom1 == c || b.atom2 == c)
+                                    && {
+                                        let o_idx = if b.atom1 == c { b.atom2 } else { b.atom1 };
+                                        mol.atoms[o_idx].atomic_number == 8
+                                    }
+                            })
+                            && mol.adjacency[c].iter().any(|&n| {
+                                mol.atoms[n].atomic_number == 8
+                                    && mol.atoms[n].charge < -0.5
+                            })
+                    });
+
+                // O bonded to an aromatic N (for N-oxide O typing)
+                let bonded_to_aromatic_n = atom.atomic_number == 8
+                    && mol.adjacency[idx].iter().any(|&n| {
+                        mol.atoms[n].atomic_number == 7 && aromatic_atoms.contains(&n)
+                    });
+
+                // Aromatic N bonded to O (for N-oxide N typing)
+                let is_noxide_n = atom.atomic_number == 7
+                    && aromatic
+                    && !oxygen_neighbors.is_empty();
+
                 match (atom.atomic_number, hybrid, aromatic, num_bonds) {
                     // Hydrogen - context-dependent subtyping
                     (1, _, _, _) => {
@@ -351,8 +572,26 @@ impl MMFFForceField {
                     // Carbon types — aromatic takes priority over hybridization
                     (6, _, true, _) => MMFFAtomType::C_AR,
                     (6, Hybridization::Sp3, false, 1..=4) => MMFFAtomType::C_3,
-                    (6, Hybridization::Sp2, false, 2..) => MMFFAtomType::C_2,
+                    // sp2 C: carbonyl/imine/thiocarbonyl C (double bond to N/O/S) is MMFF 3;
+                    // generic alkene C (double bond only to C) is MMFF 2 (RDKit-verified)
+                    // Carboxylate C (C=O + C-[O-]) is MMFF 41 (CO2M) — must check first
+                    (6, Hybridization::Sp2, false, 2..) if is_carboxylate_c => {
+                        MMFFAtomType::C_CO2
+                    }
+                    (6, Hybridization::Sp2, false, 2..) => {
+                        if has_double_to_nos {
+                            MMFFAtomType::C_2
+                        } else {
+                            MMFFAtomType::C_VIN
+                        }
+                    }
                     (6, Hybridization::Sp1, _, 1..=2) => MMFFAtomType::C_1,
+
+                    // Nitro N: exactly 2 O neighbors, >=1 N=O double bond, no H (MMFF 45)
+                    (7, _, false, _) if is_nitro_n => MMFFAtomType::N_NO2,
+
+                    // Sulfonamide N: bonded to SO2 sulfur (MMFF 43)
+                    (7, _, false, _) if bonded_to_so2_s => MMFFAtomType::N_SO2,
 
                     // Nitrogen with formal charge +1
                     (7, Hybridization::Sp3, _, _) if charge.abs() > 0.5 && charge > 0.0 => {
@@ -360,6 +599,7 @@ impl MMFFForceField {
                     }
 
                     // Nitrogen: amide N (aromatic ring + bonded to C=O)
+                    (7, _, true, _) if is_noxide_n => MMFFAtomType::N_POX,
                     (7, _, true, _) if has_c_o_neighbor => MMFFAtomType::N_AM,
 
                     // N_PL3: sp3 N bonded to C=O or to aromatic carbon (aniline)
@@ -376,10 +616,35 @@ impl MMFFForceField {
                     (7, _, true, 2..=3) => MMFFAtomType::N_AR,
                     (7, _, true, _) => MMFFAtomType::N_AM,
                     (7, Hybridization::Sp3, false, 1..=3) => MMFFAtomType::N_3,
+                    // N_PL3: sp2 N connected to aromatic carbon (aniline-like)
+                    (7, Hybridization::Sp2, false, _)
+                        if carbon_neighbors
+                            .iter()
+                            .any(|&c| aromatic_atoms.contains(&c)) =>
+                    {
+                        MMFFAtomType::N_PL3
+                    }
                     (7, Hybridization::Sp2, false, 2..) => MMFFAtomType::N_2,
                     (7, Hybridization::Sp1, false, 1..=2) => MMFFAtomType::N_1,
 
-                    // O_CO2: O double-bonded to C that is also double-bonded to another O (CO2)
+                    // Terminal O on SO2 (sulfone/sulfonamide/sulfonate) or nitro groups
+                    // is MMFF 32 (O2CM); bridging ester O's have carbon neighbors and
+                    // are excluded (RDKit-verified)
+                    (8, _, _, _)
+                        if carbon_neighbors.is_empty()
+                            && (so2_s_bond_order == Some(2)
+                                || (so2_s_bond_order == Some(1) && charge < -0.5)
+                                || bonded_to_nitro_n
+                                || bonded_to_aromatic_n) =>
+                    {
+                        MMFFAtomType::O_CO2
+                    }
+
+                    // Carboxylate [O-]: single-bonded O on a carboxylate C → MMFF 32 (O2CM)
+                    (8, _, _, _) if o_bonded_to_carboxylate_c => MMFFAtomType::O_CO2,
+
+                    // O_CO2: O double-bonded to C that is also double-bonded to another O (CO2),
+                    // OR C=O on a carboxylate C (where the other O has formal charge -1)
                     (8, _, _, _) if has_double_bond_to_c => {
                         let is_co2 = mol.bonds.iter().any(|b| {
                             if b.bond_type != BondType::Double {
@@ -395,14 +660,30 @@ impl MMFFForceField {
                             if mol.atoms[c_idx].atomic_number != 6 {
                                 return false;
                             }
-                            mol.bonds.iter().any(|b2| {
+                            // Check 1: C has another C=O double bond (e.g. CO2, neutral carboxyl)
+                            let has_second_double_o = mol.bonds.iter().any(|b2| {
                                 b2.bond_type == BondType::Double
                                     && b2.atom1 != idx
                                     && b2.atom2 != idx
                                     && (b2.atom1 == c_idx || b2.atom2 == c_idx)
                                     && (mol.atoms[b2.atom1].atomic_number == 8
                                         || mol.atoms[b2.atom2].atomic_number == 8)
-                            })
+                            });
+                            // Check 2: C is a carboxylate C (has single-bonded O with charge -1)
+                            let has_carboxylate_o = mol.bonds.iter().any(|b2| {
+                                b2.bond_type == BondType::Single
+                                    && (b2.atom1 == c_idx || b2.atom2 == c_idx)
+                                    && {
+                                        let o_idx = if b2.atom1 == c_idx {
+                                            b2.atom2
+                                        } else {
+                                            b2.atom1
+                                        };
+                                        mol.atoms[o_idx].atomic_number == 8
+                                            && mol.atoms[o_idx].charge < -0.5
+                                    }
+                            });
+                            has_second_double_o || has_carboxylate_o
                         });
                         if is_co2 {
                             MMFFAtomType::O_CO2
@@ -433,6 +714,9 @@ impl MMFFForceField {
 
                     // Sulfur types — aromatic takes priority
                     (16, _, true, 2..=3) => MMFFAtomType::S_AR,
+                    // Oxidized sulfur: SO2 -> MMFF 18, S=O -> MMFF 17 (RDKit-verified)
+                    (16, _, _, _) if double_o_count >= 2 => MMFFAtomType::S_O2,
+                    (16, _, _, _) if double_o_count == 1 => MMFFAtomType::S_OX,
                     (16, Hybridization::Sp3, _, 2..) => MMFFAtomType::S_3,
                     (16, Hybridization::Sp2, _, _) => MMFFAtomType::S_2,
 
@@ -444,6 +728,26 @@ impl MMFFForceField {
                     // Sulfur types
                     (16, Hybridization::Sp3D, _, 4..=5) => MMFFAtomType::S_3D,
                     (16, Hybridization::Sp3D2, _, 6) => MMFFAtomType::S_3D2,
+
+                    // Silicon (MMFF 19) — always type 19 regardless of hybridization
+                    (14, _, _, _) => MMFFAtomType::Si,
+
+                    // Metal ions by element + formal charge (RDKit-verified)
+                    (3, _, _, _) if charge > 0.5 => MMFFAtomType::Li,
+                    (11, _, _, _) if charge > 0.5 => MMFFAtomType::Na,
+                    (19, _, _, _) if charge > 0.5 => MMFFAtomType::K,
+                    (12, _, _, _) if charge > 1.5 => MMFFAtomType::Mg_P2,
+                    (20, _, _, _) if charge > 1.5 => MMFFAtomType::Ca_P2,
+                    (30, _, _, _) if charge > 1.5 => MMFFAtomType::Zn_P2,
+                    (26, _, _, _) if charge > 2.5 => MMFFAtomType::Fe_P3,
+                    (26, _, _, _) if charge > 1.5 => MMFFAtomType::Fe_P2,
+                    (29, _, _, _) if charge > 1.5 => MMFFAtomType::Cu_P2,
+                    (29, _, _, _) if charge > 0.5 => MMFFAtomType::Cu_P1,
+
+                    // Halide anions by formal charge (RDKit-verified; no I- in MMFF94)
+                    (9, _, _, _) if charge < -0.5 => MMFFAtomType::F_M,
+                    (17, _, _, _) if charge < -0.5 => MMFFAtomType::CL_M,
+                    (35, _, _, _) if charge < -0.5 => MMFFAtomType::BR_M,
 
                     // Halogens
                     (9, _, _, _) => MMFFAtomType::F,
@@ -520,19 +824,32 @@ impl MMFFForceField {
                 }
             }
             7 => {
-                // H_NAM for H bonded to N that is conjugated: aromatic N, amide N (double bond),
-                // or aniline N (bonded to aromatic carbon)
+                // Imine H: H on sp2 N with C=N double bond, not aromatic → MMFF 27 (H_NIM)
+                let n_has_double_to_c = mol.bonds.iter().any(|b| {
+                    b.bond_type == BondType::Double
+                        && (b.atom1 == neighbor_idx || b.atom2 == neighbor_idx)
+                        && {
+                            let other = if b.atom1 == neighbor_idx {
+                                b.atom2
+                            } else {
+                                b.atom1
+                            };
+                            mol.atoms[other].atomic_number == 6
+                        }
+                });
+                let n_is_aromatic = aromatic_atoms.contains(&neighbor_idx);
                 let n_is_aniline = mol.adjacency[neighbor_idx]
                     .iter()
                     .any(|&nbr| aromatic_atoms.contains(&nbr) && mol.atoms[nbr].atomic_number == 6);
-                let n_is_amide = mol.bonds.iter().any(|b| {
-                    (b.atom1 == neighbor_idx || b.atom2 == neighbor_idx)
-                        && b.bond_type == BondType::Double
-                });
-                let n_is_aromatic = aromatic_atoms.contains(&neighbor_idx);
-                if n_is_aniline || n_is_amide || n_is_aromatic {
+
+                if n_has_double_to_c && !n_is_aromatic {
+                    // Imine N-H (C=N-H) → MMFF 27
+                    MMFFAtomType::H_NIM
+                } else if n_is_aniline || n_is_aromatic {
+                    // Aniline / aromatic N-H → MMFF 28
                     MMFFAtomType::H_NAM
                 } else {
+                    // Generic amine N-H → MMFF 23
                     MMFFAtomType::H_N3
                 }
             }
@@ -564,23 +881,53 @@ impl MMFFForceField {
 
         // Angle bending
         for angle in &self.angles {
-            if let Some(params) = get_angle_params(
-                self.atom_types[angle.atom1],
-                self.atom_types[angle.atom2],
-                self.atom_types[angle.atom3],
+            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
+            let bij_key = (i.min(j), i.max(j));
+            let bkj_key = (k.min(j), k.max(j));
+            let bt_ij = self
+                .bond_map
+                .get(&bij_key)
+                .map(|b| get_mmff_bond_type(b.bond_type, self.type_ids[i], self.type_ids[j]))
+                .unwrap_or(0);
+            let bt_jk = self
+                .bond_map
+                .get(&bkj_key)
+                .map(|b| get_mmff_bond_type(b.bond_type, self.type_ids[j], self.type_ids[k]))
+                .unwrap_or(0);
+            let ring_size = self.angle_ring_size(i, j, k);
+            let r0_ij = self
+                .bond_map
+                .get(&bij_key)
+                .and_then(|b| get_bond_params(self.atom_types[i], self.atom_types[j], b.bond_type))
+                .map(|p| p.r0)
+                .unwrap_or(1.5);
+            let r0_jk = self
+                .bond_map
+                .get(&bkj_key)
+                .and_then(|b| get_bond_params(self.atom_types[k], self.atom_types[j], b.bond_type))
+                .map(|p| p.r0)
+                .unwrap_or(1.5);
+            if let Some(params) = get_angle_params_with_bond_info(
+                self.atom_types[i],
+                self.atom_types[j],
+                self.atom_types[k],
+                bt_ij,
+                bt_jk,
+                ring_size,
+                r0_ij,
+                r0_jk,
             ) {
-                energy += angle_energy(coords, angle.atom1, angle.atom2, angle.atom3, &params);
-                let (g1, g2, g3) =
-                    angle_gradient(coords, angle.atom1, angle.atom2, angle.atom3, &params);
-                gradient[angle.atom1][0] += g1[0];
-                gradient[angle.atom1][1] += g1[1];
-                gradient[angle.atom1][2] += g1[2];
-                gradient[angle.atom2][0] += g2[0];
-                gradient[angle.atom2][1] += g2[1];
-                gradient[angle.atom2][2] += g2[2];
-                gradient[angle.atom3][0] += g3[0];
-                gradient[angle.atom3][1] += g3[1];
-                gradient[angle.atom3][2] += g3[2];
+                energy += angle_energy(coords, i, j, k, &params);
+                let (g1, g2, g3) = angle_gradient(coords, i, j, k, &params);
+                gradient[i][0] += g1[0];
+                gradient[i][1] += g1[1];
+                gradient[i][2] += g1[2];
+                gradient[j][0] += g2[0];
+                gradient[j][1] += g2[1];
+                gradient[j][2] += g2[2];
+                gradient[k][0] += g3[0];
+                gradient[k][1] += g3[1];
+                gradient[k][2] += g3[2];
             }
         }
 
@@ -592,6 +939,10 @@ impl MMFFForceField {
             let bond_ij = self.bond_map.get(&bij_key);
             let bond_kj = self.bond_map.get(&bkj_key);
             if let (Some(bij), Some(bkj)) = (bond_ij, bond_kj) {
+                let bt_ij = get_mmff_bond_type(bij.bond_type, self.type_ids[i], self.type_ids[j]);
+                let bt_jk = get_mmff_bond_type(bkj.bond_type, self.type_ids[j], self.type_ids[k]);
+                let ring_size = self.angle_ring_size(i, j, k);
+                let angle_type_val = mmff_tables::compute_angle_type(bt_ij, bt_jk, ring_size);
                 if let (
                     Some(sb_params),
                     Some(bond_params_ij),
@@ -602,12 +953,29 @@ impl MMFFForceField {
                         self.atom_types[i],
                         self.atom_types[j],
                         self.atom_types[k],
-                        bij.bond_type,
-                        bkj.bond_type,
+                        bt_ij,
+                        bt_jk,
+                        self.mol.atoms[i].atomic_number,
+                        self.mol.atoms[j].atomic_number,
+                        self.mol.atoms[k].atomic_number,
+                        angle_type_val,
                     ),
                     get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type),
                     get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type),
-                    get_angle_params(self.atom_types[i], self.atom_types[j], self.atom_types[k]),
+                    get_angle_params_with_bond_info(
+                        self.atom_types[i],
+                        self.atom_types[j],
+                        self.atom_types[k],
+                        bt_ij,
+                        bt_jk,
+                        ring_size,
+                        get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type)
+                            .map(|p| p.r0)
+                            .unwrap_or(1.5),
+                        get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type)
+                            .map(|p| p.r0)
+                            .unwrap_or(1.5),
+                    ),
                 ) {
                     energy += stretch_bend_energy(
                         coords,
@@ -643,19 +1011,8 @@ impl MMFFForceField {
         }
 
         // Torsion
-        for torsion in &self.torsions {
-            let bond_key = (
-                torsion.atom2.min(torsion.atom3),
-                torsion.atom2.max(torsion.atom3),
-            );
-            let bond_type = self
-                .bond_map
-                .get(&bond_key)
-                .map(|b| b.bond_type)
-                .unwrap_or(BondType::Single);
-            let is_in_ring =
-                crate::molecule::graph::is_in_ring(torsion.atom2, torsion.atom3, &self.mol);
-            let tor_type = classify_torsion_type(bond_type, is_in_ring);
+        for (ti, torsion) in self.torsions.iter().enumerate() {
+            let tor_type = self.torsion_types[ti];
             if let Some(params) = get_torsion_params(
                 self.atom_types[torsion.atom1],
                 self.atom_types[torsion.atom2],
@@ -735,7 +1092,6 @@ impl MMFFForceField {
         }
 
         // Van der Waals (all nonbonded pairs, excluding 1-2 and 1-3)
-        // 1-4 pairs are scaled by 0.75
         let n = self.mol.atoms.len();
         for i in 0..n {
             for j in (i + 1)..n {
@@ -803,12 +1159,43 @@ impl MMFFForceField {
         }
 
         for angle in &self.angles {
-            if let Some(params) = get_angle_params(
-                self.atom_types[angle.atom1],
-                self.atom_types[angle.atom2],
-                self.atom_types[angle.atom3],
+            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
+            let bij_key = (i.min(j), i.max(j));
+            let bkj_key = (k.min(j), k.max(j));
+            let bt_ij = self
+                .bond_map
+                .get(&bij_key)
+                .map(|b| get_mmff_bond_type(b.bond_type, self.type_ids[i], self.type_ids[j]))
+                .unwrap_or(0);
+            let bt_jk = self
+                .bond_map
+                .get(&bkj_key)
+                .map(|b| get_mmff_bond_type(b.bond_type, self.type_ids[j], self.type_ids[k]))
+                .unwrap_or(0);
+            let ring_size = self.angle_ring_size(i, j, k);
+            let r0_ij = self
+                .bond_map
+                .get(&bij_key)
+                .and_then(|b| get_bond_params(self.atom_types[i], self.atom_types[j], b.bond_type))
+                .map(|p| p.r0)
+                .unwrap_or(1.5);
+            let r0_jk = self
+                .bond_map
+                .get(&bkj_key)
+                .and_then(|b| get_bond_params(self.atom_types[k], self.atom_types[j], b.bond_type))
+                .map(|p| p.r0)
+                .unwrap_or(1.5);
+            if let Some(params) = get_angle_params_with_bond_info(
+                self.atom_types[i],
+                self.atom_types[j],
+                self.atom_types[k],
+                bt_ij,
+                bt_jk,
+                ring_size,
+                r0_ij,
+                r0_jk,
             ) {
-                bd.angle += angle_energy(coords, angle.atom1, angle.atom2, angle.atom3, &params);
+                bd.angle += angle_energy(coords, i, j, k, &params);
             }
         }
 
@@ -819,6 +1206,10 @@ impl MMFFForceField {
             let bond_ij = self.bond_map.get(&bij_key);
             let bond_kj = self.bond_map.get(&bkj_key);
             if let (Some(bij), Some(bkj)) = (bond_ij, bond_kj) {
+                let bt_ij = get_mmff_bond_type(bij.bond_type, self.type_ids[i], self.type_ids[j]);
+                let bt_jk = get_mmff_bond_type(bkj.bond_type, self.type_ids[j], self.type_ids[k]);
+                let ring_size = self.angle_ring_size(i, j, k);
+                let angle_type_val = mmff_tables::compute_angle_type(bt_ij, bt_jk, ring_size);
                 if let (
                     Some(sb_params),
                     Some(bond_params_ij),
@@ -829,12 +1220,29 @@ impl MMFFForceField {
                         self.atom_types[i],
                         self.atom_types[j],
                         self.atom_types[k],
-                        bij.bond_type,
-                        bkj.bond_type,
+                        bt_ij,
+                        bt_jk,
+                        self.mol.atoms[i].atomic_number,
+                        self.mol.atoms[j].atomic_number,
+                        self.mol.atoms[k].atomic_number,
+                        angle_type_val,
                     ),
                     get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type),
                     get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type),
-                    get_angle_params(self.atom_types[i], self.atom_types[j], self.atom_types[k]),
+                    get_angle_params_with_bond_info(
+                        self.atom_types[i],
+                        self.atom_types[j],
+                        self.atom_types[k],
+                        bt_ij,
+                        bt_jk,
+                        ring_size,
+                        get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type)
+                            .map(|p| p.r0)
+                            .unwrap_or(1.5),
+                        get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type)
+                            .map(|p| p.r0)
+                            .unwrap_or(1.5),
+                    ),
                 ) {
                     bd.stretch_bend += stretch_bend_energy(
                         coords,
@@ -850,19 +1258,8 @@ impl MMFFForceField {
             }
         }
 
-        for torsion in &self.torsions {
-            let bond_key = (
-                torsion.atom2.min(torsion.atom3),
-                torsion.atom2.max(torsion.atom3),
-            );
-            let bond_type = self
-                .bond_map
-                .get(&bond_key)
-                .map(|b| b.bond_type)
-                .unwrap_or(BondType::Single);
-            let is_in_ring =
-                crate::molecule::graph::is_in_ring(torsion.atom2, torsion.atom3, &self.mol);
-            let tor_type = classify_torsion_type(bond_type, is_in_ring);
+        for (ti, torsion) in self.torsions.iter().enumerate() {
+            let tor_type = self.torsion_types[ti];
             if let Some(params) = get_torsion_params(
                 self.atom_types[torsion.atom1],
                 self.atom_types[torsion.atom2],

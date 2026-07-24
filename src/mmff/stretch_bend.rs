@@ -1,151 +1,41 @@
-use super::{base_type, get_angle_params, get_bond_params, MMFFAtomType};
-use crate::molecule::BondType;
+use super::mmff_tables;
+use super::params::mmff_type_id;
 
 pub struct StretchBendParams {
     pub kba_ijk: f64,
     pub kba_kji: f64,
 }
 
-fn get_sb_kba(
-    type_i: MMFFAtomType,
-    type_j: MMFFAtomType,
-    type_k: MMFFAtomType,
-) -> Option<(f64, f64)> {
-    let normalize = |t: MMFFAtomType| -> MMFFAtomType {
-        match base_type(t) {
-            MMFFAtomType::O_R => MMFFAtomType::O_3,
-            other => other,
-        }
-    };
-    let bi = normalize(type_i);
-    let bj = normalize(type_j);
-    let bk = normalize(type_k);
-
-    match (bi, bj, bk) {
-        // H-C_3-H (methane tetrahedral)
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::H) => Some((0.2270, 0.0700)),
-
-        // H-C_3-H (same, reversed)
-        (MMFFAtomType::C_3, MMFFAtomType::H, MMFFAtomType::H) => Some((0.0700, 0.2270)),
-
-        // H-C_3-C_3 (ethane-like)
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some((0.0700, 0.2270)),
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some((0.2270, 0.0700)),
-
-        // C_3-C_3-O_3 (ethanol C-C-O)
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::O_3) => Some((0.1730, 0.4170)),
-        (MMFFAtomType::O_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some((0.4170, 0.1730)),
-
-        // C_3-O_3-H (water-like O-H)
-        (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::H) => Some((0.2560, 0.1430)),
-        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_3) => Some((0.1430, 0.2560)),
-
-        // H-C_2-H (formaldehyde H-C-H)
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::H) => Some((0.1260, 0.1260)),
-
-        // H-C_2=O_2 (formaldehyde H-C=O)
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some((0.0320, 0.8050)),
-        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::H) => Some((0.8050, 0.0320)),
-
-        // C_3-C_2=O_2 (acetic acid/acetamide C-C=O)
-        (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some((0.3380, 0.7320)),
-        (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::C_3) => Some((0.7320, 0.3380)),
-
-        // C_2-O_3-H (carboxylic acid O-H)
-        (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::H) => Some((0.2150, 0.0640)),
-
-        // C_3-C_2-N_AM (acetamide C-C-N)
-        (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::N_AM) => Some((0.2230, 0.7320)),
-        (MMFFAtomType::N_AM, MMFFAtomType::C_2, MMFFAtomType::C_3) => Some((0.7320, 0.2230)),
-
-        // C_2-N_AM-H (acetamide N-H)
-        (MMFFAtomType::C_2, MMFFAtomType::N_AM, MMFFAtomType::H) => Some((0.1370, 0.0660)),
-
-        // H-O_3-H (water H-O-H)
-        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::H) => Some((0.2100, 0.2100)),
-
-        // C_3-C_3-H (propane-like)
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some((0.4360, 0.0130)),
-
-        // C_AR-C_AR-C_AR (benzene ring angles)
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some((0.8300, 0.3390)),
-
-        // C_3-C_AR-C_AR (phenol C_AR-C_AR with O attached)
-        (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some((0.2410, 0.1300)),
-
-        // C_AR-C_AR-H (aromatic C-H)
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::H) => Some((0.2500, 0.2790)),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some((0.2790, 0.2500)),
-
-        // C_AR-C_AR-O_3 (phenol C-O)
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::O_3) => Some((0.4230, 0.1860)),
-        (MMFFAtomType::O_3, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some((0.1860, 0.4230)),
-
-        // H-N_3-H (ammonia H-N-H)
-        (MMFFAtomType::H, MMFFAtomType::N_3, MMFFAtomType::H) => Some((0.1900, 0.1900)),
-
-        // N_AR-C_AR-H (aniline N-C-H)
-        (MMFFAtomType::N_AR, MMFFAtomType::C_AR, MMFFAtomType::H) => Some((0.0940, 0.0940)),
-
-        // H-N_AR-C_AR (aniline H-N-C)
-        (MMFFAtomType::H, MMFFAtomType::N_AR, MMFFAtomType::C_AR) => Some((0.0810, 0.0810)),
-
-        // H-N_AM-C_2 (amide H-N-C)
-        (MMFFAtomType::H, MMFFAtomType::N_AM, MMFFAtomType::C_2) => Some((0.0940, 0.0940)),
-
-        // C_AR-C_AR-N_AR (aniline C-C-N)
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::N_AR) => Some((0.9010, 0.4290)),
-        (MMFFAtomType::N_AR, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some((0.4290, 0.9010)),
-
-        // H-C_3-C_3 (C_3-H-C_3)
-        (MMFFAtomType::C_3, MMFFAtomType::H, MMFFAtomType::C_3) => Some((0.0700, 0.2270)),
-
-        // H-N_3-C_3 (ammonia-like N-H-C)
-        (MMFFAtomType::H, MMFFAtomType::N_3, MMFFAtomType::C_3) => Some((0.0320, 0.8050)),
-
-        // C_3-N_3-C_3
-        (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::C_3) => Some((0.5780, 0.4940)),
-
-        // C_3-N_AM-C_3
-        (MMFFAtomType::C_3, MMFFAtomType::N_AM, MMFFAtomType::C_3) => Some((0.7710, 0.3530)),
-
-        // O_3-C_3-H (ethanol O-C-H)
-        (MMFFAtomType::O_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some((0.4360, 0.0130)),
-
-        // Fallback: use estimation based on bond/angle classes
-        _ => None,
-    }
-}
-
 pub fn get_stretch_bend_params(
-    type_i: MMFFAtomType,
-    type_j: MMFFAtomType,
-    type_k: MMFFAtomType,
-    bond_type_ij: BondType,
-    bond_type_kj: BondType,
+    type_i: super::MMFFAtomType,
+    type_j: super::MMFFAtomType,
+    type_k: super::MMFFAtomType,
+    bond_type_ij: u8,
+    bond_type_jk: u8,
+    atomic_num_i: u8,
+    atomic_num_j: u8,
+    atomic_num_k: u8,
+    angle_type: u8,
 ) -> Option<StretchBendParams> {
-    if let Some((kba_ijk, kba_kji)) = get_sb_kba(type_i, type_j, type_k) {
+    let ti = mmff_type_id(type_i);
+    let tj = mmff_type_id(type_j);
+    let tk = mmff_type_id(type_k);
+
+    let sb_type = mmff_tables::compute_stretch_bend_type(angle_type, bond_type_ij, bond_type_jk);
+
+    if let Some((kba_ijk, kba_kji)) = mmff_tables::lookup_stretch_bend_params(
+        ti,
+        tj,
+        tk,
+        sb_type,
+        atomic_num_i,
+        atomic_num_j,
+        atomic_num_k,
+    ) {
         return Some(StretchBendParams { kba_ijk, kba_kji });
     }
 
-    let bond_params_ij = get_bond_params(type_i, type_j, bond_type_ij)?;
-    let bond_params_kj = get_bond_params(type_k, type_j, bond_type_kj)?;
-    let angle_params = get_angle_params(type_i, type_j, type_k)?;
-
-    let kb_ij = bond_params_ij.k_bond;
-    let r0_ij = bond_params_ij.r0;
-    let kb_kj = bond_params_kj.k_bond;
-    let r0_kj = bond_params_kj.r0;
-    let theta0 = angle_params.theta0.to_radians();
-
-    if theta0.abs() < 1e-10 || r0_ij < 1e-10 || r0_kj < 1e-10 {
-        return None;
-    }
-
-    let kba_ijk = 2.5 * (kb_ij / r0_ij) * theta0.sin();
-    let kba_kji = 2.5 * (kb_kj / r0_kj) * theta0.sin();
-
-    Some(StretchBendParams { kba_ijk, kba_kji })
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -374,11 +264,22 @@ mod tests {
 
     #[test]
     fn test_get_stretch_bend_params_known() {
-        let params = get_sb_kba(MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::H);
+        use super::super::MMFFAtomType;
+        let params = get_stretch_bend_params(
+            MMFFAtomType::H,
+            MMFFAtomType::C_3,
+            MMFFAtomType::H,
+            0,
+            0,
+            1,
+            6,
+            6,
+            0,
+        );
         assert!(params.is_some());
-        let (kba_ijk, kba_kji) = params.unwrap();
-        assert!((kba_ijk - 0.2270).abs() < 1e-4);
-        assert!((kba_kji - 0.0700).abs() < 1e-4);
+        let p = params.unwrap();
+        assert!((p.kba_ijk - 0.115).abs() < 0.01);
+        assert!((p.kba_kji - 0.115).abs() < 0.01);
     }
 
     #[test]

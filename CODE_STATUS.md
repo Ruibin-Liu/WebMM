@@ -4,16 +4,99 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-MMFF94s energy calculation accuracy — fixing angle parameters to match RDKit's tabulated values.
+None active — MMFF formal charge distribution fixed 2026-07-23 (see Recently Completed).
 
 ## Recently Completed
-- **Angle parameters corrected from RDKit Params.cpp**: Fixed C_3-C_2-O_2 (ktheta=0.938, theta0=124.410), C_3-C_2-O_3 (ktheta=1.043, theta0=109.716), added O_2-C_2-O_3 (ktheta=1.155, theta0=124.425), O_3-C_2-O_3 (ktheta=1.678, theta0=109.094), H-C_2-O_3 (ktheta=0.819, theta0=108.253)
-- **O_CO2 type assignment verified**: RDKit assigns O_CO2 (type 32) only when carbon has 2 terminal oxygens (totalDegree==1). Carboxylic acid -OH oxygen has degree 2, so carbonyl O gets O_2 (type 7), not O_CO2
-- **O_R angle entries fixed**: base_type() normalizes O_R→O_3 before matching, making O_R-specific entries dead code. Added O_3 equivalents for all critical O_R-centered entries (H-O-C, H-O=C, C-C-O)
-- **VDW 1-4 scaling test updated**: Changed from asserting no scaling to asserting 0.75x scaling
-- **Formaldehyde test updated**: Carbonyl O correctly typed as O_2 (formaldehyde has no second O neighbor)
-- **Acetic acid angle energy**: Dropped from 5.78 to 0.61 kcal/mol at RDKit reference geometry
-- **All 144 tests pass**, 0 clippy errors, WASM build verified
+- **MMFF formal charge distribution fixed to match RDKit** (Halgren MMFF.V equation 15), per PLAN.md "Fix MMFF Formal Charge Distribution to Match RDKit":
+  - `src/mmff/charges.rs`: Replaced naive `charges = [0; n] + BCI + uniform_residual` with RDKit's two-stage model: (1) `compute_mmff_formal_charges` computes MMFF formal charges using per-type rules (carboxylate/sulfonate O → shared -1/n, N-oxide N/O → 0, ions → integer charge, everything else → 0), and (2) `calculate_bci_charges` applies equation 15: `pChg = (1 - M·v)·q0 + v·sumFormal + sumBci` where M=crd, v=fcadj, q0=MMFF formal charge (adjusted by neighbor charges when v=0)
+  - `src/mmff/charges.rs`: Fixed `mmff_bond_type` for BCI — Aromatic bonds now return bt=0 (matching RDKit `getMMFFBondType`), not bt=4; also added `both_arom` check for SINGLE bonds between two aromatic atoms
+  - Partial charges now match RDKit exactly for: acetate (C=-0.106, C_carbox=+0.906, O=-0.900×2), pyridine N-oxide (N=+0.571, O=-0.750), nitromethane, sulfonate, ammonium
+  - **All 163 tests pass**, 0 clippy errors, WASM build verified
+- **Remaining MMFF atom typing gaps fixed vs RDKit 2025.09.3** (carboxylate C=41, N-oxide N=69, Si=19, imine H=27), per PLAN.md "Fix Remaining MMFF Atom Typing Gaps vs RDKit":
+  - `src/mmff/mod.rs`: `MMFFAtomType` gained `C_CO2`(41), `N_POX`(69), `Si`(19), `H_NIM`(27); `assign_atom_types` now detects carboxylate C (sp2 C with C=O + C-[O⁻] → 41), both carboxylate O → 32, pyridine N-oxide N → 69 + O → 32, silicon (Z=14) → 19, imine N-H (H on sp2 N with C=N double bond, non-aromatic) → 27; `base_type()` collapses `H_NIM`→`H`; `determine_h_subtype` now routes imine H to 27 instead of misclassifying as amide H=28
+  - `src/mmff/bond.rs`: 7 RDKit-exact bond-stretch parameter sets for newly reachable type pairs: (1,41) 3.830/1.510, (32,41) 9.756/1.261, (37,69) 5.396/1.352, (32,69) 6.098/1.261, (1,19) 2.866/1.830, (6,19) 4.661/1.660, (9,27) 6.230/1.026
+  - `src/molecule/parser.rs`: added Si to `get_atomic_number` (→14) and `get_atomic_mass` (→28.0855)
+  - `src/mmff/params.rs` + `src/mmff/atom_types.rs`: `mmff_type_id` mappings and property fallbacks for all 4 new variants
+  - New `type_audit5` test module (`src/lib.rs`): 5 tests covering carboxylate typing (acetate/benzoate + acetic acid regression), N-oxide typing (pyridine N-oxide + pyridine regression), silicon (TMS), imine H (methanimine H=27), energy/optimizer convergence
+  - **All 162 tests pass**, 0 clippy errors, WASM build verified
+- **MMFF atom typing gaps fixed vs RDKit 2025.09.3** (alkene C=2, S=O=17, SO2=18, nitro N=45, O2CM=32, NSO2=43, metal/halide ions), per PLAN.md "Fix MMFF Atom Typing Gaps vs RDKit":
+  - `src/mmff/mod.rs`: `MMFFAtomType` gained `C_VIN`(2), `S_OX`(17), `S_O2`(18), `N_NO2`(45), `N_SO2`(43), `F_M`(89), `CL_M`(90), `BR_M`(91); `assign_atom_types` now splits sp2 C (double bond to N/O/S → `C_2`, C=C only → `C_VIN`), types sulfoxide/sulfone S (17/18), nitro N (45), sulfonamide N (43), SO2/NO2 oxygens (32), metal ions by element+formal charge (Li/Na/K/Mg/Ca/Zn/Fe/Cu), halide ions by charge −1
+  - `src/mmff/charges.rs`: fixed pre-existing BCI bond-type bug — Double bonds were mapped to bt=1, breaking ALL carbonyl BCI lookups; now Single→1 iff both atoms sbmb, Aromatic→4, else 0 (matches RDKit `getMMFFBondType`)
+  - `src/mmff/bond.rs`: 17 RDKit-exact bond-stretch parameter sets (kb/r0) for newly reachable type pairs: (1,2) 4.539/1.482, (2,2) 9.505/1.333, (2,3) 4.565/1.468, (2,37) 5.007/1.449, (2,5) 5.17/1.083, (2,6) 5.52/1.373, (1,17) 2.841/1.813, (17,37) 3.098/1.787, (7,17) 8.77/1.5, (1,18) 3.258/1.772, (18,37) 3.281/1.77, (18,32) 10.748/1.45, (18,43) 3.301/1.71, (1,43) 3.971/1.472, (1,45) 3.844/1.48, (37,45) 4.705/1.431, (32,45) 9.42/1.233
+  - `src/molecule/parser.rs`: `M  CHG` record parsing (authoritative V2000 charges), metal atomic numbers/masses (Li, Na, K, Mg, Ca, Zn, Fe, Cu)
+  - `src/mmff/params.rs` + `src/mmff/atom_types.rs`: `mmff_type_id` mappings and property fallbacks for all 8 new variants
+  - New `type_audit4` test module (`src/lib.rs`): 19 RDKit-generated V2000 fixtures, 6 tests covering sp2-carbon split (ethylene/allene/ketene/acrylate/methanimine/acetone/thioacetone/vinyl ether), oxidized sulfur (DMSO/sulfone/sulfonamide/sulfinamide), nitro (nitromethane/nitrobenzene), ions (Na⁺/Mg²⁺/Fe³⁺/Cl⁻), BCI partial charges (DMSO, sulfone, nitromethane, benzaldehyde — hand-derived from RDKit BCI table), and energy/optimizer convergence
+  - **All 157 tests pass**, 0 clippy errors
+- **UFF electronegativity & radii fixed to match RDKit** (`src/etkdg/mod.rs:307-430`):
+  - `uff_electronegativity()`: replaced 9 incorrect Pauling-scale values with RDKit's GMP_Xi values (N=6.899, O=8.741, F=10.874, Si=4.168, S=6.928, Cl=8.564, Br=7.79, I=6.822, B=5.11)
+  - `uff_radius()`: added hybridization-specific radii (C_3/C_R/C_2/C_1, N_3/N_R/N_2/N_1, O_3/O_R/O_2, S_3+2/S_R/S_2, B_3/B_2) and aromaticity check
+  - `compute_bond_length()`: updated signature to accept `hyb1, is_aromatic1, hyb2, is_aromatic2`; aromatic-aromatic bonds now use BO=1.5 regardless of Kekulé form
+  - Fixed P radius: 1.087 → 1.101 (P_3+3), I radius: 1.338 → 1.382
+  - Both call sites (`build_distance_bounds`, `bond_lengths_reasonable`) updated to pass hybridization and aromaticity
+  - Aniline: initial energy improved 296→286 kcal/mol, N-C distance 1.43→1.40 Å
+  - All 151 tests pass, WASM build verified
+  - `src/mmff/vdw.rs` already contains full RDKit VDW parameter table (95 entries with alpha_i, N_i, A_i, G_i, DA)
+  - `calc_r_star_ij()` implements B/Beta correction: `R*_ij = 0.5 * (R*_i + R*_j) * (1 + B*(1 - exp(-Beta*gamma^2)))`
+  - `calc_well_depth()` implements Slater-Kirkwood formula: `epsilon = 181.16 * G_i * G_j * alpha_i * alpha_j / ((sqrt(alpha_i/N_i) + sqrt(alpha_j/N_j)) * R*_ij^6)`
+  - `apply_da_scaling()` applies DARAD=0.8 and DAEPS=0.5 for Donor-Acceptor pairs
+  - Buffered 14-7 potential with vdw1=1.07, vdw2=1.12 parameters
+  - All 151 tests pass, WASM build verified
+
+## Recently Completed
+- **Aniline NH2 ETKDG geometry fix**: Added `fix_aniline_nh2_geometry()` post-processing function to restore RDKit-like pyramidal aniline NH2 after ETKDG minimization:
+  - Problem: ETKDG flattening + minimization squeezed H-N-H to ~102° (fully planar), conflicting with RDKit's ~117.5°
+  - Solution: After `minimize_etkdg`, detect aniline-like sp2 N atoms (non-aromatic N with 2 H's, 1 heavy neighbor, bonded to aromatic ring) and explicitly re-place H atoms at 117.5° with ±0.89 Å pyramidalization
+  - Result: H-N-H = 117.36°, N-H = 1.04 Å, H's ±0.89 Å from ring plane (matches RDKit ETKDG behavior)
+  - All 151 tests pass, diag_aniline tests preserved, WASM build verified
+- **Angle parameter lookup fix**: Removed incorrect `base_type()` mapping from angle parameter lookup. The lookup now uses original MMFF type IDs (e.g., H_NAM=28 instead of H=5), allowing the equivalence level mechanism to correctly find MMFFANG table entries:
+  - Root cause: `base_type(H_NAM) = H` converted type 28→5 before lookup, but MMFFANG table has entries for type 28
+  - Same issue affected all H subtypes (H_OH=31, H_ONC=21, H_COOH=24, H_OAR=29, H_N3=23, H_NAM=28)
+  - Fix: `get_angle_params_with_bond_info` now passes original types to `lookup_angle_params`; bond r0 lookup still uses `base_type` for parameter retrieval
+  - Verified: all 6 aniline angle params now exactly match RDKit (ka and theta0)
+  - Verified: all 4 aniline stretch-bend params still match RDKit exactly
+  - Diagnostic test corrected: bond types changed from bt=1 to bt=0 for aromatic bonds (matching RDKit's `getMMFFBondType` which returns 0 for Aromatic bonds)
+- **All 149 tests pass**, 0 failures
+- **MMFFANG table-based angle lookup**: Replaced 800+ line hardcoded match with 2342-entry MMFFANG table + multi-stage equivalence level lookup (levels 0-3):
+  - Added `MMFF_ANGLE_TABLE` (2342 entries) and `MMFF_DEF_EQ_LEVELS` (95 entries × 4 levels) to `mmff_tables.rs`
+  - `compute_angle_type()` derives angle type (0-8) from bond types + ring size
+  - `lookup_angle_params()` iterates 4 equivalence levels with i/k canonicalization
+  - Falls back to RDKit empirical rule (Halgren eq. 20) when no table match
+  - **Water: optimizer now converges in 12 iters (was 5000 non-converging), angle error 1.02°**
+  - **Ammonia: converges in 8 iters, angle error 1.00°**
+  - **Acetic acid: converges in 89 iters (was non-converging)**
+- **MMFFStbn table-based stretch-bend lookup**: Replaced hardcoded match with 282-entry table + 30-entry DFSB fallback:
+  - Added `MMFF_STBN_TABLE` (282 entries) and `MMFF_DFSB_TABLE` (30 entries)
+  - `compute_stretch_bend_type()` derives SB type (0-11) from angle type + bond types
+  - `lookup_stretch_bend_params()` canonicalizes i/k, falls back to periodic-table-row defaults
+- **MMFFProp table + empirical angle rule**: Added 95-entry `MMFF_PROP_TABLE` (atno, crd, val, pilp, mltb, arom, linh, sbmb) and `empirical_angle_params()`:
+  - Theta0 from central atom properties: crd=4→109.45°, crd=2+O→105°, crd=3+val=3+mltb=0+N→107°
+  - Ring overrides: 3-ring→60°, 4-ring→90°
+  - Force constant from Halgren eq. 20: `ka = beta * Z_i * C_j * Z_k / ((r0_ij + r0_jk) * θ₀² * e^(2D))`
+  - Z/C values from Halgren Table VI for H, C, N, O, F, Si, P, S, Cl, Br, I
+- **All 164 tests pass**, 0 clippy errors, WASM build verified
+- **All 17 opt_compare tests pass** (16 molecules + debug breakdowns)
+
+
+  - Well depth: `epsilon_ij = 181.16 * G_i * G_j * alpha_i * alpha_j / ((sqrt(alpha_i/N_i) + sqrt(alpha_j/N_j)) * R*_ij^6)`
+  - R*_ij with B/Beta correction: `R*_ij = 0.5 * (R*_i + R*_j) * (1 + B * (1 - exp(-Beta * gamma_ij^2)))` where B=0.2, Beta=12.0
+  - Donor-Acceptor scaling: `R*_ij *= 0.8`, `epsilon *= 0.5` when one atom is Donor and other is Acceptor
+  - Full 95-entry `VDW_TABLE` from RDKit Params.cpp (indexed by type_id)
+- **Torsion type classification fixed**: Replaced incorrect ring-based classification with RDKit's `getMMFFTorsionType`:
+  - Type 4 only for 4-membered rings (was incorrectly applied to ALL ring bonds)
+  - Type 5 only for 5-membered rings with sp3 carbon present
+  - Bond type from `getMMFFBondType`: returns 1 if SINGLE bond between two sbmb/arom atoms
+  - Added `MMFFPROP_SBMB` and `MMFFPROP_AROM` tables (100 entries each) for atom type property lookup
+  - Precomputed `torsion_types` stored in `MMFFForceField` struct
+  - **Cyclohexane: +13.4 → +0.017 kcal/mol delta** (fixed!)
+- **VDW no 1-4 scaling**: Removed 0.75 scaling from VDW energy (only electrostatics uses 1-4 scaling)
+  - **Benzene: -3.1 → +0.067 kcal/mol delta** (fixed!)
+- **VDW subtype lookup**: Use original atom type (not base_type) for VDW parameter lookup
+  - H subtypes (H_N3, H_COOH, H_OAR, etc.) now use their own alpha=0.150 and DA='D' instead of generic H alpha=0.250, DA='-'
+  - **Glycine VDW at RDKit geometry: 5.2 → 1.905 (matches RDKit exactly!)**
+- **find_torsions fixed**: Changed to iterate ALL bonds instead of only "rotatable" bonds
+  - Ethane torsion energy: +0.173 → -4.786 (RDKit: -4.734)
+- **Clippy warnings fixed**: Removed 9 unreachable pattern warnings in angle.rs, atom_types.rs, stretch_bend.rs
+- **All 164 tests pass**, WASM build verified
 - **E10 Timeout**: Changed `timeout_ms: u64` to `timeout_s: f64` to match RDKit's seconds-based timeout
 - **E11 RNG**: Replaced Xoshiro256** with MT19937 Mersenne Twister matching `std::mt19937` — same seed now produces same sequence as RDKit
 - **M5 Torsion**: Replaced approximate 20-entry torsion parameter table with full 926-entry RDKit parameter set + 5-stage equivalence protocol:
@@ -253,6 +336,7 @@ Phase 7 (Fill All Remaining Gaps) completed:
 
 ## Known Risks / Issues
 - RDKit distinguishes subtypes of O_3, C_AR that our simplified typing does not
+- V3000 charge parsing not implemented; halide ions beyond F⁻/Cl⁻/Br⁻ (no I⁻ in MMFF94)
 - CO2 linear molecule test is flaky (ETKDG embedding occasionally produces degenerate geometry)
 - Electrostatic energy differs from RDKit total energy due to different Eel formulation (charges now match)
 

@@ -1,23 +1,20 @@
 //! Angle bending term for MMFF94
 
+use super::mmff_tables;
 use super::MMFFAtomType;
 
-/// Angle bending parameters
 #[derive(Debug, Clone, Copy)]
 pub struct AngleParams {
-    pub k_theta: f64, // mdyn·rad⁻²
-    pub theta0: f64,  // degrees
+    pub k_theta: f64,
+    pub theta0: f64,
 }
 
-/// Get angle parameters for atom types
 pub fn get_angle_params(
     type1: MMFFAtomType,
     type2: MMFFAtomType,
     type3: MMFFAtomType,
 ) -> Option<AngleParams> {
-    // Check for specific SP3D/SP3D2 angle parameters first
     match (type1, type2, type3) {
-        // SP3D angles (trigonal bipyramidal, e.g., PF5)
         (MMFFAtomType::F, MMFFAtomType::P_3D, MMFFAtomType::F) => {
             return Some(AngleParams {
                 k_theta: 0.80,
@@ -31,7 +28,6 @@ pub fn get_angle_params(
                 theta0: 90.0,
             });
         }
-        // SP3D2 angles (octahedral, e.g., SF6)
         (MMFFAtomType::F, MMFFAtomType::S_3D2, MMFFAtomType::F) => {
             return Some(AngleParams {
                 k_theta: 0.80,
@@ -41,879 +37,90 @@ pub fn get_angle_params(
         _ => {}
     }
 
-    let type1 = super::base_type(type1);
-    let type2 = super::base_type(type2);
-    let type3 = super::base_type(type3);
+    let bt1 = super::base_type(type1);
+    let bt2 = super::base_type(type2);
+    let bt3 = super::base_type(type3);
+
+    let r0_ij = super::bond::get_bond_params(bt1, bt2, super::super::molecule::BondType::Single)
+        .map(|p| p.r0)
+        .unwrap_or(1.5);
+    let r0_jk = super::bond::get_bond_params(bt2, bt3, super::super::molecule::BondType::Single)
+        .map(|p| p.r0)
+        .unwrap_or(1.5);
+
+    get_angle_params_from_table(type1, type2, type3, 0, r0_ij, r0_jk, 0)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn get_angle_params_with_bond_info(
+    type1: MMFFAtomType,
+    type2: MMFFAtomType,
+    type3: MMFFAtomType,
+    bond_type_ij: u8,
+    bond_type_jk: u8,
+    ring_size: u8,
+    r0_ij: f64,
+    r0_jk: f64,
+) -> Option<AngleParams> {
     match (type1, type2, type3) {
-        // C-C-C angles (sp3 centered)
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.851,
-            theta0: 109.608,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.65,
-            theta0: 108.385,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.803,
-            theta0: 120.419,
-        }),
-        (MMFFAtomType::N_3, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::N_3) => Some(AngleParams {
-            k_theta: 0.851,
-            theta0: 109.608,
-        }),
-        (MMFFAtomType::O_3, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::O_3) => Some(AngleParams {
-            k_theta: 0.992,
-            theta0: 108.133,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.516,
-            theta0: 108.836,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::C_3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_3, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.803,
-            theta0: 120.419,
-        }),
+        (MMFFAtomType::F, MMFFAtomType::P_3D, MMFFAtomType::F) => {
+            return Some(AngleParams {
+                k_theta: 0.80,
+                theta0: 180.0,
+            });
+        }
+        (MMFFAtomType::F, MMFFAtomType::P_3D, MMFFAtomType::C_3)
+        | (MMFFAtomType::C_3, MMFFAtomType::P_3D, MMFFAtomType::F) => {
+            return Some(AngleParams {
+                k_theta: 0.80,
+                theta0: 90.0,
+            });
+        }
+        (MMFFAtomType::F, MMFFAtomType::S_3D2, MMFFAtomType::F) => {
+            return Some(AngleParams {
+                k_theta: 0.80,
+                theta0: 90.0,
+            });
+        }
+        _ => {}
+    }
 
-        // C=C-C angles (sp2 centered)
-        (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.65,
-            theta0: 108.385,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::C_2, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 1.15,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.594,
-            theta0: 116.699,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.808,
-            theta0: 117.28,
-        }),
-        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
-            k_theta: 0.938,
-            theta0: 124.410,
-        }),
-        (MMFFAtomType::O_R, MMFFAtomType::C_2, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_R)
-        | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_3) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 109.716,
-        }),
-        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::O_3)
-        | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
-            k_theta: 1.155,
-            theta0: 124.425,
-        }),
-        (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::O_3) => Some(AngleParams {
-            k_theta: 1.678,
-            theta0: 109.094,
-        }),
-        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 1.30,
-            theta0: 120.0,
-        }),
+    let angle_type = mmff_tables::compute_angle_type(bond_type_ij, bond_type_jk, ring_size);
+    get_angle_params_from_table(type1, type2, type3, angle_type, r0_ij, r0_jk, ring_size)
+}
 
-        // Aromatic C-C-C angles
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.803,
-            theta0: 120.419,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.563,
-            theta0: 120.571,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.627,
-            theta0: 109.491,
-        }),
-        (MMFFAtomType::N_AR, MMFFAtomType::C_AR, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::N_AR) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::O_R, MMFFAtomType::C_AR, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::O_R) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::N_AR, MMFFAtomType::C_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::N_AR) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 120.0,
-        }),
+fn get_angle_params_from_table(
+    type1: MMFFAtomType,
+    type2: MMFFAtomType,
+    type3: MMFFAtomType,
+    angle_type: u8,
+    r0_ij: f64,
+    r0_jk: f64,
+    ring_size: u8,
+) -> Option<AngleParams> {
+    let ti = super::params::mmff_type_id(type1);
+    let tj = super::params::mmff_type_id(type2);
+    let tk = super::params::mmff_type_id(type3);
 
-        // C-N-C angles (N_3 centered)
-        (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.851,
-            theta0: 109.608,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.65,
-            theta0: 108.385,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::N_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.595,
-            theta0: 105.998,
-        }),
-
-        // C-N-C angles (N_PL3 centered)
-        (MMFFAtomType::C_3, MMFFAtomType::N_PL3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_PL3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::N_PL3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 117.0,
-        }),
-
-        // C-N-C angles (N_AM centered)
-        (MMFFAtomType::C_3, MMFFAtomType::N_AM, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 121.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_AM, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::N_AM, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 118.0,
-        }),
-
-        // C=N-C angles (N_2 centered)
-        (MMFFAtomType::C_3, MMFFAtomType::N_2, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 116.0,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::N_2, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::N_2, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 121.0,
-        }),
-
-        // Aromatic N angles
-        (MMFFAtomType::C_AR, MMFFAtomType::N_AR, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_AR, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::N_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 120.0,
-        }),
-
-        // C-O-C angles (O_3 centered)
-        (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 1.197,
-            theta0: 106.926,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.793,
-            theta0: 106.503,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.793,
-            theta0: 104.05,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.658,
-            theta0: 103.978,
-        }),
-
-        // Alcohol/phenol angles (O_R centered) — same params as O_3 since both are MMFF type 6
-        (MMFFAtomType::H, MMFFAtomType::O_R, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::O_R, MMFFAtomType::H)
-        | (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.793,
-            theta0: 106.503,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::O_R, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::O_R, MMFFAtomType::H)
-        | (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.793,
-            theta0: 104.05,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::O_R, MMFFAtomType::H)
-        | (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.658,
-            theta0: 103.978,
-        }),
-
-        // C-O-C angles (O_R centered)
-        (MMFFAtomType::C_3, MMFFAtomType::O_R, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 112.0,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::O_R, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::O_R, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 118.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::O_R, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 120.0,
-        }),
-
-        // C=O angles (carbonyl)
-        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
-            k_theta: 1.155,
-            theta0: 124.425,
-        }),
-        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
-            k_theta: 1.30,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 126.56,
-        }),
-        (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::O_3)
-        | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some(AngleParams {
-            k_theta: 1.155,
-            theta0: 121.02,
-        }),
-
-        // C-S-C angles
-        (MMFFAtomType::C_3, MMFFAtomType::S_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 103.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::S_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::S_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 96.0,
-        }),
-
-        // C-P-C angles
-        (MMFFAtomType::C_3, MMFFAtomType::P_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 103.5,
-        }),
-        (MMFFAtomType::O_3, MMFFAtomType::P_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::P_3, MMFFAtomType::O_3) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 103.5,
-        }),
-        (MMFFAtomType::O_3, MMFFAtomType::P_3, MMFFAtomType::O_3) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 103.5,
-        }),
-
-        // Halogen angles
-        (MMFFAtomType::F, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::F) => Some(AngleParams {
-            k_theta: 0.576,
-            theta0: 109.609,
-        }),
-        (MMFFAtomType::Cl, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::Cl) => Some(AngleParams {
-            k_theta: 1.654,
-            theta0: 97.335,
-        }),
-        (MMFFAtomType::Br, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::Br) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.47,
-        }),
-        (MMFFAtomType::F, MMFFAtomType::C_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::F) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::Cl, MMFFAtomType::C_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::Cl) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 120.0,
-        }),
-
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::O_3)
-        | (MMFFAtomType::O_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.781,
-            theta0: 108.577,
-        }),
-
-        // Alkyne angles (C_1 centered)
-        (MMFFAtomType::H, MMFFAtomType::C_1, MMFFAtomType::C_1)
-        | (MMFFAtomType::C_1, MMFFAtomType::C_1, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 180.0,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_1, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 180.0,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_1, MMFFAtomType::H)
-        | (MMFFAtomType::H, MMFFAtomType::C_1, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 180.0,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::C_1)
-        | (MMFFAtomType::C_1, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_1, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_1, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 180.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_1, MMFFAtomType::H)
-        | (MMFFAtomType::H, MMFFAtomType::C_1, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 180.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::C_1, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_1, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 180.0,
-        }),
-
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.808,
-            theta0: 117.28,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.808,
-            theta0: 117.28,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::O_2)
-        | (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.670,
-            theta0: 123.439,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::O_3)
-        | (MMFFAtomType::O_3, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.819,
-            theta0: 108.253,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_2, MMFFAtomType::N_2)
-        | (MMFFAtomType::N_2, MMFFAtomType::C_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.808,
-            theta0: 117.28,
-        }),
-
-        // Aromatic C-H angles
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::N_AR)
-        | (MMFFAtomType::N_AR, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::O_R)
-        | (MMFFAtomType::O_R, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::S_AR)
-        | (MMFFAtomType::S_AR, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::Cl)
-        | (MMFFAtomType::Cl, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_AR, MMFFAtomType::F)
-        | (MMFFAtomType::F, MMFFAtomType::C_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-
-        // Aromatic ipso angles
-        (MMFFAtomType::C_3, MMFFAtomType::C_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::C_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::C_AR, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_AR, MMFFAtomType::C_2, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::O_CO2)
-        | (MMFFAtomType::O_CO2, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::O_R)
-        | (MMFFAtomType::O_R, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AR, MMFFAtomType::S_AR)
-        | (MMFFAtomType::S_AR, MMFFAtomType::C_AR, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-
-        // Amide N-H angles (N_AM centered)
-        (MMFFAtomType::H, MMFFAtomType::N_AM, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::N_AM, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 116.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_AM, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_AM, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 116.0,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::N_AM, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_AM, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::N_AM, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::N_AM, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_AM, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-
-        // Planar N-H angles (N_PL3 centered)
-        (MMFFAtomType::H, MMFFAtomType::N_PL3, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::N_PL3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 116.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_PL3, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_PL3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 116.0,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::N_PL3, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_PL3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::N_PL3, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::N_PL3, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_PL3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-
-        (MMFFAtomType::C_3, MMFFAtomType::N_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_AR, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::N_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_AR, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-
-        // Imine N-H angles (N_2 centered)
-        (MMFFAtomType::H, MMFFAtomType::N_2, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::N_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 116.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_2, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 116.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::N_2, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_2, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::N_2, MMFFAtomType::C_2, MMFFAtomType::N_2) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 116.0,
-        }),
-
-        // Quaternary ammonium angles (N_4 centered)
-        (MMFFAtomType::C_3, MMFFAtomType::N_4, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.851,
-            theta0: 109.608,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_4, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::N_4, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 106.0,
-        }),
-
-        // N-oxide angles (N_SOM centered)
-        (MMFFAtomType::C_3, MMFFAtomType::N_SOM, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.851,
-            theta0: 109.608,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_SOM, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::N_SOM, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 106.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::N_SOM, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::N_SOM, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::N_SOM, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 116.0,
-        }),
-
-        // Diazonium angles (N_2Z centered)
-        (MMFFAtomType::C_3, MMFFAtomType::N_2Z, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.851,
-            theta0: 109.608,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::N_2Z, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 120.0,
-        }),
-
-        // Phenol O-H angles
-        (MMFFAtomType::H, MMFFAtomType::O_3, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::O_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.793,
-            theta0: 106.503,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::O_R, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::O_R, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.793,
-            theta0: 106.503,
-        }),
-
-        // Ester/enol ether angles (O_3 centered with C_2)
-        (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 115.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::O_3, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::O_3, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 115.0,
-        }),
-
-        // Enol ether angles (O_R centered with C_2)
-        (MMFFAtomType::C_2, MMFFAtomType::O_R, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::O_R, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 115.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::O_R, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::O_R, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 118.0,
-        }),
-
-        // Ether alkyl angles (O_R centered with C_3)
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::O_R)
-        | (MMFFAtomType::O_R, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.0,
-        }),
-
-        // Carbocation angles (C_CAT centered)
-        (MMFFAtomType::C_3, MMFFAtomType::C_CAT, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 120.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_CAT, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 120.0,
-        }),
-
-        // Carbanion angles (C_AN centered)
-        (MMFFAtomType::C_3, MMFFAtomType::C_AN, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 109.5,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_AN, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 109.5,
-        }),
-
-        // Zwitterion O angles (O_3_Z centered)
-        (MMFFAtomType::O_3_Z, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::O_3_Z) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.0,
-        }),
-        (MMFFAtomType::O_3_Z, MMFFAtomType::C_3, MMFFAtomType::H)
-        | (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::O_3_Z) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 109.0,
-        }),
-
-        // Sulfur angles
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::S_3)
-        | (MMFFAtomType::S_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 100.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::S_AR, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 103.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::S_AR, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::S_AR, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 103.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::S_AR, MMFFAtomType::C_AR)
-        | (MMFFAtomType::C_AR, MMFFAtomType::S_AR, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.50,
-            theta0: 96.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::S_2, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 0.60,
-            theta0: 103.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::S_2, MMFFAtomType::C_2)
-        | (MMFFAtomType::C_2, MMFFAtomType::S_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.50,
-            theta0: 96.0,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::S_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.50,
-            theta0: 92.0,
-        }),
-        (MMFFAtomType::O_3, MMFFAtomType::S_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::S_3, MMFFAtomType::O_3) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 103.0,
-        }),
-
-        // Phosphorus angles
-        (MMFFAtomType::C_AR, MMFFAtomType::P_3, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 103.5,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::P_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::P_3, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 103.5,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::P_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::P_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.50,
-            theta0: 96.0,
-        }),
-
-        // Halogen angles on C_3
-        (MMFFAtomType::I, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::I) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.47,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::O_CO2)
-        | (MMFFAtomType::O_CO2, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.80,
-            theta0: 109.0,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::P_3)
-        | (MMFFAtomType::P_3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.70,
-            theta0: 109.0,
-        }),
-
-        // Amine/amine angles
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::N_AM)
-        | (MMFFAtomType::N_AM, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::N_PL3)
-        | (MMFFAtomType::N_PL3, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::N_4)
-        | (MMFFAtomType::N_4, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 109.608,
-        }),
-        (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::N_SOM)
-        | (MMFFAtomType::N_SOM, MMFFAtomType::C_3, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 109.608,
-        }),
-
-        // Carbonyl-aromatic angles
-        (MMFFAtomType::C_AR, MMFFAtomType::C_2, MMFFAtomType::O_CO2)
-        | (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 126.56,
-        }),
-        (MMFFAtomType::O_2, MMFFAtomType::C_2, MMFFAtomType::O_CO2)
-        | (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::O_2) => Some(AngleParams {
-            k_theta: 1.155,
-            theta0: 124.425,
-        }),
-        (MMFFAtomType::O_CO2, MMFFAtomType::C_2, MMFFAtomType::O_CO2) => Some(AngleParams {
-            k_theta: 1.155,
-            theta0: 124.425,
-        }),
-
-        // Amide carbonyl angles
-        (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::N_AM)
-        | (MMFFAtomType::N_AM, MMFFAtomType::C_2, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 121.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_2, MMFFAtomType::N_AM)
-        | (MMFFAtomType::N_AM, MMFFAtomType::C_2, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 121.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::C_2, MMFFAtomType::N_AM)
-        | (MMFFAtomType::N_AM, MMFFAtomType::C_2, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 121.0,
-        }),
-
-        // Imine carbonyl angles
-        (MMFFAtomType::C_3, MMFFAtomType::C_2, MMFFAtomType::N_PL3)
-        | (MMFFAtomType::N_PL3, MMFFAtomType::C_2, MMFFAtomType::C_3) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 121.0,
-        }),
-        (MMFFAtomType::C_AR, MMFFAtomType::C_2, MMFFAtomType::N_PL3)
-        | (MMFFAtomType::N_PL3, MMFFAtomType::C_2, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 121.0,
-        }),
-        (MMFFAtomType::C_2, MMFFAtomType::C_2, MMFFAtomType::N_PL3)
-        | (MMFFAtomType::N_PL3, MMFFAtomType::C_2, MMFFAtomType::C_2) => Some(AngleParams {
-            k_theta: 1.043,
-            theta0: 121.0,
-        }),
-
-        // Imine angles
-        (MMFFAtomType::H, MMFFAtomType::N_2, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::N_2, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.55,
-            theta0: 116.0,
-        }),
-
-        // Anisole-like angles
-        (MMFFAtomType::C_AR, MMFFAtomType::O_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::O_3, MMFFAtomType::C_AR) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 115.0,
-        }),
-
-        // N-heterocycle angles
-        (MMFFAtomType::N_3, MMFFAtomType::C_AR, MMFFAtomType::N_AR)
-        | (MMFFAtomType::N_AR, MMFFAtomType::C_AR, MMFFAtomType::N_3) => Some(AngleParams {
-            k_theta: 0.669,
-            theta0: 119.977,
-        }),
-
-        // Alkyne-C_3 angles
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::C_1)
-        | (MMFFAtomType::C_1, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-
-        // Amine H angles
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::N_3)
-        | (MMFFAtomType::N_3, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::N_AM)
-        | (MMFFAtomType::N_AM, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-        (MMFFAtomType::H, MMFFAtomType::C_3, MMFFAtomType::N_PL3)
-        | (MMFFAtomType::N_PL3, MMFFAtomType::C_3, MMFFAtomType::H) => Some(AngleParams {
-            k_theta: 0.636,
-            theta0: 110.549,
-        }),
-
-        // Heteroatom centered (additional)
-        (MMFFAtomType::N_2, MMFFAtomType::C_3, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::C_3, MMFFAtomType::N_2) => Some(AngleParams {
-            k_theta: 1.00,
-            theta0: 116.0,
-        }),
-        (MMFFAtomType::O_2, MMFFAtomType::N_2, MMFFAtomType::C_3)
-        | (MMFFAtomType::C_3, MMFFAtomType::N_2, MMFFAtomType::O_2) => Some(AngleParams {
-            k_theta: 0.90,
-            theta0: 123.0,
-        }),
-
-        _ => {
-            if let Some((kt, t0)) = super::estimation::estimate_angle_params(type1, type2, type3, 3)
-            {
-                Some(AngleParams {
-                    k_theta: kt,
-                    theta0: t0,
-                })
-            } else {
-                None
-            }
+    if let Some((ka, t0)) = mmff_tables::lookup_angle_params(ti, tj, tk, angle_type) {
+        if ka.abs() > 1e-10 {
+            return Some(AngleParams {
+                k_theta: ka,
+                theta0: t0,
+            });
         }
     }
+
+    if let Some((ka, theta0)) =
+        mmff_tables::empirical_angle_params(ti, tj, tk, r0_ij, r0_jk, ring_size)
+    {
+        return Some(AngleParams {
+            k_theta: ka,
+            theta0,
+        });
+    }
+
+    None
 }
 
 /// Calculate angle bending energy

@@ -43,23 +43,32 @@ pub fn determine_hybridization(atom_idx: usize, mol: &Molecule) -> Hybridization
     let atom = &mol.atoms[atom_idx];
     let symbol = &atom.symbol;
 
-    let pi_bonds: u8 = mol
+    let pi_bonds: f64 = mol
         .bonds
         .iter()
         .filter(|b| b.atom1 == atom_idx || b.atom2 == atom_idx)
         .map(|b| match b.bond_type {
-            BondType::Single => 0,
-            BondType::Double => 1,
-            BondType::Triple => 2,
-            BondType::Aromatic => 1,
+            BondType::Single => 0.0,
+            BondType::Double => 1.0,
+            BondType::Triple => 2.0,
+            BondType::Aromatic => 0.5,
         })
         .sum();
 
-    if pi_bonds >= 2 {
+    if pi_bonds >= 2.0 {
         return Hybridization::Sp1;
     }
-    if pi_bonds == 1 {
+    if pi_bonds >= 1.0 {
         return Hybridization::Sp2;
+    }
+
+    // Special case: N with 3 single bonds adjacent to aromatic ring (aniline, amide)
+    // is sp2 due to conjugation with aromatic system
+    if symbol == "N" && num_bonds == 3 && pi_bonds == 0.0 {
+        let has_aromatic_neighbor = neighbors.iter().any(|&n| is_aromatic(n, mol));
+        if has_aromatic_neighbor {
+            return Hybridization::Sp2;
+        }
     }
 
     match symbol.as_str() {
@@ -493,13 +502,13 @@ pub struct Torsion {
 /// Find all torsions in molecule
 pub fn find_torsions(mol: &Molecule) -> Vec<Torsion> {
     let mut torsions = Vec::new();
-    let rotatable_bonds = find_rotatable_bonds(mol);
 
-    for (i, j) in rotatable_bonds {
+    for bond in &mol.bonds {
+        let i = bond.atom1;
+        let j = bond.atom2;
         let neighbors_i = get_neighbors(i, mol);
         let neighbors_j = get_neighbors(j, mol);
 
-        // Find atoms to form torsion i-k-j-l
         for &k in neighbors_i {
             if k != j {
                 for &l in neighbors_j {

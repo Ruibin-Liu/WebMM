@@ -13,6 +13,7 @@ pub struct Atom {
     pub charge: f64,
     pub position: [f64; 3],
     pub index: usize,
+    pub stereo_parity: u8,
 }
 
 /// Bond type enumeration

@@ -78,6 +78,153 @@ fn lookup_bond_params_exact(
             r0: 1.484,
         }),
 
+        // Vinyl (alkene, MMFF type 2) bonds — RDKit-extracted values
+        (MMFFAtomType::C_VIN, MMFFAtomType::C_VIN, BondType::Double) => Some(BondParams {
+            k_bond: 9.505,
+            r0: 1.333,
+        }),
+        (MMFFAtomType::C_VIN, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::C_VIN, BondType::Single) => Some(BondParams {
+            k_bond: 4.539,
+            r0: 1.482,
+        }),
+        (MMFFAtomType::C_VIN, MMFFAtomType::C_2, BondType::Single)
+        | (MMFFAtomType::C_2, MMFFAtomType::C_VIN, BondType::Single) => Some(BondParams {
+            k_bond: 4.565,
+            r0: 1.468,
+        }),
+        (MMFFAtomType::C_VIN, MMFFAtomType::C_AR, BondType::Single)
+        | (MMFFAtomType::C_AR, MMFFAtomType::C_VIN, BondType::Single) => Some(BondParams {
+            k_bond: 5.007,
+            r0: 1.449,
+        }),
+        (MMFFAtomType::C_VIN, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::C_VIN, BondType::Single) => Some(BondParams {
+            k_bond: 5.17,
+            r0: 1.083,
+        }),
+        (MMFFAtomType::C_VIN, MMFFAtomType::O_R, BondType::Single)
+        | (MMFFAtomType::O_R, MMFFAtomType::C_VIN, BondType::Single) => Some(BondParams {
+            k_bond: 5.52,
+            r0: 1.373,
+        }),
+
+        // Oxidized sulfur bonds — RDKit-extracted values
+        (MMFFAtomType::S_OX, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::S_OX, BondType::Single) => Some(BondParams {
+            k_bond: 2.841,
+            r0: 1.813,
+        }),
+        (MMFFAtomType::S_OX, MMFFAtomType::C_AR, BondType::Single)
+        | (MMFFAtomType::C_AR, MMFFAtomType::S_OX, BondType::Single) => Some(BondParams {
+            k_bond: 3.098,
+            r0: 1.787,
+        }),
+        (MMFFAtomType::S_OX, MMFFAtomType::O_2, BondType::Double)
+        | (MMFFAtomType::O_2, MMFFAtomType::S_OX, BondType::Double) => Some(BondParams {
+            k_bond: 8.77,
+            r0: 1.5,
+        }),
+        (MMFFAtomType::S_O2, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::S_O2, BondType::Single) => Some(BondParams {
+            k_bond: 3.258,
+            r0: 1.772,
+        }),
+        (MMFFAtomType::S_O2, MMFFAtomType::C_AR, BondType::Single)
+        | (MMFFAtomType::C_AR, MMFFAtomType::S_O2, BondType::Single) => Some(BondParams {
+            k_bond: 3.281,
+            r0: 1.77,
+        }),
+        (MMFFAtomType::S_O2, MMFFAtomType::O_CO2, BondType::Double)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::S_O2, BondType::Double) => Some(BondParams {
+            k_bond: 10.748,
+            r0: 1.45,
+        }),
+        (MMFFAtomType::S_O2, MMFFAtomType::N_SO2, BondType::Single)
+        | (MMFFAtomType::N_SO2, MMFFAtomType::S_O2, BondType::Single) => Some(BondParams {
+            k_bond: 3.301,
+            r0: 1.71,
+        }),
+        (MMFFAtomType::N_SO2, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::N_SO2, BondType::Single) => Some(BondParams {
+            k_bond: 3.971,
+            r0: 1.472,
+        }),
+
+        // Nitro group bonds — RDKit-extracted values
+        // (N_NO2-O_CO2 params are identical for Single and Double in RDKit)
+        (MMFFAtomType::N_NO2, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::N_NO2, BondType::Single) => Some(BondParams {
+            k_bond: 3.844,
+            r0: 1.48,
+        }),
+        (MMFFAtomType::N_NO2, MMFFAtomType::C_AR, BondType::Single)
+        | (MMFFAtomType::C_AR, MMFFAtomType::N_NO2, BondType::Single) => Some(BondParams {
+            k_bond: 4.705,
+            r0: 1.431,
+        }),
+        (MMFFAtomType::N_NO2, MMFFAtomType::O_CO2, BondType::Double)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::N_NO2, BondType::Double)
+        | (MMFFAtomType::N_NO2, MMFFAtomType::O_CO2, BondType::Single)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::N_NO2, BondType::Single) => Some(BondParams {
+            k_bond: 9.42,
+            r0: 1.233,
+        }),
+
+        // Carboxylate bonds — RDKit-extracted values (MMFF94s)
+        // (1,41) C_3-CO2M, (32,41) O_CO2-CO2M
+        (MMFFAtomType::C_3, MMFFAtomType::C_CO2, BondType::Single)
+        | (MMFFAtomType::C_CO2, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
+            k_bond: 3.830,
+            r0: 1.510,
+        }),
+        (MMFFAtomType::C_AR, MMFFAtomType::C_CO2, BondType::Single)
+        | (MMFFAtomType::C_CO2, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
+            k_bond: 3.830,
+            r0: 1.510,
+        }),
+        (MMFFAtomType::O_CO2, MMFFAtomType::C_CO2, BondType::Double)
+        | (MMFFAtomType::C_CO2, MMFFAtomType::O_CO2, BondType::Double)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::C_CO2, BondType::Single)
+        | (MMFFAtomType::C_CO2, MMFFAtomType::O_CO2, BondType::Single) => Some(BondParams {
+            k_bond: 9.756,
+            r0: 1.261,
+        }),
+
+        // Pyridine N-oxide bonds — RDKit-extracted values (MMFF94s)
+        // (37,69) C_AR-NPOX, (32,69) O_CO2-NPOX
+        (MMFFAtomType::C_AR, MMFFAtomType::N_POX, BondType::Aromatic)
+        | (MMFFAtomType::N_POX, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
+            k_bond: 5.396,
+            r0: 1.352,
+        }),
+        (MMFFAtomType::O_CO2, MMFFAtomType::N_POX, BondType::Single)
+        | (MMFFAtomType::N_POX, MMFFAtomType::O_CO2, BondType::Single) => Some(BondParams {
+            k_bond: 6.098,
+            r0: 1.261,
+        }),
+
+        // Silicon bonds — RDKit-extracted values (MMFF94s)
+        // (1,19) C_3-Si, (6,19) O_3-Si
+        (MMFFAtomType::C_3, MMFFAtomType::Si, BondType::Single)
+        | (MMFFAtomType::Si, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
+            k_bond: 2.866,
+            r0: 1.830,
+        }),
+        (MMFFAtomType::O_3, MMFFAtomType::Si, BondType::Single)
+        | (MMFFAtomType::Si, MMFFAtomType::O_3, BondType::Single) => Some(BondParams {
+            k_bond: 4.661,
+            r0: 1.660,
+        }),
+
+        // Imine N-H bond — RDKit-extracted value (MMFF94s)
+        // (9,27) N_2-H_NIM
+        (MMFFAtomType::N_2, MMFFAtomType::H_NIM, BondType::Single)
+        | (MMFFAtomType::H_NIM, MMFFAtomType::N_2, BondType::Single) => Some(BondParams {
+            k_bond: 6.230,
+            r0: 1.026,
+        }),
+
         // C-N bonds
         (MMFFAtomType::C_3, MMFFAtomType::N_3, BondType::Single)
         | (MMFFAtomType::N_3, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
@@ -98,6 +245,11 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::N_PL3, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
             k_bond: 4.7,
             r0: 1.45,
+        }),
+        (MMFFAtomType::C_AR, MMFFAtomType::N_PL3, BondType::Single)
+        | (MMFFAtomType::N_PL3, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
+            k_bond: 6.168,
+            r0: 1.398,
         }),
         (MMFFAtomType::C_3, MMFFAtomType::N_AM, BondType::Single)
         | (MMFFAtomType::N_AM, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
@@ -258,8 +410,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::H, MMFFAtomType::N_PL3, BondType::Single)
         | (MMFFAtomType::N_PL3, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 1.012,
+            k_bond: 6.576,
+            r0: 1.018,
         }),
         (MMFFAtomType::H, MMFFAtomType::N_AM, BondType::Single)
         | (MMFFAtomType::N_AM, MMFFAtomType::H, BondType::Single) => Some(BondParams {

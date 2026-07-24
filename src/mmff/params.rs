@@ -10,8 +10,11 @@ pub fn mmff_type_id(t: MMFFAtomType) -> u8 {
         MMFFAtomType::H_OAR => 29,
         MMFFAtomType::H_N3 => 23,
         MMFFAtomType::H_NAM => 28,
+        MMFFAtomType::H_NIM => 27,
         MMFFAtomType::C_3 => 1,
         MMFFAtomType::C_2 => 3,
+        MMFFAtomType::C_VIN => 2,
+        MMFFAtomType::C_CO2 => 41,
         MMFFAtomType::C_1 => 4,
         MMFFAtomType::C_AR => 37,
         MMFFAtomType::C5A => 63,
@@ -28,8 +31,11 @@ pub fn mmff_type_id(t: MMFFAtomType) -> u8 {
         MMFFAtomType::N_4 => 34,
         MMFFAtomType::N_2Z => 53,
         MMFFAtomType::N_SOM => 48,
+        MMFFAtomType::N_NO2 => 45,
+        MMFFAtomType::N_SO2 => 43,
         MMFFAtomType::N5A => 65,
         MMFFAtomType::N5B => 66,
+        MMFFAtomType::N_POX => 69,
         MMFFAtomType::O_3 => 6,
         MMFFAtomType::O_2 => 7,
         MMFFAtomType::O_R => 6,
@@ -41,11 +47,17 @@ pub fn mmff_type_id(t: MMFFAtomType) -> u8 {
         MMFFAtomType::Cl => 12,
         MMFFAtomType::Br => 13,
         MMFFAtomType::I => 14,
+        MMFFAtomType::F_M => 89,
+        MMFFAtomType::CL_M => 90,
+        MMFFAtomType::BR_M => 91,
         MMFFAtomType::S_3 => 15,
         MMFFAtomType::S_2 => 16,
         MMFFAtomType::S_AR => 44,
+        MMFFAtomType::S_OX => 17,
+        MMFFAtomType::S_O2 => 18,
         MMFFAtomType::P_3 => 26,
         MMFFAtomType::P_4 => 25,
+        MMFFAtomType::Si => 19,
         MMFFAtomType::P_3D => 26,
         MMFFAtomType::S_3D => 15,
         MMFFAtomType::S_3D2 => 15,
@@ -178,20 +190,114 @@ pub fn get_eq_levels(type_id: u8) -> [u8; 4] {
     }
 }
 
-/// Classify a torsion bond type for parameter lookup.
-/// Returns (primary_type, fallback_type) where:
-///   0=single, 1=aromatic, 2=double, 4=ring, 5=generic/fallback
-pub fn classify_torsion_type(bond_type: BondType, is_in_ring: bool) -> (u8, u8) {
-    match bond_type {
-        BondType::Aromatic => (1, 5),
-        BondType::Double => (2, 5),
-        BondType::Triple => (2, 5),
-        BondType::Single => {
-            if is_in_ring {
-                (4, 5)
-            } else {
-                (0, 5)
-            }
+#[rustfmt::skip]
+const MMFFPROP_SBMB: [bool; 100] = [
+    false, false, true, true, true, // 0-4
+    false, false, false, false, true, // 5-9
+    false, false, false, false, false, // 10-14
+    false, false, false, false, false, // 15-19
+    false, false, false, false, false, // 20-24
+    false, false, false, false, false, // 25-29
+    true, false, false, false, false, // 30-34
+    false, false, true, false, true, // 35-39
+    false, false, false, false, false, // 40-44
+    false, false, false, false, false, // 45-49
+    false, false, false, false, true, // 50-54
+    false, false, true, true, false, // 55-59
+    false, false, false, true, true, // 60-64
+    false, false, true, false, false, // 65-69
+    false, false, false, false, false, // 70-74
+    true, false, false, true, false, // 75-79
+    true, true, false, false, false, // 80-84
+    false, false, false, false, false, // 85-89
+    false, false, false, false, false, // 90-94
+    false, false, false, false, false, // 95-99
+];
+
+#[rustfmt::skip]
+const MMFFPROP_AROM: [bool; 100] = [
+    false, false, false, false, false, // 0-4
+    false, false, false, false, false, // 5-9
+    false, false, false, false, false, // 10-14
+    false, false, false, false, false, // 15-19
+    false, false, false, false, false, // 20-24
+    false, false, false, false, false, // 25-29
+    false, false, false, false, false, // 30-34
+    false, false, true, true, true, // 35-39
+    false, false, false, false, true, // 40-44
+    false, false, false, false, false, // 45-49
+    false, false, false, false, false, // 50-54
+    false, false, false, true, true, // 55-59
+    false, false, false, true, true, // 60-64
+    true, true, false, false, true, // 65-69
+    false, false, false, false, false, // 70-74
+    false, false, false, true, true, // 75-79
+    false, true, true, false, false, // 80-84
+    false, false, false, false, false, // 85-89
+    false, false, false, false, false, // 90-94
+    false, false, false, false, false, // 95-99
+];
+
+pub fn is_sbmb(type_id: u8) -> bool {
+    let idx = type_id as usize;
+    idx < 100 && MMFFPROP_SBMB[idx]
+}
+
+pub fn is_arom(type_id: u8) -> bool {
+    let idx = type_id as usize;
+    idx < 100 && MMFFPROP_AROM[idx]
+}
+
+/// RDKit's getMMFFBondType: returns 1 if bond is SINGLE and both atoms
+/// have sbmb=1 or both atoms have arom=1, else 0.
+pub fn get_mmff_bond_type(bond_type: BondType, type_id_a: u8, type_id_b: u8) -> u8 {
+    if bond_type == BondType::Single {
+        let a_sbmb = is_sbmb(type_id_a);
+        let b_sbmb = is_sbmb(type_id_b);
+        let a_arom = is_arom(type_id_a);
+        let b_arom = is_arom(type_id_b);
+        if (a_sbmb && b_sbmb) || (a_arom && b_arom) {
+            return 1;
         }
     }
+    0
+}
+
+/// RDKit's getMMFFTorsionType: determines (primary, secondary) torsion type.
+/// bond_ij_type, bond_jk_type, bond_kl_type: from get_mmff_bond_type (0 or 1)
+/// bond_jk_actual: the actual BondType of the central J-K bond
+/// ring4: true if atoms i,j,k,l all belong to the same 4-membered ring
+/// ring5: true if atoms i,j,k,l all belong to the same 5-membered ring
+/// type_i..type_l: MMFF type IDs of the four atoms
+pub fn get_mmff_torsion_type(
+    bond_ij_type: u8,
+    bond_jk_type: u8,
+    bond_kl_type: u8,
+    bond_jk_actual: BondType,
+    ring4: bool,
+    ring5: bool,
+    type_i: u8,
+    type_j: u8,
+    type_k: u8,
+    type_l: u8,
+) -> (u8, u8) {
+    let mut torsion_type = bond_jk_type;
+    let mut second_torsion_type = 0u8;
+
+    if bond_jk_type == 0
+        && bond_jk_actual == BondType::Single
+        && (bond_ij_type == 1 || bond_kl_type == 1)
+    {
+        torsion_type = 2;
+    }
+
+    if ring4 {
+        second_torsion_type = torsion_type;
+        torsion_type = 4;
+    } else if ring5 && (type_i == 1 || type_j == 1 || type_k == 1 || type_l == 1) {
+        second_torsion_type = torsion_type;
+        torsion_type = 5;
+    }
+
+    (torsion_type, second_torsion_type)
 }

@@ -85,16 +85,6 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
             vdw_alpha: 0.083,
             oop_k: 0.0,
         }),
-        MMFFAtomType::H_NAM => Some(AtomTypeProperties {
-            bond_class: 1,
-            angle_class: 1,
-            fbci: 0.25,
-            crd: 0.35,
-            vdw_r: 2.600,
-            vdw_eps: 0.0216,
-            vdw_alpha: 0.083,
-            oop_k: 0.0,
-        }),
         MMFFAtomType::C_3 => Some(AtomTypeProperties {
             bond_class: 2,
             angle_class: 2,
@@ -458,7 +448,28 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
         // SP3D / SP3D2 types use base type properties
         MMFFAtomType::P_3D => get_atom_type_props(MMFFAtomType::P_3),
         MMFFAtomType::S_3D | MMFFAtomType::S_3D2 => get_atom_type_props(MMFFAtomType::S_3),
-        MMFFAtomType::Fe_P2
+        // Newly typed groups: reuse nearest base-type props (estimation fallback only;
+        // exact values come from the full RDKit tables indexed by numeric type id)
+        MMFFAtomType::C_VIN => get_atom_type_props(MMFFAtomType::C_2),
+        MMFFAtomType::C_CO2 => get_atom_type_props(MMFFAtomType::C_2),
+        MMFFAtomType::S_OX | MMFFAtomType::S_O2 => get_atom_type_props(MMFFAtomType::S_3),
+        MMFFAtomType::N_NO2 | MMFFAtomType::N_SO2 => get_atom_type_props(MMFFAtomType::N_3),
+        MMFFAtomType::N_POX => get_atom_type_props(MMFFAtomType::N_AR),
+        MMFFAtomType::H_NIM => get_atom_type_props(MMFFAtomType::H),
+        MMFFAtomType::Si => Some(AtomTypeProperties {
+            bond_class: 3,
+            angle_class: 3,
+            fbci: 0.0,
+            crd: 4.0,
+            vdw_r: 2.320,
+            vdw_eps: 0.100,
+            vdw_alpha: 0.550,
+            oop_k: 0.0,
+        }),
+        MMFFAtomType::F_M
+        | MMFFAtomType::CL_M
+        | MMFFAtomType::BR_M
+        | MMFFAtomType::Fe_P2
         | MMFFAtomType::Fe_P3
         | MMFFAtomType::Li
         | MMFFAtomType::Na

@@ -94,16 +94,14 @@ M  END"#, x, y, z, x + 1.5, y, z);
     proptest! {
         #[test]
         fn vdw_has_attractive_well(_separation in 2.0f64..10.0) {
-            use crate::mmff::vdw::{vdw_energy_and_gradient, VDWParams};
+            use crate::mmff::vdw::{get_vdw_params, vdw_energy_and_gradient};
+            use crate::mmff::MMFFAtomType;
 
-            let params = VDWParams {
-                r0: 3.5,
-                epsilon: 0.1,
-            };
+            let params = get_vdw_params(MMFFAtomType::C_3);
 
-            let coords_close = vec![[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]; // Very close, repulsive
-            let coords_mid = vec![[0.0, 0.0, 0.0], [3.5, 0.0, 0.0]];    // At r0, attractive well
-            let coords_far = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]];  // Far, ~zero
+            let coords_close = vec![[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]];
+            let coords_mid = vec![[0.0, 0.0, 0.0], [params.r_star, 0.0, 0.0]];
+            let coords_far = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]];
 
             let (_e_close, _, _) = vdw_energy_and_gradient(
                 &coords_close, 0, 1, &params, &params, false);

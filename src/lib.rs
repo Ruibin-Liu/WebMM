@@ -865,13 +865,29 @@ M  END"#;
                 let bond_ij = ff.bond_map.get(&bij_key);
                 let bond_kj = ff.bond_map.get(&bkj_key);
                 if let (Some(bij), Some(bkj)) = (bond_ij, bond_kj) {
+                    let bt_ij = crate::mmff::params::get_mmff_bond_type(
+                        bij.bond_type,
+                        ff.type_ids[i],
+                        ff.type_ids[j],
+                    );
+                    let bt_jk = crate::mmff::params::get_mmff_bond_type(
+                        bkj.bond_type,
+                        ff.type_ids[j],
+                        ff.type_ids[k],
+                    );
+                    let angle_type_val =
+                        crate::mmff::mmff_tables::compute_angle_type(bt_ij, bt_jk, 0);
                     if let (Some(sb_params), Some(bp_ij), Some(bp_kj), Some(ap)) = (
                         get_stretch_bend_params(
                             ff.atom_types[i],
                             ff.atom_types[j],
                             ff.atom_types[k],
-                            bij.bond_type,
-                            bkj.bond_type,
+                            bt_ij,
+                            bt_jk,
+                            ff.mol.atoms[i].atomic_number,
+                            ff.mol.atoms[j].atomic_number,
+                            ff.mol.atoms[k].atomic_number,
+                            angle_type_val,
                         ),
                         get_bond_params(ff.atom_types[i], ff.atom_types[j], bij.bond_type),
                         get_bond_params(ff.atom_types[k], ff.atom_types[j], bkj.bond_type),
@@ -3860,5 +3876,1312 @@ M  END"#;
                 bd.bond, bd.angle, bd.stretch_bend, bd.torsion, bd.oop, bd.vdw, bd.electrostatic
             );
         }
+    }
+
+    #[cfg(test)]
+    mod diag_aniline {
+        use crate::mmff::angle::get_angle_params_with_bond_info;
+        use crate::mmff::stretch_bend::get_stretch_bend_params;
+        use crate::mmff::{MMFFAtomType, MMFFForceField, MMFFVariant};
+        use crate::molecule::{Atom, Bond, BondStereo, BondType, Molecule};
+        use crate::optimizer;
+        use crate::ConvergenceOptions;
+
+        fn dist(a: &[f64; 3], b: &[f64; 3]) -> f64 {
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+        }
+
+        fn make_aniline() -> Molecule {
+            let syms = [
+                "C", "C", "C", "C", "C", "C", "N", "H", "H", "H", "H", "H", "H",
+            ];
+            let anums = [6u8, 6, 6, 6, 6, 6, 7, 1, 1, 1, 1, 1, 1];
+            let bonds = [
+                (0, 1, BondType::Double),
+                (1, 2, BondType::Single),
+                (2, 3, BondType::Double),
+                (3, 4, BondType::Single),
+                (4, 5, BondType::Double),
+                (5, 0, BondType::Single),
+                (0, 6, BondType::Single),
+                (6, 7, BondType::Single),
+                (6, 8, BondType::Single),
+                (1, 9, BondType::Single),
+                (2, 10, BondType::Single),
+                (3, 11, BondType::Single),
+                (4, 12, BondType::Single),
+            ];
+            let atoms: Vec<Atom> = syms
+                .iter()
+                .enumerate()
+                .map(|(i, &s)| Atom {
+                    symbol: s.to_string(),
+                    atomic_number: anums[i],
+                    mass: 0.0,
+                    charge: 0.0,
+                    position: [0.0, 0.0, 0.0],
+                    index: i,
+                    stereo_parity: 0,
+                })
+                .collect();
+            let mol_bonds: Vec<Bond> = bonds
+                .iter()
+                .map(|&(a, b, bt)| Bond {
+                    atom1: a,
+                    atom2: b,
+                    bond_type: bt,
+                    stereo: BondStereo::None,
+                })
+                .collect();
+            let n = atoms.len();
+            let mut adj = vec![vec![]; n];
+            for b in &mol_bonds {
+                adj[b.atom1].push(b.atom2);
+                adj[b.atom2].push(b.atom1);
+            }
+            Molecule {
+                name: "aniline".to_string(),
+                atoms,
+                bonds: mol_bonds,
+                adjacency: adj,
+            }
+        }
+
+        fn rdkit_opt_coords() -> Vec<[f64; 3]> {
+            vec![
+                [0.9552, -0.2390, -0.0597],
+                [0.3486, 1.0162, 0.0153],
+                [-1.0417, 1.1307, 0.1112],
+                [-1.8388, -0.0127, 0.1157],
+                [-1.2448, -1.2686, 0.0178],
+                [0.1422, -1.3750, -0.0788],
+                [2.3264, -0.3587, -0.2121],
+                [2.7460, -1.2789, -0.1870],
+                [2.9250, 0.4466, -0.0972],
+                [0.9540, 1.9181, -0.0010],
+                [-1.5004, 2.1139, 0.1763],
+                [-2.9194, 0.0756, 0.1883],
+                [-1.8524, -2.1680, 0.0110],
+            ]
+        }
+
+        #[test]
+        fn test_aniline_param_audit() {
+            let atom_types = [
+                MMFFAtomType::C_AR,
+                MMFFAtomType::C_AR,
+                MMFFAtomType::C_AR,
+                MMFFAtomType::C_AR,
+                MMFFAtomType::C_AR,
+                MMFFAtomType::C_AR,
+                MMFFAtomType::N_PL3,
+                MMFFAtomType::H_NAM,
+                MMFFAtomType::H_NAM,
+                MMFFAtomType::H,
+                MMFFAtomType::H,
+                MMFFAtomType::H,
+                MMFFAtomType::H,
+            ];
+
+            println!("\n=== Angle params: WebMM vs RDKit ===");
+            let angle_tests: &[(usize, usize, usize, u8, u8, u8, f64, f64, &str)] = &[
+                (1, 0, 5, 0, 0, 0, 0.669, 119.977, "C1-C0-C5 (37-37-37)"),
+                (1, 0, 6, 0, 0, 0, 1.045, 121.633, "C1-C0-N6 (37-37-40)"),
+                (5, 0, 6, 0, 0, 0, 1.045, 121.633, "C5-C0-N6 (37-37-40)"),
+                (0, 1, 9, 0, 0, 0, 0.563, 120.571, "C0-C1-H9 (37-37-5)"),
+                (0, 6, 7, 0, 0, 0, 0.662, 110.288, "C0-N6-H7 (37-40-28)"),
+                (7, 6, 8, 0, 0, 0, 0.56, 109.16, "H7-N6-H8 (28-40-28)"),
+            ];
+            let mut mismatches = 0;
+            for &(i, j, k, btij, btjk, ring, exp_ka, exp_t0, label) in angle_tests {
+                let params = get_angle_params_with_bond_info(
+                    atom_types[i],
+                    atom_types[j],
+                    atom_types[k],
+                    btij,
+                    btjk,
+                    ring,
+                    1.4,
+                    1.4,
+                );
+                if let Some(p) = params {
+                    let ka_err = p.k_theta - exp_ka;
+                    let t0_err = p.theta0 - exp_t0;
+                    let ok = ka_err.abs() < 0.01 && t0_err.abs() < 0.5;
+                    if !ok {
+                        mismatches += 1;
+                    }
+                    println!(
+                        "  {} ka={:.3}({:+.3}) t0={:.2}({:+.2}) [{}]",
+                        label,
+                        p.k_theta,
+                        ka_err,
+                        p.theta0,
+                        t0_err,
+                        if ok { "OK" } else { "MISMATCH" }
+                    );
+                } else {
+                    mismatches += 1;
+                    println!("  {} NO PARAMS FOUND", label);
+                }
+            }
+
+            println!("\n=== Stretch-bend params: WebMM vs RDKit ===");
+            let sb_tests: &[(usize, usize, usize, u8, u8, u8, u8, u8, u8, f64, f64, &str)] = &[
+                (1, 0, 5, 0, 0, 6, 6, 6, 0, -0.411, -0.411, "C1-C0-C5"),
+                (1, 0, 6, 0, 0, 6, 6, 7, 0, 0.429, 0.901, "C1-C0-N6"),
+                (0, 6, 7, 0, 0, 6, 7, 1, 0, 0.423, 0.186, "C0-N6-H7"),
+                (7, 6, 8, 0, 0, 1, 7, 1, 0, 0.094, 0.094, "H7-N6-H8"),
+            ];
+            for &(i, j, k, btij, btjk, ani, anj, ank, at, exp_ijk, exp_kji, label) in sb_tests {
+                let sb = get_stretch_bend_params(
+                    atom_types[i],
+                    atom_types[j],
+                    atom_types[k],
+                    btij,
+                    btjk,
+                    ani,
+                    anj,
+                    ank,
+                    at,
+                );
+                if let Some(p) = sb {
+                    let err_i = p.kba_ijk - exp_ijk;
+                    let err_k = p.kba_kji - exp_kji;
+                    let ok = err_i.abs() < 0.01 && err_k.abs() < 0.01;
+                    if !ok {
+                        mismatches += 1;
+                    }
+                    println!(
+                        "  {} kbaIJK={:.3}({:+.3}) kbaKJI={:.3}({:+.3}) [{}]",
+                        label,
+                        p.kba_ijk,
+                        err_i,
+                        p.kba_kji,
+                        err_k,
+                        if ok { "OK" } else { "MISMATCH" }
+                    );
+                } else {
+                    mismatches += 1;
+                    println!("  {} NO SB PARAMS", label);
+                }
+            }
+            assert_eq!(mismatches, 0, "{} parameter mismatches found", mismatches);
+        }
+
+        #[test]
+        fn test_aniline_sdf_compare() {
+            // Proper 14-atom aniline from RDKit (all H explicit, Kekulé bonds)
+            let sdf = "Aniline\n     RDKit          3D\n\n 14 14  0  0  0  0  0  0  0  0999 V2000\n   -1.8551    0.3019   -0.2147 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9433    1.3121   -0.5108 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4265    1.0872   -0.3490 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9000   -0.1487    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2537   -0.3576    0.2878 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0248   -1.1486    0.4072 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3958   -0.9291    0.2472 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9206    0.4752   -0.3382 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2957    2.2773   -0.8642 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1231    1.8892   -0.5767 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.5964   -1.2716    0.5480 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9224    0.3435    0.0017 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3154   -2.1119    0.7767 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1023   -1.7188    0.4874 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  4  6  1  0\n  6  7  2  0\n  7  1  1  0\n  1  8  1  0\n  2  9  1  0\n  3 10  1  0\n  5 11  1  0\n  5 12  1  0\n  6 13  1  0\n  7 14  1  0\nM  END";
+            let mol = crate::molecule::parser::parse_sdf(sdf).expect("parse");
+            let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+
+            // Print atom types for comparison
+            println!("\n=== WebMM Atom Types ===");
+            for i in 0..mol.atoms.len() {
+                println!(
+                    "  {}{}: type_id={} atom_type={:?}",
+                    mol.atoms[i].symbol, i, ff.type_ids[i], ff.atom_types[i]
+                );
+            }
+
+            // RDKit optimized coords (same atom ordering)
+            let rdkit_coords: Vec<[f64; 3]> = vec![
+                [-1.85512092, 0.30187570, -0.21465294],
+                [-0.94333594, 1.31212997, -0.51081856],
+                [0.42653914, 1.08716520, -0.34904719],
+                [0.90001856, -0.14867175, 0.09758881],
+                [2.25373393, -0.35759361, 0.28781709],
+                [-0.02477892, -1.14860473, 0.40717404],
+                [-1.39575686, -0.92910352, 0.24724968],
+                [-2.92061022, 0.47515967, -0.33823023],
+                [-1.29565190, 2.27728629, -0.86420534],
+                [1.12305883, 1.88921250, -0.57667460],
+                [2.59640897, -1.27159239, 0.54799775],
+                [2.92243159, 0.34348029, 0.00171857],
+                [0.31537746, -2.11193527, 0.77666301],
+                [-2.10231370, -1.71880836, 0.48741991],
+            ];
+
+            // RDKit reference energies at optimized geometry
+            let rdkit_bond = 1.315;
+            let rdkit_angle = 3.859;
+            let rdkit_total = 8.145;
+
+            let bd = ff.calculate_energy_breakdown(&rdkit_coords);
+
+            // Print per-angle params for comparison with RDKit
+            println!("\n=== WebMM Angle Parameters ===");
+            for angle in &ff.angles {
+                let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
+                let bij_key = (i.min(j), i.max(j));
+                let bkj_key = (k.min(j), k.max(j));
+                let bt_ij = ff
+                    .bond_map
+                    .get(&bij_key)
+                    .map(|b| {
+                        crate::mmff::params::get_mmff_bond_type(
+                            b.bond_type,
+                            ff.type_ids[i],
+                            ff.type_ids[j],
+                        )
+                    })
+                    .unwrap_or(0);
+                let bt_jk = ff
+                    .bond_map
+                    .get(&bkj_key)
+                    .map(|b| {
+                        crate::mmff::params::get_mmff_bond_type(
+                            b.bond_type,
+                            ff.type_ids[j],
+                            ff.type_ids[k],
+                        )
+                    })
+                    .unwrap_or(0);
+                let ring_size = ff.angle_ring_size(i, j, k);
+                let r0_ij = ff
+                    .bond_map
+                    .get(&bij_key)
+                    .and_then(|b| {
+                        crate::mmff::bond::get_bond_params(
+                            ff.atom_types[i],
+                            ff.atom_types[j],
+                            b.bond_type,
+                        )
+                    })
+                    .map(|p| p.r0)
+                    .unwrap_or(1.5);
+                let r0_jk = ff
+                    .bond_map
+                    .get(&bkj_key)
+                    .and_then(|b| {
+                        crate::mmff::bond::get_bond_params(
+                            ff.atom_types[k],
+                            ff.atom_types[j],
+                            b.bond_type,
+                        )
+                    })
+                    .map(|p| p.r0)
+                    .unwrap_or(1.5);
+                if let Some(p) = crate::mmff::angle::get_angle_params_with_bond_info(
+                    ff.atom_types[i],
+                    ff.atom_types[j],
+                    ff.atom_types[k],
+                    bt_ij,
+                    bt_jk,
+                    ring_size,
+                    r0_ij,
+                    r0_jk,
+                ) {
+                    let e = crate::mmff::angle::angle_energy(&rdkit_coords, i, j, k, &p);
+                    println!(
+                        "  {}{}-{}{}-{}{} ka={:.4} t0={:.4} bt=({},{}) rs={} E={:.6}",
+                        mol.atoms[i].symbol,
+                        i,
+                        mol.atoms[j].symbol,
+                        j,
+                        mol.atoms[k].symbol,
+                        k,
+                        p.k_theta,
+                        p.theta0,
+                        bt_ij,
+                        bt_jk,
+                        ring_size,
+                        e
+                    );
+                }
+            }
+
+            println!("\n=== Energy at RDKit Optimized Geometry ===");
+            println!("WebMM: bond={:.3} angle={:.3} sb={:.3} tor={:.3} oop={:.3} vdw={:.3} elec={:.3} total={:.3}",
+                bd.bond, bd.angle, bd.stretch_bend, bd.torsion, bd.oop, bd.vdw, bd.electrostatic, bd.total());
+            println!(
+                "RDKit: bond={:.3} angle={:.3} total={:.3}",
+                rdkit_bond, rdkit_angle, rdkit_total
+            );
+            println!(
+                "Delta bond: {:.3}  Delta angle: {:.3}  Delta total: {:.3}",
+                bd.bond - rdkit_bond,
+                bd.angle - rdkit_angle,
+                bd.total() - rdkit_total
+            );
+
+            // Bond lengths at RDKit geometry
+            println!("\n=== Bond Lengths (RDKit geometry) ===");
+            for b in &mol.bonds {
+                let dr = dist(&rdkit_coords[b.atom1], &rdkit_coords[b.atom2]);
+                println!(
+                    "  {}{}-{}{} ({:?}) r={:.4}",
+                    mol.atoms[b.atom1].symbol,
+                    b.atom1,
+                    mol.atoms[b.atom2].symbol,
+                    b.atom2,
+                    b.bond_type,
+                    dr
+                );
+            }
+
+            // Optimize with WebMM
+            let opts = ConvergenceOptions {
+                max_iterations: 5000,
+                ..Default::default()
+            };
+            let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
+            println!(
+                "\nWebMM opt: converged={} iters={} energy={:.6}",
+                result.converged, result.iterations, result.final_energy
+            );
+
+            // RMSD
+            let mut sum_sq = 0.0;
+            for i in 0..mol.atoms.len() {
+                for d in 0..3 {
+                    let delta = result.optimized_coords[i][d] - rdkit_coords[i][d];
+                    sum_sq += delta * delta;
+                }
+            }
+            let rmsd = (sum_sq / mol.atoms.len() as f64).sqrt();
+            println!("RMSD: {:.4} A", rmsd);
+        }
+    }
+}
+
+
+// ============================================================================
+// RDKit-verified typing tests for 2026-07 atom typing gap fixes
+// (alkene C=2, S=O=17, SO2=18, nitro N=45, O2CM=32, NSO2=43, metal/halide ions)
+// All expected type ids and charges verified against RDKit 2025.09.3 (MMFF94s).
+// SDF fixtures generated by RDKit (MolToMolBlock, Kekulé form).
+// ============================================================================
+#[cfg(test)]
+mod type_audit4 {
+    use crate::mmff::MMFFForceField;
+    use crate::molecule::parser::parse_sdf;
+    use crate::optimizer;
+    use crate::{ConvergenceOptions, MMFFVariant};
+
+    /// Heavy-atom (Z > 1) MMFF numeric type ids in SDF atom order
+    fn heavy_type_ids(sdf: &str) -> Vec<u8> {
+        let mol = parse_sdf(sdf).expect("parse failed");
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        mol.atoms
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.atomic_number > 1)
+            .map(|(i, _)| ff.type_ids[i])
+            .collect()
+    }
+
+    const ETHYLENE: &str = r#"Ethylene
+     RDKit          2D
+
+  6  5  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    0.7500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981   -0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  1  3  1  0
+  1  4  1  0
+  2  5  1  0
+  2  6  1  0
+M  END"#;
+
+    const ALLENE: &str = r#"Allene
+     RDKit          2D
+
+  7  6  0  0  0  0  0  0  0  0999 V2000
+    0.0000    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990   -2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990   -2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  2  0
+  1  4  1  0
+  1  5  1  0
+  3  6  1  0
+  3  7  1  0
+M  END"#;
+
+    const KETENE: &str = r#"Ketene
+     RDKit          2D
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    1.5000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  2  0
+  1  4  1  0
+  1  5  1  0
+M  END"#;
+
+    const ACRYLATE: &str = r#"Acrylate
+     RDKit          2D
+
+ 12 11  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981   -0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.8971    0.7500    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981   -1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.8971   -2.2500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    0.7500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    5.1962   -3.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.1471   -3.5490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.6471   -0.9510    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  3  5  1  0
+  5  6  1  0
+  1  7  1  0
+  1  8  1  0
+  2  9  1  0
+  6 10  1  0
+  6 11  1  0
+  6 12  1  0
+M  END"#;
+
+    const METHANIMINE: &str = r#"Methanimine
+     RDKit          2D
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    0.7500    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    0.7500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981   -0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  1  3  1  0
+  1  4  1  0
+  2  5  1  0
+M  END"#;
+
+    const ACETONE: &str = r#"Acetone
+     RDKit          2D
+
+ 10  9  0  0  0  0  0  0  0  0999 V2000
+    1.2990    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.0490   -0.5490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5490    2.0490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5981    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0490   -0.5490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.5490    2.0490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  1  0
+  1  5  1  0
+  1  6  1  0
+  1  7  1  0
+  4  8  1  0
+  4  9  1  0
+  4 10  1  0
+M  END"#;
+
+    const THIOACETONE: &str = r#"Thioacetone
+     RDKit          2D
+
+ 10  9  0  0  0  0  0  0  0  0999 V2000
+    1.2990    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.0490   -0.5490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.5490    2.0490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5981    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0490   -0.5490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.5490    2.0490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  1  0
+  1  5  1  0
+  1  6  1  0
+  1  7  1  0
+  4  8  1  0
+  4  9  1  0
+  4 10  1  0
+M  END"#;
+
+    const VINYL_ETHER: &str = r#"VinylEther
+     RDKit          2D
+
+ 10  9  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981   -0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.8971    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    0.7500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    2.2500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    5.1962    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.6471   -0.5490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.1471    2.0490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  1  0
+  1  5  1  0
+  1  6  1  0
+  2  7  1  0
+  4  8  1  0
+  4  9  1  0
+  4 10  1  0
+M  END"#;
+
+    const DMSO: &str = r#"DMSO
+     RDKit          2D
+
+ 10  9  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    0.0000    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2500    1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0000   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.5490   -0.5490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9510   -2.0490    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  1  0
+  1  5  1  0
+  1  6  1  0
+  1  7  1  0
+  4  8  1  0
+  4  9  1  0
+  4 10  1  0
+M  END"#;
+
+    const SULFONE: &str = r#"Sulfone
+     RDKit          2D
+
+ 11 10  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    0.0000    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    4.5000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0000    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  2  0
+  2  5  1  0
+  1  6  1  0
+  1  7  1  0
+  1  8  1  0
+  5  9  1  0
+  5 10  1  0
+  5 11  1  0
+M  END"#;
+
+    const SULFONAMIDE: &str = r#"Sulfonamide
+     RDKit          2D
+
+ 10  9  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    0.0000    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7500    1.2990    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7500   -1.2990    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  2  0
+  2  5  1  0
+  1  6  1  0
+  1  7  1  0
+  1  8  1  0
+  5  9  1  0
+  5 10  1  0
+M  END"#;
+
+    const SULFINAMIDE: &str = r#"Sulfinamide
+     RDKit          2D
+
+  9  8  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    0.0000    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2500    1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2500   -1.2990    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7500   -1.2990    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  1  0
+  1  5  1  0
+  1  6  1  0
+  1  7  1  0
+  4  8  1  0
+  4  9  1  0
+M  END"#;
+
+    const NITROMETHANE: &str = r#"Nitromethane
+     RDKit          2D
+
+  7  6  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2500   -1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2500    1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  1  0
+  1  5  1  0
+  1  6  1  0
+  1  7  1  0
+M  CHG  2   2   1   4  -1
+M  END"#;
+
+    const NITROBENZENE: &str = r#"Nitrobenzene
+     RDKit          2D
+
+ 14 14  0  0  0  0  0  0  0  0999 V2000
+    1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    2.5981    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0000    2.5981    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500    3.8971    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  7  1  0
+  7  8  2  0
+  7  9  1  0
+  6  1  1  0
+  1 10  1  0
+  2 11  1  0
+  3 12  1  0
+  4 13  1  0
+  5 14  1  0
+M  CHG  2   7   1   9  -1
+M  END"#;
+
+    const BENZALDEHYDE: &str = r#"Benzaldehyde
+  WebMM
+
+ 14 14  0  0  0  0  0  0  0  0999 V2000
+    1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    2.5981    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500    3.8971    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981    2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  1  1  0
+  1  7  1  0
+  7  8  2  0
+  2  9  1  0
+  3 10  1  0
+  4 11  1  0
+  5 12  1  0
+  6 13  1  0
+  7 14  1  0
+M  END"#;
+
+    const SODIUM: &str = r#"Sodium
+  WebMM
+
+  1  0  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 Na  0  0  0  0  0  0  0  0  0  0  0  0
+M  CHG  1   1   1
+M  END"#;
+
+    const MAGNESIUM: &str = r#"Magnesium
+  WebMM
+
+  1  0  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 Mg  0  0  0  0  0  0  0  0  0  0  0  0
+M  CHG  1   1   2
+M  END"#;
+
+    const IRON3: &str = r#"Iron3
+  WebMM
+
+  1  0  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 Fe  0  0  0  0  0  0  0  0  0  0  0  0
+M  CHG  1   1   3
+M  END"#;
+
+    const CHLORIDE: &str = r#"Chloride
+  WebMM
+
+  1  0  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+M  CHG  1   1  -1
+M  END"#;
+
+    #[test]
+    fn test_sp2_carbon_split_types() {
+        // sp2 C double-bonded only to C -> 2; double-bonded to N/O/S -> 3
+        assert_eq!(heavy_type_ids(ETHYLENE), vec![2, 2], "ethylene");
+        assert_eq!(heavy_type_ids(ALLENE), vec![2, 4, 2], "allene");
+        assert_eq!(heavy_type_ids(KETENE), vec![2, 4, 7], "ketene");
+        assert_eq!(
+            heavy_type_ids(ACRYLATE),
+            vec![2, 2, 3, 7, 6, 1],
+            "acrylate"
+        );
+        assert_eq!(heavy_type_ids(METHANIMINE), vec![3, 9], "methanimine");
+        // Regression guards: carbonyl / thiocarbonyl C stays 3
+        assert_eq!(heavy_type_ids(ACETONE), vec![1, 3, 7, 1], "acetone");
+        assert_eq!(heavy_type_ids(THIOACETONE), vec![1, 3, 16, 1], "thioacetone");
+        assert_eq!(heavy_type_ids(VINYL_ETHER), vec![2, 2, 6, 1], "vinyl ether");
+    }
+
+    #[test]
+    fn test_oxidized_sulfur_types() {
+        assert_eq!(heavy_type_ids(DMSO), vec![1, 17, 7, 1], "dmso");
+        assert_eq!(heavy_type_ids(SULFONE), vec![1, 18, 32, 32, 1], "sulfone");
+        assert_eq!(
+            heavy_type_ids(SULFONAMIDE),
+            vec![1, 18, 32, 32, 43],
+            "sulfonamide"
+        );
+        // Sulfinamide N stays 8 (RDKit-verified; NOT 48)
+        assert_eq!(heavy_type_ids(SULFINAMIDE), vec![1, 17, 7, 8], "sulfinamide");
+    }
+
+    #[test]
+    fn test_nitro_types() {
+        assert_eq!(heavy_type_ids(NITROMETHANE), vec![1, 45, 32, 32], "nitromethane");
+        assert_eq!(
+            heavy_type_ids(NITROBENZENE),
+            vec![37, 37, 37, 37, 37, 37, 45, 32, 32],
+            "nitrobenzene"
+        );
+    }
+
+    #[test]
+    fn test_ion_types() {
+        assert_eq!(heavy_type_ids(SODIUM), vec![93], "Na+");
+        assert_eq!(heavy_type_ids(MAGNESIUM), vec![99], "Mg2+");
+        assert_eq!(heavy_type_ids(IRON3), vec![88], "Fe3+");
+        assert_eq!(heavy_type_ids(CHLORIDE), vec![90], "Cl-");
+    }
+
+    /// Partial charges for the newly typed groups, hand-derived from RDKit's
+    /// MMFF94s BCI table (canonical pair i<j → smaller id gets −stored value,
+    /// larger gets +stored). Tolerance 1e-3.
+    #[test]
+    fn test_new_type_partial_charges() {
+        // DMSO: atoms (0 C, 1 S=17, 2 O, 3 C)
+        let mol = crate::molecule::parser::parse_sdf(DMSO).unwrap();
+        let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
+        assert!((ff.charges[1] - 0.113).abs() < 1e-3, "DMSO S: {}", ff.charges[1]);
+        assert!((ff.charges[2] - (-0.5)).abs() < 1e-3, "DMSO O: {}", ff.charges[2]);
+        assert!((ff.charges[0] - 0.1935).abs() < 1e-3, "DMSO C0: {}", ff.charges[0]);
+        assert!((ff.charges[3] - 0.1935).abs() < 1e-3, "DMSO C3: {}", ff.charges[3]);
+
+        // Sulfone: atoms (0 C, 1 S=18, 2 O=32, 3 O=32, 4 C)
+        let mol = crate::molecule::parser::parse_sdf(SULFONE).unwrap();
+        let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
+        assert!((ff.charges[1] - 1.0896).abs() < 1e-3, "sulfone S: {}", ff.charges[1]);
+        assert!((ff.charges[2] - (-0.65)).abs() < 1e-3, "sulfone O2: {}", ff.charges[2]);
+        assert!((ff.charges[3] - (-0.65)).abs() < 1e-3, "sulfone O3: {}", ff.charges[3]);
+        assert!((ff.charges[0] - 0.1052).abs() < 1e-3, "sulfone C0: {}", ff.charges[0]);
+        assert!((ff.charges[4] - 0.1052).abs() < 1e-3, "sulfone C4: {}", ff.charges[4]);
+
+        // Nitromethane: atoms (0 C, 1 N=45, 2 O=32, 3 O=32)
+        let mol = crate::molecule::parser::parse_sdf(NITROMETHANE).unwrap();
+        let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
+        assert!((ff.charges[1] - 0.7998).abs() < 1e-3, "nitro N: {}", ff.charges[1]);
+        assert!((ff.charges[2] - (-0.52)).abs() < 1e-3, "nitro O2: {}", ff.charges[2]);
+        assert!((ff.charges[3] - (-0.52)).abs() < 1e-3, "nitro O3: {}", ff.charges[3]);
+        assert!((ff.charges[0] - 0.2402).abs() < 1e-3, "nitro C: {}", ff.charges[0]);
+
+        // Benzaldehyde: atoms (0 ipso C, 6 CHO, 7 O, 13 aldehyde H)
+        let mol = crate::molecule::parser::parse_sdf(BENZALDEHYDE).unwrap();
+        let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
+        assert!((ff.charges[7] - (-0.57)).abs() < 1e-3, "PhCHO O: {}", ff.charges[7]);
+        assert!((ff.charges[6] - 0.4238).abs() < 1e-3, "PhCHO CHO: {}", ff.charges[6]);
+        assert!((ff.charges[0] - 0.0862).abs() < 1e-3, "PhCHO ipso: {}", ff.charges[0]);
+        assert!((ff.charges[13] - 0.06).abs() < 1e-3, "PhCHO H: {}", ff.charges[13]);
+    }
+
+    /// Energy evaluation and geometry optimization must converge for the
+    /// newly typed functional groups.
+    #[test]
+    fn test_new_type_energy_and_convergence() {
+        for (name, sdf) in [
+            ("DMSO", DMSO),
+            ("sulfone", SULFONE),
+            ("nitrobenzene", NITROBENZENE),
+        ] {
+            let mol = crate::molecule::parser::parse_sdf(sdf).unwrap();
+            let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
+            let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+            let e = ff.calculate_energy(&coords);
+            assert!(e.is_finite(), "{name}: non-finite energy {e}");
+            let opts = ConvergenceOptions::default();
+            let result = optimizer::optimize(&ff, &coords, &opts);
+            assert!(
+                result.converged,
+                "{name}: optimization did not converge (energy={})",
+                result.final_energy
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod type_audit5 {
+    use crate::mmff::MMFFForceField;
+    use crate::molecule::parser::parse_sdf;
+    use crate::optimizer;
+    use crate::{ConvergenceOptions, MMFFVariant};
+
+    /// Heavy-atom (Z > 1) MMFF numeric type ids in SDF atom order
+    fn heavy_type_ids(sdf: &str) -> Vec<u8> {
+        let mol = parse_sdf(sdf).expect("parse failed");
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        mol.atoms
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.atomic_number > 1)
+            .map(|(i, _)| ff.type_ids[i])
+            .collect()
+    }
+
+    /// All-atom (including H) MMFF type ids
+    fn all_type_ids(sdf: &str) -> Vec<u8> {
+        let mol = parse_sdf(sdf).expect("parse failed");
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        ff.type_ids.clone()
+    }
+
+    // ---- SDF fixtures (RDKit-generated 2D coordinates) ----
+
+    const ACETATE: &str = r#"Acetate
+     RDKit          2D
+
+  7  6  0  0  0  0  0  0  0  0999 V2000
+    0.6429   -0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.8571    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.6071    1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.6071   -1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1429   -0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6429   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6429    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  1  0
+  1  5  1  0
+  1  6  1  0
+  1  7  1  0
+M  CHG  1   4  -1
+M  END"#;
+
+    const BENZOATE: &str = r#"Benzoate
+     RDKit          2D
+
+ 14 14  0  0  0  0  0  0  0  0999 V2000
+    3.2143   -1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.4643    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.2143    1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9643   -0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2143   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2857   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0357    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2857    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2143    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9643   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0357   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.5357    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.0357    2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.9643    2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  2  4  1  0
+  4  5  2  0
+  5  6  1  0
+  6  7  2  0
+  7  8  1  0
+  8  9  2  0
+  9  4  1  0
+  5 10  1  0
+  6 11  1  0
+  7 12  1  0
+  8 13  1  0
+  9 14  1  0
+M  CHG  1   3  -1
+M  END"#;
+
+    const ACETIC_ACID: &str = r#"AceticAcid
+     RDKit          2D
+
+  8  7  0  0  0  0  0  0  0  0999 V2000
+    1.0348   -0.1383    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4030    0.2892    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7517    1.7482    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.4922   -0.7422    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.4726   -0.5658    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.6073   -1.5761    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4623    1.2995    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.9299   -0.3147    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  1  0
+  1  5  1  0
+  1  6  1  0
+  1  7  1  0
+  4  8  1  0
+M  END"#;
+
+    const PYRIDINE_NO: &str = r#"PyridineNO
+     RDKit          2D
+
+ 12 12  0  0  0  0  0  0  0  0999 V2000
+    3.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000   -2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    2.5981    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  3  4  1  0
+  4  5  2  0
+  5  6  1  0
+  6  7  2  0
+  7  2  1  0
+  3  8  1  0
+  4  9  1  0
+  5 10  1  0
+  6 11  1  0
+  7 12  1  0
+M  CHG  2   1  -1   2   1
+M  END"#;
+
+    const PYRIDINE: &str = r#"Pyridine
+     RDKit          2D
+
+ 11 11  0  0  0  0  0  0  0  0999 V2000
+    0.0000   -1.2273    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990   -0.4773    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    1.0227    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000    1.7727    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    1.0227    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990   -0.4773    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000   -2.7273    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5981   -1.2273    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.5981    1.7727    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981    1.7727    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981   -1.2273    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  2  3  1  0
+  3  4  2  0
+  4  5  1  0
+  5  6  2  0
+  6  1  1  0
+  1  7  1  0
+  2  8  1  0
+  3  9  1  0
+  5 10  1  0
+  6 11  1  0
+M  END"#;
+
+    const TMS: &str = r#"TMS
+     RDKit          2D
+
+ 17 16  0  0  0  0  0  0  0  0999 V2000
+    1.0037    1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0569   -0.0000    0.0000 Si  0  0  0  0  0  4  0  0  0  0  0  0
+   -1.1176   -1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.1176    1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0037   -1.0607    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.0644    2.1213    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1858    0.1372    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4584    1.7586    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.1783   -2.1213    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.8156   -0.5154    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.5723   -1.7586    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.1783    2.1213    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.8156    0.5154    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.5723    1.7586    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.0644   -2.1213    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.4584   -1.7586    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.1858   -0.1372    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  1  0
+  2  4  1  0
+  2  5  1  0
+  1  6  1  0
+  1  7  1  0
+  1  8  1  0
+  3  9  1  0
+  3 10  1  0
+  3 11  1  0
+  4 12  1  0
+  4 13  1  0
+  4 14  1  0
+  5 15  1  0
+  5 16  1  0
+  5 17  1  0
+M  END"#;
+
+    const METHANIMINE: &str = r#"Methanimine
+     RDKit          2D
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2990    0.7500    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.2990    0.7500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.5981   -0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  2  0
+  1  3  1  0
+  1  4  1  0
+  2  5  1  0
+M  END"#;
+
+    // ---- Tests ----
+
+    /// Carboxylate C → 41, both O → 32; regression: acetic acid stays C=3, =O=7, OH=6
+    #[test]
+    fn test_carboxylate_types() {
+        assert_eq!(heavy_type_ids(ACETATE), vec![1, 41, 32, 32], "acetate");
+        assert_eq!(
+            heavy_type_ids(BENZOATE),
+            vec![32, 41, 32, 37, 37, 37, 37, 37, 37],
+            "benzoate"
+        );
+        // Regression guard: acetic acid C=3, =O=7, −OH=6 (unchanged)
+        assert_eq!(heavy_type_ids(ACETIC_ACID), vec![1, 3, 7, 6], "acetic acid");
+    }
+
+    /// Pyridine N-oxide N → 69, O → 32; regression: pyridine N stays 38
+    #[test]
+    fn test_noxide_types() {
+        assert_eq!(
+            heavy_type_ids(PYRIDINE_NO),
+            vec![32, 69, 37, 37, 37, 37, 37],
+            "pyridine N-oxide"
+        );
+        // Regression guard: pyridine N=38 (unchanged)
+        assert_eq!(
+            heavy_type_ids(PYRIDINE),
+            vec![37, 37, 37, 38, 37, 37],
+            "pyridine"
+        );
+    }
+
+    /// Silicon → 19 (RDKit-verified)
+    #[test]
+    fn test_silicon_types() {
+        assert_eq!(heavy_type_ids(TMS), vec![1, 19, 1, 1, 1], "TMS");
+    }
+
+    /// Imine H → 27 (RDKit-verified); the C=N bond stays N=9, C=3
+    #[test]
+    fn test_imine_h_type() {
+        use crate::mmff::params::mmff_type_id;
+        let mol = parse_sdf(METHANIMINE).expect("parse failed");
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        // type_ids applies base_type() (all H subtypes → 5), so check raw atom_types
+        assert_eq!(
+            mmff_type_id(ff.atom_types[0]),
+            3,
+            "methanimine C type"
+        );
+        assert_eq!(
+            mmff_type_id(ff.atom_types[1]),
+            9,
+            "methanimine N type"
+        );
+        // Atom 4 is the N-H (imine hydrogen); type 27, not 23 or 28
+        assert_eq!(
+            mmff_type_id(ff.atom_types[4]),
+            27,
+            "methanimine N-H (imine H) = 27, got {}",
+            mmff_type_id(ff.atom_types[4])
+        );
+    }
+
+    /// Energy finite and optimizer converges for the newly typed groups
+    #[test]
+    fn test_new_type_energy_and_convergence() {
+        for (name, sdf) in [
+            ("acetate", ACETATE),
+            ("pyridine_no", PYRIDINE_NO),
+            ("tetramethylsilane", TMS),
+            ("methanimine", METHANIMINE),
+        ] {
+            let mol = parse_sdf(sdf).unwrap();
+            let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+            let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+            let e = ff.calculate_energy(&coords);
+            assert!(e.is_finite(), "{name}: non-finite energy {e}");
+            let result = optimizer::optimize(&ff, &coords, &ConvergenceOptions::default());
+            assert!(
+                result.converged,
+                "{name}: optimization did not converge (energy={})",
+                result.final_energy
+            );
+        }
+    }
+
+    const SULFONATE: &str = r#"Sulfonate
+     RDKit          2D
+
+  8  7  0  0  0  0  0  0  0  0999 V2000
+   -0.7500   -0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500   -0.0000    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2500   -0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500   -1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500    1.5000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -2.2500    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  2  3  2  0
+  2  4  2  0
+  2  5  1  0
+  1  6  1  0
+  1  7  1  0
+  1  8  1  0
+M  CHG  1   5  -1
+M  END"#;
+
+    const AMMONIUM: &str = r#"Ammonium
+     RDKit          2D
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000   -0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.0000   -1.5000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  1  3  1  0
+  1  4  1  0
+  1  5  1  0
+M  CHG  1   1   1
+M  END"#;
+
+    /// Partial charges match RDKit for charged/zwitterionic groups.
+    /// RDKit-verified reference values from GetMMFFPartialCharge (tolerance 0.02).
+    #[test]
+    fn test_formal_charge_distribution() {
+        // Acetate: atoms (0 C_methyl=1, 1 C_carbox=41, 2 O=32, 3 O⁻=32, 4-6 H)
+        // RDKit partials: C=-0.106, C_carbox=+0.906, O=-0.900, O=-0.900
+        let mol = parse_sdf(ACETATE).unwrap();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        assert!(
+            (ff.charges[0] - (-0.106)).abs() < 0.02,
+            "acetate C_methyl: got {}",
+            ff.charges[0]
+        );
+        assert!(
+            (ff.charges[1] - 0.906).abs() < 0.02,
+            "acetate C_carbox: got {}",
+            ff.charges[1]
+        );
+        assert!(
+            (ff.charges[2] - (-0.900)).abs() < 0.02,
+            "acetate O2: got {}",
+            ff.charges[2]
+        );
+        assert!(
+            (ff.charges[3] - (-0.900)).abs() < 0.02,
+            "acetate O3: got {}",
+            ff.charges[3]
+        );
+
+        // Pyridine N-oxide: atoms (0 O⁻=32, 1 N⁺=69, 2-6 C_AR, 7-11 H)
+        // RDKit partials: O=-0.750, N=+0.571
+        let mol = parse_sdf(PYRIDINE_NO).unwrap();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        assert!(
+            (ff.charges[0] - (-0.750)).abs() < 0.02,
+            "N-oxide O: got {}",
+            ff.charges[0]
+        );
+        assert!(
+            (ff.charges[1] - 0.571).abs() < 0.02,
+            "N-oxide N: got {}",
+            ff.charges[1]
+        );
+
+        // Ammonium: N keeps +1.0 (type 34, fcadj=0, no redistribution)
+        // RDKit: N=-0.800 (formal +1 + BCI increments)
+        let mol = parse_sdf(AMMONIUM).unwrap();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        // Sum of charges should be +1.0
+        let total: f64 = ff.charges.iter().sum();
+        assert!(
+            (total - 1.0).abs() < 0.02,
+            "ammonium total charge: got {}",
+            total
+        );
+
+        // Sulfonate: 3 type-32 O's each get -1/3 formal charge
+        let mol = parse_sdf(SULFONATE).unwrap();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        // Sum of charges should be -1.0
+        let total: f64 = ff.charges.iter().sum();
+        assert!(
+            (total - (-1.0)).abs() < 0.02,
+            "sulfonate total charge: got {}",
+            total
+        );
     }
 }
