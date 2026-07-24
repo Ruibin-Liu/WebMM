@@ -429,8 +429,8 @@ pub fn oop_gradient(
     atom3: usize,
     params: &OOPParams,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    let eps = 1e-7;
-    let e_ref = oop_energy(coords, central, atom1, atom2, atom3, params);
+    // Central-difference numerical gradient (O(eps²) accurate).
+    let eps = 1e-5;
     let mut gc = [0.0; 3];
     let mut g1 = [0.0; 3];
     let mut g2 = [0.0; 3];
@@ -443,10 +443,12 @@ pub fn oop_gradient(
         (atom3, &mut g3),
     ] {
         for dim in 0..3 {
-            let mut coords_p = coords.to_vec();
-            coords_p[atom_idx][dim] += eps;
-            let e_plus = oop_energy(&coords_p, central, atom1, atom2, atom3, params);
-            grad[dim] = (e_plus - e_ref) / eps;
+            let mut cp = coords.to_vec();
+            cp[atom_idx][dim] += eps;
+            let ep = oop_energy(&cp, central, atom1, atom2, atom3, params);
+            cp[atom_idx][dim] -= 2.0 * eps;
+            let em = oop_energy(&cp, central, atom1, atom2, atom3, params);
+            grad[dim] = (ep - em) / (2.0 * eps);
         }
     }
 
@@ -483,13 +485,16 @@ mod tests {
         let params = OOPParams { k_oop: 0.04 };
         let (gc, g1, g2, g3) = oop_gradient(&coords, 1, 0, 2, 3, &params);
 
-        let eps = 1e-7;
+        // Verify against independent central-difference
+        let eps = 1e-5;
         for (idx, grad) in [(1usize, gc), (0usize, g1), (2usize, g2), (3usize, g3)] {
             for dim in 0..3 {
                 let mut cp = coords.clone();
                 cp[idx][dim] += eps;
                 let ep = oop_energy(&cp, 1, 0, 2, 3, &params);
-                let num = (ep - oop_energy(&coords, 1, 0, 2, 3, &params)) / eps;
+                cp[idx][dim] -= 2.0 * eps;
+                let em = oop_energy(&cp, 1, 0, 2, 3, &params);
+                let num = (ep - em) / (2.0 * eps);
                 assert!(
                     (grad[dim] - num).abs() < 1e-4,
                     "OOP grad[{}] = {} vs numerical {} for atom {}",

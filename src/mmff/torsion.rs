@@ -2107,8 +2107,12 @@ pub fn torsion_gradient(
     atom4: usize,
     params: &TorsionParams,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    let eps = 1e-7;
+    // Central-difference numerical gradient (O(eps²) accurate).
+    // Much more precise than the previous forward-difference (O(eps) accurate).
+    // This precision is critical for weak torsion forces that enforce planarity.
+    let eps = 1e-5;
     let e_ref = torsion_energy(coords, atom1, atom2, atom3, atom4, params);
+
     let mut g1 = [0.0; 3];
     let mut g2 = [0.0; 3];
     let mut g3 = [0.0; 3];
@@ -2121,13 +2125,16 @@ pub fn torsion_gradient(
         (atom4, &mut g4),
     ] {
         for dim in 0..3 {
-            let mut coords_p = coords.to_vec();
-            coords_p[atom_idx][dim] += eps;
-            let e_plus = torsion_energy(&coords_p, atom1, atom2, atom3, atom4, params);
-            grad[dim] = (e_plus - e_ref) / eps;
+            let mut cp = coords.to_vec();
+            cp[atom_idx][dim] += eps;
+            let ep = torsion_energy(&cp, atom1, atom2, atom3, atom4, params);
+            cp[atom_idx][dim] -= 2.0 * eps;
+            let em = torsion_energy(&cp, atom1, atom2, atom3, atom4, params);
+            grad[dim] = (ep - em) / (2.0 * eps);
         }
     }
 
+    let _ = e_ref; // suppress unused warning
     (g1, g2, g3, g4)
 }
 
@@ -2156,10 +2163,11 @@ mod tests {
 
     #[test]
     fn test_torsion_gradient_numerical() {
+        // Use non-collinear geometry so the dihedral is well-defined
         let coords = vec![
-            [1.0, 0.0, 0.0],
+            [1.0, 0.5, 0.0],
             [0.0, 0.0, 0.0],
-            [1.5, 0.0, 0.0],
+            [1.5, 0.5, 0.3],
             [2.5, 1.0, 0.0],
         ];
         let params = TorsionParams {

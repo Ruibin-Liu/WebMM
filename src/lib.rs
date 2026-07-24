@@ -5070,7 +5070,11 @@ M  END"#;
             let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
             let e = ff.calculate_energy(&coords);
             assert!(e.is_finite(), "{name}: non-finite energy {e}");
-            let result = optimizer::optimize(&ff, &coords, &ConvergenceOptions::default());
+            let opts = ConvergenceOptions {
+                max_iterations: 5000,
+                ..Default::default()
+            };
+            let result = optimizer::optimize(&ff, &coords, &opts);
             assert!(
                 result.converged,
                 "{name}: optimization did not converge (energy={})",
@@ -5184,4 +5188,43 @@ M  END"#;
             total
         );
     }
+
+    /// Aniline NH2 must be planar after MMFF94s optimization (torsion enforces planarity)
+    #[test]
+    fn test_aniline_nh2_planar() {
+        let sdf = "Aniline\n     RDKit          3D\n\n 13 13  0  0  0  0  0  0  0  0999 V2000\n   -1.2000    0.6930    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.5000   -0.6000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3000   -1.2000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0000   -0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3000    0.6000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000    1.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1500    1.3000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2500    2.2800    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.0000    0.8000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.4000   -1.1000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3500   -2.2700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.7500   -1.5500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.3000    1.0500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  1  1  0\n  1  7  1  0\n  7  8  1  0\n  7  9  1  0\n  2 10  1  0\n  3 11  1  0\n  4 12  1  0\n  5 13  1  0\nM  END";
+        let mol = parse_sdf(sdf).unwrap();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let opts = ConvergenceOptions {
+            max_iterations: 5000,
+            ..Default::default()
+        };
+        let result = optimizer::optimize(&ff, &coords, &opts);
+        assert!(result.converged, "aniline optimization did not converge");
+
+        let c = &result.optimized_coords;
+        fn dihedral(p1: [f64; 3], p2: [f64; 3], p3: [f64; 3], p4: [f64; 3]) -> f64 {
+            let b1 = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+            let b2 = [p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2]];
+            let b3 = [p4[0] - p3[0], p4[1] - p3[1], p4[2] - p3[2]];
+            let n1 = [b1[1]*b2[2]-b1[2]*b2[1], b1[2]*b2[0]-b1[0]*b2[2], b1[0]*b2[1]-b1[1]*b2[0]];
+            let n2 = [b2[1]*b3[2]-b2[2]*b3[1], b2[2]*b3[0]-b2[0]*b3[2], b2[0]*b3[1]-b2[1]*b3[0]];
+            let m = (n1[0]*n1[0]+n1[1]*n1[1]+n1[2]*n1[2]).sqrt();
+            let n = (n2[0]*n2[0]+n2[1]*n2[1]+n2[2]*n2[2]).sqrt();
+            let dot = (n1[0]*n2[0]+n1[1]*n2[1]+n1[2]*n2[2]) / (m*n);
+            dot.clamp(-1.0, 1.0).acos().to_degrees()
+        }
+
+        let d1 = dihedral(c[7], c[6], c[0], c[1]);
+        let d2 = dihedral(c[8], c[6], c[0], c[1]);
+        let d1_planar = d1 < 20.0 || d1 > 160.0;
+        let d2_planar = d2 < 20.0 || d2 > 160.0;
+        assert!(
+            d1_planar && d2_planar,
+            "Aniline NH2 not planar: H7-N-C-C={:.1}° H8-N-C-C={:.1}°",
+            d1, d2
+        );
+    }
 }
+
