@@ -377,6 +377,21 @@ impl MMFFForceField {
                     _ => {}
                 }
             }
+            // Refine: a dicoordinate (pyridine-type) N adjacent in the ring to a
+            // lone-pair heteroatom (NPYL/OFUR/S_AR) is the alpha N -> N5A (65);
+            // otherwise beta -> N5B (66). E.g. pyrazole's =N- next to the pyrrole N.
+            for (i, t) in tmp.clone() {
+                if t != MMFFAtomType::N5B {
+                    continue;
+                }
+                let adj_lp = mol.adjacency[i].iter().any(|&nbr| {
+                    ringset.contains(&nbr)
+                        && matches!(tmp.get(&nbr), Some(MMFFAtomType::NPYL) | Some(MMFFAtomType::OFUR) | Some(MMFFAtomType::S_AR))
+                });
+                if adj_lp {
+                    tmp.insert(i, MMFFAtomType::N5A);
+                }
+            }
             // Pass 2: carbons
             for &atom_idx in ring {
                 if mol.atoms[atom_idx].atomic_number != 6 {
@@ -446,11 +461,22 @@ impl MMFFForceField {
                         })
                 });
 
+                // This N's own double bond to C (imine =N) — excludes it from the
+                // enamine/amidine N_PL3 rules below (those are for the N single-
+                // bonded to the C=X carbon; the =N itself is sp2 N_2).
+                let n_owns_cn = mol.bonds
+                    .iter()
+                    .any(|b| {
+                        b.bond_type == BondType::Double
+                            && (b.atom1 == idx || b.atom2 == idx)
+                            && mol.atoms[if b.atom1 == idx { b.atom2 } else { b.atom1 }].atomic_number
+                                == 6
+                    });
                 // N bonded to a carbon that has a C=C double bond (enamine /
                 // vinylamine) → planar N (MMFF N_PL3, 40), like aniline. (Aromatic
                 // bonds are BondType::Aromatic, not Double, so this only catches
                 // non-aromatic C=C neighbors; aniline is handled separately.)
-                let has_c_c_neighbor = mol.bonds.iter().any(|b| {
+                let has_c_c_neighbor = !n_owns_cn && mol.bonds.iter().any(|b| {
                     let other = if b.atom1 == idx {
                         b.atom2
                     } else if b.atom2 == idx {
@@ -474,22 +500,22 @@ impl MMFFForceField {
 
                 // Amidine / guanidinium N: this N is single-bonded to a carbon that
                 // is double-bonded to a *different* nitrogen (R-N-C(=N')-). Such Ns
-                // are planar → MMFF 40 (N_PL3). Excludes the =N' imine itself (which
-                // has a double, not single, bond to that C).
-                let has_c_n_neighbor = mol.bonds.iter().any(|b| {
-                    if b.bond_type != BondType::Single || (b.atom1 != idx && b.atom2 != idx) {
-                        return false;
-                    }
-                    let c = if b.atom1 == idx { b.atom2 } else { b.atom1 };
-                    mol.atoms[c].atomic_number == 6
-                        && mol.bonds.iter().any(|b2| {
-                            b2.bond_type == BondType::Double
-                                && (b2.atom1 == c || b2.atom2 == c)
-                                && mol.atoms[if b2.atom1 == c { b2.atom2 } else { b2.atom1 }]
-                                    .atomic_number
-                                    == 7
-                        })
-                });
+                // are planar → MMFF 40 (N_PL3). Excludes the =N' imine itself.
+                let has_c_n_neighbor = !n_owns_cn
+                    && mol.bonds.iter().any(|b| {
+                        if b.bond_type != BondType::Single || (b.atom1 != idx && b.atom2 != idx) {
+                            return false;
+                        }
+                        let c = if b.atom1 == idx { b.atom2 } else { b.atom1 };
+                        mol.atoms[c].atomic_number == 6
+                            && mol.bonds.iter().any(|b2| {
+                                b2.bond_type == BondType::Double
+                                    && (b2.atom1 == c || b2.atom2 == c)
+                                    && mol.atoms[if b2.atom1 == c { b2.atom2 } else { b2.atom1 }]
+                                        .atomic_number
+                                        == 7
+                            })
+                    });
 
                 let has_double_bond_to_c = mol.bonds.iter().any(|b| {
                     let other = if b.atom1 == idx {
@@ -695,8 +721,15 @@ impl MMFFForceField {
                     // Sulfonamide N: bonded to SO2 sulfur (MMFF 43)
                     (7, _, false, _) if bonded_to_so2_s => MMFFAtomType::N_SO2,
 
-                    // Nitrogen with formal charge +1
-                    (7, Hybridization::Sp3, _, _) if charge.abs() > 0.5 && charge > 0.0 => {
+                    // Nitrogen with formal charge +1 (quaternary ammonium). Exclude
+                    // acyl/amidine/enamine Ns (e.g. charged guanidinium N), which
+                    // RDKit types N_PL3/N_AM, not N_4.
+                    (7, Hybridization::Sp3, _, _)
+                        if charge > 0.5
+                            && !has_c_n_neighbor
+                            && !has_c_o_neighbor
+                            && !has_c_c_neighbor =>
+                    {
                         MMFFAtomType::N_4
                     }
 
@@ -1015,7 +1048,7 @@ impl MMFFForceField {
                                 && {
                                     let o = if b2.atom1 == nbr { b2.atom2 } else { b2.atom1 };
                                     let an = mol.atoms[o].atomic_number;
-                                    an == 8 || an == 7
+                                    an == 8 || an == 7 || an == 6
                                 }
                         })
                 });
@@ -1036,15 +1069,17 @@ impl MMFFForceField {
                 if n_has_double_to_c && !n_is_aromatic {
                     // Imine N-H (C=N-H) → MMFF 27
                     MMFFAtomType::H_NIM
-                } else if n_is_acyl_or_amidine || n_is_sulfonamide || n_is_aniline {
-                    // Amide / amidine / sulfonamide / aniline N-H → MMFF 28
+                } else if !n_is_aromatic
+                    && (n_is_acyl_or_amidine || n_is_sulfonamide || n_is_aniline)
+                {
+                    // Amide / amidine / enamine / sulfonamide / aniline N-H → MMFF 28
                     // (covers charged guanidinium N-H, which is amidinium)
                     MMFFAtomType::H_NAM
                 } else if mol.atoms[neighbor_idx].charge > 0.5 {
                     // Ammonium (sp3 N+) N-H → MMFF 36 (HNR+)
                     MMFFAtomType::HNRP
                 } else {
-                    // Generic amine or aromatic-ring N-H (pyrrole) → MMFF 23
+                    // Generic amine or aromatic-ring N-H (pyrrole/indole) → MMFF 23
                     MMFFAtomType::H_N3
                 }
             }
