@@ -46,6 +46,10 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         | MMFFAtomType::HS => MMFFAtomType::H,
         MMFFAtomType::CR4R => MMFFAtomType::C_3,
         MMFFAtomType::CE4R => MMFFAtomType::C_2,
+        MMFFAtomType::CR3R => MMFFAtomType::C_3,
+        MMFFAtomType::HNRP => MMFFAtomType::H,
+        MMFFAtomType::S2CM => MMFFAtomType::S_3,
+        MMFFAtomType::HOS => MMFFAtomType::H,
         // 5-membered heteroaromatic ring atoms use same params as generic aromatic
         MMFFAtomType::C5A | MMFFAtomType::C5B => MMFFAtomType::C_AR,
         MMFFAtomType::NPYL | MMFFAtomType::N5A | MMFFAtomType::N5B => MMFFAtomType::N_AR,
@@ -77,6 +81,10 @@ pub enum MMFFAtomType {
     HS,     // H bonded to sulfur (thiol R-S-H) (MMFF 71)
     CR4R,   // sp3 carbon in a 4-membered ring (MMFF 20)
     CE4R,   // sp2 carbon in a 4-membered ring (MMFF 30)
+    CR3R,   // sp3 carbon in a 3-membered ring (MMFF 22)
+    HNRP,   // H on a positively-charged (ammonium) N (MMFF 36)
+    S2CM,   // S in C(=S)=S / thiocarbonyl (MMFF 72)
+    HOS,    // H on O bonded to S (sulfonic acid) (MMFF 33)
 
     // Carbons
     C_3,
@@ -306,7 +314,12 @@ impl MMFFForceField {
         let aromatic_atoms = get_aromatic_atoms(mol);
         let rings = find_rings(mol);
 
-        // Atoms in 4-membered rings (carbons get CR4R/CE4R per RDKit MMFF)
+        // Atoms in 3- and 4-membered rings (carbons get CR3R/CR4R/CE4R per RDKit MMFF)
+        let in_3ring: std::collections::HashSet<usize> = rings
+            .iter()
+            .filter(|r| r.len() == 3)
+            .flat_map(|r| r.iter().copied())
+            .collect();
         let in_4ring: std::collections::HashSet<usize> = rings
             .iter()
             .filter(|r| r.len() == 4)
@@ -336,47 +349,62 @@ impl MMFFForceField {
                 continue;
             }
 
+            // Two passes: first classify heteroatoms (N/O/S), then classify
+            // carbons from their ring hetero-neighbors' types. (RDKit's C5A vs
+            // C5B keys on neighbor type: C adjacent to a pyrrole-type N (NPYL),
+            // O (OFUR), or S (S_AR), or flanked by two heteroatoms, is C5A;
+            // C adjacent only to a pyridine-type N (N5B) or no heteroatom is C5B.)
+            use std::collections::HashSet;
+            let ringset: HashSet<usize> = ring.iter().copied().collect();
+            let mut tmp: std::collections::HashMap<usize, MMFFAtomType> =
+                std::collections::HashMap::new();
+            // Pass 1: heteroatoms
             for &atom_idx in ring {
-                let an = mol.atoms[atom_idx].atomic_number;
-                let hetero_neighbors_in_ring: Vec<usize> = ring
-                    .iter()
-                    .filter(|&&n| {
-                        n != atom_idx
-                            && mol.adjacency[atom_idx].contains(&n)
-                            && (mol.atoms[n].atomic_number == 7
-                                || mol.atoms[n].atomic_number == 8
-                                || mol.atoms[n].atomic_number == 16)
-                    })
-                    .copied()
-                    .collect();
-
-                let typ = match an {
-                    6 => {
-                        if hetero_neighbors_in_ring.len() == 1 {
-                            MMFFAtomType::C5A
-                        } else {
-                            MMFFAtomType::C5B
-                        }
-                    }
+                match mol.atoms[atom_idx].atomic_number {
                     7 => {
-                        // Pyrrole-type N (tricoordinate — 2 ring bonds + H or
-                        // substituent; contributes its lone pair to aromaticity,
-                        // whether the substituent is H or alkyl) → NPYL (MMFF 39).
-                        // Pyridine-type N (dicoordinate, =N-) → N5B.
-                        // (RDKit keys on coordination, not H count; aromatic bonds
-                        // have already replaced Kekulé double bonds, so bond order
-                        // cannot be used here.)
                         let n_neighbors = mol.adjacency[atom_idx].len();
-                        if n_neighbors >= 3 {
-                            MMFFAtomType::NPYL
-                        } else {
-                            MMFFAtomType::N5B
-                        }
+                        tmp.insert(
+                            atom_idx,
+                            if n_neighbors >= 3 { MMFFAtomType::NPYL } else { MMFFAtomType::N5B },
+                        );
                     }
-                    8 => MMFFAtomType::OFUR,
-                    16 => MMFFAtomType::S_AR,
-                    _ => continue,
-                };
+                    8 => {
+                        tmp.insert(atom_idx, MMFFAtomType::OFUR);
+                    }
+                    16 => {
+                        tmp.insert(atom_idx, MMFFAtomType::S_AR);
+                    }
+                    _ => {}
+                }
+            }
+            // Pass 2: carbons
+            for &atom_idx in ring {
+                if mol.atoms[atom_idx].atomic_number != 6 {
+                    continue;
+                }
+                let mut lonepair_het = 0; // NPYL / OFUR / S_AR neighbors
+                let mut het_total = 0;
+                for &nbr in &mol.adjacency[atom_idx] {
+                    if !ringset.contains(&nbr) {
+                        continue;
+                    }
+                    match tmp.get(&nbr) {
+                        Some(MMFFAtomType::NPYL) | Some(MMFFAtomType::OFUR) | Some(MMFFAtomType::S_AR) => {
+                            lonepair_het += 1;
+                            het_total += 1;
+                        }
+                        Some(MMFFAtomType::N5B) => {
+                            het_total += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                tmp.insert(
+                    atom_idx,
+                    if lonepair_het >= 1 || het_total >= 2 { MMFFAtomType::C5A } else { MMFFAtomType::C5B },
+                );
+            }
+            for (&atom_idx, &typ) in tmp.iter() {
                 atom_5ring_type.insert(atom_idx, typ);
             }
         }
@@ -441,6 +469,25 @@ impl MMFFForceField {
                                 }]
                                 .atomic_number
                                     == 6
+                        })
+                });
+
+                // Amidine / guanidinium N: this N is single-bonded to a carbon that
+                // is double-bonded to a *different* nitrogen (R-N-C(=N')-). Such Ns
+                // are planar → MMFF 40 (N_PL3). Excludes the =N' imine itself (which
+                // has a double, not single, bond to that C).
+                let has_c_n_neighbor = mol.bonds.iter().any(|b| {
+                    if b.bond_type != BondType::Single || (b.atom1 != idx && b.atom2 != idx) {
+                        return false;
+                    }
+                    let c = if b.atom1 == idx { b.atom2 } else { b.atom1 };
+                    mol.atoms[c].atomic_number == 6
+                        && mol.bonds.iter().any(|b2| {
+                            b2.bond_type == BondType::Double
+                                && (b2.atom1 == c || b2.atom2 == c)
+                                && mol.atoms[if b2.atom1 == c { b2.atom2 } else { b2.atom1 }]
+                                    .atomic_number
+                                    == 7
                         })
                 });
 
@@ -615,7 +662,11 @@ impl MMFFForceField {
 
                     // Carbon types — aromatic takes priority over hybridization
                     (6, _, true, _) => MMFFAtomType::C_AR,
-                    // Carbons in 4-membered rings: RDKit uses CR4R (sp3, 20) / CE4R (sp2, 30)
+                    // Carbons in small rings: RDKit uses CR3R (sp3, 22) for 3-rings,
+                    // CR4R (sp3, 20) / CE4R (sp2, 30) for 4-rings.
+                    (6, Hybridization::Sp3, false, _) if in_3ring.contains(&idx) => {
+                        MMFFAtomType::CR3R
+                    }
                     (6, Hybridization::Sp3, false, _) if in_4ring.contains(&idx) => {
                         MMFFAtomType::CR4R
                     }
@@ -660,6 +711,9 @@ impl MMFFForceField {
                     // Enamine / vinylamine N: non-aromatic N bonded to a C=C carbon
                     // is planar → MMFF 40 (N_PL3) (analogous to aniline).
                     (7, _, false, _) if has_c_c_neighbor => MMFFAtomType::N_PL3,
+
+                    // Amidine / guanidinium N (bonded to C=N carbon) → MMFF 40 (N_PL3).
+                    (7, _, false, _) if has_c_n_neighbor => MMFFAtomType::N_PL3,
 
                     // N_PL3: sp3 N bonded to aromatic carbon (aniline-like)
                     (7, Hybridization::Sp3, false, _)
@@ -768,8 +822,12 @@ impl MMFFForceField {
                         }
                     }
 
-                    // Water O: two H neighbors
-                    (8, Hybridization::Sp3, _, 2) if carbon_neighbors.is_empty() => {
+                    // Water O: both neighbors are H (true H2O). Not O-S/P-H hydroxyls.
+                    (8, Hybridization::Sp3, _, 2)
+                        if mol.adjacency[idx]
+                            .iter()
+                            .all(|&n| mol.atoms[n].atomic_number == 1) =>
+                    {
                         MMFFAtomType::OH2
                     }
 
@@ -793,6 +851,34 @@ impl MMFFForceField {
                     // Oxidized sulfur: SO2 -> MMFF 18, S=O -> MMFF 17 (RDKit-verified)
                     (16, _, _, _) if double_o_count >= 2 => MMFFAtomType::S_O2,
                     (16, _, _, _) if double_o_count == 1 => MMFFAtomType::S_OX,
+                    // CS2 / thiocarbonyl: S double-bonded to a C that is itself
+                    // double-bonded to another S -> MMFF 72 (S2CM).
+                    (16, _, _, _)
+                        if mol.bonds.iter().any(|b| {
+                            if b.bond_type != BondType::Double
+                                || (b.atom1 != idx && b.atom2 != idx)
+                            {
+                                return false;
+                            }
+                            let c = if b.atom1 == idx { b.atom2 } else { b.atom1 };
+                            mol.atoms[c].atomic_number == 6
+                                && mol.bonds.iter().any(|b2| {
+                                    b2.bond_type == BondType::Double
+                                        && b2.atom1 != idx
+                                        && b2.atom2 != idx
+                                        && (b2.atom1 == c || b2.atom2 == c)
+                                        && mol.atoms[if b2.atom1 == c {
+                                            b2.atom2
+                                        } else {
+                                            b2.atom1
+                                        }]
+                                        .atomic_number
+                                            == 16
+                                })
+                        }) =>
+                    {
+                        MMFFAtomType::S2CM
+                    }
                     (16, Hybridization::Sp3, _, 2..) => MMFFAtomType::S_3,
                     (16, Hybridization::Sp2, _, _) => MMFFAtomType::S_2,
 
@@ -878,6 +964,11 @@ impl MMFFForceField {
                 if let Some(&nn) = non_h_neighbor {
                     let nn_atom = &mol.atoms[nn];
                     match nn_atom.atomic_number {
+                        // Sulfonic acid S-OH -> MMFF 33 (HOS)
+                        16 => MMFFAtomType::HOS,
+                        // Phosphonic / phosphoric acid P-OH -> MMFF 24 (H_COOH);
+                        // RDKit reuses the carboxylic-acid H type for P-OH.
+                        15 => MMFFAtomType::H_COOH,
                         6 => {
                             if aromatic_atoms.contains(&nn) {
                                 MMFFAtomType::H_OAR
@@ -914,34 +1005,46 @@ impl MMFFForceField {
                         }
                 });
                 let n_is_aromatic = aromatic_atoms.contains(&neighbor_idx);
-                let n_is_aniline = mol.adjacency[neighbor_idx]
-                    .iter()
-                    .any(|&nbr| aromatic_atoms.contains(&nbr) && mol.atoms[nbr].atomic_number == 6);
-                // Amide H: N bonded to a carbonyl C (R-C(=O)-N-H) → MMFF 28 (H_NAM,
-                // "HNCO"). Mirrors the N_AM typing in assign_atom_types.
-                let n_is_amide = mol.adjacency[neighbor_idx].iter().any(|&nbr| {
+                // Acyl/amidine N: N has a carbon neighbor that is double-bonded to O
+                // (amide) or to another N (amidine/guanidinium).
+                let n_is_acyl_or_amidine = mol.adjacency[neighbor_idx].iter().any(|&nbr| {
                     mol.atoms[nbr].atomic_number == 6
                         && mol.bonds.iter().any(|b2| {
                             b2.bond_type == BondType::Double
                                 && (b2.atom1 == nbr || b2.atom2 == nbr)
-                                && mol.atoms[if b2.atom1 == nbr {
-                                    b2.atom2
-                                } else {
-                                    b2.atom1
-                                }]
-                                .atomic_number
-                                    == 8
+                                && {
+                                    let o = if b2.atom1 == nbr { b2.atom2 } else { b2.atom1 };
+                                    let an = mol.atoms[o].atomic_number;
+                                    an == 8 || an == 7
+                                }
                         })
                 });
+                // Sulfonamide N: N bonded to an SO2 sulfur.
+                let n_is_sulfonamide = mol.adjacency[neighbor_idx].iter().any(|&nbr| {
+                    mol.atoms[nbr].atomic_number == 16
+                        && mol.bonds.iter().filter(|b| {
+                            b.bond_type == BondType::Double
+                                && (b.atom1 == nbr || b.atom2 == nbr)
+                        }).count() >= 2
+                });
+                // Aniline N: non-aromatic N bonded to an aromatic C.
+                let n_is_aniline = !n_is_aromatic
+                    && mol.adjacency[neighbor_idx]
+                        .iter()
+                        .any(|&nbr| aromatic_atoms.contains(&nbr) && mol.atoms[nbr].atomic_number == 6);
 
                 if n_has_double_to_c && !n_is_aromatic {
                     // Imine N-H (C=N-H) → MMFF 27
                     MMFFAtomType::H_NIM
-                } else if n_is_amide || n_is_aniline || n_is_aromatic {
-                    // Amide / aniline / aromatic N-H → MMFF 28
+                } else if n_is_acyl_or_amidine || n_is_sulfonamide || n_is_aniline {
+                    // Amide / amidine / sulfonamide / aniline N-H → MMFF 28
+                    // (covers charged guanidinium N-H, which is amidinium)
                     MMFFAtomType::H_NAM
+                } else if mol.atoms[neighbor_idx].charge > 0.5 {
+                    // Ammonium (sp3 N+) N-H → MMFF 36 (HNR+)
+                    MMFFAtomType::HNRP
                 } else {
-                    // Generic amine N-H → MMFF 23
+                    // Generic amine or aromatic-ring N-H (pyrrole) → MMFF 23
                     MMFFAtomType::H_N3
                 }
             }

@@ -458,6 +458,10 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
         MMFFAtomType::H_NIM | MMFFAtomType::HS => get_atom_type_props(MMFFAtomType::H),
         MMFFAtomType::CR4R => get_atom_type_props(MMFFAtomType::C_3),
         MMFFAtomType::CE4R => get_atom_type_props(MMFFAtomType::C_2),
+        MMFFAtomType::CR3R => get_atom_type_props(MMFFAtomType::C_3),
+        MMFFAtomType::HNRP => get_atom_type_props(MMFFAtomType::H),
+        MMFFAtomType::S2CM => get_atom_type_props(MMFFAtomType::S_3),
+        MMFFAtomType::HOS => get_atom_type_props(MMFFAtomType::H),
         MMFFAtomType::Si => Some(AtomTypeProperties {
             bond_class: 3,
             angle_class: 3,
