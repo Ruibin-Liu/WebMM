@@ -86,24 +86,57 @@ cargo build --release --target wasm32-unknown-unknown
 wasm-bindgen --out-dir pkg --target web target/wasm32-unknown-unknown/release/webmm.wasm
 ```
 
-**Option 2: Using wasm-pack**
+**Option 2: Using wasm-pack (recommended)**
 
 ```bash
 # Install wasm-pack if you haven't already
 cargo install wasm-pack
 
 # Build and generate bindings in one step
-wasm-pack build --target web --out-dir pkg
+wasm-pack build --target web --release
 ```
 
-### Serve
+### Serve the demo locally
+
+The WASM bindings are written to the gitignored `pkg/` directory, while the
+demo landing page is the committed `site/index.html`. To serve the demo,
+build the WASM, stage the landing page into `pkg/`, then serve `pkg/`:
 
 ```bash
-# Start the dev server (serves pkg/ directory on port 8000)
-python3 pkg/server.py
+wasm-pack build --target web --release
+cp site/index.html pkg/index.html      # stage the landing page
+python3 -m http.server 8000 --directory pkg   # serve on http://localhost:8000
 ```
 
-Then open http://localhost:8000 in your browser.
+Then open **http://localhost:8000** in your browser. (This mirrors what the
+GitHub Pages workflow does — see `.github/workflows/pages.yml`.)
+
+> **Note:** the demo loads `3Dmol.js` (the 3D viewer) from a CDN, so you need
+> internet access for the viewer. The MMFF/ETKDG optimizer itself runs fully
+> in-browser via WASM — no network calls.
+
+#### Using the demo
+
+- **Molecule buttons** — load any built-in RDKit-generated 3D structure
+  (caffeine, aspirin, benzene, …) into the viewer.
+- **Render from input** — re-render whatever SDF is in the textarea.
+- **Generate 3D (ETKDG v3)** — regenerate coordinates from scratch using the
+  ETKDG v3 embedding algorithm.
+- **Optimize (MMFF94s)** — run the full MMFF94s minimization. The readout
+  panel shows final energy (kcal/mol), iteration count, atom count, and time.
+- **Viewer style buttons** — switch between Stick / Ball+Stick / Space Fill /
+  Wireframe.
+
+#### Stopping the server
+
+```bash
+lsof -ti tcp:8000 | xargs kill
+```
+
+#### Rebuilding after edits
+
+After changing Rust source or `site/index.html`, re-run the three commands
+above (build → stage → serve).
 
 ### Test
 

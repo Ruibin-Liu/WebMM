@@ -3,131 +3,151 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebMM - MMFF94 Geometry Optimizer</title>
+    <title>WebMM — MMFF94/MMFF94s Geometry Optimizer</title>
+    <meta name="description" content="In-browser molecular geometry optimization using ETKDG v3 embedding and the MMFF94/MMFF94s force field, compiled from Rust to WebAssembly.">
     <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"></script>
     <style>
         * { box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-            max-width: 900px;
+            max-width: 980px;
             margin: 0 auto;
             padding: 20px;
-            color: #333;
+            color: #1f2328;
+            line-height: 1.5;
         }
-        h1 {
+        header h1 {
+            margin-bottom: 4px;
             border-bottom: 2px solid #e0e0e0;
             padding-bottom: 10px;
         }
+        header .tagline { color: #57606a; margin-top: 0; }
+        a { color: #0969da; }
         .status {
             margin: 15px 0;
             padding: 12px 15px;
-            border-radius: 4px;
+            border-radius: 6px;
         }
-        .success { background-color: #d4edda; color: #155724; }
-        .error { background-color: #f8d7da; color: #721c24; }
-        .info { background-color: #d1ecf1; color: #0c5460; }
+        .success { background-color: #dafbe1; color: #1a7f37; }
+        .error { background-color: #ffebe9; color: #cf222e; }
+        .info { background-color: #ddf4ff; color: #0550ae; }
         .row { display: flex; gap: 20px; }
-        .col { flex: 1; }
-        @media (max-width: 700px) { .row { flex-direction: column; } }
+        .col { flex: 1; min-width: 0; }
+        @media (max-width: 760px) { .row { flex-direction: column; } }
         textarea {
             width: 100%;
             height: 180px;
-            font-family: 'Courier New', monospace;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
             font-size: 12px;
             margin-bottom: 10px;
             resize: vertical;
         }
+        .molecules { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        .molecules button { margin: 0; }
         button {
-            background-color: #4CAF50;
+            background-color: #1f883d;
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
+            padding: 7px 14px;
+            border-radius: 6px;
             cursor: pointer;
-            margin: 0 8px 8px 0;
-            font-size: 14px;
+            margin: 0 6px 6px 0;
+            font-size: 13px;
         }
-        button:hover { background-color: #45a049; }
-        button.secondary { background-color: #2196F3; }
-        button.secondary:hover { background-color: #1e88e5; }
-        button.secondary.active { background-color: #1565C0; }
+        button:hover { background-color: #1a7f37; }
+        button.secondary { background-color: #0969da; }
+        button.secondary:hover { background-color: #0550ae; }
+        button:disabled { background-color: #9da2a6; cursor: not-allowed; }
         #viewer {
             width: 100%;
-            height: 400px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            background: #f9f9f9;
+            height: 420px;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
+            background: #f6f8fa;
             position: relative;
         }
-        #viewer canvas {
-            width: 100% !important;
-            height: 100% !important;
-        }
+        #viewer canvas { width: 100% !important; height: 100% !important; }
         .log {
-            background-color: #f5f5f5;
-            border: 1px solid #e0e0e0;
-            border-radius: 4px;
+            background-color: #f6f8fa;
+            border: 1px solid #d0d7de;
+            border-radius: 6px;
             padding: 10px;
-            max-height: 200px;
+            max-height: 220px;
             overflow-y: auto;
             font-size: 12px;
-            font-family: 'Courier New', monospace;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
         }
         .log p { margin: 3px 0; }
+        .readout { display: flex; gap: 24px; flex-wrap: wrap; margin: 10px 0; }
+        .readout .metric { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 14px; }
+        .readout .metric .label { color: #57606a; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+        .readout .metric .value { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #e0e0e0; color: #57606a; font-size: 13px; }
     </style>
 </head>
 <body>
-    <h1>WebMM - MMFF94 Geometry Optimizer</h1>
+    <header>
+        <h1>WebMM</h1>
+        <p class="tagline">In-browser 3D molecular geometry optimization — ETKDG v3 embedding + MMFF94/MMFF94s force field, compiled from Rust to WebAssembly.</p>
+    </header>
 
     <div class="status">
-        <div id="status" class="info">Initializing...</div>
+        <div id="status" class="info">Initializing WASM…</div>
+    </div>
+
+    <div class="readout">
+        <div class="metric"><div class="label">Final energy</div><div class="value" id="m-energy">—</div></div>
+        <div class="metric"><div class="label">Iterations</div><div class="value" id="m-iters">—</div></div>
+        <div class="metric"><div class="label">Atoms</div><div class="value" id="m-atoms">—</div></div>
+        <div class="metric"><div class="label">Time</div><div class="value" id="m-time">—</div></div>
     </div>
 
     <div class="row">
         <div class="col">
-            <h2>Input (SDF Format)</h2>
-            <textarea id="sdf-input" placeholder="Paste SDF/MOL file content here..."></textarea>
-            <div>
-                <button onclick="loadTestFile()">Water</button>
-                <button onclick="loadTestFile('acetic')">Acetic Acid</button>
-                <button onclick="loadTestFile('benzene')">Benzene</button>
-                <button onclick="loadTestFile('ethanol')">Ethanol</button>
-                <button onclick="loadTestFile('aniline')">Aniline (N)</button>
-                <button onclick="loadTestFile('thiophene')">Thiophene (S)</button>
-                <button onclick="loadTestFile('chloroethane')">Chloroethane (Cl)</button>
-                <button onclick="loadTestFile('fluorobenzene')">Fluorobenzene (F)</button>
-            </div>
+            <h2>Input (SDF / MOL)</h2>
+            <textarea id="sdf-input" placeholder="Paste an SDF or MOL file here…"></textarea>
+            <div class="molecules" id="molecule-buttons"></div>
         </div>
         <div class="col">
             <h2>3D Viewer</h2>
             <div id="viewer"></div>
-            <div>
+            <div style="margin-top:8px;">
                 <button class="secondary" onclick="setStyle('stick')">Stick</button>
-                <button class="secondary" onclick="setStyle('sphere')">Space Fill</button>
                 <button class="secondary" onclick="setStyle('ball+stick')">Ball+Stick</button>
+                <button class="secondary" onclick="setStyle('sphere')">Space Fill</button>
                 <button class="secondary" onclick="setStyle('line')">Wireframe</button>
-                <button class="secondary" onclick="setStyle('cross')">Cross</button>
             </div>
         </div>
     </div>
 
-    <h2>Optimization</h2>
+    <h2>Run</h2>
     <div>
-        <button onclick="renderFromInput()">Render from Input</button>
-        <button onclick="generateInitialCoords()">Generate 3D (ETKDG v3)</button>
-        <button onclick="runOptimization()">Optimize (MMFF94s)</button>
+        <button id="btn-render" onclick="renderFromInput()">Render from input</button>
+        <button id="btn-etkdg" onclick="generateInitialCoords()">Generate 3D (ETKDG v3)</button>
+        <button id="btn-opt" onclick="runOptimization()">Optimize (MMFF94s)</button>
     </div>
 
     <h2>Log</h2>
     <div id="log" class="log"></div>
 
+    <footer>
+        <p>
+            WebMM runs entirely in your browser — no data leaves your machine.
+            Source: <a href="https://github.com/Ruibin-Liu/WebMM" target="_blank" rel="noopener">github.com/Ruibin-Liu/WebMM</a>.
+            Force-field parameters and atom typing are cross-checked against
+            <a href="https://www.rdkit.org/" target="_blank" rel="noopener">RDKit</a>.
+        </p>
+    </footer>
+
     <script>
-        let optimize_from_sdf, generate_initial_coordinates_wasm;
+        let optimize_from_sdf, generate_initial_coordinates_wasm, OptimizationOptions;
         let viewer3Dmol;
         let currentStyle = 'stick';
+        let ready = false;
 
         const statusDiv = document.getElementById('status');
         const logDiv = document.getElementById('log');
+        const setMetric = (id, txt) => { document.getElementById(id).textContent = txt; };
 
         function setStatus(msg, type) {
             statusDiv.textContent = msg;
@@ -141,31 +161,34 @@
             logDiv.scrollTop = logDiv.scrollHeight;
         }
 
+        function setReady(state) {
+            ready = state;
+            ['btn-render', 'btn-etkdg', 'btn-opt'].forEach(id => {
+                document.getElementById(id).disabled = !state;
+            });
+        }
+
         function initViewer() {
             if (typeof $3Dmol === 'undefined') {
-                log('3Dmol.js not loaded - viewer disabled');
+                log('3Dmol.js failed to load — viewer disabled');
                 return;
             }
             const element = document.getElementById('viewer');
-            viewer3Dmol = $3Dmol.createViewer(element, { backgroundColor: '#f9f9f9' });
+            viewer3Dmol = $3Dmol.createViewer(element, { backgroundColor: '#f6f8fa' });
             log('3D viewer initialized');
         }
 
         const VIEWER_STYLES = {
-            stick: { stick: { radius: 0.15, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } } },
-            sphere: { sphere: { scale: 1.0, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } } },
-            'ball+stick': {
-                stick: { radius: 0.15, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } },
-                sphere: { scale: 0.25, colors: { C: '#333333', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#ffffff' } }
-            },
-            line: { line: { linewidth: 4, colors: { C: '#000000', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#aaaaaa' } } },
-            cross: { cross: { radius: 0.2, colors: { C: '#000000', O: '#ff0000', N: '#0066ff', S: '#ffcc00', H: '#aaaaaa' } } }
+            stick: { stick: { radius: 0.15 } },
+            'ball+stick': { stick: { radius: 0.15 }, sphere: { scale: 0.28 } },
+            sphere: { sphere: { scale: 0.85 } },
+            line: { line: { linewidth: 3 } }
         };
 
         function setStyle(style) {
             currentStyle = style;
             if (viewer3Dmol) {
-                viewer3Dmol.setStyle({}, VIEWER_STYLES[style]);
+                viewer3Dmol.setStyle({}, VIEWER_STYLES[style] || VIEWER_STYLES.stick);
                 viewer3Dmol.render();
             }
         }
@@ -175,193 +198,217 @@
             try {
                 viewer3Dmol.removeAllModels();
                 viewer3Dmol.addModel(sdfContent, 'sdf');
-                viewer3Dmol.setStyle({}, VIEWER_STYLES[currentStyle]);
+                viewer3Dmol.setStyle({}, VIEWER_STYLES[currentStyle] || VIEWER_STYLES.stick);
                 viewer3Dmol.zoomTo();
                 viewer3Dmol.render();
             } catch (e) {
-                console.error('renderMolecule error:', e);
+                log('render error: ' + e.message);
+                console.error(e);
             }
         }
 
         function renderMoleculeWithCoords(coords, sdfContent) {
-            if (!viewer3Dmol || !coords) return;
+            if (!viewer3Dmol || !coords || !coords.length) return;
             try {
                 renderMolecule(sdfContent);
-                var atoms = viewer3Dmol.selectedAtoms({});
-                for (var i = 0; i < atoms.length; i++) {
+                const atoms = viewer3Dmol.selectedAtoms({});
+                for (let i = 0; i < atoms.length; i++) {
                     if (i * 3 + 2 < coords.length) {
                         atoms[i].x = coords[i * 3];
                         atoms[i].y = coords[i * 3 + 1];
                         atoms[i].z = coords[i * 3 + 2];
                     }
                 }
-                viewer3Dmol.setStyle({}, VIEWER_STYLES[currentStyle]);
+                viewer3Dmol.setStyle({}, VIEWER_STYLES[currentStyle] || VIEWER_STYLES.stick);
                 viewer3Dmol.zoomTo();
                 viewer3Dmol.render();
             } catch (e) {
-                log('renderMoleculeWithCoords error: ' + e.message);
+                log('render error: ' + e.message);
                 console.error(e);
             }
         }
 
+        function flatCoords(result) {
+            const out = [];
+            for (let i = 0; i < result.n_atoms; i++) {
+                out.push(result.get_coord(i, 0));
+                out.push(result.get_coord(i, 1));
+                out.push(result.get_coord(i, 2));
+            }
+            return out;
+        }
+
         async function initWasm() {
             try {
-                const wasmModule = await import('../pkg/webmm.js');
+                const wasmModule = await import('./webmm.js');
                 if (wasmModule.default) await wasmModule.default();
                 optimize_from_sdf = wasmModule.optimize_from_sdf;
                 generate_initial_coordinates_wasm = wasmModule.generate_initial_coordinates_wasm;
                 OptimizationOptions = wasmModule.OptimizationOptions;
-                if (!optimize_from_sdf) throw new Error('optimize_from_sdf not found');
+                if (!optimize_from_sdf || !generate_initial_coordinates_wasm || !OptimizationOptions) {
+                    throw new Error('expected WASM exports not found');
+                }
                 setStatus('Ready', 'success');
+                setReady(true);
                 log('WASM module loaded');
+                loadTestFile('caffeine');
             } catch (error) {
-                setStatus('Failed: ' + error.message, 'error');
+                setStatus('Failed to load WASM: ' + error.message, 'error');
                 log(error);
                 console.error(error);
             }
         }
 
-        var TEST_MOLECULES = {
-            water: 'Water\n     RDKit          3D\n\n  3  2  0  0  0  0  0  0  0  0999 V2000\n    0.0075    0.3977    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7671   -0.1844    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7596   -0.2134    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  1  3  1  0\nM  END',
-            acetic: 'Acetic acid\n     RDKit          3D\n\n  8  7  0  0  0  0  0  0  0  0999 V2000\n   -0.9549   -0.1188   -0.0467 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4728    0.3162   -0.0139 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.8884    1.4538   -0.1499 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3178   -0.7111    0.1905 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1077   -0.8272   -0.8647 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2264   -0.5716    0.9100 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.5945    0.7523   -0.2149 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2046   -0.2935    0.1897 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  2  0\n  2  4  1  0\n  1  5  1  0\n  1  6  1  0\n  1  7  1  0\n  4  8  1  0\nM  END',
-            benzene: 'Benzene\n     RDKit          3D\n\n 12 12  0  0  0  0  0  0  0  0999 V2000\n   -1.0500    0.9181   -0.0114 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3201   -0.4503   -0.0061 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2701   -1.3684    0.0053 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0500   -0.9181    0.0114 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3201    0.4503    0.0061 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.2701    1.3684   -0.0053 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.8681    1.6334   -0.0203 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.3486   -0.8012   -0.0108 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4805   -2.4346    0.0094 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8681   -1.6334    0.0203 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.3486    0.8012    0.0108 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4805    2.4346   -0.0095 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  1  1  0\n  1  7  1  0\n  2  8  1  0\n  3  9  1  0\n  4 10  1  0\n  5 11  1  0\n  6 12  1  0\nM  END',
-            ethanol: 'Ethanol\n     RDKit          3D\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n    0.8867    0.1097    0.1398 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4649   -0.1632   -0.4871 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4908    0.4341    0.2924 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0600    1.1872    0.2278 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.6897   -0.3301   -0.4581 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9343   -0.3042    1.1524 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5119    0.2599   -1.4947 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6562   -1.2384   -0.5550 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4469    0.0448    1.1825 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  1  4  1  0\n  1  5  1  0\n  1  6  1  0\n  2  7  1  0\n  2  8  1  0\n  3  9  1  0\nM  END',
-            aniline: 'Aniline\n     RDKit          3D\n\n 14 14  0  0  0  0  0  0  0  0999 V2000\n   -1.8551    0.3019   -0.2147 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9433    1.3121   -0.5108 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4265    1.0872   -0.3490 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9000   -0.1487    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2537   -0.3576    0.2878 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0248   -1.1486    0.4072 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3958   -0.9291    0.2472 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9206    0.4752   -0.3382 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2957    2.2773   -0.8642 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1231    1.8892   -0.5767 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.5964   -1.2716    0.5480 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9224    0.3435    0.0017 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3154   -2.1119    0.7767 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1023   -1.7188    0.4874 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  4  6  1  0\n  6  7  2  0\n  7  1  1  0\n  1  8  1  0\n  2  9  1  0\n  3 10  1  0\n  5 11  1  0\n  5 12  1  0\n  6 13  1  0\n  7 14  1  0\nM  END',
-            thiophene: 'Thiophene\n     RDKit          3D\n\n  9  9  0  0  0  0  0  0  0  0999 V2000\n    0.9000    0.6500    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4500    0.7500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2000   -0.4500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1500   -1.4000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0500   -0.8500    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3000    1.8200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2600   -0.5500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2200   -2.4800    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1200   -0.9500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  2  0\n  3  4  1  0\n  4  5  2  0\n  5  1  1  0\n  2  6  1  0\n  3  7  1  0\n  4  8  1  0\n  5  9  1  0\nM  END',
-            chloroethane: 'Chloroethane\n     RDKit          3D\n\n  8  7  0  0  0  0  0  0  0  0999 V2000\n    0.7640    0.0946    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7010   -0.1400    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1800    0.8800    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0\n    1.0600    1.1600    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4200   -0.5200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.8400   -0.4300    1.0100 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2100   -0.7200    0.8900 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1700   -0.5400   -0.8900 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  1  4  1  0\n  1  5  1  0\n  1  6  1  0\n  2  7  1  0\n  2  8  1  0\nM  END',
-            fluorobenzene: 'Fluorobenzene\n     RDKit          3D\n\n 12 12  0  0  0  0  0  0  0  0999 V2000\n   -1.0500    0.9181    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3201   -0.4503    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2701   -1.3684    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0500   -0.9181    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3201    0.4503    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.2701    1.3684    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.8681    1.6334    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.3486   -0.8012    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4805   -2.4346    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8681   -1.6334    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.3486    0.8012    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4805    2.4346    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  1  1  0\n  1  7  1  0\n  2  8  1  0\n  3  9  1  0\n  4 10  1  0\n  5 11  1  0\n  6 12  1  0\nM  END'
+        const TEST_MOLECULES = {
+            caffeine: 'caffeine\n     RDKit          3D\n\n 24 25  0  0  0  0  0  0  0  0999 V2000\n   -3.1467    0.3265   -1.1835 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1053    0.5301   -0.2170 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2966    1.1837    0.9508 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1349    1.2083    1.6347 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1914    0.5776    0.9232 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8053    0.1537   -0.2383 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0843   -0.5348   -1.1842 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6291   -0.9261   -2.2444 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2166   -0.7901   -0.9692 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8366   -0.3797    0.1694 C   0  0  0  0  0  0  0  0  0  0  0  0\n    3.0459   -0.6252    0.3533 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1188    0.2930    1.0864 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.7486    0.7433    2.3079 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.9500   -1.5253   -1.9992 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.7183    0.1213   -2.1828 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.7643    1.2546   -1.2989 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.8067   -0.5028   -0.8528 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.2283    1.6279    1.3057 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.7467    0.2925    2.4045 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1334    0.3401    3.1586 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8508    1.8381    2.3249 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9689   -1.7716   -1.6252 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.0933   -0.8627   -2.8669 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3843   -2.4217   -2.2647 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  7  1  0\n  7  8  2  0\n  7  9  1  0\n  9 10  1  0\n 10 11  2  0\n 10 12  1  0\n 12 13  1  0\n  9 14  1  0\n  6  2  1  0\n 12  5  1  0\n  1 15  1  0\n  1 16  1  0\n  1 17  1  0\n  3 18  1  0\n 13 19  1  0\n 13 20  1  0\n 13 21  1  0\n 14 22  1  0\n 14 23  1  0\n 14 24  1  0\nM  END',
+            aspirin: 'aspirin\n     RDKit          3D\n\n 21 21  0  0  0  0  0  0  0  0999 V2000\n   -1.5974   -1.3813   -3.0708 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8644   -1.3818   -1.7726 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3285   -0.9937   -1.6623 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4931   -1.8265   -0.5945 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6986   -1.7757    0.5481 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0453   -2.9192    0.8183 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.8367   -2.8752    1.9520 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.8726   -1.7542    2.7549 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.1154   -0.6292    2.4538 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6762   -0.6589    1.3293 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4862    0.4902    0.9706 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2081    0.4317   -0.0760 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.5094    1.6572    1.7219 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4447   -0.4029   -3.5676 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.6774   -1.4829   -2.8325 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2327   -2.2270   -3.7171 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0004   -3.7958    0.1671 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4221   -3.7735    2.1657 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4978   -1.7487    3.6309 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.1621    0.2313    3.0967 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.6136    2.5292    1.2238 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  2  0\n  2  4  1  0\n  4  5  1  0\n  5  6  2  0\n  6  7  1  0\n  7  8  2  0\n  8  9  1  0\n  9 10  2  0\n 10 11  1  0\n 11 12  2  0\n 11 13  1  0\n 10  5  1  0\n  1 14  1  0\n  1 15  1  0\n  1 16  1  0\n  6 17  1  0\n  7 18  1  0\n  8 19  1  0\n  9 20  1  0\n 13 21  1  0\nM  END',
+            paracetamol: 'paracetamol\n     RDKit          3D\n\n 20 20  0  0  0  0  0  0  0  0999 V2000\n    1.9085   -0.8718   -3.9202 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1146   -0.6388   -2.6645 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1281   -0.4475   -2.6959 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.7838   -0.6337   -1.4035 N   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9995   -0.4088   -0.2247 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.8097    0.8953    0.2373 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0371    1.0532    1.3896 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4939   -0.0605    2.0086 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2666    0.1359    3.1665 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3032   -1.3457    1.5481 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4611   -1.4980    0.4088 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3472   -0.5210   -4.8058 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1006   -1.9529   -4.0652 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.8512   -0.2803   -3.8926 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.8151   -0.7865   -1.3099 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2473    1.7412   -0.2831 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1345    2.0665    1.7837 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2150    0.4778    3.1108 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7296   -2.2038    2.0503 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.6077   -2.5159    0.0505 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  2  0\n  2  4  1  0\n  4  5  1  0\n  5  6  2  0\n  6  7  1  0\n  7  8  2  0\n  8  9  1  0\n  8 10  1  0\n 10 11  2  0\n 11  5  1  0\n  1 12  1  0\n  1 13  1  0\n  1 14  1  0\n  4 15  1  0\n  6 16  1  0\n  7 17  1  0\n  9 18  1  0\n 10 19  1  0\n 11 20  1  0\nM  END',
+            nicotine: 'nicotine\n     RDKit          3D\n\n 26 27  0  0  0  0  0  0  0  0999 V2000\n    3.1821    2.6007    0.8983 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.9289    2.6680    0.3296 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0350    1.6061    0.4272 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3150    1.6275   -0.1623 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4412    0.8782   -1.4575 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2653   -0.3432   -1.1369 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.8001   -0.1364    0.2483 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3787    1.1664    0.6206 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4753    1.5266    1.9746 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4711    0.4959    1.1179 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.7382    0.4686    1.6744 C   0  0  0  0  0  0  0  0  0  0  0  0\n    3.5955    1.5003    1.5748 N   0  0  0  0  0  0  0  0  0  0  0  0\n    3.8353    3.4513    0.7932 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5725    3.5417   -0.2196 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5124    2.7127   -0.4067 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.5522    0.6081   -1.8230 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.0006    1.4799   -2.2307 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1020   -0.4869   -1.8537 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6238   -1.2608   -1.1160 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9130   -0.1585    0.2668 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4997   -0.9544    0.9445 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.7459    0.6762    2.6362 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.3436    2.2451    2.0582 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5994    2.0566    2.3735 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.8494   -0.3817    1.2488 H   0  0  0  0  0  0  0  0  0  0  0  0\n    3.0878   -0.3962    2.2167 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  1  0\n  4  5  1  0\n  5  6  1  0\n  6  7  1  0\n  7  8  1  0\n  8  9  1  0\n  3 10  2  0\n 10 11  1  0\n 11 12  2  0\n 12  1  1  0\n  8  4  1  0\n  1 13  1  0\n  2 14  1  0\n  4 15  1  0\n  5 16  1  0\n  5 17  1  0\n  6 18  1  0\n  6 19  1  0\n  7 20  1  0\n  7 21  1  0\n  9 22  1  0\n  9 23  1  0\n  9 24  1  0\n 10 25  1  0\n 11 26  1  0\nM  END',
+            sulfanilamide: 'sulfanilamide\n     RDKit          3D\n\n 19 19  0  0  0  0  0  0  0  0999 V2000\n   -2.2184   -2.5598    0.7387 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1946   -1.5738    0.6682 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8383   -0.7928    1.7606 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.1733    0.1532    1.6193 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.8257    0.3173    0.3904 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1092    1.5219    0.2220 S   0  0  0  0  0  0  0  0  0  0  0  0\n    2.7637    1.7583    1.5734 O   0  0  0  0  0  0  0  0  0  0  0  0\n    3.1502    1.0571   -0.7289 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4917    3.0470   -0.2665 N   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4700   -0.4657   -0.7089 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5459   -1.4141   -0.5625 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.2188   -2.2735    0.7594 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.9829   -3.5544    0.7695 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3468   -0.9235    2.7119 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4554    0.7708    2.4822 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.5445    3.2254    0.0834 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.6786    3.2894   -1.2465 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9754   -0.3423   -1.6708 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8329   -2.0361   -1.4245 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  2  0\n  3  4  1  0\n  4  5  2  0\n  5  6  1  0\n  6  7  2  0\n  6  8  2  0\n  6  9  1  0\n  5 10  1  0\n 10 11  2  0\n 11  2  1  0\n  1 12  1  0\n  1 13  1  0\n  3 14  1  0\n  4 15  1  0\n  9 16  1  0\n  9 17  1  0\n 10 18  1  0\n 11 19  1  0\nM  END',
+            pyridine_no: 'pyridine N-oxide\n     RDKit          3D\n\n 12 12  0  0  0  0  0  0  0  0999 V2000\n   -0.9884   -1.1532    0.6418 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5000   -0.1698    1.4490 N   0  0  0  0  0  0  0  0  0  0  0  0\n    0.5370    0.5831    1.0448 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0452    1.5848    1.8505 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4408    1.7796    3.0912 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6241    1.0153    3.5204 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.0767    0.0272    2.6504 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0040    0.4297    0.0815 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8693    2.1734    1.5140 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7911    2.5429    3.7621 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.0853    1.1737    4.4827 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.9071   -0.6006    2.9344 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  2  0\n  3  4  1  0\n  4  5  2  0\n  5  6  1  0\n  6  7  2  0\n  7  2  1  0\n  3  8  1  0\n  4  9  1  0\n  5 10  1  0\n  6 11  1  0\n  7 12  1  0\nM  CHG  2   1  -1   2   1\nM  END',
+            naphthalene: 'naphthalene\n     RDKit          3D\n\n 18 19  0  0  0  0  0  0  0  0999 V2000\n   -1.4714   -2.0931   -0.7097 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.5010   -1.5565   -1.9999 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8227   -0.3801   -2.2839 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1100    0.2795   -1.3052 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.5606    1.4489   -1.6002 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2642    2.0875   -0.6062 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3294    1.6074    0.6805 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.6442    0.4261    0.9518 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0748   -0.2459   -0.0210 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7524   -1.4253    0.2722 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.0027   -3.0173   -0.4812 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.0537   -2.0470   -2.8054 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8205    0.0668   -3.2662 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.5589    1.8961   -2.5968 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8098    3.0164   -0.7962 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8829    2.1020    1.4797 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.6469   -0.0155    1.9395 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7314   -1.8510    1.2871 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  7  1  0\n  7  8  2  0\n  8  9  1  0\n  9 10  2  0\n 10  1  1  0\n  9  4  1  0\n  1 11  1  0\n  2 12  1  0\n  3 13  1  0\n  5 14  1  0\n  6 15  1  0\n  7 16  1  0\n  8 17  1  0\n 10 18  1  0\nM  END',
+            glucose: 'glucose\n     RDKit          3D\n\n 24 24  0  0  0  0  0  0  0  0999 V2000\n    0.2326    2.5926   -1.5776 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2774    1.4484   -2.2056 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3883    0.2680   -1.4928 C   0  0  1  0  0  0  0  0  0  0  0  0\n    0.0224    0.3647   -0.1777 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.5259   -0.5863    0.6624 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5229   -0.9884    1.5029 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9879   -1.8160   -0.0883 C   0  0  2  0  0  0  0  0  0  0  0  0\n    2.2249   -1.5291   -0.6913 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0964   -2.1094   -1.1132 C   0  0  1  0  0  0  0  0  0  0  0  0\n   -1.3205   -1.8861   -0.4470 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0170   -1.0409   -2.1579 C   0  0  2  0  0  0  0  0  0  0  0  0\n    0.9979   -1.3973   -3.1100 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1963    3.3957   -1.9339 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3699    1.3324   -1.9841 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0686    1.4703   -3.2807 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4881    0.4780   -1.6412 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3774   -0.2207    1.2886 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4585   -1.9458    1.7503 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1700   -2.6665    0.5798 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.7117   -0.9814   -0.0186 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0561   -3.1323   -1.5107 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.0678   -1.9923   -1.0699 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9720   -0.9510   -2.6416 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.5680   -1.9984   -3.7699 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  3  4  1  0\n  4  5  1  0\n  5  6  1  0\n  5  7  1  0\n  7  8  1  0\n  7  9  1  0\n  9 10  1  0\n  9 11  1  0\n 11 12  1  0\n 11  3  1  0\n  1 13  1  0\n  2 14  1  0\n  2 15  1  0\n  3 16  1  1\n  5 17  1  0\n  6 18  1  0\n  7 19  1  1\n  8 20  1  0\n  9 21  1  6\n 10 22  1  0\n 11 23  1  6\n 12 24  1  0\nM  END',
+            dmso: 'DMSO\n     RDKit          3D\n\n 10  9  0  0  0  0  0  0  0  0999 V2000\n   -1.3915   -1.6500   -1.0631 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1289   -0.5625   -0.4246 S   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6413    0.8034   -0.0492 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2282   -0.4663   -1.6144 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.6545   -2.4346   -0.3092 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.0207   -2.2147   -1.9544 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.3341   -1.1125   -1.3244 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5413    0.5814   -1.7543 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9377   -0.9348   -2.5819 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.0371   -1.1058   -1.1868 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  2  0\n  2  4  1  0\n  1  5  1  0\n  1  6  1  0\n  1  7  1  0\n  4  8  1  0\n  4  9  1  0\n  4 10  1  0\nM  END',
+            cyclohexane: 'cyclohexane\n     RDKit          3D\n\n 18 18  0  0  0  0  0  0  0  0999 V2000\n    0.2432    0.2703   -2.0057 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1531   -0.6329   -1.2348 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8262    0.1716   -0.1302 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.6974    0.5370    0.8281 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0842    1.6218    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6833    1.0896   -1.1667 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3961   -0.3548   -2.6800 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.8811    0.9269   -2.6417 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.9218   -1.0207   -1.9227 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.6484   -1.4922   -0.7618 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.6330   -0.3789    0.3681 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1986    1.0953   -0.6156 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0772    0.9220    1.7802 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0415   -0.3598    0.9592 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.6646    2.4169   -0.1469 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9070    2.0020    0.7335 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9626    1.9844   -1.7839 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.5868    0.4996   -0.9072 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  3  4  1  0\n  4  5  1  0\n  5  6  1  0\n  6  1  1  0\n  1  7  1  0\n  1  8  1  0\n  2  9  1  0\n  2 10  1  0\n  3 11  1  0\n  3 12  1  0\n  4 13  1  0\n  4 14  1  0\n  5 15  1  0\n  5 16  1  0\n  6 17  1  0\n  6 18  1  0\nM  END',
+            water: 'water\n     RDKit          3D\n\n  3  2  0  0  0  0  0  0  0  0999 V2000\n    0.0075    0.3977    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7671   -0.1844    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7596   -0.2134    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  1  3  1  0\nM  END',
+            ethanol: 'ethanol\n     RDKit          3D\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n    0.8867    0.1097    0.1398 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4649   -0.1632   -0.4871 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4908    0.4341    0.2924 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0600    1.1872    0.2278 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.6897   -0.3301   -0.4581 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9343   -0.3042    1.1524 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5119    0.2599   -1.4947 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6562   -1.2384   -0.5550 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4469    0.0448    1.1825 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  1  4  1  0\n  1  5  1  0\n  1  6  1  0\n  2  7  1  0\n  2  8  1  0\n  3  9  1  0\nM  END',
+            aniline: 'aniline\n     RDKit          3D\n\n 14 14  0  0  0  0  0  0  0  0999 V2000\n   -1.8551    0.3019   -0.2147 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9433    1.3121   -0.5108 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4265    1.0872   -0.3490 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9000   -0.1487    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2537   -0.3576    0.2878 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0248   -1.1486    0.4072 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3958   -0.9291    0.2472 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9206    0.4752   -0.3382 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2957    2.2773   -0.8642 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1231    1.8892   -0.5767 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.5964   -1.2716    0.5480 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9224    0.3435    0.0017 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3154   -2.1119    0.7767 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1023   -1.7188    0.4874 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  4  6  1  0\n  6  7  2  0\n  7  1  1  0\n  1  8  1  0\n  2  9  1  0\n  3 10  1  0\n  5 11  1  0\n  5 12  1  0\n  6 13  1  0\n  7 14  1  0\nM  END',
+            benzene: 'benzene\n     RDKit          3D\n\n 12 12  0  0  0  0  0  0  0  0999 V2000\n   -1.0500    0.9181   -0.0114 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3201   -0.4503   -0.0061 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2701   -1.3684    0.0053 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0500   -0.9181    0.0114 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3201    0.4503    0.0061 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.2701    1.3684   -0.0053 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.8681    1.6334   -0.0203 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.3486   -0.8012   -0.0108 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4805   -2.4346    0.0094 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8681   -1.6334    0.0203 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.3486    0.8012    0.0108 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4805    2.4346   -0.0095 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  1  1  0\n  1  7  1  0\n  2  8  1  0\n  3  9  1  0\n  4 10  1  0\n  5 11  1  0\n  6 12  1  0\nM  END'
         };
 
+        // Build molecule buttons dynamically
+        const MOLECULE_ORDER = [
+            'caffeine', 'aspirin', 'paracetamol', 'nicotine', 'sulfanilamide',
+            'pyridine_no', 'naphthalene', 'glucose', 'dmso', 'cyclohexane',
+            'water', 'ethanol', 'aniline', 'benzene'
+        ];
+        const MOLECULE_LABELS = {
+            caffeine: 'Caffeine', aspirin: 'Aspirin', paracetamol: 'Paracetamol',
+            nicotine: 'Nicotine', sulfanilamide: 'Sulfanilamide', pyridine_no: 'Pyridine N-oxide',
+            naphthalene: 'Naphthalene', glucose: 'Glucose', dmso: 'DMSO', cyclohexane: 'Cyclohexane',
+            water: 'Water', ethanol: 'Ethanol', aniline: 'Aniline', benzene: 'Benzene'
+        };
+        (function buildButtons() {
+            const container = document.getElementById('molecule-buttons');
+            MOLECULE_ORDER.forEach(key => {
+                const btn = document.createElement('button');
+                btn.textContent = MOLECULE_LABELS[key];
+                btn.className = 'secondary';
+                btn.onclick = () => loadTestFile(key);
+                container.appendChild(btn);
+            });
+        })();
+
         function loadTestFile(name) {
-            name = name || 'water';
-            var sdf = TEST_MOLECULES[name];
+            const sdf = TEST_MOLECULES[name];
             if (!sdf) return;
             document.getElementById('sdf-input').value = sdf;
             renderMolecule(sdf);
-            setStatus('Loaded ' + name, 'success');
+            setStatus('Loaded ' + MOLECULE_LABELS[name], 'info');
             log('Loaded ' + name);
+            // reset metrics to stale
+            setMetric('m-energy', '—');
+            setMetric('m-iters', '—');
         }
 
-        async function generateInitialCoords() {
-            try {
-                var sdfContent = document.getElementById('sdf-input').value;
-                if (!sdfContent.trim()) { setStatus('Enter SDF first', 'error'); return; }
-                setStatus('Generating 3D coords (ETKDG v3)...', 'info');
-                log('Starting ETKDG v3');
-                var t0 = performance.now();
-                var result = await generate_initial_coordinates_wasm(sdfContent);
-                var dt = ((performance.now() - t0) / 1000).toFixed(2);
-                if (result.get_success()) {
-                    setStatus('ETKDG v3 complete, optimizing...', 'info');
-                    var nAtoms = typeof result.get_n_atoms === 'function' ? result.get_n_atoms() : result.get_n_atoms;
-                    log('ETKDG v3 generated in ' + dt + 's, ' + nAtoms + ' atoms');
-                    var coords = result.get_coordinates();
-                    renderMoleculeWithCoords(coords, sdfContent);
-
-                    var t1 = performance.now();
-                    var opts = new OptimizationOptions();
-                    opts.set_max_iterations(500);
-                    opts.set_max_force(0.01);
-                    var optResult = await optimize_from_sdf(sdfContent, opts);
-                    var dt2 = ((performance.now() - t1) / 1000).toFixed(2);
-                    var optCoords = [];
-                    for (var i = 0; i < optResult.n_atoms; i++) {
-                        optCoords.push(optResult.get_coord(i, 0));
-                        optCoords.push(optResult.get_coord(i, 1));
-                        optCoords.push(optResult.get_coord(i, 2));
-                    }
-                    logCoords('Ours MMFF94s optimized', optCoords, sdfContent);
-                    renderMoleculeWithCoords(optCoords, sdfContent);
-                    if (optResult.get_converged()) {
-                        setStatus('Converged in ' + optResult.get_iterations() + ' iters (' + dt2 + 's)', 'success');
-                        log('MMFF94s: ' + optResult.get_iterations() + ' iters, E=' + optResult.get_final_energy().toFixed(2));
-                    } else {
-                        setStatus('Max iters (' + dt2 + 's)', 'error');
-                        log('MMFF94s: ' + optResult.get_iterations() + ' iters, E=' + optResult.get_final_energy().toFixed(2));
-                    }
-                } else {
-                    setStatus('ETKDG failed: ' + result.get_error(), 'error');
-                    log('ETKDG failed');
-                }
-            } catch (error) {
-                setStatus('Error: ' + error.message, 'error');
-                log(error);
+        function getSdf() {
+            const sdfContent = document.getElementById('sdf-input').value;
+            if (!sdfContent.trim()) {
+                setStatus('Paste or load an SDF first', 'error');
+                return null;
             }
-        }
-
-        function logCoords(label, coords, sdfContent) {
-            var elements = [];
-            if (sdfContent) {
-                var lines = sdfContent.split('\n');
-                var atomCount = parseInt(lines[3].substring(0, 3));
-                for (var i = 4; i < 4 + atomCount; i++) {
-                    var sym = lines[i].substring(31, 34).trim();
-                    elements.push(sym);
-                }
-            }
-            log(label + ' coords (' + (coords.length/3) + ' atoms):');
-            for (var i = 0; i < coords.length / 3; i++) {
-                var sym = i < elements.length ? elements[i] : '?';
-                log('  ' + sym + i + ': ' + coords[i*3].toFixed(4) + ', ' + coords[i*3+1].toFixed(4) + ', ' + coords[i*3+2].toFixed(4));
-            }
+            return sdfContent;
         }
 
         async function runOptimization() {
+            if (!ready) return;
+            const sdfContent = getSdf();
+            if (!sdfContent) return;
+            setStatus('Optimizing (MMFF94s)…', 'info');
+            setReady(false);
+            log('Starting MMFF94s optimization');
             try {
-                var sdfContent = document.getElementById('sdf-input').value;
-                if (!sdfContent.trim()) { setStatus('Enter SDF first', 'error'); return; }
-                setStatus('Optimizing...', 'info');
-                log('Starting MMFF94s optimization');
-                var t0 = performance.now();
-                var opts = new OptimizationOptions();
-                opts.set_max_iterations(500);
+                const t0 = performance.now();
+                const opts = new OptimizationOptions();
+                opts.set_max_iterations(1000);
                 opts.set_max_force(0.01);
-                var result = await optimize_from_sdf(sdfContent, opts);
-                var dt = ((performance.now() - t0) / 1000).toFixed(2);
-                var coords = [];
-                for (var i = 0; i < result.n_atoms; i++) {
-                    coords.push(result.get_coord(i, 0));
-                    coords.push(result.get_coord(i, 1));
-                    coords.push(result.get_coord(i, 2));
-                }
+                opts.set_rms_force(0.001);
+                const result = optimize_from_sdf(sdfContent, opts);
+                const dt = ((performance.now() - t0) / 1000).toFixed(2);
+                const coords = flatCoords(result);
                 renderMoleculeWithCoords(coords, sdfContent);
+                setMetric('m-energy', result.get_final_energy().toFixed(3) + ' kcal/mol');
+                setMetric('m-iters', result.get_iterations());
+                setMetric('m-atoms', result.n_atoms);
+                setMetric('m-time', dt + ' s');
                 if (result.get_converged()) {
-                    setStatus('Converged in ' + result.get_iterations() + ' iters (' + dt + 's)', 'success');
-                    log('Converged: ' + result.get_iterations() + ' iters, E=' + result.get_final_energy().toFixed(2) + ' kcal/mol');
+                    setStatus('Converged in ' + result.get_iterations() + ' iterations', 'success');
+                    log('Converged: ' + result.get_iterations() + ' iters, E=' + result.get_final_energy().toFixed(3) + ' kcal/mol');
                 } else {
-                    setStatus('Max iters reached (' + dt + 's)', 'error');
-                    log(result.get_iterations() + ' iters, E=' + result.get_final_energy().toFixed(2) + ' kcal/mol');
+                    setStatus('Max iterations reached', 'error');
+                    log(result.get_iterations() + ' iters, E=' + result.get_final_energy().toFixed(3) + ' kcal/mol');
                 }
             } catch (error) {
                 setStatus('Error: ' + error.message, 'error');
-                log(error);
+                log('' + error);
+                console.error(error);
+            } finally {
+                setReady(true);
+            }
+        }
+
+        async function generateInitialCoords() {
+            if (!ready) return;
+            const sdfContent = getSdf();
+            if (!sdfContent) return;
+            setStatus('Generating 3D coordinates (ETKDG v3)…', 'info');
+            setReady(false);
+            log('Starting ETKDG v3 embedding');
+            try {
+                const t0 = performance.now();
+                const result = generate_initial_coordinates_wasm(sdfContent);
+                const dt = ((performance.now() - t0) / 1000).toFixed(2);
+                if (result.get_success()) {
+                    const coords = result.get_coordinates();
+                    renderMoleculeWithCoords(coords, sdfContent);
+                    setMetric('m-atoms', result.get_n_atoms());
+                    setMetric('m-time', dt + ' s');
+                    setMetric('m-energy', '—');
+                    setMetric('m-iters', '—');
+                    setStatus('ETKDG v3 complete in ' + dt + ' s (' + result.get_n_atoms() + ' atoms)', 'success');
+                    log('ETKDG v3: ' + result.get_n_atoms() + ' atoms in ' + dt + ' s');
+                } else {
+                    setStatus('ETKDG failed: ' + result.get_error(), 'error');
+                    log('ETKDG failed: ' + result.get_error());
+                }
+            } catch (error) {
+                setStatus('Error: ' + error.message, 'error');
+                log('' + error);
+                console.error(error);
+            } finally {
+                setReady(true);
             }
         }
 
         function renderFromInput() {
-            var sdf = document.getElementById('sdf-input').value;
-            if (sdf.trim()) {
-                renderMolecule(sdf);
-            }
+            const sdf = document.getElementById('sdf-input').value;
+            if (sdf.trim()) renderMolecule(sdf);
         }
 
-        document.getElementById('sdf-input').addEventListener('change', function() {
-            renderFromInput();
-        });
+        document.getElementById('sdf-input').addEventListener('input', renderFromInput);
 
-        window.addEventListener('resize', function() {
+        window.addEventListener('resize', () => {
             if (viewer3Dmol) {
-                var element = document.getElementById('viewer');
-                var rect = element.getBoundingClientRect();
+                const rect = document.getElementById('viewer').getBoundingClientRect();
                 viewer3Dmol.setWidth(rect.width);
                 viewer3Dmol.setHeight(rect.height);
                 viewer3Dmol.render();
             }
         });
 
+        setReady(false);
         initViewer();
         initWasm();
-        loadTestFile('water');
     </script>
 </body>
 </html>

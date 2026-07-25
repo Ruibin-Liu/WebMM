@@ -2,8 +2,17 @@ name: Deploy to GitHub Pages
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'site/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/pages.yml'
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,9 +26,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
     - uses: actions/checkout@v4
 
@@ -40,6 +46,12 @@ jobs:
     - name: Build WASM
       run: wasm-pack build --target web --release
 
+    # wasm-pack writes webmm.js / webmm_bg.wasm into pkg/, but the demo
+    # landing page is the committed site/index.html (pkg/ is gitignored).
+    # Copy it in so the deployed Pages root has an entry point.
+    - name: Stage landing page
+      run: cp site/index.html pkg/index.html
+
     - name: Setup Pages
       uses: actions/configure-pages@v5
 
@@ -48,6 +60,13 @@ jobs:
       with:
         path: pkg
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
     - name: Deploy to GitHub Pages
       id: deployment
       uses: actions/deploy-pages@v4
