@@ -4,9 +4,13 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-None active — large-scale RDKit validation harness built (109 mols); see Recently Completed & roadmap.
+None active — #1 (5-ring type collapse) fixed; validation at 3.85% mismatch.
 
 ## Recently Completed
+- **#1 5-ring type_ids collapse fixed (energy-neutral)** (per PLAN.md "Fix #1: 5-ring type_ids collapse"):
+  - `src/mmff/mod.rs`: `type_ids` now uses `mmff_type_id(at)` for all types (no base_type collapse). The collapse was a workaround for the since-fixed NPYL charge bug; with that fixed, un-collapsing is energy-neutral (caffeine breakdown byte-identical; 109-mol r=0.954/RMSD 11.04 unchanged).
+  - Validation atom-type mismatch **91 → 51 (3.85%)** — the 56 dominant 5-ring cases (C5A/C5B/NPYL/N5B/OFUR) now report their real MMFF IDs. 165 tests pass, 0 warnings.
+  - Remaining (cosmetic, no energy impact): C5A-vs-C5B alpha/beta swap (13 — RDKit keys on pyrrole-vs-pyridine-N position; both EQ-fall to C_2), plus H-subtype residuals (16), HNR+ charged-amine H (5), cyclopropane CR3R (3), water OH2-vs-O_3 (3), N_2-vs-N_PL3 (3), CS2 S2CM (2), H_COOH-vs-H_ONC (2).
 - **Large-scale RDKit validation harness + H_NAM subtype fix** (per PLAN.md "Large-Scale RDKit Validation"):
   - Built `scripts/gen_validation_set.py` (109 curated explicit-H 3D molecules via RDKit ETKDG), `examples/dump_types_energy.rs` (WebMM types+energy), `scripts/validate.py` (compare). PubChem-drug fetch wired via curl (`--drugs`) since the sandbox blocks `urllib`/`subprocess` import.
   - **Results (109 mols, 1324 atoms)**: atom types **91 mismatches (6.87%)**; charges mean |Δ|=0.0107 (23 outliers: ammonium/purines/CS2); energy **Pearson r=0.952, RMSD 11.3 kcal/mol** with systematic high-energy bias for 5-ring heteroaromatics + strained rings.
