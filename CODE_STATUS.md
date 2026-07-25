@@ -4,9 +4,16 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-None active — typing gaps nearly closed: validation 0.60% mismatch, energy r=0.967.
+None active — atom typing matches RDKit 100% on both validation sets (0.00% mismatch).
 
 ## Recently Completed
+- **Final 8 typing gaps closed → 0.00% mismatch** (per PLAN.md "Close final 8 typing gaps"):
+  - `src/mmff/mod.rs`: gated `has_c_c_neighbor`/`has_c_n_neighbor` on `!n_owns_cn` (this N has no own C=X double bond) so the enamine/amidine → N_PL3 rules no longer catch the =N imine itself (→ N_2 instead). Fixed guanine/purine 6-ring N (4).
+  - N_4 (quaternary ammonium) charge rule now excludes acyl/amidine/enamine Ns → charged guanidinium N → N_PL3. Fixed guanidinium (1).
+  - H_NAM gated on non-aromatic N (aromatic-ring N-H → H_N3); acyl detection broadened to C=C (enamine). Fixed indole (1) + guanine NH2 H (2).
+  - 5-ring dicoordinate N → N5A when adjacent to NPYL/OFUR/S_AR. Fixed pyrazole (1).
+  - **Validation: atom types 8 → 0 (0.00%)** on 109-mol (1324 atoms) AND 43-file sets. Charges mean |Δ| 0.0092 → 0.0003. Energy r 0.967 → 0.9754, RMSD 8.65 → 7.53. Caffeine min −123.02 (RDKit −123.49). 165 tests pass, 0 warnings.
+  - Atom typing now matches RDKit 2025.09.3 exactly on the full validation set. Remaining energy gaps are parameter-table issues (5-ring/strained-ring angles, P/S params), documented in docs/validation-energy-analysis.md.
 - **Remaining typing gaps fixed + energy outliers documented** (per PLAN.md "Fix remaining typing gaps"):
   - `docs/validation-energy-analysis.md`: categorizes the 15 worst energy outliers by family with root causes.
   - New MMFF types: CR3R (22, 3-ring sp3 C), HNRP (36, ammonium H), S2CM (72, CS2 S), HOS (33, sulfonic-acid H).
