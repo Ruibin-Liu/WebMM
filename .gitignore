@@ -29,3 +29,7 @@ CODE_STATUS.md
 .opencode/
 proptest-regressions/
 
+# Generated validation/type-comparison artifacts (regenerable via scripts/ + examples/)
+scripts/webmm_atom_types.json
+scripts/val_set/webmm_ref.json
+
