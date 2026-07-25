@@ -429,8 +429,11 @@ pub fn oop_gradient(
     atom3: usize,
     params: &OOPParams,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    // Central-difference numerical gradient (O(eps²) accurate).
-    let eps = 1e-5;
+    // Central-difference numerical gradient: (E(+eps) - E(-eps)) / (2*eps).
+    // eps=1e-8 minimizes truncation error (O(eps^2) ~ 1e-16) at the cost of
+    // higher roundoff (O(machine_eps/eps) ~ 2e-8). Matches the torsion gradient
+    // step size for consistency across all angle-based terms.
+    let eps = 1e-8;
     let mut gc = [0.0; 3];
     let mut g1 = [0.0; 3];
     let mut g2 = [0.0; 3];
@@ -485,8 +488,8 @@ mod tests {
         let params = OOPParams { k_oop: 0.04 };
         let (gc, g1, g2, g3) = oop_gradient(&coords, 1, 0, 2, 3, &params);
 
-        // Verify against independent central-difference
-        let eps = 1e-5;
+        // Verify against independent central-difference reference at the same eps.
+        let eps = 1e-8;
         for (idx, grad) in [(1usize, gc), (0usize, g1), (2usize, g2), (3usize, g3)] {
             for dim in 0..3 {
                 let mut cp = coords.clone();
@@ -496,7 +499,7 @@ mod tests {
                 let em = oop_energy(&cp, 1, 0, 2, 3, &params);
                 let num = (ep - em) / (2.0 * eps);
                 assert!(
-                    (grad[dim] - num).abs() < 1e-4,
+                    (grad[dim] - num).abs() < 1e-6,
                     "OOP grad[{}] = {} vs numerical {} for atom {}",
                     dim,
                     grad[dim],
@@ -504,6 +507,21 @@ mod tests {
                     idx
                 );
             }
+        }
+
+        // Translational invariance: sum of all four gradients must vanish.
+        let sum = [
+            gc[0] + g1[0] + g2[0] + g3[0],
+            gc[1] + g1[1] + g2[1] + g3[1],
+            gc[2] + g1[2] + g2[2] + g3[2],
+        ];
+        for dim in 0..3 {
+            assert!(
+                sum[dim].abs() < 1e-6,
+                "Translational invariance violated: sum[{}] = {}",
+                dim,
+                sum[dim]
+            );
         }
     }
 

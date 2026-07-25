@@ -170,14 +170,18 @@ M  END"#, x, y, z, x + 1.5, y, z);
                 let num_grad = (e_plus - e0) / eps;
 
                 let abs_diff = (g2[dim] - num_grad).abs();
-                let max_mag = g2[dim].abs().max(num_grad.abs());
-                let rel_err = if max_mag > 1e-4 {
-                    abs_diff / max_mag
+                // Relative error when the gradient is sizable; when the analytical
+                // gradient is ~0 (symmetric points, e.g. bond along x at y=z=0),
+                // finite-difference accumulates O(eps * dE/dr) second-order error
+                // proportional to the (possibly large) force, so fall back to an
+                // absolute tolerance. Otherwise rel_err = |0 - noise|/noise = 1.
+                let passed = if g2[dim].abs() > 1e-3 {
+                    abs_diff / g2[dim].abs() < 1e-3
                 } else {
-                    abs_diff
+                    abs_diff < 5e-3
                 };
                 prop_assert!(
-                    rel_err < 1e-3,
+                    passed,
                     "Gradient mismatch at dim {}: analytical={}, numerical={}",
                     dim, g2[dim], num_grad
                 );

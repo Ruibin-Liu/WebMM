@@ -13,7 +13,7 @@ pub fn estimate_bond_params(
     let bc1 = props1.bond_class as f64;
     let bc2 = props2.bond_class as f64;
 
-    let k_bond = 71.9662 * (2.0 * bc1 * bc2) / (bc1 + bc2);
+    let k_bond = (2.0 * bc1 * bc2) / (bc1 + bc2);
 
     let mut r0 = props1.crd + props2.crd - 0.01 * (props1.crd - props2.crd).powi(2);
 
@@ -65,7 +65,14 @@ mod tests {
         let (k_bond, r0) =
             estimate_bond_params(MMFFAtomType::C_3, MMFFAtomType::C_3, BondType::Single).unwrap();
         assert!((r0 - 1.54).abs() < 0.05, "r0 = {r0}, expected ~1.54");
-        assert!(k_bond > 100.0, "k_bond = {k_bond}, expected > 100");
+        // Force constant must be in mdyn/Å (real MMFF bond kb ~1.5–17). The
+        // harmonic-mean-of-bond-class estimate gives ~2.0 for C_3-C_3; the
+        // true table value is 4.258. It must NOT include the kcal conversion
+        // factor (bond_energy applies c1=143.9325 separately).
+        assert!(
+            (1.0..=5.0).contains(&k_bond),
+            "k_bond = {k_bond}, expected ~2 mdyn/Å (table value 4.258)"
+        );
     }
 
     #[test]

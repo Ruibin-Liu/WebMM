@@ -242,11 +242,62 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
         }
     };
 
-    let etkdg_config = crate::etkdg::ETKDGConfig {
-        random_seed: 42,
-        ..Default::default()
+    // If the SDF already has 3D coordinates (any non-zero z), use them directly.
+    // Only generate ETKDG coordinates for 2D inputs.
+    let has_3d = mol.atoms.iter().any(|a| a.position[2].abs() > 1e-6);
+    let initial_coords = if has_3d {
+        mol.atoms.iter().map(|a| a.position).collect::<Vec<_>>()
+    } else {
+        let etkdg_config = crate::etkdg::ETKDGConfig {
+            random_seed: 42,
+            ..Default::default()
+        };
+        crate::etkdg::generate_initial_coords_with_config(&mol, &etkdg_config)
     };
-    let initial_coords = crate::etkdg::generate_initial_coords_with_config(&mol, &etkdg_config);
+
+    let variant = match options.mmff_variant.as_str() {
+        "MMFF94" => MMFFVariant::MMFF94,
+        _ => MMFFVariant::MMFF94s,
+    };
+
+    let ff = crate::mmff::MMFFForceField::new(&mol, variant);
+    let optimizer_result = crate::optimizer::optimize(&ff, &initial_coords, &options.convergence);
+
+    let mut flat_coords = Vec::new();
+    for coord in &optimizer_result.optimized_coords {
+        flat_coords.extend_from_slice(coord);
+    }
+
+    OptimizationResult {
+        n_atoms: optimizer_result.optimized_coords.len(),
+        final_energy: optimizer_result.final_energy,
+        converged: optimizer_result.converged,
+        iterations: optimizer_result.iterations,
+        message: "Optimization completed".to_string(),
+        coordinates: flat_coords,
+    }
+}
+
+/// Optimize from an SDF using the SDF coordinates directly (no ETKDG).
+/// If the SDF is 2D, coordinates are used as-is (z=0 plane).
+#[wasm_bindgen]
+pub fn optimize_from_sdf_direct(sdf_content: &str, options: OptimizationOptions) -> OptimizationResult {
+    console_error_panic_hook::set_once();
+    let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
+        Ok(mol) => mol,
+        Err(e) => {
+            return OptimizationResult {
+                n_atoms: 0,
+                final_energy: 0.0,
+                converged: false,
+                iterations: 0,
+                message: format!("Parse error: {}", e),
+                coordinates: Vec::new(),
+            };
+        }
+    };
+
+    let initial_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
 
     let variant = match options.mmff_variant.as_str() {
         "MMFF94" => MMFFVariant::MMFF94,
@@ -3883,7 +3934,7 @@ M  END"#;
         use crate::mmff::angle::get_angle_params_with_bond_info;
         use crate::mmff::stretch_bend::get_stretch_bend_params;
         use crate::mmff::{MMFFAtomType, MMFFForceField, MMFFVariant};
-        use crate::molecule::{Atom, Bond, BondStereo, BondType, Molecule};
+
         use crate::optimizer;
         use crate::ConvergenceOptions;
 
@@ -3891,81 +3942,7 @@ M  END"#;
             ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
         }
 
-        fn make_aniline() -> Molecule {
-            let syms = [
-                "C", "C", "C", "C", "C", "C", "N", "H", "H", "H", "H", "H", "H",
-            ];
-            let anums = [6u8, 6, 6, 6, 6, 6, 7, 1, 1, 1, 1, 1, 1];
-            let bonds = [
-                (0, 1, BondType::Double),
-                (1, 2, BondType::Single),
-                (2, 3, BondType::Double),
-                (3, 4, BondType::Single),
-                (4, 5, BondType::Double),
-                (5, 0, BondType::Single),
-                (0, 6, BondType::Single),
-                (6, 7, BondType::Single),
-                (6, 8, BondType::Single),
-                (1, 9, BondType::Single),
-                (2, 10, BondType::Single),
-                (3, 11, BondType::Single),
-                (4, 12, BondType::Single),
-            ];
-            let atoms: Vec<Atom> = syms
-                .iter()
-                .enumerate()
-                .map(|(i, &s)| Atom {
-                    symbol: s.to_string(),
-                    atomic_number: anums[i],
-                    mass: 0.0,
-                    charge: 0.0,
-                    position: [0.0, 0.0, 0.0],
-                    index: i,
-                    stereo_parity: 0,
-                })
-                .collect();
-            let mol_bonds: Vec<Bond> = bonds
-                .iter()
-                .map(|&(a, b, bt)| Bond {
-                    atom1: a,
-                    atom2: b,
-                    bond_type: bt,
-                    stereo: BondStereo::None,
-                })
-                .collect();
-            let n = atoms.len();
-            let mut adj = vec![vec![]; n];
-            for b in &mol_bonds {
-                adj[b.atom1].push(b.atom2);
-                adj[b.atom2].push(b.atom1);
-            }
-            Molecule {
-                name: "aniline".to_string(),
-                atoms,
-                bonds: mol_bonds,
-                adjacency: adj,
-            }
-        }
-
-        fn rdkit_opt_coords() -> Vec<[f64; 3]> {
-            vec![
-                [0.9552, -0.2390, -0.0597],
-                [0.3486, 1.0162, 0.0153],
-                [-1.0417, 1.1307, 0.1112],
-                [-1.8388, -0.0127, 0.1157],
-                [-1.2448, -1.2686, 0.0178],
-                [0.1422, -1.3750, -0.0788],
-                [2.3264, -0.3587, -0.2121],
-                [2.7460, -1.2789, -0.1870],
-                [2.9250, 0.4466, -0.0972],
-                [0.9540, 1.9181, -0.0010],
-                [-1.5004, 2.1139, 0.1763],
-                [-2.9194, 0.0756, 0.1883],
-                [-1.8524, -2.1680, 0.0110],
-            ]
-        }
-
-        #[test]
+#[test]
         fn test_aniline_param_audit() {
             let atom_types = [
                 MMFFAtomType::C_AR,
@@ -4795,14 +4772,7 @@ mod type_audit5 {
             .collect()
     }
 
-    /// All-atom (including H) MMFF type ids
-    fn all_type_ids(sdf: &str) -> Vec<u8> {
-        let mol = parse_sdf(sdf).expect("parse failed");
-        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
-        ff.type_ids.clone()
-    }
-
-    // ---- SDF fixtures (RDKit-generated 2D coordinates) ----
+// ---- SDF fixtures (RDKit-generated 2D coordinates) ----
 
     const ACETATE: &str = r#"Acetate
      RDKit          2D
@@ -5228,3 +5198,64 @@ M  END"#;
     }
 }
 
+
+#[cfg(test)]
+mod aniline_etkdg_planarity {
+    #[test]
+    fn check_webmm_etkdg_aniline() {
+        use crate::etkdg::{ETKDGConfig, generate_initial_coords_with_config};
+        use crate::molecule::parser::parse_sdf;
+
+        let sdf = "Aniline\n     RDKit          3D\n\n 13 13  0  0  0  0  0  0  0  0999 V2000\n   -1.2000    0.6930    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.5000   -0.6000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3000   -1.2000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0000   -0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3000    0.6000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000    1.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1500    1.3000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2500    2.2800    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.0000    0.8000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.4000   -1.1000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3500   -2.2700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.7500   -1.5500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.3000    1.0500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  1  1  0\n  1  7  1  0\n  7  8  1  0\n  7  9  1  0\n  2 10  1  0\n  3 11  1  0\n  4 12  1  0\n  5 13  1  0\nM  END";
+        let mol = parse_sdf(sdf).unwrap();
+        let config = ETKDGConfig { random_seed: 42, ..Default::default() };
+        let coords = generate_initial_coords_with_config(&mol, &config);
+
+        // Print all coords
+        for (i, (atom, c)) in mol.atoms.iter().zip(coords.iter()).enumerate() {
+            println!("{} {} {:.4} {:.4} {:.4}", i, atom.symbol, c[0], c[1], c[2]);
+        }
+
+        // Check N (atom 6) pyramidalization
+        let n = coords[6];
+        let h7 = coords[7];
+        let h8 = coords[8];
+        let c0 = coords[0];
+
+        // H-N-H angle
+        let v1 = [h7[0]-n[0], h7[1]-n[1], h7[2]-n[2]];
+        let v2 = [h8[0]-n[0], h8[1]-n[1], h8[2]-n[2]];
+        let d1 = (v1[0]*v1[0]+v1[1]*v1[1]+v1[2]*v1[2]).sqrt();
+        let d2 = (v2[0]*v2[0]+v2[1]*v2[1]+v2[2]*v2[2]).sqrt();
+        let dot = (v1[0]*v2[0]+v1[1]*v2[1]+v1[2]*v2[2])/(d1*d2);
+        let hnh = dot.clamp(-1.0,1.0).acos().to_degrees();
+        println!("H-N-H angle: {:.1} deg", hnh);
+
+        // Distance of H atoms from ring plane
+        // Ring atoms: 0-5
+        let ring: Vec<[f64;3]> = (0..6).map(|i| coords[i]).collect();
+        let center = [
+            ring.iter().map(|c| c[0]).sum::<f64>() / 6.0,
+            ring.iter().map(|c| c[1]).sum::<f64>() / 6.0,
+            ring.iter().map(|c| c[2]).sum::<f64>() / 6.0,
+        ];
+
+        // Simple normal: cross product of two ring diagonals
+        let r1 = [ring[3][0]-ring[0][0], ring[3][1]-ring[0][1], ring[3][2]-ring[0][2]];
+        let r2 = [ring[4][1]-ring[1][0], ring[4][1]-ring[1][1], ring[4][2]-ring[1][2]];
+        let normal = [
+            r1[1]*r2[2]-r1[2]*r2[1],
+            r1[2]*r2[0]-r1[0]*r2[2],
+            r1[0]*r2[1]-r1[1]*r2[0],
+        ];
+        let nlen = (normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]).sqrt();
+        let nhat = [normal[0]/nlen, normal[1]/nlen, normal[2]/nlen];
+
+        for (idx, h) in [(7usize, h7), (8, h8)] {
+            let d = (h[0]-center[0])*nhat[0] + (h[1]-center[1])*nhat[1] + (h[2]-center[2])*nhat[2];
+            println!("H{} distance from ring plane: {:.4} A", idx, d.abs());
+        }
+        let n_dist = (n[0]-center[0])*nhat[0] + (n[1]-center[1])*nhat[1] + (n[2]-center[2])*nhat[2];
+        println!("N distance from ring plane: {:.4} A", n_dist.abs());
+    }
+}

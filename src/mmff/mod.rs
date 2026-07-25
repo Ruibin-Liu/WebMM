@@ -42,7 +42,10 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         | MMFFAtomType::H_OAR
         | MMFFAtomType::H_N3
         | MMFFAtomType::H_NAM
-        | MMFFAtomType::H_NIM => MMFFAtomType::H,
+        | MMFFAtomType::H_NIM
+        | MMFFAtomType::HS => MMFFAtomType::H,
+        MMFFAtomType::CR4R => MMFFAtomType::C_3,
+        MMFFAtomType::CE4R => MMFFAtomType::C_2,
         // 5-membered heteroaromatic ring atoms use same params as generic aromatic
         MMFFAtomType::C5A | MMFFAtomType::C5B => MMFFAtomType::C_AR,
         MMFFAtomType::NPYL | MMFFAtomType::N5A | MMFFAtomType::N5B => MMFFAtomType::N_AR,
@@ -71,6 +74,9 @@ pub enum MMFFAtomType {
     H_N3,   // H bonded to N_3 (ammonia)
     H_NAM,  // H bonded to N_AM or N_AR (aniline, acetamide)
     H_NIM,  // H bonded to sp2 imine N with C=N double bond (MMFF 27)
+    HS,     // H bonded to sulfur (thiol R-S-H) (MMFF 71)
+    CR4R,   // sp3 carbon in a 4-membered ring (MMFF 20)
+    CE4R,   // sp2 carbon in a 4-membered ring (MMFF 30)
 
     // Carbons
     C_3,
@@ -207,9 +213,28 @@ impl MMFFForceField {
 
         // Compute torsion types using RDKit's classification
         let rings = crate::molecule::graph::find_rings(mol);
+        // type_ids drives parameter lookup. H subtypes keep their real MMFF IDs
+        // (their EQ chains include H=5 as fallback, so lookups stay correct and
+        // the reported type matches RDKit). Other subtypes — notably the
+        // 5-membered-heteroaromatic C5A/C5B/N5A/N5B/NPYL/OFUR — MUST collapse
+        // to their aromatic base (C_AR/N_AR/O_3), because WebMM's parameter
+        // tables resolve aromatic-ring params via the base type, not via the
+        // C5A->C_2 EQ fallback (which would give wrong energies).
         let type_ids: Vec<u8> = atom_types
             .iter()
-            .map(|&at| mmff_type_id(base_type(at)))
+            .map(|&at| match at {
+                MMFFAtomType::H_OH
+                | MMFFAtomType::H_ONC
+                | MMFFAtomType::H_COOH
+                | MMFFAtomType::H_OAR
+                | MMFFAtomType::H_N3
+                | MMFFAtomType::H_NAM
+                | MMFFAtomType::H_NIM
+                | MMFFAtomType::HS
+                | MMFFAtomType::CR4R
+                | MMFFAtomType::CE4R => mmff_type_id(at),
+                other => mmff_type_id(base_type(other)),
+            })
             .collect();
 
         let torsion_types: Vec<(u8, u8)> = torsions
@@ -296,6 +321,13 @@ impl MMFFForceField {
         let aromatic_atoms = get_aromatic_atoms(mol);
         let rings = find_rings(mol);
 
+        // Atoms in 4-membered rings (carbons get CR4R/CE4R per RDKit MMFF)
+        let in_4ring: std::collections::HashSet<usize> = rings
+            .iter()
+            .filter(|r| r.len() == 4)
+            .flat_map(|r| r.iter().copied())
+            .collect();
+
         // Detect 5-membered heteroaromatic rings and classify their atoms
         let mut atom_5ring_type: std::collections::HashMap<usize, MMFFAtomType> =
             std::collections::HashMap::new();
@@ -342,16 +374,17 @@ impl MMFFForceField {
                         }
                     }
                     7 => {
-                        let h_count = mol.adjacency[atom_idx]
-                            .iter()
-                            .filter(|&&n| mol.atoms[n].atomic_number == 1)
-                            .count();
-                        if h_count >= 1 {
+                        // Pyrrole-type N (tricoordinate — 2 ring bonds + H or
+                        // substituent; contributes its lone pair to aromaticity,
+                        // whether the substituent is H or alkyl) → NPYL (MMFF 39).
+                        // Pyridine-type N (dicoordinate, =N-) → N5B.
+                        // (RDKit keys on coordination, not H count; aromatic bonds
+                        // have already replaced Kekulé double bonds, so bond order
+                        // cannot be used here.)
+                        let n_neighbors = mol.adjacency[atom_idx].len();
+                        if n_neighbors >= 3 {
                             MMFFAtomType::NPYL
                         } else {
-                            // N without H in 5-ring: could be N5A or N5B
-                            // N5B = pyridine-like (beta position), N5A = alpha
-                            // For simplicity, use N5B for N without H (imidazole-type)
                             MMFFAtomType::N5B
                         }
                     }
@@ -397,6 +430,32 @@ impl MMFFForceField {
                                 }]
                                 .atomic_number
                                     == 8
+                        })
+                });
+
+                // N bonded to a carbon that has a C=C double bond (enamine /
+                // vinylamine) → planar N (MMFF N_PL3, 40), like aniline. (Aromatic
+                // bonds are BondType::Aromatic, not Double, so this only catches
+                // non-aromatic C=C neighbors; aniline is handled separately.)
+                let has_c_c_neighbor = mol.bonds.iter().any(|b| {
+                    let other = if b.atom1 == idx {
+                        b.atom2
+                    } else if b.atom2 == idx {
+                        b.atom1
+                    } else {
+                        return false;
+                    };
+                    mol.atoms[other].atomic_number == 6
+                        && mol.bonds.iter().any(|b2| {
+                            (b2.atom1 == other || b2.atom2 == other)
+                                && matches!(b2.bond_type, BondType::Double)
+                                && mol.atoms[if b2.atom1 == other {
+                                    b2.atom2
+                                } else {
+                                    b2.atom1
+                                }]
+                                .atomic_number
+                                    == 6
                         })
                 });
 
@@ -571,6 +630,13 @@ impl MMFFForceField {
 
                     // Carbon types — aromatic takes priority over hybridization
                     (6, _, true, _) => MMFFAtomType::C_AR,
+                    // Carbons in 4-membered rings: RDKit uses CR4R (sp3, 20) / CE4R (sp2, 30)
+                    (6, Hybridization::Sp3, false, _) if in_4ring.contains(&idx) => {
+                        MMFFAtomType::CR4R
+                    }
+                    (6, Hybridization::Sp2, false, _) if in_4ring.contains(&idx) => {
+                        MMFFAtomType::CE4R
+                    }
                     (6, Hybridization::Sp3, false, 1..=4) => MMFFAtomType::C_3,
                     // sp2 C: carbonyl/imine/thiocarbonyl C (double bond to N/O/S) is MMFF 3;
                     // generic alkene C (double bond only to C) is MMFF 2 (RDKit-verified)
@@ -602,8 +668,15 @@ impl MMFFForceField {
                     (7, _, true, _) if is_noxide_n => MMFFAtomType::N_POX,
                     (7, _, true, _) if has_c_o_neighbor => MMFFAtomType::N_AM,
 
-                    // N_PL3: sp3 N bonded to C=O or to aromatic carbon (aniline)
-                    (7, Hybridization::Sp3, false, _) if has_c_o_neighbor => MMFFAtomType::N_PL3,
+                    // Amide / carbamate / urea N: non-aromatic N directly bonded to a
+                    // carbonyl C is MMFF 10 (N_AM), regardless of detected hybridization.
+                    (7, _, false, _) if has_c_o_neighbor => MMFFAtomType::N_AM,
+
+                    // Enamine / vinylamine N: non-aromatic N bonded to a C=C carbon
+                    // is planar → MMFF 40 (N_PL3) (analogous to aniline).
+                    (7, _, false, _) if has_c_c_neighbor => MMFFAtomType::N_PL3,
+
+                    // N_PL3: sp3 N bonded to aromatic carbon (aniline-like)
                     (7, Hybridization::Sp3, false, _)
                         if carbon_neighbors
                             .iter()
@@ -642,6 +715,24 @@ impl MMFFForceField {
 
                     // Carboxylate [O-]: single-bonded O on a carboxylate C → MMFF 32 (O2CM)
                     (8, _, _, _) if o_bonded_to_carboxylate_c => MMFFAtomType::O_CO2,
+
+                    // O double-bonded to phosphorus (P=O, phosphine oxide) → MMFF 32
+                    // (O2CM). RDKit reuses the carbonyl-O type for P=O.
+                    (8, _, _, _)
+                        if mol.bonds.iter().any(|b| {
+                            b.bond_type == BondType::Double
+                                && (b.atom1 == idx || b.atom2 == idx)
+                                && mol.atoms[if b.atom1 == idx {
+                                    b.atom2
+                                } else {
+                                    b.atom1
+                                }]
+                                .atomic_number
+                                    == 15
+                        }) =>
+                    {
+                        MMFFAtomType::O_CO2
+                    },
 
                     // O_CO2: O double-bonded to C that is also double-bonded to another O (CO2),
                     // OR C=O on a carboxylate C (where the other O has formal charge -1)
@@ -841,18 +932,36 @@ impl MMFFForceField {
                 let n_is_aniline = mol.adjacency[neighbor_idx]
                     .iter()
                     .any(|&nbr| aromatic_atoms.contains(&nbr) && mol.atoms[nbr].atomic_number == 6);
+                // Amide H: N bonded to a carbonyl C (R-C(=O)-N-H) → MMFF 28 (H_NAM,
+                // "HNCO"). Mirrors the N_AM typing in assign_atom_types.
+                let n_is_amide = mol.adjacency[neighbor_idx].iter().any(|&nbr| {
+                    mol.atoms[nbr].atomic_number == 6
+                        && mol.bonds.iter().any(|b2| {
+                            b2.bond_type == BondType::Double
+                                && (b2.atom1 == nbr || b2.atom2 == nbr)
+                                && mol.atoms[if b2.atom1 == nbr {
+                                    b2.atom2
+                                } else {
+                                    b2.atom1
+                                }]
+                                .atomic_number
+                                    == 8
+                        })
+                });
 
                 if n_has_double_to_c && !n_is_aromatic {
                     // Imine N-H (C=N-H) → MMFF 27
                     MMFFAtomType::H_NIM
-                } else if n_is_aniline || n_is_aromatic {
-                    // Aniline / aromatic N-H → MMFF 28
+                } else if n_is_amide || n_is_aniline || n_is_aromatic {
+                    // Amide / aniline / aromatic N-H → MMFF 28
                     MMFFAtomType::H_NAM
                 } else {
                     // Generic amine N-H → MMFF 23
                     MMFFAtomType::H_N3
                 }
             }
+            // Thiol H: H bonded to S → MMFF 71 (HS)
+            16 => MMFFAtomType::HS,
             _ => MMFFAtomType::H,
         }
     }

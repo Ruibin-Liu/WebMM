@@ -100,7 +100,9 @@ pub fn determine_hybridization(atom_idx: usize, mol: &Molecule) -> Hybridization
             _ => Hybridization::Sp3,
         },
         "S" => match num_bonds {
-            2 => Hybridization::Sp2,
+            // By the time we reach here pi_bonds == 0 (single bonds only):
+            // 2-coordinate S (thiol R-S-H, thioether R-S-R) is bent sp3, not sp2.
+            2 => Hybridization::Sp3,
             3 => Hybridization::Sp3,
             4 => Hybridization::Sp3D,
             5 => Hybridization::Sp3D,

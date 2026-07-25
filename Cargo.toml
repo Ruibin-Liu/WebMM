@@ -22,7 +22,3 @@ proptest = "1.0"
 opt-level = "s"
 lto = true
 codegen-units = 1
-
-[[bin]]
-name = "benchmark"
-path = "benches/benchmark.rs"
