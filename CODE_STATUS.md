@@ -4,9 +4,18 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-None active — #1 (5-ring type collapse) fixed; validation at 3.85% mismatch.
+None active — typing gaps nearly closed: validation 0.60% mismatch, energy r=0.967.
 
 ## Recently Completed
+- **Remaining typing gaps fixed + energy outliers documented** (per PLAN.md "Fix remaining typing gaps"):
+  - `docs/validation-energy-analysis.md`: categorizes the 15 worst energy outliers by family with root causes.
+  - New MMFF types: CR3R (22, 3-ring sp3 C), HNRP (36, ammonium H), S2CM (72, CS2 S), HOS (33, sulfonic-acid H).
+  - 5-ring C5A/C5B restructured to two-pass (classify N/O/S first, then C by neighbor type: adjacent to NPYL/OFUR/S_AR or flanked by 2 heteroatoms → C5A, else C5B).
+  - OH2 (water O) bug: now requires both neighbors be H (was firing for O-S/P-H).
+  - H_NAM/H_N3 rule corrected (was backwards): H_NAM for amide/amidine/sulfonamide/aniline N-H; H_N3 for aromatic-ring N-H (pyrrole) + simple amines. Added amidine (C=N) + sulfonamide (SO2) detection; H on O-P → H_COOH.
+  - Amidine/guanidinium N → N_PL3 (has_c_n_neighbor); HNRP only for sp3 ammonium.
+  - **Validation: atom types 51 → 8 (0.60%); energy r 0.954 → 0.967, RMSD 11.04 → 8.65; caffeine minimized −115.5 → −123.02 (RDKit −123.49).** 165 tests pass, 0 warnings.
+  - Remaining 8 (exotic): guanidinium amidine N (1), guanine/purine 6-ring N→N_2 (4), guanine NH2 H (2), pyrazole N5A (1) — RDKit-specific nuances, minimal energy impact.
 - **#1 5-ring type_ids collapse fixed (energy-neutral)** (per PLAN.md "Fix #1: 5-ring type_ids collapse"):
   - `src/mmff/mod.rs`: `type_ids` now uses `mmff_type_id(at)` for all types (no base_type collapse). The collapse was a workaround for the since-fixed NPYL charge bug; with that fixed, un-collapsing is energy-neutral (caffeine breakdown byte-identical; 109-mol r=0.954/RMSD 11.04 unchanged).
   - Validation atom-type mismatch **91 → 51 (3.85%)** — the 56 dominant 5-ring cases (C5A/C5B/NPYL/N5B/OFUR) now report their real MMFF IDs. 165 tests pass, 0 warnings.
