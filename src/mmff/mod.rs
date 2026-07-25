@@ -213,29 +213,14 @@ impl MMFFForceField {
 
         // Compute torsion types using RDKit's classification
         let rings = crate::molecule::graph::find_rings(mol);
-        // type_ids drives parameter lookup. H subtypes keep their real MMFF IDs
-        // (their EQ chains include H=5 as fallback, so lookups stay correct and
-        // the reported type matches RDKit). Other subtypes — notably the
-        // 5-membered-heteroaromatic C5A/C5B/N5A/N5B/NPYL/OFUR — MUST collapse
-        // to their aromatic base (C_AR/N_AR/O_3), because WebMM's parameter
-        // tables resolve aromatic-ring params via the base type, not via the
-        // C5A->C_2 EQ fallback (which would give wrong energies).
-        let type_ids: Vec<u8> = atom_types
-            .iter()
-            .map(|&at| match at {
-                MMFFAtomType::H_OH
-                | MMFFAtomType::H_ONC
-                | MMFFAtomType::H_COOH
-                | MMFFAtomType::H_OAR
-                | MMFFAtomType::H_N3
-                | MMFFAtomType::H_NAM
-                | MMFFAtomType::H_NIM
-                | MMFFAtomType::HS
-                | MMFFAtomType::CR4R
-                | MMFFAtomType::CE4R => mmff_type_id(at),
-                other => mmff_type_id(base_type(other)),
-            })
-            .collect();
+        // type_ids report each atom's actual MMFF type (matching RDKit's
+        // GetMMFFAtomType), and the equivalence-level protocol (EQ_LEVELS) handles
+        // parameter-lookup fallback. A previous version collapsed subtypes via
+        // base_type() (C5A->C_AR, NPYL->N_AR, ...) for energy correctness, but
+        // once the 5-ring N classification / charge bugs were fixed the collapse
+        // became energy-neutral, so all types now keep their real IDs. (C5A vs
+        // C5B alpha/beta is the one remaining cosmetic gap — both EQ-fall to C_2.)
+        let type_ids: Vec<u8> = atom_types.iter().map(|&at| mmff_type_id(at)).collect();
 
         let torsion_types: Vec<(u8, u8)> = torsions
             .iter()
