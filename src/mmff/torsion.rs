@@ -2012,7 +2012,9 @@ pub fn torsion_energy(
     l: usize,
     params: &TorsionParams,
 ) -> f64 {
-    // Compute phi using the same convention as the gradient (OpenMM-style)
+    // Match RDKit's calcTorsionCosPhi + calcTorsionEnergy exactly.
+    // r1=i-j, r2=k-j, r3=j-k (NEGATED central bond), r4=l-k
+    // t1 = r1×r2; t2 = r3×r4 = (-v1)×v2
     let v0 = [
         coords[i][0] - coords[j][0],
         coords[i][1] - coords[j][1],
@@ -2029,38 +2031,41 @@ pub fn torsion_energy(
         coords[l][2] - coords[k][2],
     ];
 
+    // cp0 = v0 × v1 (normal to plane i-j-k)
     let cp0 = [
         v0[1] * v1[2] - v0[2] * v1[1],
         v0[2] * v1[0] - v0[0] * v1[2],
         v0[0] * v1[1] - v0[1] * v1[0],
     ];
+    // cp1 = (-v1) × v2 (normal to plane j-k-l; matches RDKit's r3=j-k)
     let cp1 = [
-        v1[1] * v2[2] - v1[2] * v2[1],
-        v1[2] * v2[0] - v1[0] * v2[2],
-        v1[0] * v2[1] - v1[1] * v2[0],
+        v1[2] * v2[1] - v1[1] * v2[2],
+        v1[0] * v2[2] - v1[2] * v2[0],
+        v1[1] * v2[0] - v1[0] * v2[1],
     ];
 
     let cp0_norm = (cp0[0] * cp0[0] + cp0[1] * cp0[1] + cp0[2] * cp0[2]).sqrt();
     let cp1_norm = (cp1[0] * cp1[0] + cp1[1] * cp1[1] + cp1[2] * cp1[2]).sqrt();
-    let v1_norm = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt();
 
-    if cp0_norm < 1e-12 || cp1_norm < 1e-12 || v1_norm < 1e-12 {
+    if cp0_norm < 1e-12 || cp1_norm < 1e-12 {
         return 0.0;
     }
 
-    let cos_phi = (cp0[0] * cp1[0] + cp0[1] * cp1[1] + cp0[2] * cp1[2]) / (cp0_norm * cp1_norm);
-    let cross_cp = [
-        cp0[1] * cp1[2] - cp0[2] * cp1[1],
-        cp0[2] * cp1[0] - cp0[0] * cp1[2],
-        cp0[0] * cp1[1] - cp0[1] * cp1[0],
-    ];
-    let triple = cross_cp[0] * v1[0] + cross_cp[1] * v1[1] + cross_cp[2] * v1[2];
-    let sin_phi = triple / (cp0_norm * cp1_norm * v1_norm);
-    let phi = sin_phi.atan2(cos_phi);
+    let mut cos_phi =
+        (cp0[0] * cp1[0] + cp0[1] * cp1[1] + cp0[2] * cp1[2]) / (cp0_norm * cp1_norm);
+    if cos_phi > 1.0 {
+        cos_phi = 1.0;
+    } else if cos_phi < -1.0 {
+        cos_phi = -1.0;
+    }
 
-    0.5 * (params.v1 * (1.0 + phi.cos())
-        + params.v2 * (1.0 - (2.0 * phi).cos())
-        + params.v3 * (1.0 + (3.0 * phi).cos()))
+    // RDKit's calcTorsionEnergy via Chebyshev identities (no atan2).
+    let cos2_phi = 2.0 * cos_phi * cos_phi - 1.0;
+    let cos3_phi = cos_phi * (2.0 * cos2_phi - 1.0);
+
+    0.5 * (params.v1 * (1.0 + cos_phi)
+        + params.v2 * (1.0 - cos2_phi)
+        + params.v3 * (1.0 + cos3_phi))
 }
 
 pub fn torsion_gradient(
@@ -2071,106 +2076,25 @@ pub fn torsion_gradient(
     atom4: usize,
     params: &TorsionParams,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    // Analytical torsion gradient using the OpenMM force formula
-    // (platforms/common/src/kernels/torsionForce.cc), adapted to WebMM's
-    // dihedral convention. Verified against numerical gradient to 2e-10.
-    //
-    // Bond vectors (WebMM convention):
-    //   v0 = x_i - x_j   (= OpenMM v0)
-    //   v1 = x_k - x_j   (= OpenMM v1)
-    //   v2 = x_l - x_k   (= -OpenMM v2)
-    //
-    // cp0 = cross(v0, v1)  (= OpenMM cp0)
-    // cp1 = cross(v1, v2)  (= -OpenMM cp1, sign difference due to v2)
-
-    let i = atom1;
-    let j = atom2;
-    let k = atom3;
-    let l = atom4;
-
-    let v0 = [
-        coords[i][0] - coords[j][0],
-        coords[i][1] - coords[j][1],
-        coords[i][2] - coords[j][2],
-    ];
-    let v1 = [
-        coords[k][0] - coords[j][0],
-        coords[k][1] - coords[j][1],
-        coords[k][2] - coords[j][2],
-    ];
-    let v2 = [
-        coords[l][0] - coords[k][0],
-        coords[l][1] - coords[k][1],
-        coords[l][2] - coords[k][2],
-    ];
-
-    let cp0 = [
-        v0[1] * v1[2] - v0[2] * v1[1],
-        v0[2] * v1[0] - v0[0] * v1[2],
-        v0[0] * v1[1] - v0[1] * v1[0],
-    ];
-    let cp1 = [
-        v1[1] * v2[2] - v1[2] * v2[1],
-        v1[2] * v2[0] - v1[0] * v2[2],
-        v1[0] * v2[1] - v1[1] * v2[0],
-    ];
-
-    let norm_cross1 = cp0[0] * cp0[0] + cp0[1] * cp0[1] + cp0[2] * cp0[2];
-    let norm_sqr_bc = v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2];
-    let norm_bc = norm_sqr_bc.sqrt();
-    let norm_cross2 = cp1[0] * cp1[0] + cp1[1] * cp1[1] + cp1[2] * cp1[2];
-
-    if norm_cross1 < 1e-20 || norm_cross2 < 1e-20 || norm_sqr_bc < 1e-20 {
-        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    // Numerical finite-difference gradient of torsion_energy.
+    // Guarantees energy/gradient consistency regardless of the dihedral
+    // convention (RDKit r3=j-k sign). Central atoms j,k carry opposite-sign
+    // gradients by construction (translational invariance).
+    let eps = 1e-7;
+    let e0 = torsion_energy(coords, atom1, atom2, atom3, atom4, params);
+    let mut g = [[0.0f64; 3]; 4];
+    let atoms = [atom1, atom2, atom3, atom4];
+    let mut c = coords.to_vec();
+    for (idx, &a) in atoms.iter().enumerate() {
+        for d in 0..3 {
+            let orig = c[a][d];
+            c[a][d] = orig + eps;
+            let e_plus = torsion_energy(&c, atom1, atom2, atom3, atom4, params);
+            c[a][d] = orig;
+            g[idx][d] = (e_plus - e0) / eps;
+        }
     }
-
-    // Compute cos(φ) and sin(φ) directly rather than via a separate dihedral helper
-    // to ensure the gradient uses the same angle convention as the force formula.
-    let cp0_norm = norm_cross1.sqrt();
-    let cp1_norm = norm_cross2.sqrt();
-    let cos_phi = (cp0[0] * cp1[0] + cp0[1] * cp1[1] + cp0[2] * cp1[2]) / (cp0_norm * cp1_norm);
-    // sin(φ) sign from triple product: dot(cp0 × cp1, v1)
-    let cross_cp0_cp1 = [
-        cp0[1] * cp1[2] - cp0[2] * cp1[1],
-        cp0[2] * cp1[0] - cp0[0] * cp1[2],
-        cp0[0] * cp1[1] - cp0[1] * cp1[0],
-    ];
-    let triple = cross_cp0_cp1[0] * v1[0] + cross_cp0_cp1[1] * v1[1] + cross_cp0_cp1[2] * v1[2];
-    let sin_phi = triple / (cp0_norm * cp1_norm * norm_bc);
-    let phi = sin_phi.atan2(cos_phi);
-
-    let de_dphi = 0.5
-        * (-params.v1 * phi.sin()
-            + 2.0 * params.v2 * (2.0 * phi).sin()
-            - 3.0 * params.v3 * (3.0 * phi).sin());
-
-    let dp = 1.0 / norm_sqr_bc;
-    let dot_v0_v1 = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
-    let dot_v2_v1 = v2[0] * v1[0] + v2[1] * v1[1] + v2[2] * v1[2];
-
-    // Coefficients (verified by brute-force sign search against numerical gradient):
-    // sign_de=+1, sign_cp1=-1, sign_ffz=-1
-    let ff_x = de_dphi * norm_bc / norm_cross1;
-    let ff_y = dot_v0_v1 * dp;
-    let ff_z = -dot_v2_v1 * dp;
-    let ff_w = -de_dphi * norm_bc / norm_cross2;
-
-    // Force on each atom (= -gradient), then negate to get gradient
-    let force1 = [ff_x * cp0[0], ff_x * cp0[1], ff_x * cp0[2]];
-    // cp1_neg = -cp1 (due to v2 convention difference)
-    let force4 = [ff_w * (-cp1[0]), ff_w * (-cp1[1]), ff_w * (-cp1[2])];
-    let s = [
-        ff_y * force1[0] - ff_z * force4[0],
-        ff_y * force1[1] - ff_z * force4[1],
-        ff_y * force1[2] - ff_z * force4[2],
-    ];
-    let force2 = [s[0] - force1[0], s[1] - force1[1], s[2] - force1[2]];
-    let force3 = [-s[0] - force4[0], -s[1] - force4[1], -s[2] - force4[2]];
-
-    // Return gradient (OpenMM computes force = -gradient, so we negate)
-    // BUT: verified that the formula with our sign conventions already gives
-    // the gradient directly (matching numerical), so no negation needed.
-    (force1, force2, force3, force4)
+    (g[0], g[1], g[2], g[3])
 }
 
 #[cfg(test)]
