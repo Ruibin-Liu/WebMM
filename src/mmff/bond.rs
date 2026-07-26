@@ -351,8 +351,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::C_2, MMFFAtomType::S_2, BondType::Double)
         | (MMFFAtomType::S_2, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 1.61,
+            k_bond: 4.349,
+            r0: 1.686,
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::S_AR, BondType::Aromatic)
         | (MMFFAtomType::S_AR, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
@@ -563,8 +563,24 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::P_4, MMFFAtomType::O_2, BondType::Double)
         | (MMFFAtomType::O_2, MMFFAtomType::P_4, BondType::Double) => Some(BondParams {
-            k_bond: 8.5,
-            r0: 1.48,
+            k_bond: 9.020,
+            r0: 1.496,
+        }),
+        // P_4 (phosphine oxide / phosphonate) bonds — RDKit-extracted
+        (MMFFAtomType::C_3, MMFFAtomType::P_4, BondType::Single)
+        | (MMFFAtomType::P_4, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
+            k_bond: 5.801,
+            r0: 1.838,
+        }),
+        (MMFFAtomType::P_4, MMFFAtomType::O_3, BondType::Single)
+        | (MMFFAtomType::O_3, MMFFAtomType::P_4, BondType::Single) => Some(BondParams {
+            k_bond: 6.813,
+            r0: 1.616,
+        }),
+        (MMFFAtomType::P_4, MMFFAtomType::O_CO2, BondType::Double)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::P_4, BondType::Double) => Some(BondParams {
+            k_bond: 9.020,
+            r0: 1.496,
         }),
 
         _ => None,
