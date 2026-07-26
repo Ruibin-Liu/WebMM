@@ -625,6 +625,11 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::N_PL3, MMFFAtomType::C_VIN, BondType::Single) => Some(BondParams {
             k_bond: 5.952, r0: 1.376,
         }),
+        // C_AR-C_1 single (aryl to nitrile C) — RDKit verbose-extracted
+        (MMFFAtomType::C_AR, MMFFAtomType::C_1, BondType::Single)
+        | (MMFFAtomType::C_1, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
+            k_bond: 5.445, r0: 1.424,
+        }),
         (MMFFAtomType::C_3, MMFFAtomType::P_4, BondType::Single)
         | (MMFFAtomType::P_4, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
             k_bond: 5.801,
