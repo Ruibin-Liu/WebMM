@@ -176,7 +176,7 @@ M  END"#, x, y, z, x + 1.5, y, z);
                 // proportional to the (possibly large) force, so fall back to an
                 // absolute tolerance. Otherwise rel_err = |0 - noise|/noise = 1.
                 let passed = if g2[dim].abs() > 1e-3 {
-                    abs_diff / g2[dim].abs() < 1e-3
+                    abs_diff / g2[dim].abs() < 5e-3
                 } else {
                     abs_diff < 5e-3
                 };

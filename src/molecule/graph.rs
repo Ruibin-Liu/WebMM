@@ -69,6 +69,19 @@ pub fn determine_hybridization(atom_idx: usize, mol: &Molecule) -> Hybridization
         if has_aromatic_neighbor {
             return Hybridization::Sp2;
         }
+        // N with 3 single bonds adjacent to a C with a double bond (C=O, C=N,
+        // C=C) is sp2 (amide, amidine, enamine, guanidinium) — RDKit treats these
+        // as planar. Excludes S=O (sulfinamide/sulfonamide) where N stays sp3.
+        let neighbor_c_has_double = neighbors.iter().any(|&n| {
+            mol.atoms[n].atomic_number == 6
+                && mol.bonds.iter().any(|b| {
+                    (b.atom1 == n || b.atom2 == n)
+                        && matches!(b.bond_type, BondType::Double | BondType::Aromatic)
+                })
+        });
+        if neighbor_c_has_double {
+            return Hybridization::Sp2;
+        }
     }
 
     match symbol.as_str() {
