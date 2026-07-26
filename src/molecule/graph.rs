@@ -122,22 +122,33 @@ pub fn get_aromatic_atoms(mol: &Molecule) -> HashSet<usize> {
 }
 
 /// Convert bonds in aromatic rings to BondType::Aromatic
-/// This matches RDKit behavior where Kekulé structures are perceived as aromatic
+/// This matches RDKit behavior where Kekulé structures are perceived as aromatic.
+/// Iterated to a fixpoint because converting one ring's bonds to Aromatic can
+/// change the pi-electron count enough for an adjacent fused ring to then pass
+/// the aromaticity test (e.g. indole's pyrrole ring after the benzene ring is
+/// perceived).
 pub fn perceive_aromatic_bonds(mol: &mut Molecule) {
-    let aromatic_atoms = get_aromatic_atoms(mol);
-    let rings = find_rings(mol);
-
-    for ring in &rings {
-        let ring_set: HashSet<usize> = ring.iter().copied().collect();
-        let all_aromatic = ring.iter().all(|a| aromatic_atoms.contains(a));
-        if !all_aromatic {
-            continue;
-        }
-
-        for bond in mol.bonds.iter_mut() {
-            if ring_set.contains(&bond.atom1) && ring_set.contains(&bond.atom2) {
-                bond.bond_type = BondType::Aromatic;
+    loop {
+        let aromatic_atoms = get_aromatic_atoms(mol);
+        let rings = find_rings(mol);
+        let mut changed = false;
+        for ring in &rings {
+            let ring_set: HashSet<usize> = ring.iter().copied().collect();
+            if !ring.iter().all(|a| aromatic_atoms.contains(a)) {
+                continue;
             }
+            for bond in mol.bonds.iter_mut() {
+                if ring_set.contains(&bond.atom1)
+                    && ring_set.contains(&bond.atom2)
+                    && bond.bond_type != BondType::Aromatic
+                {
+                    bond.bond_type = BondType::Aromatic;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
         }
     }
 }
