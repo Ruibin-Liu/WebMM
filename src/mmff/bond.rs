@@ -253,8 +253,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::C_3, MMFFAtomType::N_AM, BondType::Single)
         | (MMFFAtomType::N_AM, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 4.7,
-            r0: 1.42,
+            k_bond: 4.664,
+            r0: 1.436,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::N_2, BondType::Double)
         | (MMFFAtomType::N_2, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
@@ -575,23 +575,33 @@ fn lookup_bond_params_exact(
 
         // 5-ring heteroaromatic bond params (RDKit verbose-extracted)
         (MMFFAtomType::C_2, MMFFAtomType::C5A, BondType::Aromatic)
-        | (MMFFAtomType::C5A, MMFFAtomType::C_2, BondType::Aromatic) => Some(BondParams {
+        | (MMFFAtomType::C5A, MMFFAtomType::C_2, BondType::Aromatic)
+        | (MMFFAtomType::C_2, MMFFAtomType::C5A, BondType::Single)
+        | (MMFFAtomType::C5A, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
             k_bond: 5.468, r0: 1.423,
         }),
         (MMFFAtomType::C5A, MMFFAtomType::NPYL, BondType::Aromatic)
-        | (MMFFAtomType::NPYL, MMFFAtomType::C5A, BondType::Aromatic) => Some(BondParams {
+        | (MMFFAtomType::NPYL, MMFFAtomType::C5A, BondType::Aromatic)
+        | (MMFFAtomType::C5A, MMFFAtomType::NPYL, BondType::Single)
+        | (MMFFAtomType::NPYL, MMFFAtomType::C5A, BondType::Single) => Some(BondParams {
             k_bond: 6.301, r0: 1.364,
         }),
         (MMFFAtomType::C5A, MMFFAtomType::N5B, BondType::Aromatic)
-        | (MMFFAtomType::N5B, MMFFAtomType::C5A, BondType::Aromatic) => Some(BondParams {
+        | (MMFFAtomType::N5B, MMFFAtomType::C5A, BondType::Aromatic)
+        | (MMFFAtomType::C5A, MMFFAtomType::N5B, BondType::Single)
+        | (MMFFAtomType::N5B, MMFFAtomType::C5A, BondType::Single) => Some(BondParams {
             k_bond: 8.326, r0: 1.313,
         }),
         (MMFFAtomType::C5B, MMFFAtomType::C5A, BondType::Aromatic)
-        | (MMFFAtomType::C5A, MMFFAtomType::C5B, BondType::Aromatic) => Some(BondParams {
+        | (MMFFAtomType::C5A, MMFFAtomType::C5B, BondType::Aromatic)
+        | (MMFFAtomType::C5B, MMFFAtomType::C5A, BondType::Single)
+        | (MMFFAtomType::C5A, MMFFAtomType::C5B, BondType::Single) => Some(BondParams {
             k_bond: 7.118, r0: 1.377,
         }),
         (MMFFAtomType::N5B, MMFFAtomType::C5B, BondType::Aromatic)
-        | (MMFFAtomType::C5B, MMFFAtomType::N5B, BondType::Aromatic) => Some(BondParams {
+        | (MMFFAtomType::C5B, MMFFAtomType::N5B, BondType::Aromatic)
+        | (MMFFAtomType::N5B, MMFFAtomType::C5B, BondType::Single)
+        | (MMFFAtomType::C5B, MMFFAtomType::N5B, BondType::Single) => Some(BondParams {
             k_bond: 4.456, r0: 1.369,
         }),
         (MMFFAtomType::N_AM, MMFFAtomType::C_2, BondType::Single)
