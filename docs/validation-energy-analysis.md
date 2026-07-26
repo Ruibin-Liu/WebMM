@@ -5,10 +5,31 @@ explicit-H 3D structure (seed 42). Energies compared at the **same geometry**
 (WebMM `calculate_energy` vs RDKit `MMFF.CalcEnergy`), isolating force-field
 parameters from the optimizer/ETKDG.
 
-**Overall:** Pearson r = 0.954, RMSD 11.04 kcal/mol. Good correlation, but a
-systematic high-energy bias for specific families. Regenerate with
-`cargo run --release --example dump_types_energy > scripts/val_set/webmm_ref.json`
-then `python3 scripts/validate.py`.
+**Overall (after 2026-07-25 fixes):** Pearson r = 0.984, RMSD 6.05 kcal/mol
+(was r=0.954, RMSD 11.3). The 5-membered-heteroaromatic family — previously the
+largest outlier group (indole/benzothiophene/thiazole/adenine/purine, +40 to
++25) — is now within ~1-3 kcal/mol of RDKit.
+
+### Fixed: 5-ring aromatic angle inflation (biggest win)
+Root cause: `perceive_aromatic_bonds` ran once, so fused systems whose Kekulé
+form gives the 5-ring only 4 pi electrons (indole) failed aromaticity on the
+first pass and kept Kekulé bonds. That made the MMFF angle_type 1/2 instead of
+0, selecting wrong 120-128° MMFFANG entries. Fix: iterate perception to a
+fixpoint. Energy r 0.975 -> 0.984, RMSD 7.53 -> 6.05.
+
+## Remaining worst outliers (specialized parameter domains)
+| Molecule | RDKit | WebMM | Δ | Cause |
+|----------|------:|------:|---:|-------|
+| adamantane | 36.49 | 75.97 | +39.5 | cage: torsion=35 + vdw=32 (C-C-C-C torsion params + H-H 1,3/1,4 VDW) |
+| methylphosphonic_acid | -101.29 | -82.89 | +18.4 | sparse P=O/P-O params |
+| triethyl_phosphate | -51.37 | -33.92 | +17.5 | P-O params |
+| norbornane | 32.32 | 46.02 | +13.7 | strained bridged (torsion+vdw) |
+| thioacetone | 43.42 | 31.82 | -11.6 | C=S params |
+| carbon_disulfide | 17.30 | 6.32 | -11.0 | S=C=S (S2CM) params |
+| trimethylphosphine_oxide | 16.54 | 27.47 | +10.9 | P=O params |
+
+These are parameter-table completeness issues in niche domains (cage alkanes,
+phosphorus, exotic sulfur), not algorithmic.
 
 ## Worst offenders (|ΔE| > 12 kcal/mol)
 
