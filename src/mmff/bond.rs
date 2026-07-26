@@ -566,7 +566,12 @@ fn lookup_bond_params_exact(
             k_bond: 9.020,
             r0: 1.496,
         }),
-        // P_4 (phosphine oxide / phosphonate) bonds — RDKit-extracted
+        // CS2 / S=C=S — S2CM (72) to C_1 (4) double (RDKit-extracted via symmetric scan)
+        (MMFFAtomType::S2CM, MMFFAtomType::C_1, BondType::Double)
+        | (MMFFAtomType::C_1, MMFFAtomType::S2CM, BondType::Double) => Some(BondParams {
+            k_bond: 2.954,
+            r0: 1.80,
+        }),
         (MMFFAtomType::C_3, MMFFAtomType::P_4, BondType::Single)
         | (MMFFAtomType::P_4, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
             k_bond: 5.801,
