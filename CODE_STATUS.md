@@ -4,9 +4,21 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-None active — atom typing matches RDKit 100% (0.00% mismatch) on a **130-molecule** validation set. Energy accuracy r=1.0000 / RMSD=0.248 kcal/mol (**0 outliers >1.0**).
+None active — atom typing matches RDKit 100% (0.00% mismatch) on a **130-molecule** validation set. Energy accuracy r=1.0000 / RMSD=0.170 kcal/mol (**0 outliers >1.0**).
 
 ## Recently Completed
+- **Audited + fixed the worst remaining |Δ| cases** (per request "check the other cases with big |Δ|"):
+  - `src/mmff/bond.rs`: N_4-H (ammonium) 1.012/5.5→1.028/6.163; C_AR-C_2 Single 1.484/5.0→1.457/4.488; added C_2-C_2 Single 1.489/4.418 (oxalic acid); added O_3/O_R-H_COOH 0.981/7.403 (carboxylic acid O-H); C-F 1.38/6.0→1.360/6.011 (sign-flipped stretch-bend, same class of bug as P-C/C_AR-N_AR).
+  - All RDKit-verbose verified. Fixed ammonium (+0.99→~0), trifluoromethane (−0.94→fixed), oxalic_acid/benzoic_acid/acetic_acid (carboxylic family).
+  - **Result**: 130-set r=1.0000, RMSD 0.248→**0.170**, max|Δ| 0.99→0.95, outliers >0.5: 9→4. 0 outliers >1.0. 190 tests pass, 0 warnings. WASM rebuilt.
+  - **Remaining worst**: caffeine (+0.95) — sb gap spread across ~14 amide/carbonyl angles (O-C-N type 7,3,10); all bond params verified correct, gap is in stretch-bend kba table entries for amide angles (needs systematic STBN audit). carbon_disulfide (+0.61, C=S), benzoate (+0.61), cyclobutane (−0.59, 4-ring) — all <1.0, diminishing returns.
+
+## Recently Completed
+- **All clippy lints fixed → 0 warnings** (per PLAN.md "Fix all clippy lints"):
+  - `cargo clippy --all-targets`: **70 warnings → 0**; `cargo build`/release clean; 190 tests pass; WASM rebuilt.
+  - **Mechanical-equivalence fixes** (clippy-verified, no behavior change): `manual_rotate`→`rotate_left` (etkdg Xoshiro tempering); `iter_cloned_collect`→`to_vec`; `len_zero`/`length_comparison_to_one`→`is_empty`; `manual_range_contains`×8→`(lo..=hi).contains`; `nonminimal_bool` simplifications (graph.rs ring test, etkdg); `mul_by_neg_one`→unary `-` (electrostatics); `unnecessary_to_vec`×4 (opt_compare; `optimize` takes `&[[f64;3]]`); `clamp_like_pattern`→`.clamp` (torsion cos_phi); OR-pattern→range (charges halides); `field_assignment outside Default`→struct-update (lib.rs config); `assert_eq!` literal bool→`assert!`; `function call inside expect`×2→`unwrap_or_else`; removed duplicate `#[cfg(test)]` (lib.rs); `needless_range_loop`→`iter().enumerate()`/`zip()` on clean cases (oop, torsion invariance, lib.rs print loops/RMSD/worst_coords).
+  - **Scoped `#[allow]`** (structural/pervasive, no refactor): etkdg/mod.rs module allow for `needless_range_loop`+`too_many_arguments`+`type_complexity` (distance-geometry matrix code); extended mmff_tables allow with `large_const_arrays`+`type_complexity`, torsion with `type_complexity` (lookup tables); `too_many_arguments` on `get_mmff_torsion_type`/`get_stretch_bend_params`; `unnecessary_cast` on `estimate_implicit_h` (removing the `as i32` casts triggers a *different* false positive — the `.max(0)` hypervalent-atom guard is load-bearing).
+  - `cargo clippy --fix` was unusable: it is transactional and its `unnecessary_cast` suggestion (graph.rs) is a false positive causing E0308, rolling back the whole batch each run; all fixes applied manually with the 190-test suite as the regression net.
 - **Fixed aziridine 3-ring torsion bug + regression test** (per PLAN.md "Fix aziridine 3-ring torsion gap"):
   - `src/molecule/graph.rs` (`find_torsions`): was creating degenerate torsions where atom1 == atom4 in 3-membered rings (the ring wraps around to the same atom, e.g. C2-C0-C1-C2). Added `l != k` filter. RDKit excludes these; WebMM didn't, inflating torsion energy (cyclopropane +0.71, aziridine +1.24).
   - `src/lib.rs` (`regression_tests`): `no_degenerate_torsions_in_3_ring` test asserts cyclopropane has 0 torsions with atom1==atom4 and all torsion atoms are distinct.
