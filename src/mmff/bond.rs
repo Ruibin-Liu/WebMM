@@ -580,8 +580,8 @@ fn lookup_bond_params_exact(
         // Halogen bonds (symmetric)
         (MMFFAtomType::C_3, MMFFAtomType::F, BondType::Single)
         | (MMFFAtomType::F, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 6.0,
-            r0: 1.38,
+            k_bond: 6.011,
+            r0: 1.360,
         }),
         (MMFFAtomType::C_3, MMFFAtomType::Cl, BondType::Single)
         | (MMFFAtomType::Cl, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
