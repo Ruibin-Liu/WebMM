@@ -21,7 +21,14 @@ pub fn get_stretch_bend_params(
     let tj = mmff_type_id(type_j);
     let tk = mmff_type_id(type_k);
 
-    let sb_type = mmff_tables::compute_stretch_bend_type(angle_type, bond_type_ij, bond_type_jk);
+    // RDKit canonicalizes the angle so type_i <= type_k before computing
+    // the stretch-bend type; bond_type_1 must be the canonical-first bond.
+    let (bt1, bt2) = if ti <= tk {
+        (bond_type_ij, bond_type_jk)
+    } else {
+        (bond_type_jk, bond_type_ij)
+    };
+    let sb_type = mmff_tables::compute_stretch_bend_type(angle_type, bt1, bt2);
 
     if let Some((kba_ijk, kba_kji)) = mmff_tables::lookup_stretch_bend_params(
         ti,
