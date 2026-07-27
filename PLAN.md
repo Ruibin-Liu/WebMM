@@ -1,26 +1,22 @@
-# Fix remaining 7 energy outliers — target RMSD < 0.3 kcal/mol
+# Add regression tests + symmetry invariant + expand validation set
 
-**Status:** ✅ COMPLETE — ALL 7 fixed, RMSD 0.441→0.238 kcal/mol, 0 outliers >1.0
+**Status:** ✅ COMPLETE
 
-## Results
-- ALL 7 outliers fixed; 109/109 molecules within 1.0 kcal/mol of RDKit
-- **0 outliers >1.0 kcal/mol** (was 7)
-- Worst remaining: ammonium (+0.99), caffeine (+0.95) — both <1.0
+## Phase 1: Regression tests + symmetry invariant (DONE)
+- `src/lib.rs` `regression_tests` module: 6 tests pinning the 3 silent bugs
+  (OOP cyclic, DFSB skip, sb_type order) + bond-param symmetry + per-term
+  breakdown + purine end-to-end.
+- `src/prop_tests.rs`: energy_equals_breakdown_sum invariant.
+- 172 tests pass (was 165), 0 warnings.
 
-## Fixes applied
-1. `src/mmff/bond.rs`: 13 RDKit-verbose-verified bond param corrections/additions
-   (S-S, C-S, C-Cl, N-N aromatic, C-P single×2, P=O, C5A-OFUR, NPYL-N5A,
-   N5A-C5B, C-I, C=N double, C-N single)
-2. `src/mmff/mmff_tables.rs`: DFSB stretch-bend row canonicalization fix
-   (was skipping asymmetric-row angles like P-O-H entirely)
-3. `src/mmff/stretch_bend.rs`: sb_type canonicalization — swap bt_ij/bt_jk
-   when type_i > type_k so bond_type_1 is the lower-type peripheral bond
-   (matching RDKit's getMMFFStretchBendType canonical ordering). Fixed purine.
+## Phase 2: Validation set expansion (DONE)
+- 21 new molecules added (130 total). Atom types 0.00% mismatch on all.
+- Bond-param fixes for 3-ring (CR3R), cumulated (C=C=C), sulfonate chemistry.
+- Fixed: allene, cyclopropene, p_toluene_sulfonic_acid, ethylene_oxide.
 
 ## Metrics
-- Pearson r: **1.0000**
-- RMSD: **0.238 kcal/mol** (was 0.441)
-- Outliers >1.0: **0** (was 7)
-- max|Δ|: **0.99** (was 3.87)
-- Atom types 0.00% mismatch; charges mean|Δ|=0.0003
-- 165 tests pass, 0 warnings; WASM rebuilt
+- 130-mol set: r=1.0000, RMSD=0.281, 1 outlier >1.0 (aziridine)
+- Original 109-mol set: unchanged (RMSD=0.244, 0 outliers >1.0)
+- Known gap: 3-ring torsion V3 (aziridine +1.24, cyclopropane +0.71) —
+  tor_type 0 CR3R-CR3R central bond, RDKit V3=0.236. Future torsion-table work.
+- 172 tests pass, 0 warnings; WASM rebuilt.

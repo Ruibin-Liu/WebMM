@@ -4,7 +4,16 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-None active — atom typing matches RDKit 100% on both validation sets (0.00% mismatch). Energy accuracy r=1.0000 / RMSD=0.238 kcal/mol on 109-mol validation set (**0 outliers >1.0 kcal/mol**).
+None active — atom typing matches RDKit 100% (0.00% mismatch) on a **130-molecule** validation set. Energy accuracy r=1.0000 / RMSD=0.281 kcal/mol (0 outliers >1.0 on the original 109; 1 on the expanded 130: aziridine, a 3-ring torsion gap).
+
+## Recently Completed
+- **Regression tests + symmetry invariant + validation-set expansion** (per PLAN.md "Add regression tests + symmetry invariant + expand validation set"):
+  - `src/lib.rs` (new `regression_tests` module): 6 tests pinning the 3 silent algorithmic bugs — OOP cyclic permutations (guanidinium→3 terms), DFSB not-skipped (P-O-H→Some), sb_type order-invariance (purine N-C-C), bond-param symmetry (21 curated heteroatom pairs), pyrimidine per-term breakdown vs RDKit, purine end-to-end tolerance.
+  - `src/prop_tests.rs`: `energy_equals_breakdown_sum` invariant (catches dropped/double-counted terms).
+  - `scripts/add_val_molecules.py` + 21 new molecules in `scripts/val_set/` (formamidine, acetamidine, biguanide, phosphoric/sulfuric/p-toluenesulfonic acid, benzimidazole, benzothiazole, xanthine, CF3CH/CH2Br2/CH2I2/vinyl_chloride/acetyl_chloride, tetramethylsilane, cyclopropene/allene/ethylene_oxide/aziridine, glycine_zwitterion, ibuprofen). Atom types 0.00% mismatch on all new molecules.
+  - `src/mmff/bond.rs`: 3-ring (CR3R-CR3R/CR3R-O/CR3R-H/C_2-CR3R/C_VIN-CR3R) + cumulated (C_2=C_1/C_VIN=C_1 Double) + sulfonate (S_O2-O_3) bond params from RDKit verbose. Fixed allene, cyclopropene, p_toluene_sulfonic_acid, ethylene_oxide.
+  - **Result**: 172 tests pass (was 165), 0 warnings. Original 109 set unchanged (RMSD 0.244, 0 outliers >1.0). Expanded 130-set: r=1.0000, RMSD 0.281, 1 outlier >1.0.
+  - **Known gap**: aziridine (+1.24) + cyclopropane (+0.71) expose a 3-ring torsion V3 gap (tor_type 0, CR3R-CR3R central bond; RDKit V3=0.236). Needs torsion-table investigation.
 
 ## Recently Completed
 - **All 7 energy outliers fixed → r=1.0000, RMSD=0.238 kcal/mol, 0 outliers >1.0** (per PLAN.md "Fix remaining 7 energy outliers"):
