@@ -314,6 +314,11 @@ fn lookup_bond_params_exact(
             k_bond: 5.737,
             r0: 1.333,
         }),
+        (MMFFAtomType::N_AR, MMFFAtomType::C5A, BondType::Aromatic)
+        | (MMFFAtomType::C5A, MMFFAtomType::N_AR, BondType::Aromatic) => Some(BondParams {
+            k_bond: 7.299,
+            r0: 1.330,
+        }),
         (MMFFAtomType::C_1, MMFFAtomType::N_1, BondType::Triple)
         | (MMFFAtomType::N_1, MMFFAtomType::C_1, BondType::Triple) => Some(BondParams {
             k_bond: 16.582,
@@ -556,6 +561,11 @@ fn lookup_bond_params_exact(
             k_bond: 6.663,
             r0: 1.015,
         }),
+        (MMFFAtomType::N_SO2, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::N_SO2, BondType::Single) => Some(BondParams {
+            k_bond: 6.265,
+            r0: 1.028,
+        }),
         (MMFFAtomType::H, MMFFAtomType::N_4, BondType::Single)
         | (MMFFAtomType::N_4, MMFFAtomType::H, BondType::Single) => Some(BondParams {
             k_bond: 6.163,
@@ -612,8 +622,8 @@ fn lookup_bond_params_exact(
         // S-H bonds (symmetric)
         (MMFFAtomType::H, MMFFAtomType::S_3, BondType::Single)
         | (MMFFAtomType::S_3, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 4.0,
-            r0: 1.336,
+            k_bond: 4.014,
+            r0: 1.341,
         }),
         (MMFFAtomType::H, MMFFAtomType::S_2, BondType::Single)
         | (MMFFAtomType::S_2, MMFFAtomType::H, BondType::Single) => Some(BondParams {
