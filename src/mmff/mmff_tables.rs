@@ -1,4 +1,4 @@
-#![allow(clippy::too_many_arguments)]
+#![allow(clippy::too_many_arguments, clippy::large_const_arrays, clippy::type_complexity)]
 
 #[rustfmt::skip]
 pub const MMFF_DEF_EQ_LEVELS: [[u8; 4]; 100] = [
@@ -2884,9 +2884,14 @@ pub fn lookup_stretch_bend_params(
     let row_k = get_periodic_table_row(atomic_num_k);
     // DFSB table is stored in canonical form (ri <= rk); canonicalize query rows
     let (can_ri, can_rk) = if row_i <= row_k { (row_i, row_k) } else { (row_k, row_i) };
+    // DFSB swap must be ROW-based (the table is row-indexed), not the type-based
+    // `swap` used for the STBN lookup. These disagree when a heavy atom has a
+    // lower type_id than H (e.g. C type 2 < H type 5, but C row 1 > H row 0),
+    // which swaps the kba halves and corrupts stretch-bend energy.
+    let row_swap = row_i > row_k;
     for &(ri, rj, rk, kba_ijk, kba_kji) in MMFF_DFSB_TABLE.iter() {
         if ri == can_ri && rj == row_j && rk == can_rk {
-            if swap {
+            if row_swap {
                 return Some((kba_kji, kba_ijk));
             } else {
                 return Some((kba_ijk, kba_kji));
