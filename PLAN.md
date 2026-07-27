@@ -1,22 +1,18 @@
-# Add regression tests + symmetry invariant + expand validation set
+# Fix aziridine 3-ring torsion gap
 
 **Status:** ✅ COMPLETE
 
-## Phase 1: Regression tests + symmetry invariant (DONE)
-- `src/lib.rs` `regression_tests` module: 6 tests pinning the 3 silent bugs
-  (OOP cyclic, DFSB skip, sb_type order) + bond-param symmetry + per-term
-  breakdown + purine end-to-end.
-- `src/prop_tests.rs`: energy_equals_breakdown_sum invariant.
-- 172 tests pass (was 165), 0 warnings.
+## Root cause
+`find_torsions` created degenerate torsions where atom1 == atom4 in 3-membered
+rings (the ring wraps around to the same atom: C2-C0-C1-C2). RDKit filters
+these; WebMM didn't, inflating torsion energy.
 
-## Phase 2: Validation set expansion (DONE)
-- 21 new molecules added (130 total). Atom types 0.00% mismatch on all.
-- Bond-param fixes for 3-ring (CR3R), cumulated (C=C=C), sulfonate chemistry.
-- Fixed: allene, cyclopropene, p_toluene_sulfonic_acid, ethylene_oxide.
+## Fix
+`src/molecule/graph.rs`: added `l != k` filter in find_torsions.
+`src/lib.rs`: added `no_degenerate_torsions_in_3_ring` regression test.
 
-## Metrics
-- 130-mol set: r=1.0000, RMSD=0.281, 1 outlier >1.0 (aziridine)
-- Original 109-mol set: unchanged (RMSD=0.244, 0 outliers >1.0)
-- Known gap: 3-ring torsion V3 (aziridine +1.24, cyclopropane +0.71) —
-  tor_type 0 CR3R-CR3R central bond, RDKit V3=0.236. Future torsion-table work.
-- 172 tests pass, 0 warnings; WASM rebuilt.
+## Result
+- cyclopropane: Δ +0.71 → 0.00 (exact)
+- aziridine: Δ +1.24 → +0.41
+- 130-set: r=1.0000, RMSD 0.281 → 0.248, 0 outliers >1.0
+- 190 tests pass, 0 warnings; WASM rebuilt

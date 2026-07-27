@@ -4,9 +4,21 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-None active — atom typing matches RDKit 100% (0.00% mismatch) on a **130-molecule** validation set. Energy accuracy r=1.0000 / RMSD=0.281 kcal/mol (0 outliers >1.0 on the original 109; 1 on the expanded 130: aziridine, a 3-ring torsion gap).
+None active — atom typing matches RDKit 100% (0.00% mismatch) on a **130-molecule** validation set. Energy accuracy r=1.0000 / RMSD=0.248 kcal/mol (**0 outliers >1.0**).
 
 ## Recently Completed
+- **Fixed aziridine 3-ring torsion bug + regression test** (per PLAN.md "Fix aziridine 3-ring torsion gap"):
+  - `src/molecule/graph.rs` (`find_torsions`): was creating degenerate torsions where atom1 == atom4 in 3-membered rings (the ring wraps around to the same atom, e.g. C2-C0-C1-C2). Added `l != k` filter. RDKit excludes these; WebMM didn't, inflating torsion energy (cyclopropane +0.71, aziridine +1.24).
+  - `src/lib.rs` (`regression_tests`): `no_degenerate_torsions_in_3_ring` test asserts cyclopropane has 0 torsions with atom1==atom4 and all torsion atoms are distinct.
+  - **Result**: cyclopropane now exact (Δ=0.00), aziridine +0.41 (was +1.24). 130-set: r=1.0000, RMSD 0.281→**0.248**, 0 outliers >1.0 (was 1). 190 tests pass (was 172), 0 warnings. WASM rebuilt.
+
+## Recently Completed
+- **Test suite hardened: print-only tests converted to real assertions** (per PLAN.md "Harden the test suite: convert print-only tests to real assertions"):
+  - **Discovered `src/opt_compare.rs` was orphaned dead code** — never declared as a module, so its 17 tests never compiled or ran. Wired it in via `#[cfg(test)] mod opt_compare;` in `src/lib.rs` and stripped the file's self-wrapping `#[cfg(test)] mod opt_compare { ... }` so it is a normal module body.
+  - `src/opt_compare.rs`: added `assert!(result.converged)` + `assert!((webmm_e - rdkit_e).abs() < 0.1)` to all 16 `opt_*` tests and 4 `debug_breakdowns` molecule blocks — previously pure `println!` diagnostics (0 asserts in the whole file). Observed max |Δ| = 0.019 kcal/mol (acetic_acid); most exact.
+  - `src/lib.rs`: added asserts to 9 more print-only tests — `test_rdkit_energy_comparison` (|ΔE|<0.01, was ratio-print only), `test_aniline_sdf_compare` (total<0.01 vs RDKit 8.145), `test_diagnostic_ethane_etkdg_steps` (finite energy + C-C∈[1.45,1.55]), `test_worst_run` (benzene planarity <0.01 Å over 10 seeds), `check_webmm_etkdg_aniline` (H-N-H∈[110,125]° + NH₂ pyramidalization >0.3 Å), and the 4 type audits (`test_aniline_mmff_types`/`test_5ring_mmff_types`/`test_simple_molecule_types`/`test_thiophene_imidazole_types`) now assert exact atom MMFF types via `format!("{:?}")` (typing is 0.00% vs RDKit → current values encoded as regression baseline).
+  - Renamed 4 duplicate test names for clean `cargo test` filtering: `type_audit4/5::test_new_type_energy_and_convergence` → `test_sp2_sulfur_nitro_energy_and_convergence` / `test_carboxylate_noxide_silicon_imine_energy_and_convergence`; `estimation/atom_types::test_ion_types_return_none` → `test_ion_bond_angle_estimation_returns_none` / `test_ion_atom_type_props_return_none`.
+  - **189 tests pass** (was 172; +17 from newly-compiled opt_compare), 0 failures, 0 build warnings. All changes test-gated (`#[cfg(test)]`); no production code changed, WASM unaffected.
 - **Regression tests + symmetry invariant + validation-set expansion** (per PLAN.md "Add regression tests + symmetry invariant + expand validation set"):
   - `src/lib.rs` (new `regression_tests` module): 6 tests pinning the 3 silent algorithmic bugs — OOP cyclic permutations (guanidinium→3 terms), DFSB not-skipped (P-O-H→Some), sb_type order-invariance (purine N-C-C), bond-param symmetry (21 curated heteroatom pairs), pyrimidine per-term breakdown vs RDKit, purine end-to-end tolerance.
   - `src/prop_tests.rs`: `energy_equals_breakdown_sum` invariant (catches dropped/double-counted terms).

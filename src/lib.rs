@@ -24,6 +24,9 @@ pub mod utils;
 #[cfg(test)]
 pub mod prop_tests;
 
+#[cfg(test)]
+mod opt_compare;
+
 /// MMFF variant selection
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -2457,6 +2460,9 @@ M  END"#;
             "  C-C dist: {:.4} (ideal 1.512)",
             dist3(&perfect_coords, 0, 1)
         );
+        assert!(e_perfect.is_finite(), "ethane: non-finite energy from perfect coords");
+        let cc0 = dist3(&perfect_coords, 0, 1);
+        assert!(cc0 > 1.45 && cc0 < 1.55, "ethane C-C dist {} out of [1.45, 1.55]", cc0);
         eprintln!(
             "  C-H dist: {:.4} (ideal 1.094)",
             dist3(&perfect_coords, 0, 2)
@@ -3328,6 +3334,11 @@ M  END"#;
         }
 
         eprintln!("Max all-atom deviation: {:.6} Å", max_all_dev);
+        assert!(
+            max_all_dev < 0.01,
+            "benzene worst-case planar deviation {} Å exceeds 0.01",
+            max_all_dev
+        );
 
         // Compute ring plane
         let ring_atoms = vec![0, 1, 2, 3, 4, 5];
@@ -3514,6 +3525,14 @@ M  END"#;
         for (i, atom) in mol.atoms.iter().enumerate() {
             eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
         }
+        let expected = [
+            "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "C_AR",
+            "N_PL3", "H_NAM", "H_NAM", "H", "H", "H", "H",
+        ];
+        assert_eq!(mol.atoms.len(), expected.len(), "aniline atom count");
+        for (i, exp) in expected.iter().enumerate() {
+            assert_eq!(format!("{:?}", ff.atom_types[i]), *exp, "aniline atom {}", i);
+        }
         let coords = crate::etkdg::generate_initial_coords(&mol);
         let (energy, _) = ff.calculate_energy_and_gradient(&coords);
         eprintln!("Aniline initial energy: {}", energy);
@@ -3581,8 +3600,15 @@ M  END"#;
             let mol = parse_sdf(sdf).expect("parse");
             let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
             eprintln!("\n=== {} ===", name);
+            let expected: &[&str] = match name {
+                "pyrrole" => &["C5A", "C5B", "C5B", "C5A", "NPYL", "H", "H", "H", "H_N3", "H"],
+                "furan" => &["C5A", "C5B", "C5B", "C5A", "OFUR", "H", "H", "H", "H"],
+                _ => &[],
+            };
+            assert_eq!(mol.atoms.len(), expected.len(), "{} atom count", name);
             for (i, atom) in mol.atoms.iter().enumerate() {
                 eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
+                assert_eq!(format!("{:?}", ff.atom_types[i]), expected[i], "{} atom {}", name, i);
             }
         }
     }
@@ -3667,8 +3693,19 @@ M  END"#,
             let mol = parse_sdf(sdf).expect("parse");
             let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
             eprintln!("\n=== {} ===", name);
+            let expected: &[&str] = match name {
+                "water" => &["OH2", "H_OH", "H_OH"],
+                "methanol" => &["C_3", "O_R", "H", "H", "H", "H_ONC"],
+                "phenol" => &[
+                    "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "O_R",
+                    "H", "H", "H", "H", "H", "H_OAR",
+                ],
+                _ => &[],
+            };
+            assert_eq!(mol.atoms.len(), expected.len(), "{} atom count", name);
             for (i, atom) in mol.atoms.iter().enumerate() {
                 eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
+                assert_eq!(format!("{:?}", ff.atom_types[i]), expected[i], "{} atom {}", name, i);
             }
         }
     }
@@ -3739,8 +3776,15 @@ M  END"#,
             let mol = parse_sdf(sdf).expect("parse");
             let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
             eprintln!("\n=== {} ===", name);
+            let expected: &[&str] = match name {
+                "thiophene" => &["C5A", "C5B", "C5B", "C5A", "S_AR", "H", "H", "H", "H"],
+                "imidazole" => &["N5B", "C5A", "NPYL", "C5A", "C5B", "H", "H_N3", "H", "H"],
+                _ => &[],
+            };
+            assert_eq!(mol.atoms.len(), expected.len(), "{} atom count", name);
             for (i, atom) in mol.atoms.iter().enumerate() {
                 eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
+                assert_eq!(format!("{:?}", ff.atom_types[i]), expected[i], "{} atom {}", name, i);
             }
         }
     }
@@ -3925,6 +3969,11 @@ M  END"#;
                 "{}: ours={:.6} rdkit={:.6} ratio={:.4} | bond={:.4} angle={:.4} sb={:.4} tor={:.4} oop={:.4} vdw={:.4} elec={:.4}",
                 name, our_energy, rdkit_energy, ratio,
                 bd.bond, bd.angle, bd.stretch_bend, bd.torsion, bd.oop, bd.vdw, bd.electrostatic
+            );
+            assert!(
+                (our_energy - rdkit_e).abs() < 0.01,
+                "{}: our energy {} vs RDKit {}, delta {} exceeds 0.01",
+                name, our_energy, rdkit_e, our_energy - rdkit_e
             );
         }
     }
@@ -4181,6 +4230,11 @@ M  END"#;
                 bd.bond - rdkit_bond,
                 bd.angle - rdkit_angle,
                 bd.total() - rdkit_total
+            );
+            assert!(
+                (bd.total() - rdkit_total).abs() < 0.01,
+                "aniline: total energy {} vs RDKit {}",
+                bd.total(), rdkit_total
             );
 
             // Bond lengths at RDKit geometry
@@ -4731,7 +4785,7 @@ M  END"#;
     /// Energy evaluation and geometry optimization must converge for the
     /// newly typed functional groups.
     #[test]
-    fn test_new_type_energy_and_convergence() {
+    fn test_sp2_sulfur_nitro_energy_and_convergence() {
         for (name, sdf) in [
             ("DMSO", DMSO),
             ("sulfone", SULFONE),
@@ -5028,7 +5082,7 @@ M  END"#;
 
     /// Energy finite and optimizer converges for the newly typed groups
     #[test]
-    fn test_new_type_energy_and_convergence() {
+    fn test_carboxylate_noxide_silicon_imine_energy_and_convergence() {
         for (name, sdf) in [
             ("acetate", ACETATE),
             ("pyridine_no", PYRIDINE_NO),
@@ -5257,6 +5311,16 @@ mod aniline_etkdg_planarity {
         }
         let n_dist = (n[0]-center[0])*nhat[0] + (n[1]-center[1])*nhat[1] + (n[2]-center[2])*nhat[2];
         println!("N distance from ring plane: {:.4} A", n_dist.abs());
+        // Aniline NH2 must be pyramidal with ~117° H-N-H (RDKit ETKDG behavior)
+        assert!(
+            hnh > 110.0 && hnh < 125.0,
+            "aniline H-N-H angle {} out of [110, 125]",
+            hnh
+        );
+        let h7_oop = ((h7[0]-center[0])*nhat[0] + (h7[1]-center[1])*nhat[1] + (h7[2]-center[2])*nhat[2]).abs();
+        let h8_oop = ((h8[0]-center[0])*nhat[0] + (h8[1]-center[1])*nhat[1] + (h8[2]-center[2])*nhat[2]).abs();
+        assert!(h7_oop > 0.3, "aniline H7 out-of-plane {} Å (NH2 not pyramidal)", h7_oop);
+        assert!(h8_oop > 0.3, "aniline H8 out-of-plane {} Å (NH2 not pyramidal)", h8_oop);
     }
 }
 
@@ -5440,6 +5504,28 @@ mod regression_tests {
         check("torsion", bd.torsion, 0.0);
         check("vdw", bd.vdw, 11.0989);
         check("electrostatic", bd.electrostatic, -21.1362);
+    }
+
+    /// Bug #4 (found via validation-set expansion): find_torsions created
+    /// degenerate torsions where atom1 == atom4 in 3-membered rings
+    /// (the ring wraps around to the same atom: C2-C0-C1-C2). RDKit filters
+    /// these; WebMM didn't, inflating torsion energy (cyclopropane was +0.71,
+    /// aziridine +1.24). cyclopropane has exactly 3 such invalid terms.
+    #[test]
+    fn no_degenerate_torsions_in_3_ring() {
+        let mol = parse_sdf(include_str!("../scripts/val_set/cyclopropane.sdf")).expect("parse");
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let degenerate: Vec<_> = ff.torsions.iter()
+            .filter(|t| t.atom1 == t.atom4)
+            .collect();
+        assert!(degenerate.is_empty(),
+            "found {} torsions with atom1==atom4 (degenerate, should be 0)",
+            degenerate.len());
+        // all 4 atoms of every torsion must be distinct
+        for t in &ff.torsions {
+            let s = std::collections::HashSet::from([t.atom1, t.atom2, t.atom3, t.atom4]);
+            assert_eq!(s.len(), 4, "torsion ({},{},{},{}) has non-distinct atoms", t.atom1, t.atom2, t.atom3, t.atom4);
+        }
     }
 
     /// Purine end-to-end: the fused-ring sb_type bug left it +1.1 off; pin it

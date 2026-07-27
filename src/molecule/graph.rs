@@ -538,7 +538,7 @@ pub fn find_torsions(mol: &Molecule) -> Vec<Torsion> {
         for &k in neighbors_i {
             if k != j {
                 for &l in neighbors_j {
-                    if l != i {
+                    if l != i && l != k {
                         torsions.push(Torsion {
                             atom1: k,
                             atom2: i,
