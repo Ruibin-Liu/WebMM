@@ -2882,8 +2882,10 @@ pub fn lookup_stretch_bend_params(
     let row_i = get_periodic_table_row(atomic_num_i);
     let row_j = get_periodic_table_row(atomic_num_j);
     let row_k = get_periodic_table_row(atomic_num_k);
+    // DFSB table is stored in canonical form (ri <= rk); canonicalize query rows
+    let (can_ri, can_rk) = if row_i <= row_k { (row_i, row_k) } else { (row_k, row_i) };
     for &(ri, rj, rk, kba_ijk, kba_kji) in MMFF_DFSB_TABLE.iter() {
-        if ri == row_i && rj == row_j && rk == row_k {
+        if ri == can_ri && rj == row_j && rk == can_rk {
             if swap {
                 return Some((kba_kji, kba_ijk));
             } else {
