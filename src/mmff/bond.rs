@@ -553,8 +553,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::H, MMFFAtomType::N_AM, BondType::Single)
         | (MMFFAtomType::N_AM, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 5.0,
-            r0: 1.010,
+            k_bond: 6.663,
+            r0: 1.015,
         }),
         (MMFFAtomType::H, MMFFAtomType::N_4, BondType::Single)
         | (MMFFAtomType::N_4, MMFFAtomType::H, BondType::Single) => Some(BondParams {
@@ -639,8 +639,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::C_3, MMFFAtomType::I, BondType::Single)
         | (MMFFAtomType::I, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 2.5,
-            r0: 2.14,
+            k_bond: 1.706,
+            r0: 2.090,
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::I, BondType::Single)
         | (MMFFAtomType::I, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
@@ -777,7 +777,7 @@ fn lookup_bond_params_exact(
         // Purine 6-ring N_PL3-C bonds (RDKit verbose-estimated)
         (MMFFAtomType::N_PL3, MMFFAtomType::C_2, BondType::Single)
         | (MMFFAtomType::C_2, MMFFAtomType::N_PL3, BondType::Single) => Some(BondParams {
-            k_bond: 5.829, r0: 1.369,
+            k_bond: 6.110, r0: 1.370,
         }),
         (MMFFAtomType::N_PL3, MMFFAtomType::C_VIN, BondType::Single)
         | (MMFFAtomType::C_VIN, MMFFAtomType::N_PL3, BondType::Single) => Some(BondParams {
