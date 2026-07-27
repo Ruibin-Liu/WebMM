@@ -662,6 +662,11 @@ fn lookup_bond_params_exact(
             k_bond: 3.390,
             r0: 1.720,
         }),
+        (MMFFAtomType::C_2, MMFFAtomType::Cl, BondType::Single)
+        | (MMFFAtomType::Cl, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
+            k_bond: 3.449,
+            r0: 1.715,
+        }),
         (MMFFAtomType::C_3, MMFFAtomType::Br, BondType::Single)
         | (MMFFAtomType::Br, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
             k_bond: 3.0,
