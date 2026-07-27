@@ -46,6 +46,10 @@ fn lookup_bond_params_exact(
             k_bond: 4.258,
             r0: 1.508,
         }),
+        (MMFFAtomType::C_2, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
+            k_bond: 4.418,
+            r0: 1.489,
+        }),
         (MMFFAtomType::C_2, MMFFAtomType::C_3, BondType::Single)
         | (MMFFAtomType::C_3, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
             k_bond: 4.19,
@@ -70,8 +74,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::C_2, MMFFAtomType::C_AR, BondType::Single)
         | (MMFFAtomType::C_AR, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
-            k_bond: 5.0,
-            r0: 1.484,
+            k_bond: 4.488,
+            r0: 1.457,
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
             k_bond: 5.0,
@@ -534,6 +538,16 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::O_3, MMFFAtomType::H_OH, BondType::Single) => Some(BondParams {
             k_bond: 7.88,
             r0: 0.969,
+        }),
+        (MMFFAtomType::H_COOH, MMFFAtomType::O_3, BondType::Single)
+        | (MMFFAtomType::O_3, MMFFAtomType::H_COOH, BondType::Single) => Some(BondParams {
+            k_bond: 7.403,
+            r0: 0.981,
+        }),
+        (MMFFAtomType::H_COOH, MMFFAtomType::O_R, BondType::Single)
+        | (MMFFAtomType::O_R, MMFFAtomType::H_COOH, BondType::Single) => Some(BondParams {
+            k_bond: 7.403,
+            r0: 0.981,
         }),
         (MMFFAtomType::H, MMFFAtomType::O_3, BondType::Single)
         | (MMFFAtomType::O_3, MMFFAtomType::H, BondType::Single) => Some(BondParams {
