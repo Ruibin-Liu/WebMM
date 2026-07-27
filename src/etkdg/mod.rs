@@ -3739,60 +3739,144 @@ fn minimize_etkdg(
     if n == 0 {
         return 0.0;
     }
-    let mut best_coords = coords.to_vec();
-    let mut best_energy = etkdg_energy(
-        coords,
-        bounds,
-        chiral_centers,
-        tetrahedral,
-        pc,
-        torsion_prefs,
-        bonds_12,
-        angles_13,
-    );
-    for _ in 0..max_iter {
-        let grad = etkdg_gradient(
-            coords,
-            bounds,
-            chiral_centers,
-            tetrahedral,
-            pc,
-            torsion_prefs,
-            bonds_12,
-            angles_13,
-        );
-        let max_g = grad
-            .iter()
-            .map(|g| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt())
-            .fold(0.0f64, f64::max);
+    // L-BFGS (two-loop recursion + backtracking line search) over etkdg_energy /
+    // etkdg_gradient. The prior fixed-step normalized descent (`step = 0.1/max_g`)
+    // diverged as the gradient shrank (step -> inf near a minimum) and never
+    // converged — stalling in bad local minima even for tiny molecules (butadiene
+    // E~282 vs min ~6; 2000 iters didn't help). L-BFGS uses curvature history to
+    // take well-scaled steps and actually reach the force tolerance.
+    let dim = 3 * n;
+    let mut x = vec![0.0f64; dim];
+    for i in 0..n {
+        x[3 * i] = coords[i][0];
+        x[3 * i + 1] = coords[i][1];
+        x[3 * i + 2] = coords[i][2];
+    }
+    let fixed: Vec<bool> = (0..n).map(|i| coord_map.contains_key(&i)).collect();
+    let energy_at = |xx: &[f64]| -> f64 {
+        let c: Vec<[f64; 3]> = (0..n).map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]]).collect();
+        etkdg_energy(&c, bounds, chiral_centers, tetrahedral, pc, torsion_prefs, bonds_12, angles_13)
+    };
+    let gradient_at = |xx: &[f64]| -> Vec<f64> {
+        let c: Vec<[f64; 3]> = (0..n).map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]]).collect();
+        let g3 = etkdg_gradient(&c, bounds, chiral_centers, tetrahedral, pc, torsion_prefs, bonds_12, angles_13);
+        let mut gx = vec![0.0f64; dim];
+        for i in 0..n {
+            if fixed[i] {
+                continue;
+            }
+            gx[3 * i] = g3[i][0];
+            gx[3 * i + 1] = g3[i][1];
+            gx[3 * i + 2] = g3[i][2];
+        }
+        gx
+    };
+
+    let mut f = energy_at(&x);
+    let mut g = gradient_at(&x);
+    const M: usize = 8;
+    let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
+    let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
+    let mut rho_hist: Vec<f64> = Vec::with_capacity(M);
+
+    for _iter in 0..max_iter {
+        // convergence: max per-atom force (excluding fixed atoms)
+        let mut max_g = 0.0f64;
+        for i in 0..n {
+            if fixed[i] {
+                continue;
+            }
+            let gm = (g[3 * i] * g[3 * i] + g[3 * i + 1] * g[3 * i + 1] + g[3 * i + 2] * g[3 * i + 2]).sqrt();
+            if gm > max_g {
+                max_g = gm;
+            }
+        }
         if max_g < force_tol {
             break;
         }
-        let step = 0.1 / max_g.max(1e-10);
-        for i in 0..n {
-            if !coord_map.contains_key(&i) {
-                coords[i][0] -= step * grad[i][0];
-                coords[i][1] -= step * grad[i][1];
-                coords[i][2] -= step * grad[i][2];
+
+        // L-BFGS two-loop recursion -> q = H_k·g ; direction = -q
+        let k = s_hist.len();
+        let mut q = g.clone();
+        let mut alpha = vec![0.0f64; k];
+        for j in (0..k).rev() {
+            let sjq: f64 = s_hist[j].iter().zip(q.iter()).map(|(a, b)| a * b).sum();
+            alpha[j] = rho_hist[j] * sjq;
+            let yj = &y_hist[j];
+            for d in 0..dim {
+                q[d] -= alpha[j] * yj[d];
             }
         }
-        let energy = etkdg_energy(
-            coords,
-            bounds,
-            chiral_centers,
-            tetrahedral,
-            pc,
-            torsion_prefs,
-            bonds_12,
-            angles_13,
-        );
-        if energy < best_energy {
-            best_energy = energy;
-            best_coords = coords.to_vec();
+        let gamma = if k > 0 {
+            let sy: f64 = s_hist[k - 1].iter().zip(y_hist[k - 1].iter()).map(|(a, b)| a * b).sum();
+            let yy: f64 = y_hist[k - 1].iter().map(|v| v * v).sum();
+            if yy > 1e-20 { sy / yy } else { 1.0 }
+        } else {
+            1.0
+        };
+        for d in 0..dim {
+            q[d] *= gamma;
+        }
+        for j in 0..k {
+            let yjq: f64 = y_hist[j].iter().zip(q.iter()).map(|(a, b)| a * b).sum();
+            let beta = rho_hist[j] * yjq;
+            let sj = &s_hist[j];
+            for d in 0..dim {
+                q[d] += sj[d] * (alpha[j] - beta);
+            }
+        }
+        let mut dir: Vec<f64> = q.iter().map(|qi| -qi).collect();
+        let mut dg: f64 = dir.iter().zip(g.iter()).map(|(a, b)| a * b).sum();
+        // If not a descent direction (rare, bad curvature), reset and use steepest descent.
+        if dg >= 0.0 {
+            s_hist.clear();
+            y_hist.clear();
+            rho_hist.clear();
+            dir = g.iter().map(|gi| -gi).collect();
+            dg = dir.iter().zip(g.iter()).map(|(a, b)| a * b).sum();
+        }
+
+        // Backtracking Armijo line search: f(x + step·dir) <= f + c·step·dg
+        let c_armijo = 1e-4;
+        let mut step = if k == 0 { 1.0 / max_g.max(1e-10) } else { 1.0 };
+        let mut accepted = false;
+        for _ls in 0..25 {
+            let x_new: Vec<f64> = (0..dim).map(|d| x[d] + step * dir[d]).collect();
+            let f_new = energy_at(&x_new);
+            if f_new.is_finite() && f_new <= f + c_armijo * step * dg {
+                let g_new = gradient_at(&x_new);
+                let s: Vec<f64> = (0..dim).map(|d| x_new[d] - x[d]).collect();
+                let y: Vec<f64> = (0..dim).map(|d| g_new[d] - g[d]).collect();
+                let sy: f64 = s.iter().zip(y.iter()).map(|(a, b)| a * b).sum();
+                if sy > 1e-20 {
+                    if s_hist.len() >= M {
+                        s_hist.remove(0);
+                        y_hist.remove(0);
+                        rho_hist.remove(0);
+                    }
+                    s_hist.push(s);
+                    y_hist.push(y);
+                    rho_hist.push(1.0 / sy);
+                }
+                x = x_new;
+                g = g_new;
+                f = f_new;
+                accepted = true;
+                break;
+            }
+            step *= 0.5;
+        }
+        if !accepted {
+            break;
         }
     }
-    coords.copy_from_slice(&best_coords);
-    best_energy
+
+    for i in 0..n {
+        coords[i][0] = x[3 * i];
+        coords[i][1] = x[3 * i + 1];
+        coords[i][2] = x[3 * i + 2];
+    }
+    f
 }
 
 fn bounds_fulfilled(coords: &[[f64; 3]], bounds: &DistanceBounds, atom_indices: &[usize]) -> bool {
