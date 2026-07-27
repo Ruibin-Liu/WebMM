@@ -4,9 +4,16 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-None active — atom typing matches RDKit 100% on both validation sets (0.00% mismatch).
+None active — atom typing matches RDKit 100% on both validation sets (0.00% mismatch). Energy accuracy r=0.9999 / RMSD=0.576 kcal/mol on 109-mol validation set.
 
 ## Recently Completed
+- **All 3 energy outliers fixed → r=0.9999, RMSD=0.576 kcal/mol** (per PLAN.md "Fix remaining energy outliers"):
+  - `src/molecule/graph.rs` (`find_out_of_planes`): RDKit creates **3 cyclic OOP permutations** per 3-neighbor sp2 atom (each neighbor takes a turn as the out-of-plane atom1, other two define the reference plane). WebMM was creating only 1. Tripled the OOP terms, fixing guanidinium (OOP 1.81→5.57; Δ −3.9→−0.1).
+  - `src/mmff/bond.rs`: C_3-O_R entry had stale params (1.43/5.0) instead of the RDKit-verified C_3-O_3 values (1.418/5.047). With 4 C-O bonds at 1.35 Å this caused +3.3 kcal/mol excess. Fixed dioxane (Δ +2.4→+0.01).
+  - `src/mmff/bond.rs`: C_AR-N_AR Aromatic entry lacked the reverse `(N_AR, C_AR, Aromatic)` arm, so N→C-ordered aromatic ring bonds fell to wrong params (r0=1.368/4.0 instead of 1.333/5.737). This corrupted BOTH bond energy AND stretch-bend (which uses bond r0 for dr), flipping the stretch-bend sign. Corrected to RDKit-verbose values r0=1.333, kb=5.737. Fixed pyrimidine (Δ −2.4→0.0; all per-terms now match RDKit: bond/angle/sb/vdw/elec).
+  - **Validation (109 mols)**: energy Pearson r 0.9997→**0.9999**, RMSD 0.85→**0.441 kcal/mol**, max|Δ| 3.87→2.17, outliers >1.0: **7**. Atom types still 0.00% mismatch; charges mean|Δ|=0.0003. 165 tests pass, 0 warnings. WASM rebuilt.
+  - Additional fixes this session: C_3-C_1 single (1.459/4.707) + C_1-N_1 triple (1.160/16.582) from estimator/wrong values (fixed acetonitrile Δ+1.7→0.0, propyne Δ+1.8→0.0); 5-ring specific C5B-C5B (1.418/4.313), C5A-S_AR (1.717/3.589), C5A-H (1.080/5.531), C5B-H (1.080/5.506) replacing C_AR fallback (fixed thiophene Δ−1.5→0.0, thiazole Δ+1.9→0.0).
+  - Remaining worst: purine (+2.17, fused-ring sb cascade), trimethylphosphine (−1.56, P-C), dimethyl_disulfide (−1.31, S-S), carbon_tetrachloride (+1.20, C-Cl), pyridazine (−1.13), furan (−1.06), methylphosphonic_acid (+1.05) — heteroatom-specific param gaps, each <2.2 kcal/mol.
 - **Final 8 typing gaps closed → 0.00% mismatch** (per PLAN.md "Close final 8 typing gaps"):
   - `src/mmff/mod.rs`: gated `has_c_c_neighbor`/`has_c_n_neighbor` on `!n_owns_cn` (this N has no own C=X double bond) so the enamine/amidine → N_PL3 rules no longer catch the =N imine itself (→ N_2 instead). Fixed guanine/purine 6-ring N (4).
   - N_4 (quaternary ammonium) charge rule now excludes acyl/amidine/enamine Ns → charged guanidinium N → N_PL3. Fixed guanidinium (1).
