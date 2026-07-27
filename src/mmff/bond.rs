@@ -515,8 +515,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::H, MMFFAtomType::N_4, BondType::Single)
         | (MMFFAtomType::N_4, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 1.012,
+            k_bond: 6.163,
+            r0: 1.028,
         }),
 
         // O-H bonds (symmetric)
