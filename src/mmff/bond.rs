@@ -352,8 +352,12 @@ fn lookup_bond_params_exact(
         // C-S bonds
         (MMFFAtomType::C_3, MMFFAtomType::S_3, BondType::Single)
         | (MMFFAtomType::S_3, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 2.7,
-            r0: 1.82,
+            k_bond: 2.893,
+            r0: 1.805,
+        }),
+        (MMFFAtomType::S_3, MMFFAtomType::S_3, BondType::Single) => Some(BondParams {
+            k_bond: 2.531,
+            r0: 2.050,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::S_2, BondType::Double)
         | (MMFFAtomType::S_2, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
@@ -374,6 +378,26 @@ fn lookup_bond_params_exact(
         (MMFFAtomType::C5B, MMFFAtomType::C5B, BondType::Aromatic) => Some(BondParams {
             k_bond: 4.313,
             r0: 1.418,
+        }),
+        (MMFFAtomType::NPYL, MMFFAtomType::N5A, BondType::Aromatic)
+        | (MMFFAtomType::N5A, MMFFAtomType::NPYL, BondType::Aromatic) => Some(BondParams {
+            k_bond: 5.513,
+            r0: 1.339,
+        }),
+        (MMFFAtomType::N5A, MMFFAtomType::C5B, BondType::Aromatic)
+        | (MMFFAtomType::C5B, MMFFAtomType::N5A, BondType::Aromatic) => Some(BondParams {
+            k_bond: 8.258,
+            r0: 1.335,
+        }),
+        (MMFFAtomType::C5A, MMFFAtomType::NPYL, BondType::Aromatic)
+        | (MMFFAtomType::NPYL, MMFFAtomType::C5A, BondType::Aromatic) => Some(BondParams {
+            k_bond: 6.301,
+            r0: 1.364,
+        }),
+        (MMFFAtomType::C5A, MMFFAtomType::OFUR, BondType::Aromatic)
+        | (MMFFAtomType::OFUR, MMFFAtomType::C5A, BondType::Aromatic) => Some(BondParams {
+            k_bond: 5.787,
+            r0: 1.360,
         }),
         (MMFFAtomType::C5A, MMFFAtomType::H, BondType::Single)
         | (MMFFAtomType::H, MMFFAtomType::C5A, BondType::Single) => Some(BondParams {
@@ -502,8 +526,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::C_3, MMFFAtomType::Cl, BondType::Single)
         | (MMFFAtomType::Cl, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 2.893,
-            r0: 1.805,
+            k_bond: 2.974,
+            r0: 1.773,
         }),
         (MMFFAtomType::C_3, MMFFAtomType::Br, BondType::Single)
         | (MMFFAtomType::Br, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
@@ -556,8 +580,8 @@ fn lookup_bond_params_exact(
             r0: 1.40,
         }),
         (MMFFAtomType::N_AR, MMFFAtomType::N_AR, BondType::Aromatic) => Some(BondParams {
-            k_bond: 5.5,
-            r0: 1.33,
+            k_bond: 5.002,
+            r0: 1.246,
         }),
         (MMFFAtomType::N_3, MMFFAtomType::C_2, BondType::Single)
         | (MMFFAtomType::C_2, MMFFAtomType::N_3, BondType::Single) => Some(BondParams {
@@ -579,8 +603,8 @@ fn lookup_bond_params_exact(
         // P bonds
         (MMFFAtomType::C_3, MMFFAtomType::P_3, BondType::Single)
         | (MMFFAtomType::P_3, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 3.0,
-            r0: 1.87,
+            k_bond: 2.790,
+            r0: 1.830,
         }),
         (MMFFAtomType::P_3, MMFFAtomType::O_3, BondType::Single)
         | (MMFFAtomType::O_3, MMFFAtomType::P_3, BondType::Single) => Some(BondParams {
@@ -658,8 +682,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::C_3, MMFFAtomType::P_4, BondType::Single)
         | (MMFFAtomType::P_4, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
-            k_bond: 5.801,
-            r0: 1.838,
+            k_bond: 2.980,
+            r0: 1.810,
         }),
         (MMFFAtomType::P_4, MMFFAtomType::O_3, BondType::Single)
         | (MMFFAtomType::O_3, MMFFAtomType::P_4, BondType::Single) => Some(BondParams {
@@ -668,8 +692,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::P_4, MMFFAtomType::O_CO2, BondType::Double)
         | (MMFFAtomType::O_CO2, MMFFAtomType::P_4, BondType::Double) => Some(BondParams {
-            k_bond: 9.020,
-            r0: 1.496,
+            k_bond: 8.296,
+            r0: 1.510,
         }),
 
         _ => None,
