@@ -515,9 +515,9 @@ mod tests {
             gc[1] + g1[1] + g2[1] + g3[1],
             gc[2] + g1[2] + g2[2] + g3[2],
         ];
-        for dim in 0..3 {
+        for (dim, s) in sum.iter().enumerate() {
             assert!(
-                sum[dim].abs() < 1e-6,
+                s.abs() < 1e-6,
                 "Translational invariance violated: sum[{}] = {}",
                 dim,
                 sum[dim]

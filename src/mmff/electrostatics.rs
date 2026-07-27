@@ -123,7 +123,7 @@ mod tests {
         let (energy, _, _) = electrostatic_energy_and_gradient(&coords, &charges, 0, 1, 1.0, false);
 
         // E = 332.0716 * (-1) * 1 / (1.0 + 0.05) = -316.2587
-        let expected = COULOMB_CONST * (-1.0) * 1.0 / (1.0 + 0.05);
+        let expected = -COULOMB_CONST / (1.0 + 0.05);
         assert!(
             (energy - expected).abs() < 0.01,
             "Energy = {}, expected {}",

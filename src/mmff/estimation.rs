@@ -165,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ion_types_return_none() {
+    fn test_ion_bond_angle_estimation_returns_none() {
         let result = estimate_bond_params(MMFFAtomType::Na, MMFFAtomType::C_3, BondType::Single);
         assert!(result.is_none());
 

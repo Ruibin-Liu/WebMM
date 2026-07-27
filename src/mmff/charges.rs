@@ -1034,7 +1034,7 @@ fn compute_mmff_formal_charges(mol: &Molecule, type_ids: &[u8]) -> Vec<f64> {
             // NPOX (69): pyridine N-oxide N — formal charge is 0 (neutralized)
             69 => 0.0,
             // Halide anions
-            89 | 90 | 91 => -1.0,
+            89..=91 => -1.0,
             // Everything else: formal charge is 0 (RDKit initializes to 0, not molchg)
             _ => 0.0,
         };

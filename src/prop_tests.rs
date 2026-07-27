@@ -41,6 +41,7 @@ M  END"#, x, y, z, x + 1.5, y, z);
             let params = BondParams {
                 k_bond: 4.7,
                 r0: length,
+                cb: 1.0,
             };
 
             // At equilibrium distance, energy should be zero
@@ -67,6 +68,7 @@ M  END"#, x, y, z, x + 1.5, y, z);
             let params = BondParams {
                 k_bond: 4.7,
                 r0,
+                cb: 1.0,
             };
 
             let coords_equilibrium = vec![[0.0, 0.0, 0.0], [r0, 0.0, 0.0]];
@@ -154,7 +156,7 @@ M  END"#, x, y, z, x + 1.5, y, z);
             prop_assume!(dist_sq > 1e-10);
 
             let coords = vec![[0.0, 0.0, 0.0], [x, y, z]];
-            let params = BondParams { k_bond: 4.7, r0: 1.526 };
+            let params = BondParams { k_bond: 4.7, r0: 1.526, cb: 1.0 };
 
             // Calculate analytical gradient
             let (_g1, g2) = bond_gradient(&coords, 0, 1, &params);

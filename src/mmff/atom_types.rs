@@ -507,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ion_types_return_none() {
+    fn test_ion_atom_type_props_return_none() {
         assert!(get_atom_type_props(MMFFAtomType::Fe_P2).is_none());
         assert!(get_atom_type_props(MMFFAtomType::Na).is_none());
     }

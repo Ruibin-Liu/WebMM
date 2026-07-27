@@ -1,6 +1,6 @@
 //! Torsion term for MMFF94
 
-#![allow(clippy::approx_constant)]
+#![allow(clippy::approx_constant, clippy::type_complexity)]
 
 use super::get_eq_levels;
 use super::mmff_type_id;
@@ -2051,13 +2051,9 @@ pub fn torsion_energy(
         return 0.0;
     }
 
-    let mut cos_phi =
+    let cos_phi =
         (cp0[0] * cp1[0] + cp0[1] * cp1[1] + cp0[2] * cp1[2]) / (cp0_norm * cp1_norm);
-    if cos_phi > 1.0 {
-        cos_phi = 1.0;
-    } else if cos_phi < -1.0 {
-        cos_phi = -1.0;
-    }
+    let cos_phi = cos_phi.clamp(-1.0, 1.0);
 
     // RDKit's calcTorsionEnergy via Chebyshev identities (no atan2).
     let cos2_phi = 2.0 * cos_phi * cos_phi - 1.0;
@@ -2166,12 +2162,12 @@ mod tests {
             g1[1] + g2[1] + g3[1] + g4[1],
             g1[2] + g2[2] + g3[2] + g4[2],
         ];
-        for dim in 0..3 {
+        for (dim, s) in sum.iter().enumerate() {
             assert!(
-                sum[dim].abs() < 1e-6,
+                s.abs() < 1e-6,
                 "Translational invariance violated: sum[{}] = {}",
                 dim,
-                sum[dim]
+                s
             );
         }
 
@@ -2191,12 +2187,12 @@ mod tests {
                 + (coords[2][0] * g3[1] - coords[2][1] * g3[0])
                 + (coords[3][0] * g4[1] - coords[3][1] * g4[0]),
         ];
-        for dim in 0..3 {
+        for (dim, t) in torque.iter().enumerate() {
             assert!(
-                torque[dim].abs() < 1e-6,
+                t.abs() < 1e-6,
                 "Rotational invariance violated: torque[{}] = {}",
                 dim,
-                torque[dim]
+                t
             );
         }
     }

@@ -6,6 +6,7 @@ pub struct StretchBendParams {
     pub kba_kji: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn get_stretch_bend_params(
     type_i: super::MMFFAtomType,
     type_j: super::MMFFAtomType,

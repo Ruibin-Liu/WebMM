@@ -208,6 +208,9 @@ fn estimate_total_neighbors(atom_idx: usize, mol: &Molecule) -> usize {
         _ => return explicit_neighbors,
     };
 
+    // explicit_valence can exceed typical_valence (e.g. hypervalent atoms), so the
+    // .max(0) guard is meaningful; the casts fix the type for the comparison.
+    #[allow(clippy::unnecessary_cast)]
     let implicit_h = (typical_valence as i32 - explicit_valence as i32).max(0) as usize;
     explicit_neighbors + implicit_h
 }
@@ -250,7 +253,7 @@ fn is_aromatic_candidate(atom_idx: usize, ring: &[usize], mol: &Molecule) -> boo
             }
         }
         7 => {
-            ring.len() == 5 && ring_bonds == 2 || has_multiple || (ring_bonds == 3 && !has_multiple)
+            has_multiple || ring_bonds == 3 || (ring.len() == 5 && ring_bonds == 2)
         }
         8 | 16 => ring.len() == 5 && ring_bonds == 2 || has_multiple,
         _ => has_multiple,

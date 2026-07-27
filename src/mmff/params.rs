@@ -276,6 +276,7 @@ pub fn get_mmff_bond_type(bond_type: BondType, type_id_a: u8, type_id_b: u8) -> 
 /// ring4: true if atoms i,j,k,l all belong to the same 4-membered ring
 /// ring5: true if atoms i,j,k,l all belong to the same 5-membered ring
 /// type_i..type_l: MMFF type IDs of the four atoms
+#[allow(clippy::too_many_arguments)]
 pub fn get_mmff_torsion_type(
     bond_ij_type: u8,
     bond_jk_type: u8,

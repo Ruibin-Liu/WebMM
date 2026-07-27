@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod opt_compare {
     use crate::mmff::{MMFFForceField, MMFFVariant};
     use crate::molecule::{Atom, Bond, BondStereo, BondType, Molecule};
     use crate::optimizer;
@@ -97,6 +95,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 0.000000_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== WATER ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -147,6 +155,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 0.026383_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== METHANE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -212,6 +230,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 0.000000_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== AMMONIA ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -281,6 +309,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = -4.734365_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== ETHANE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -384,6 +422,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = -1.336857_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== ETHANOL ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -481,6 +529,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 0.054161_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== FORMALDEHYDE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -550,6 +608,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = -26.405933_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== ACETIC_ACID ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -655,6 +723,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 1.652258_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== ACETONE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -770,6 +848,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = -1.694530_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== METHYLAMINE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -865,6 +953,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 6.089114_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== DIMETHYL_ETHER ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -980,6 +1078,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = -4.897293_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== PROPANE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -1117,6 +1225,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 16.226967_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== BENZENE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -1277,6 +1395,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 5.713261_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== PHENOL ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -1433,6 +1561,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = -0.137887_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== ACETALDEHYDE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -1530,6 +1668,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 20.929656_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== GLYCINE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -1671,6 +1819,16 @@ mod opt_compare {
         let result = optimizer::optimize(&ff, &rdkit_coords, &opts);
         let rdkit_e = 2.368812_f64;
         let webmm_e = result.final_energy;
+        assert!(
+            result.converged,
+            "optimization did not converge ({} iters)",
+            result.iterations
+        );
+        assert!(
+            (webmm_e - rdkit_e).abs() < 0.1,
+            "energy {} vs RDKit {}, delta {} exceeds 0.1 kcal/mol",
+            webmm_e, rdkit_e, webmm_e - rdkit_e
+        );
         println!("\n=== CYCLOHEXANE ===");
         println!(
             "RDKit E: {:.6}  WebMM E: {:.6}  Delta: {:.6}",
@@ -1907,7 +2065,9 @@ mod opt_compare {
                 max_iterations: 2000,
                 ..Default::default()
             };
-            let result = optimizer::optimize(&ff, &coords.to_vec(), &opts);
+            let result = optimizer::optimize(&ff, coords, &opts);
+            assert!((result.final_energy - 2.368812).abs() < 0.1,
+                "cyclohexane breakdown: energy {} vs RDKit 2.368812", result.final_energy);
             bd("cyclohexane@webmm_opt", &mol, &result.optimized_coords);
             println!(
                 "RDKit E: 2.368812  WebMM E: {:.6}  Delta: {:.6}",
@@ -1957,7 +2117,9 @@ mod opt_compare {
                 max_iterations: 2000,
                 ..Default::default()
             };
-            let result = optimizer::optimize(&ff, &coords.to_vec(), &opts);
+            let result = optimizer::optimize(&ff, coords, &opts);
+            assert!((result.final_energy - 5.713261).abs() < 0.1,
+                "phenol breakdown: energy {} vs RDKit 5.713261", result.final_energy);
             bd("phenol@webmm_opt", &mol, &result.optimized_coords);
             println!(
                 "RDKit E: 5.713261  WebMM E: {:.6}  Delta: {:.6}",
@@ -2003,7 +2165,9 @@ mod opt_compare {
                 max_iterations: 2000,
                 ..Default::default()
             };
-            let result = optimizer::optimize(&ff, &coords.to_vec(), &opts);
+            let result = optimizer::optimize(&ff, coords, &opts);
+            assert!((result.final_energy - 16.227397).abs() < 0.1,
+                "benzene breakdown: energy {} vs RDKit 16.227397", result.final_energy);
             bd("benzene@webmm_opt", &mol, &result.optimized_coords);
             println!(
                 "RDKit E: 16.227397  WebMM E: {:.6}  Delta: {:.6}",
@@ -2044,7 +2208,9 @@ mod opt_compare {
                 max_iterations: 2000,
                 ..Default::default()
             };
-            let result = optimizer::optimize(&ff, &coords.to_vec(), &opts);
+            let result = optimizer::optimize(&ff, coords, &opts);
+            assert!((result.final_energy - 20.929656).abs() < 0.1,
+                "glycine breakdown: energy {} vs RDKit 20.929656", result.final_energy);
             bd("glycine@webmm_opt", &mol, &result.optimized_coords);
             println!(
                 "RDKit E: 20.929656  WebMM E: {:.6}  Delta: {:.6}",
@@ -2053,4 +2219,3 @@ mod opt_compare {
             );
         }
     }
-}

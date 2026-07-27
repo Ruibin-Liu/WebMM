@@ -16,6 +16,11 @@
 //!    j. Final chiral checks
 //!    k. Double bond stereo checks
 
+// Index-based loops, multi-argument kernels, and large table types are
+// pervasive in this distance-geometry numerical code; the indexed form is
+// clearer for matrix/coordinate access, so these lints are allowed here.
+#![allow(clippy::needless_range_loop, clippy::too_many_arguments, clippy::type_complexity)]
+
 use crate::molecule::{BondStereo, BondType, Hybridization, Molecule};
 use std::collections::HashSet;
 use web_time::Instant;
@@ -82,7 +87,7 @@ impl Rng {
     }
 
     fn rotl(&self, x: u64, k: i32) -> u64 {
-        (x << k) | (x >> (64 - k))
+        x.rotate_left(k as u32)
     }
 
     fn random_f64(&mut self) -> f64 {
@@ -851,7 +856,7 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
             continue;
         }
         let hyb = crate::molecule::graph::determine_hybridization(aid2, mol);
-        let neighbors: Vec<usize> = mol.adjacency[aid2].iter().copied().collect();
+        let neighbors: Vec<usize> = mol.adjacency[aid2].to_vec();
         for i1 in 0..neighbors.len() {
             for i2 in 0..i1 {
                 let aid1 = neighbors[i2];
@@ -1191,7 +1196,7 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                             (dl, du, Path14Type::Other)
                         }
                     }
-                } else if (b1_in_ring && b2_in_ring) || (b2_in_ring && b3_in_ring) {
+                } else if b2_in_ring && (b1_in_ring || b3_in_ring) {
                     // Two bonds in different rings
                     let dc = compute_14_dist_cis(bl1, bl2, bl3, ba12, ba23);
                     let dt = compute_14_dist_trans(bl1, bl2, bl3, ba12, ba23);
@@ -1577,6 +1582,11 @@ fn generate_initial_coords_from_bounds(bounds: &DistanceBounds, rng: &mut Rng) -
     let mut indices: Vec<usize> = (0..n).collect();
     indices.sort_by(|&a, &b| eigenvalues[b].partial_cmp(&eigenvalues[a]).unwrap());
     let dim = 4.min(n);
+    {
+        let top: Vec<f64> = (0..dim).filter_map(|d| indices.get(d).map(|&idx| eigenvalues[idx])).collect();
+        let npos = top.iter().filter(|e| **e > 0.0).count();
+        eprintln!("EMBED n={n} top{dim}_eig=[{}] positive={npos}/{dim}", top.iter().map(|e| format!("{:.2}", e)).collect::<Vec<_>>().join(","));
+    }
     let mut coords_4d = vec![[0.0f64; 4]; n];
     for i in 0..n {
         for d in 0..dim {
@@ -2083,6 +2093,7 @@ fn volume_test(coords: &[[f64; 3]], cc: &ChiralCenter) -> bool {
     true
 }
 
+#[allow(dead_code)]
 fn check_tetrahedral(coords: &[[f64; 3]], tetrahedral: &[ChiralCenter]) -> bool {
     for tc in tetrahedral {
         if !volume_test(coords, tc) || !center_in_volume(coords, tc) {
@@ -2121,6 +2132,7 @@ fn have_opposite_sign(a: f64, b: f64) -> bool {
     (a < 0.0) != (b < 0.0)
 }
 
+#[allow(dead_code)]
 fn center_in_volume(coords: &[[f64; 3]], cc: &ChiralCenter) -> bool {
     center_in_volume_tol(coords, cc, TETRAHEDRAL_CENTERINVOLUME_TOL)
 }
@@ -2475,7 +2487,7 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
             })
             .copied()
             .collect();
-        if double_bond_neighbors.len() >= 1 && neighbors.len() >= 3 {
+        if !double_bond_neighbors.is_empty() && neighbors.len() >= 3 {
             let other_neighbors: Vec<usize> = neighbors
                 .iter()
                 .filter(|&&n| !double_bond_neighbors.contains(&n))
@@ -2935,7 +2947,7 @@ fn match_torsion_pattern(
                 }
                 return None;
             }
-            if rsize >= 3 && rsize <= 8 {
+            if (3..=8).contains(&rsize) {
                 if sp2(h1) && sp2(h2) && sp2(h3) && sp2(h4) {
                     return Some(([1, -1, 1, 1, 1, 1], [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]));
                 }
@@ -3285,7 +3297,11 @@ fn build_torsion_preferences(mol: &Molecule, et_version: u32) -> Vec<TorsionPref
 
         let num_ring_bonds = rings
             .iter()
-            .filter(|r| r.contains(&a2) && r.contains(&a3))
+            // count only SMALL rings toward the fusion limit: a bond shared by
+            // many small (rigid) rings is highly-fused and should be skipped, but
+            // macrocycle rings (>=9) are flexible and must still receive torsion
+            // prefs (otherwise macrocycle amide C-N bonds get skipped and twist).
+            .filter(|r| r.contains(&a2) && r.contains(&a3) && r.len() < MIN_MACROCYCLE_SIZE)
             .count();
         if num_ring_bonds > 3 || excluded_bonds[bond_idx] {
             continue;
@@ -3325,7 +3341,7 @@ fn build_torsion_preferences(mol: &Molecule, et_version: u32) -> Vec<TorsionPref
     // Basic knowledge: flat aromatic / sp2 ring torsions (RDKit logic)
     for ring in &rings {
         let rsize = ring.len();
-        if rsize < 4 || rsize > 6 {
+        if !(4..=6).contains(&rsize) {
             continue;
         }
         for i in 0..rsize {
@@ -4150,24 +4166,14 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
             continue;
         }
 
-        // Step 2: Check tetrahedral centers (in 4D projected to 3D)
-        let coords_3d_pre: Vec<[f64; 3]> = coords_4d.iter().map(|c| [c[0], c[1], c[2]]).collect();
-        if !check_tetrahedral(&coords_3d_pre, &tetrahedral) {
-            if first_e < best_energy {
-                best_energy = first_e;
-                best_coords = coords_3d_pre;
-            }
-            continue;
-        }
-
-        // Step 3: Check chiral centers (preliminary, in 4D projected to 3D)
-        if !chiral_centers.is_empty() && !check_chiral_centers(&coords_3d_pre, &chiral_centers) {
-            if first_e < best_energy {
-                best_energy = first_e;
-                best_coords = coords_3d_pre;
-            }
-            continue;
-        }
+        // Steps 2-3 (tetrahedral + chiral pre-checks) used to be hard gates that
+        // `continue`d on failure. For macrocycles the 4D->3D projection frequently
+        // flattens a stereocenter (e.g. RDKit #9143's [C@@H]), failing
+        // check_tetrahedral on every attempt and aborting before the 3D refinement
+        // (minimize_etkdg) — whose chiral-volume term is designed to fix exactly
+        // that — could run. Pre-checks are now advisory: proceed to refinement and
+        // let the post-refinement acceptance gate below (check_chiral_centers +
+        // center_in_volume_tol + planarity + clashes + energy) judge the result.
 
         // Step 4: Minimize 4th dimension — strong 4th-dim weight, relaxed chirality
         minimize_4d_collapse(&mut coords_4d, &bounds, &chiral_centers, 200);

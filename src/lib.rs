@@ -1255,7 +1255,7 @@ M  END"#;
         let mol = parse_sdf(sdf).expect("parse failed");
         let ff = crate::mmff::MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
         assert_eq!(ff.atom_types[0], crate::mmff::MMFFAtomType::P_3D);
-        assert!(ff.angles.len() > 0);
+        assert!(!ff.angles.is_empty());
     }
 
     #[test]
@@ -1270,8 +1270,10 @@ M  END"#;
   1  3  1  0  0  0  0
 M  END"#;
         let mol = parse_sdf(sdf).expect("parse failed");
-        let mut config = crate::etkdg::ETKDGConfig::default();
-        config.random_seed = 42;
+        let mut config = crate::etkdg::ETKDGConfig {
+            random_seed: 42,
+            ..Default::default()
+        };
         // Fix oxygen at origin
         config.coord_map.insert(0, [0.0, 0.0, 0.0]);
         let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &config);
@@ -1467,7 +1469,7 @@ M  END"#;
         // AtropCW should give negative chiral volume
         let vol = crate::etkdg::chiral_volume(&coords, 2, 3, 4, 5);
         assert!(
-            vol < -0.5 || vol > 0.5,
+            !(-0.5..=0.5).contains(&vol),
             "Atropisomer should have significant chiral volume, got {}",
             vol
         );
@@ -1565,7 +1567,7 @@ M  END"#;
 
         assert_eq!(result.n_atoms, 3);
         assert!(result.get_final_energy().is_finite());
-        assert_eq!(result.get_iterations() > 0, true);
+        assert!(result.get_iterations() > 0);
 
         let x0 = result.get_coord(0, 0);
         let y0 = result.get_coord(0, 1);
@@ -1781,7 +1783,7 @@ M  END"#;
         energy_tol: f64,
         force_tol: f64,
     ) {
-        let mol = parse_sdf(sdf).expect(&format!("{}: parse failed", name));
+        let mol = parse_sdf(sdf).unwrap_or_else(|_| panic!("{}: parse failed", name));
         assert_eq!(
             mol.atoms.len(),
             rdkit_positions.len(),
@@ -2083,7 +2085,7 @@ M  END"#;
         bond_tol: f64,                            // tolerance in Angstroms
         angle_tol: f64,                           // tolerance in degrees
     ) {
-        let mol = parse_sdf(sdf).expect(&format!("{}: parse failed", name));
+        let mol = parse_sdf(sdf).unwrap_or_else(|_| panic!("{}: parse failed", name));
 
         // Run ETKDG + optimize
         let config = crate::etkdg::ETKDGConfig {
@@ -2375,12 +2377,12 @@ M  END"#;
         let d1 = dihedral(&coords, 2, 1, 3, 7).abs();
         let d2 = dihedral(&coords, 0, 1, 2, 3).abs();
         assert!(
-            d1 < 15.0 || d1 > 165.0,
+            !(15.0..=165.0).contains(&d1),
             "O=C-O-H dihedral should be planar, got {:.1}°",
             d1
         );
         assert!(
-            d2 < 15.0 || d2 > 165.0,
+            !(15.0..=165.0).contains(&d2),
             "C-C(=O)-O dihedral should be planar, got {:.1}°",
             d2
         );
@@ -3364,21 +3366,20 @@ M  END"#;
         let normal = eigenvector_smallest_eigenvalue_3x3(&cov);
 
         eprintln!("\nDeviations from ring plane:");
-        for i in 0..12 {
-            let dx = worst_coords[i][0] - cx;
-            let dy = worst_coords[i][1] - cy;
-            let dz = worst_coords[i][2] - cz;
+        for (i, wc) in worst_coords.iter().enumerate() {
+            let dx = wc[0] - cx;
+            let dy = wc[1] - cy;
+            let dz = wc[2] - cz;
             let d = (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs();
             let name = if i < 6 { "C" } else { "H" };
             eprintln!(
                 "{} {:2}: {:10.6} Å  pos=[{:8.4}, {:8.4}, {:8.4}]",
-                name, i, d, worst_coords[i][0], worst_coords[i][1], worst_coords[i][2]
+                name, i, d, wc[0], wc[1], wc[2]
             );
         }
     }
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod pyrrole_tests {
     use crate::etkdg::eigenvector_smallest_eigenvalue_3x3;
@@ -3869,10 +3870,10 @@ M  END"#;
         let coords = generate_initial_coords_with_config(&mol, &config);
 
         eprintln!("=== ETKDG geometry ===");
-        for i in 0..8 {
+        for (i, (atom, c)) in mol.atoms.iter().zip(coords.iter()).enumerate() {
             eprintln!(
                 "  {} {}: {:.4} {:.4} {:.4}",
-                i, mol.atoms[i].symbol, coords[i][0], coords[i][1], coords[i][2]
+                i, atom.symbol, c[0], c[1], c[2]
             );
         }
         // Key dihedrals for carboxyl planarity:
@@ -3911,10 +3912,10 @@ M  END"#;
         };
 
         eprintln!("\n=== After MMFF94s optimization ===");
-        for i in 0..8 {
+        for (i, (atom, c)) in mol.atoms.iter().zip(opt.iter()).enumerate() {
             eprintln!(
                 "  {} {}: {:.4} {:.4} {:.4}",
-                i, mol.atoms[i].symbol, opt[i][0], opt[i][1], opt[i][2]
+                i, atom.symbol, c[0], c[1], c[2]
             );
         }
         eprintln!(
@@ -4010,6 +4011,7 @@ M  END"#;
             ];
 
             println!("\n=== Angle params: WebMM vs RDKit ===");
+            #[allow(clippy::type_complexity)]
             let angle_tests: &[(usize, usize, usize, u8, u8, u8, f64, f64, &str)] = &[
                 (1, 0, 5, 0, 0, 0, 0.669, 119.977, "C1-C0-C5 (37-37-37)"),
                 (1, 0, 6, 0, 0, 0, 1.045, 121.633, "C1-C0-N6 (37-37-40)"),
@@ -4053,6 +4055,7 @@ M  END"#;
             }
 
             println!("\n=== Stretch-bend params: WebMM vs RDKit ===");
+            #[allow(clippy::type_complexity)]
             let sb_tests: &[(usize, usize, usize, u8, u8, u8, u8, u8, u8, f64, f64, &str)] = &[
                 (1, 0, 5, 0, 0, 6, 6, 6, 0, -0.411, -0.411, "C1-C0-C5"),
                 (1, 0, 6, 0, 0, 6, 6, 7, 0, 0.429, 0.901, "C1-C0-N6"),
@@ -4265,9 +4268,9 @@ M  END"#;
 
             // RMSD
             let mut sum_sq = 0.0;
-            for i in 0..mol.atoms.len() {
-                for d in 0..3 {
-                    let delta = result.optimized_coords[i][d] - rdkit_coords[i][d];
+            for (rc, oc) in rdkit_coords.iter().zip(result.optimized_coords.iter()) {
+                for (&o, &r) in oc.iter().zip(rc.iter()) {
+                    let delta = o - r;
                     sum_sq += delta * delta;
                 }
             }
@@ -5242,8 +5245,8 @@ M  END"#;
 
         let d1 = dihedral(c[7], c[6], c[0], c[1]);
         let d2 = dihedral(c[8], c[6], c[0], c[1]);
-        let d1_planar = d1 < 20.0 || d1 > 160.0;
-        let d2_planar = d2 < 20.0 || d2 > 160.0;
+        let d1_planar = !(20.0..=160.0).contains(&d1);
+        let d2_planar = !(20.0..=160.0).contains(&d2);
         assert!(
             d1_planar && d2_planar,
             "Aniline NH2 not planar: H7-N-C-C={:.1}° H8-N-C-C={:.1}°",
