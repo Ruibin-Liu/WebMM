@@ -1582,11 +1582,6 @@ fn generate_initial_coords_from_bounds(bounds: &DistanceBounds, rng: &mut Rng) -
     let mut indices: Vec<usize> = (0..n).collect();
     indices.sort_by(|&a, &b| eigenvalues[b].partial_cmp(&eigenvalues[a]).unwrap());
     let dim = 4.min(n);
-    {
-        let top: Vec<f64> = (0..dim).filter_map(|d| indices.get(d).map(|&idx| eigenvalues[idx])).collect();
-        let npos = top.iter().filter(|e| **e > 0.0).count();
-        eprintln!("EMBED n={n} top{dim}_eig=[{}] positive={npos}/{dim}", top.iter().map(|e| format!("{:.2}", e)).collect::<Vec<_>>().join(","));
-    }
     let mut coords_4d = vec![[0.0f64; 4]; n];
     for i in 0..n {
         for d in 0..dim {

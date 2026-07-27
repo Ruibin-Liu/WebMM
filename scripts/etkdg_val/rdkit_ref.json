@@ -1,0 +1,652 @@
+{
+ "DMF": {
+  "energy": -12.6656,
+  "n_atoms": 12,
+  "embed_ok": true
+ },
+ "DMSO": {
+  "energy": 14.3956,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "N_methylacetamide": {
+  "energy": -19.9526,
+  "n_atoms": 12,
+  "embed_ok": true
+ },
+ "N_methylaniline": {
+  "energy": 16.3503,
+  "n_atoms": 17,
+  "embed_ok": true
+ },
+ "THF": {
+  "energy": 15.4897,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "acetaldehyde": {
+  "energy": 2.9684,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "acetaldimine": {
+  "energy": 8.9723,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "acetamide": {
+  "energy": -5.3641,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "acetamidine": {
+  "energy": -36.4418,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "acetate": {
+  "energy": 15.7963,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "acetic_acid": {
+  "energy": -16.517,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "acetic_anhydride": {
+  "energy": -0.5406,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "acetone": {
+  "energy": 4.4245,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "acetonitrile": {
+  "energy": 0.6483,
+  "n_atoms": 6,
+  "embed_ok": true
+ },
+ "acetyl_chloride": {
+  "energy": 4.4224,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "acetylene": {
+  "energy": 2.653,
+  "n_atoms": 4,
+  "embed_ok": true
+ },
+ "adamantane": {
+  "energy": 30.5701,
+  "n_atoms": 26,
+  "embed_ok": true
+ },
+ "adenine": {
+  "energy": 50.5107,
+  "n_atoms": 15,
+  "embed_ok": true
+ },
+ "allene": {
+  "energy": -0.2197,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "ammonium": {
+  "energy": null,
+  "n_atoms": 5,
+  "embed_ok": false
+ },
+ "aniline": {
+  "energy": 19.2835,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "anisole": {
+  "energy": 25.2593,
+  "n_atoms": 16,
+  "embed_ok": true
+ },
+ "anthracene": {
+  "energy": 79.8412,
+  "n_atoms": 24,
+  "embed_ok": true
+ },
+ "aspirin": {
+  "energy": 41.8827,
+  "n_atoms": 21,
+  "embed_ok": true
+ },
+ "aziridine": {
+  "energy": 24.5004,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "benzaldehyde": {
+  "energy": 33.7976,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "benzaldimine": {
+  "energy": 40.1057,
+  "n_atoms": 15,
+  "embed_ok": true
+ },
+ "benzamide": {
+  "energy": 20.0167,
+  "n_atoms": 16,
+  "embed_ok": true
+ },
+ "benzene": {
+  "energy": 18.2013,
+  "n_atoms": 12,
+  "embed_ok": true
+ },
+ "benzimidazole": {
+  "energy": 37.5395,
+  "n_atoms": 15,
+  "embed_ok": true
+ },
+ "benzoate": {
+  "energy": 48.2884,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "benzoic_acid": {
+  "energy": 23.4578,
+  "n_atoms": 15,
+  "embed_ok": true
+ },
+ "benzonitrile": {
+  "energy": 31.3262,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "benzothiazole": {
+  "energy": 113.0042,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "benzothiophene": {
+  "energy": 51.9999,
+  "n_atoms": 15,
+  "embed_ok": true
+ },
+ "biguanide": {
+  "energy": -143.9867,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "bromobenzene": {
+  "energy": 18.552,
+  "n_atoms": 12,
+  "embed_ok": true
+ },
+ "butadiene": {
+  "energy": 6.2566,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "caffeine": {
+  "energy": -106.0948,
+  "n_atoms": 24,
+  "embed_ok": true
+ },
+ "carbon_disulfide": {
+  "energy": 17.2979,
+  "n_atoms": 3,
+  "embed_ok": true
+ },
+ "carbon_tetrachloride": {
+  "energy": 0.2676,
+  "n_atoms": 5,
+  "embed_ok": true
+ },
+ "chloroform": {
+  "energy": 0.3353,
+  "n_atoms": 5,
+  "embed_ok": true
+ },
+ "cyclobutane": {
+  "energy": 14.8619,
+  "n_atoms": 12,
+  "embed_ok": true
+ },
+ "cycloheptane": {
+  "energy": 22.7882,
+  "n_atoms": 21,
+  "embed_ok": true
+ },
+ "cyclohexane": {
+  "energy": 8.2356,
+  "n_atoms": 18,
+  "embed_ok": true
+ },
+ "cyclohexanone": {
+  "energy": 9.0426,
+  "n_atoms": 17,
+  "embed_ok": true
+ },
+ "cyclohexene": {
+  "energy": 21.268,
+  "n_atoms": 16,
+  "embed_ok": true
+ },
+ "cyclopentane": {
+  "energy": 11.8793,
+  "n_atoms": 15,
+  "embed_ok": true
+ },
+ "cyclopentene": {
+  "energy": 22.1858,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "cyclopropane": {
+  "energy": 17.7313,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "cyclopropene": {
+  "energy": 47.7626,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "dibromomethane": {
+  "energy": 1.8294,
+  "n_atoms": 5,
+  "embed_ok": true
+ },
+ "dichloromethane": {
+  "energy": 1.1665,
+  "n_atoms": 5,
+  "embed_ok": true
+ },
+ "diethyl_ether": {
+  "energy": 11.0727,
+  "n_atoms": 15,
+  "embed_ok": true
+ },
+ "diiodomethane": {
+  "energy": 1.2489,
+  "n_atoms": 5,
+  "embed_ok": true
+ },
+ "dimethyl_disulfide": {
+  "energy": 8.749,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "dimethyl_ether": {
+  "energy": 9.7895,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "dimethyl_sulfide": {
+  "energy": 15.0216,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "dimethyl_sulfone": {
+  "energy": 15.4921,
+  "n_atoms": 11,
+  "embed_ok": true
+ },
+ "dimethylamine": {
+  "energy": 9.8277,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "dioxane": {
+  "energy": 90.4352,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "ethane": {
+  "energy": -2.3532,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "ethanol": {
+  "energy": 4.5577,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "ethyl_acetate": {
+  "energy": -2.0736,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "ethylene": {
+  "energy": 10.0792,
+  "n_atoms": 6,
+  "embed_ok": true
+ },
+ "ethylene_oxide": {
+  "energy": 10.5556,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "fluoromethane": {
+  "energy": 1.4459,
+  "n_atoms": 5,
+  "embed_ok": true
+ },
+ "formaldehyde": {
+  "energy": 1.5259,
+  "n_atoms": 4,
+  "embed_ok": true
+ },
+ "formamide": {
+  "energy": -21.8367,
+  "n_atoms": 6,
+  "embed_ok": true
+ },
+ "formamidine": {
+  "energy": -24.3996,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "formic_acid": {
+  "energy": -14.6826,
+  "n_atoms": 5,
+  "embed_ok": true
+ },
+ "furan": {
+  "energy": 9.7228,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "glycine_zwitterion": {
+  "energy": 6.6736,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "guanidinium": {
+  "energy": -120.9943,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "guanine": {
+  "energy": 143.6679,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "histidine_sidechain": {
+  "energy": 11.9392,
+  "n_atoms": 16,
+  "embed_ok": true
+ },
+ "ibuprofen": {
+  "energy": 50.8242,
+  "n_atoms": 33,
+  "embed_ok": true
+ },
+ "imidazole": {
+  "energy": 3.6892,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "indole": {
+  "energy": 40.2595,
+  "n_atoms": 16,
+  "embed_ok": true
+ },
+ "iodobenzene": {
+  "energy": 19.2335,
+  "n_atoms": 12,
+  "embed_ok": true
+ },
+ "isobutane": {
+  "energy": 14.3121,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "isoprene": {
+  "energy": 11.7978,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "isoquinoline": {
+  "energy": 64.1729,
+  "n_atoms": 17,
+  "embed_ok": true
+ },
+ "methanesulfonamide": {
+  "energy": -61.5699,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "methanesulfonic_acid": {
+  "energy": -27.3421,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "methanethiol": {
+  "energy": 5.2939,
+  "n_atoms": 6,
+  "embed_ok": true
+ },
+ "methanol": {
+  "energy": 2.331,
+  "n_atoms": 6,
+  "embed_ok": true
+ },
+ "methyl_formate": {
+  "energy": 2.7997,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "methyl_salicylate": {
+  "energy": 54.5826,
+  "n_atoms": 19,
+  "embed_ok": true
+ },
+ "methylamine": {
+  "energy": 1.3898,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "methylphosphonic_acid": {
+  "energy": -84.8188,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "naphthalene": {
+  "energy": 58.3015,
+  "n_atoms": 18,
+  "embed_ok": true
+ },
+ "neopentane": {
+  "energy": 29.8836,
+  "n_atoms": 17,
+  "embed_ok": true
+ },
+ "nicotine": {
+  "energy": 57.1034,
+  "n_atoms": 30,
+  "embed_ok": true
+ },
+ "nitrobenzene": {
+  "energy": 60.308,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "nitromethane": {
+  "energy": 15.5637,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "norbornane": {
+  "energy": 30.4269,
+  "n_atoms": 19,
+  "embed_ok": true
+ },
+ "oxalic_acid": {
+  "energy": 57.3565,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "p_toluene_sulfonic_acid": {
+  "energy": 14.5642,
+  "n_atoms": 19,
+  "embed_ok": true
+ },
+ "paracetamol": {
+  "energy": 21.6636,
+  "n_atoms": 20,
+  "embed_ok": true
+ },
+ "phenol": {
+  "energy": 14.2921,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "phosphoric_acid": {
+  "energy": -199.9241,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "propane": {
+  "energy": 1.8101,
+  "n_atoms": 11,
+  "embed_ok": true
+ },
+ "propene": {
+  "energy": 7.7343,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "propyne": {
+  "energy": 3.3157,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "purine": {
+  "energy": 27.3319,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "pyrazine": {
+  "energy": 56.827,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "pyrazole": {
+  "energy": 15.1005,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "pyridazine": {
+  "energy": 4.5264,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "pyridine": {
+  "energy": 20.1306,
+  "n_atoms": 11,
+  "embed_ok": true
+ },
+ "pyrimidine": {
+  "energy": -1.276,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "pyrrole": {
+  "energy": 7.1454,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "quinoline": {
+  "energy": 62.014,
+  "n_atoms": 17,
+  "embed_ok": true
+ },
+ "sulfuric_acid": {
+  "energy": -115.3015,
+  "n_atoms": 7,
+  "embed_ok": true
+ },
+ "tetrahydrofuran": {
+  "energy": 15.4897,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "tetramethylammonium": {
+  "energy": 43.1877,
+  "n_atoms": 17,
+  "embed_ok": true
+ },
+ "tetramethylsilane": {
+  "energy": 7.3259,
+  "n_atoms": 17,
+  "embed_ok": true
+ },
+ "theophylline": {
+  "energy": -108.4001,
+  "n_atoms": 21,
+  "embed_ok": true
+ },
+ "thiazole": {
+  "energy": 57.9228,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "thioacetone": {
+  "energy": 40.4021,
+  "n_atoms": 10,
+  "embed_ok": true
+ },
+ "thiophene": {
+  "energy": 19.0561,
+  "n_atoms": 9,
+  "embed_ok": true
+ },
+ "triethyl_phosphate": {
+  "energy": -47.6057,
+  "n_atoms": 26,
+  "embed_ok": true
+ },
+ "trifluoromethane": {
+  "energy": 2.5591,
+  "n_atoms": 5,
+  "embed_ok": true
+ },
+ "trimethylamine": {
+  "energy": 21.5201,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "trimethylammonium": {
+  "energy": 17.455,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "trimethylphosphine": {
+  "energy": 24.8703,
+  "n_atoms": 13,
+  "embed_ok": true
+ },
+ "trimethylphosphine_oxide": {
+  "energy": 16.1319,
+  "n_atoms": 14,
+  "embed_ok": true
+ },
+ "urea": {
+  "energy": -72.9915,
+  "n_atoms": 8,
+  "embed_ok": true
+ },
+ "vinyl_chloride": {
+  "energy": 2.8362,
+  "n_atoms": 6,
+  "embed_ok": true
+ },
+ "xanthine": {
+  "energy": -141.2689,
+  "n_atoms": 15,
+  "embed_ok": true
+ }
+}
