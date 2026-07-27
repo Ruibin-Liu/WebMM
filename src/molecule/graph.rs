@@ -608,15 +608,32 @@ pub fn find_out_of_planes(mol: &Molecule) -> Vec<OutOfPlane> {
             // Only sp2 and aromatic atoms typically have significant OOP
             let hybrid = determine_hybridization(atom_idx, mol);
             if hybrid == Hybridization::Sp2 || is_aromatic(atom_idx, mol) {
-                // Create OOP combinations (choose 3 out of N neighbors)
+                // RDKit creates 3 OOP terms per 3-neighbor combination: for each
+                // choice of which neighbor is the "out-of-plane" atom (atom1),
+                // the other two define the reference plane. This gives different
+                // OOP angles and must all be summed.
                 for i in 0..neighbors.len() {
                     for j in (i + 1)..neighbors.len() {
                         for k in (j + 1)..neighbors.len() {
+                            // 3 cyclic permutations: each neighbor takes a turn
+                            // as atom1 (the out-of-plane atom)
                             oops.push(OutOfPlane {
                                 central: atom_idx,
                                 atom1: neighbors[i],
                                 atom2: neighbors[j],
                                 atom3: neighbors[k],
+                            });
+                            oops.push(OutOfPlane {
+                                central: atom_idx,
+                                atom1: neighbors[j],
+                                atom2: neighbors[i],
+                                atom3: neighbors[k],
+                            });
+                            oops.push(OutOfPlane {
+                                central: atom_idx,
+                                atom1: neighbors[k],
+                                atom2: neighbors[i],
+                                atom3: neighbors[j],
                             });
                         }
                     }
