@@ -189,8 +189,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::C_CO2, BondType::Single)
         | (MMFFAtomType::C_CO2, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
-            k_bond: 3.830,
-            r0: 1.510,
+            k_bond: 4.537,
+            r0: 1.468,
         }),
         (MMFFAtomType::O_CO2, MMFFAtomType::C_CO2, BondType::Double)
         | (MMFFAtomType::C_CO2, MMFFAtomType::O_CO2, BondType::Double)
@@ -339,6 +339,16 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::CR3R, MMFFAtomType::C_VIN, BondType::Single) => Some(BondParams {
             k_bond: 4.926,
             r0: 1.448,
+        }),
+        // 4-ring (cyclobutane) specific bond params (CR4R=20)
+        (MMFFAtomType::CR4R, MMFFAtomType::CR4R, BondType::Single) => Some(BondParams {
+            k_bond: 3.663,
+            r0: 1.526,
+        }),
+        (MMFFAtomType::CR4R, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::CR4R, BondType::Single) => Some(BondParams {
+            k_bond: 4.852,
+            r0: 1.093,
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::N_AM, BondType::Aromatic)
         | (MMFFAtomType::N_AM, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
@@ -688,8 +698,8 @@ fn lookup_bond_params_exact(
         // CS2 / S=C=S — S2CM (72) to C_1 (4) double (RDKit-extracted via symmetric scan)
         (MMFFAtomType::S2CM, MMFFAtomType::C_1, BondType::Double)
         | (MMFFAtomType::C_1, MMFFAtomType::S2CM, BondType::Double) => Some(BondParams {
-            k_bond: 2.954,
-            r0: 1.80,
+            k_bond: 2.982,
+            r0: 1.798,
         }),
 
         // 5-ring heteroaromatic bond params (RDKit verbose-extracted)
