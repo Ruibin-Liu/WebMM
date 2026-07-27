@@ -742,6 +742,18 @@ fn lookup_bond_params_exact(
             r0: 0.981,
         cb: 1.0,
         }),
+        (MMFFAtomType::H_OAR, MMFFAtomType::O_3, BondType::Single)
+        | (MMFFAtomType::O_3, MMFFAtomType::H_OAR, BondType::Single) => Some(BondParams {
+            k_bond: 7.839,
+            r0: 0.973,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::H_OAR, MMFFAtomType::O_R, BondType::Single)
+        | (MMFFAtomType::O_R, MMFFAtomType::H_OAR, BondType::Single) => Some(BondParams {
+            k_bond: 7.839,
+            r0: 0.973,
+        cb: 1.0,
+        }),
         (MMFFAtomType::HOS, MMFFAtomType::O_3, BondType::Single)
         | (MMFFAtomType::O_3, MMFFAtomType::HOS, BondType::Single) => Some(BondParams {
             k_bond: 7.143,
