@@ -5259,3 +5259,199 @@ mod aniline_etkdg_planarity {
         println!("N distance from ring plane: {:.4} A", n_dist.abs());
     }
 }
+
+// =====================================================================
+// Regression tests for the 3 silent algorithmic bugs found during the
+// energy-accuracy debugging pass (2025-09). Each test pins a behavior that
+// was wrong and would otherwise silently recur.
+//   1. OOP cyclic permutations (1 vs 3 terms per sp2 center)
+//   2. DFSB stretch-bend skipped for asymmetric-row angles (P-O-H)
+//   3. stretch-bend sb_type canonicalization (lower-type peripheral bond)
+// Plus a bond-param symmetry invariant (the C_AR-N_AR reverse-arm bug) and
+// a per-term energy-breakdown check (catches *which* term regresses).
+// =====================================================================
+#[cfg(test)]
+mod regression_tests {
+    use crate::mmff::bond::get_bond_params;
+    use crate::mmff::stretch_bend::get_stretch_bend_params;
+    use crate::mmff::mmff_tables::compute_angle_type;
+    use crate::mmff::params::get_mmff_bond_type;
+    use crate::mmff::{MMFFAtomType, MMFFForceField};
+    use crate::molecule::parser::parse_sdf;
+    use crate::molecule::BondType;
+    use crate::MMFFVariant;
+
+    // --- shared SDF fixtures (RDKit 3D geometries) ---
+    const GUANIDINIUM: &str = include_str!("../scripts/val_set/guanidinium.sdf");
+    const METHYLPHOSPHONIC_ACID: &str =
+        include_str!("../scripts/val_set/methylphosphonic_acid.sdf");
+    const PURINE: &str = include_str!("../scripts/val_set/purine.sdf");
+    const PYRIMIDINE: &str = include_str!("../scripts/val_set/pyrimidine.sdf");
+
+    /// Bug #1: RDKit creates **3 cyclic OOP terms** per 3-neighbor sp2 atom
+    /// (each neighbor takes a turn as the out-of-plane atom1). WebMM used to
+    /// create only 1, undercounting OOP energy ~3x (guanidinium was off by
+    /// 3.9 kcal/mol). The central C of guanidinium C(=NH)(NH2)(NH2) has 3 N
+    /// neighbors and must yield exactly 3 OOP terms.
+    #[test]
+    fn oop_creates_3_cyclic_terms_per_sp2_center() {
+        let mol = parse_sdf(GUANIDINIUM).expect("parse");
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        // central C is atom 1 (C_2); its 3 neighbors are the 3 N atoms
+        let central_oops: Vec<_> = ff.oops.iter().filter(|o| o.central == 1).collect();
+        assert_eq!(
+            central_oops.len(),
+            3,
+            "sp2 C with 3 neighbors must have 3 cyclic OOP terms, got {}",
+            central_oops.len()
+        );
+        // the 3 terms must cycle which neighbor is atom1
+        let atom1_set: std::collections::HashSet<_> =
+            central_oops.iter().map(|o| o.atom1).collect();
+        assert_eq!(atom1_set.len(), 3, "each of the 3 neighbors must be atom1 once");
+    }
+
+    /// Bug #2: the default stretch-bend (DFSB) lookup didn't canonicalize
+    /// periodic-table rows, so asymmetric angles like P-O-H (rows 2,1,0) were
+    /// looked up as (2,1,0) against a table stored as (0,1,2) -> no match ->
+    /// `None` -> the term was silently dropped. methylphosphonic_acid has two
+    /// P-O-H angles that MUST resolve to a real kba.
+    #[test]
+    fn stretch_bend_dfsb_not_skipped_for_asymmetric_rows() {
+        let mol = parse_sdf(METHYLPHOSPHONIC_ACID).expect("parse");
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        // find P-O-H angles: central atom is O (type 6), one peripheral is H
+        let mut resolved = 0;
+        for ang in &ff.angles {
+            let (i, j, k) = (ang.atom1, ang.atom2, ang.atom3);
+            let is_poh = ff.type_ids[j] == 6
+                && (ff.type_ids[i] == 25 || ff.type_ids[k] == 25)
+                && (mol.atoms[i].atomic_number == 1 || mol.atoms[k].atomic_number == 1);
+            if !is_poh {
+                continue;
+            }
+            let bij = ff.bond_map.get(&(i.min(j), i.max(j))).unwrap();
+            let bkj = ff.bond_map.get(&(k.min(j), k.max(j))).unwrap();
+            let btij = get_mmff_bond_type(bij.bond_type, ff.type_ids[i], ff.type_ids[j]);
+            let btjk = get_mmff_bond_type(bkj.bond_type, ff.type_ids[j], ff.type_ids[k]);
+            let at = compute_angle_type(btij, btjk, ff.angle_ring_size(i, j, k));
+            let p = get_stretch_bend_params(
+                ff.atom_types[i],
+                ff.atom_types[j],
+                ff.atom_types[k],
+                btij,
+                btjk,
+                mol.atoms[i].atomic_number,
+                mol.atoms[j].atomic_number,
+                mol.atoms[k].atomic_number,
+                at,
+            );
+            assert!(p.is_some(), "P-O-H stretch-bend must resolve (was silently dropped)");
+            resolved += 1;
+        }
+        assert!(resolved >= 2, "expected >=2 P-O-H angles, found {}", resolved);
+    }
+
+    /// Bug #3: the stretch-bend *type* depends on bond_type_1 = the bond to the
+    /// LOWER-type peripheral atom. Swapping i<->k must not change the resolved
+    /// kba pair. (purine's N-C-C angle got sb_type 2 instead of 1, using the
+    /// DFSB default 0.3 instead of the specific 0.61/0.227 entry.)
+    #[test]
+    fn stretch_bend_kba_is_order_invariant() {
+        // N_2(9) - C_2(3) - C_VIN(2): the purine angle that was broken.
+        // ti=9 > tk=2, so the lookup must canonicalize before computing sb_type.
+        let fwd = get_stretch_bend_params(
+            MMFFAtomType::N_2, MMFFAtomType::C_2, MMFFAtomType::C_VIN,
+            0, 1, 7, 6, 6, 1, // bt_ij=0 (C=N dbl), bt_jk=1 (C-C sbmb); Z: N,C,C
+        );
+        let rev = get_stretch_bend_params(
+            MMFFAtomType::C_VIN, MMFFAtomType::C_2, MMFFAtomType::N_2,
+            1, 0, 6, 6, 7, 1, // same two bonds, swapped order
+        );
+        let (kf, kr) = (fwd.expect("fwd"), rev.expect("rev"));
+        // kba_ijk must correspond to the same physical bond in both orders:
+        // fwd.kba_ijk (N-C side) == rev.kba_kji, and fwd.kba_kji == rev.kba_ijk
+        assert!((kf.kba_ijk - kr.kba_kji).abs() < 1e-9, "N-C kba differs on swap");
+        assert!((kf.kba_kji - kr.kba_ijk).abs() < 1e-9, "C-C kba differs on swap");
+        // and it must NOT be the DFSB default (0.3, 0.3) — the specific entry is
+        // (0.61, 0.227) for the N-C / C-C halves
+        assert!(kf.kba_ijk > 0.5, "expected specific kba ~0.61, got {}", kf.kba_ijk);
+    }
+
+    /// Bond-param symmetry: every (A,B,bt) entry must equal (B,A,bt). The
+    /// C_AR-N_AR aromatic entry once lacked its reverse arm, so N->C-ordered
+    /// ring bonds fell to a different param set and corrupted both bond and
+    /// stretch-bend energy (pyrimidine was off 2.4 kcal/mol).
+    #[test]
+    fn bond_params_symmetric_for_heteroatom_pairs() {
+        use MMFFAtomType::*;
+        // curated pairs covering every bug-hit family: aromatic heterocycles,
+        // 5-ring types, heteroatoms (P/S/halide), imines.
+        let cases: &[(MMFFAtomType, MMFFAtomType, BondType)] = &[
+            (C_AR, N_AR, BondType::Aromatic),
+            (C_AR, S_AR, BondType::Aromatic),
+            (C_AR, O_R, BondType::Aromatic),
+            (N_AR, N_AR, BondType::Aromatic),
+            (C5A, S_AR, BondType::Aromatic),
+            (C5A, OFUR, BondType::Aromatic),
+            (C5B, C5B, BondType::Aromatic),
+            (NPYL, N5A, BondType::Aromatic),
+            (N5A, C5B, BondType::Aromatic),
+            (C_3, O_R, BondType::Single),
+            (C_3, S_3, BondType::Single),
+            (S_3, S_3, BondType::Single),
+            (C_3, P_3, BondType::Single),
+            (C_3, P_4, BondType::Single),
+            (P_4, O_CO2, BondType::Double),
+            (C_AR, I, BondType::Single),
+            (C_3, Cl, BondType::Single),
+            (C_2, N_2, BondType::Double),
+            (C_2, N_2, BondType::Single),
+            (C_3, C_1, BondType::Single),
+            (C_1, N_1, BondType::Triple),
+        ];
+        for &(a, b, bt) in cases {
+            let pa = get_bond_params(a, b, bt);
+            let pb = get_bond_params(b, a, bt);
+            assert_eq!(pa.is_some(), pb.is_some(), "({:?},{:?},{:?}) asymmetry: one resolves, other doesn't", a, b, bt);
+            if let (Some(pa), Some(pb)) = (pa, pb) {
+                assert!((pa.r0 - pb.r0).abs() < 1e-9, "({:?},{:?}) r0 differs: {} vs {}", a, b, pa.r0, pb.r0);
+                assert!((pa.k_bond - pb.k_bond).abs() < 1e-9, "({:?},{:?}) kb differs: {} vs {}", a, b, pa.k_bond, pb.k_bond);
+            }
+        }
+    }
+
+    /// Per-term energy breakdown vs known RDKit values. Unlike a total-energy
+    /// check, this names *which* term regressed — essential for fast triage.
+    /// Values are RDKit 2025.09.3 MMFF94s `SetMMFFVerbosity(2)` per-term totals.
+    #[test]
+    fn pyrimidine_breakdown_matches_rdkit_per_term() {
+        let mol = parse_sdf(PYRIMIDINE).expect("parse");
+        let c: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let bd = ff.calculate_energy_breakdown(&c);
+        let check = |name: &str, got: f64, want: f64| {
+            assert!((got - want).abs() < 0.05, "{}: got {:.3}, want {:.3}", name, got, want);
+        };
+        check("bond", bd.bond, 0.8143);
+        check("angle", bd.angle, 7.0014);
+        check("stretch_bend", bd.stretch_bend, 0.9510);
+        check("oop", bd.oop, 0.0);
+        check("torsion", bd.torsion, 0.0);
+        check("vdw", bd.vdw, 11.0989);
+        check("electrostatic", bd.electrostatic, -21.1362);
+    }
+
+    /// Purine end-to-end: the fused-ring sb_type bug left it +1.1 off; pin it
+    /// under 0.5 so a regression is caught even if the per-term test above is
+    /// not run.
+    #[test]
+    fn purine_total_energy_within_tolerance() {
+        let mol = parse_sdf(PURINE).expect("parse");
+        let c: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let e = ff.calculate_energy(&c);
+        // RDKit 2025.09.3 MMFF94s total = 27.34
+        assert!((e - 27.34).abs() < 0.5, "purine energy {} vs RDKit 27.34", e);
+    }
+}

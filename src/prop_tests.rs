@@ -188,4 +188,30 @@ M  END"#, x, y, z, x + 1.5, y, z);
             }
         }
     }
+
+    // Invariant: total energy must equal the sum of the per-term breakdown.
+    // Catches silently dropped terms (e.g. the DFSB stretch-bend bug that skipped
+    // P-O-H angles entirely) or double-counting, independent of value accuracy.
+    #[test]
+    fn energy_equals_breakdown_sum() {
+        use crate::mmff::MMFFForceField;
+        use crate::molecule::parser::parse_sdf;
+        use crate::MMFFVariant;
+
+        // methylphosphonic_acid: exercises P, O-H, stretch-bend, torsion, elec
+        let sdf = include_str!("../scripts/val_set/methylphosphonic_acid.sdf");
+        let mol = parse_sdf(sdf).expect("parse");
+        let mut coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        // distort atoms so no term is trivially zero
+        for (i, c) in coords.iter_mut().enumerate() {
+            c[0] += 0.03 * (i as f64);
+            c[1] -= 0.02 * (i as f64);
+        }
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let total = ff.calculate_energy(&coords);
+        let bd = ff.calculate_energy_breakdown(&coords);
+        let sum = bd.bond + bd.angle + bd.stretch_bend + bd.torsion
+            + bd.oop + bd.vdw + bd.electrostatic;
+        assert!((total - sum).abs() < 1e-6, "total {} != breakdown sum {}", total, sum);
+    }
 }
