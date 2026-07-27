@@ -1,30 +1,28 @@
-# Close final 8 typing gaps — validation at 0.00% mismatch
+# Fix remaining 7 energy outliers — target RMSD < 0.3 kcal/mol
 
-**Status:** ✅ COMPLETE — 0% type mismatch on both validation sets (109-mol + 43-file)
+**Status:** ✅ COMPLETE — 6/7 fixed, RMSD 0.441→0.251 kcal/mol
 
-## Fixes (src/mmff/mod.rs)
-1. **has_c_c_neighbor / has_c_n_neighbor gated on `!n_owns_cn`**: the enamine
-   (C=C) and amidine (C=N) → N_PL3 rules were catching the =N imine itself
-   (its *other* neighbor has the C=C/C=N). Now excluded via `n_owns_cn`
-   (this N has its own double bond to C) — the =N falls through to sp2 N_2.
-   Fixed guanine atom6/8, purine atom1/7 (4 cases).
-2. **N_4 charge rule gated**: quaternary-ammonium N_4 no longer fires for
-   acyl/amidine/enamine Ns (charged guanidinium N → N_PL3 via amidine).
-   Fixed guanidinium atom3.
-3. **H_NAM gated on non-aromatic N**: aromatic-ring N-H (pyrrole/indole NPYL)
-   → H_N3; H_NAM only for non-aromatic amide/amidine/enamine/sulfonamide/aniline.
-   Fixed indole atom12. Broadened acyl detection to include C=C (enamine),
-   fixed guanine exocyclic NH2 H → H_NAM.
-4. **5-ring dicoordinate N → N5A** when adjacent to NPYL/OFUR/S_AR (else N5B).
-   Fixed pyrazole atom4.
+## Results
+- 6 of 7 outliers fixed (all Δ < 0.3 except purine):
+  - dimethyl_disulfide, CCl4, pyridazine, furan, pyrazole, iodobenzene → Δ ≈ 0
+  - trimethylphosphine → Δ 0.0, methylphosphonic_acid → Δ +0.2
+- **Remaining: purine (+1.12)** — stretch-bend sb_type classification bug
+  (compute_stretch_bend_type returns sb_type 2 for mixed Double/Single bond
+  angles where RDKit uses sb_type 1, causing kba to use DFSB default 0.3
+  instead of specific STBN table entries 0.61/0.227). Needs RDKit source
+  comparison for the exact getMMFFStretchBendType formula.
 
-## Result
-- Validation atom types: **8 → 0 (0.00%)** on 109 mols (1324 atoms); 43-file
-  set also 0%. 165 tests pass, 0 warnings.
-- Charges: mean |Δ| **0.0092 → 0.0003** (only 1 atom >0.15, indole borderline).
-- Energy: Pearson **r 0.967 → 0.9754**, RMSD **8.65 → 7.53**.
-- Caffeine minimized −123.02 (RDKit −123.49, Δ≈0.5).
+## Fixes applied
+1. `src/mmff/bond.rs`: 13 RDKit-verbose-verified bond param corrections/additions
+   (S-S, C-S, C-Cl, N-N aromatic, C-P single×2, P=O, C5A-OFUR, NPYL-N5A,
+   N5A-C5B, C-I, C=N double, C-N single)
+2. `src/mmff/mmff_tables.rs`: DFSB stretch-bend row canonicalization fix
+   (was skipping asymmetric-row angles like P-O-H entirely)
 
-Atom typing now matches RDKit 2025.09.3 exactly on the full validation set.
-Remaining energy gaps are parameter-table issues (5-ring/strained-ring angles,
-P/S params), not typing — see docs/validation-energy-analysis.md.
+## Metrics
+- Pearson r: **1.0000** (rounds to 1.0)
+- RMSD: **0.251 kcal/mol** (was 0.441)
+- Outliers >1.0: **1** (purine, was 7)
+- 108/109 molecules within 1.0 kcal/mol of RDKit
+- Atom types 0.00% mismatch; charges mean|Δ|=0.0003
+- 165 tests pass, 0 warnings; WASM rebuilt

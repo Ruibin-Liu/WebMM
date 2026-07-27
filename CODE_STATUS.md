@@ -4,10 +4,15 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-None active — atom typing matches RDKit 100% on both validation sets (0.00% mismatch). Energy accuracy r=0.9999 / RMSD=0.576 kcal/mol on 109-mol validation set.
+None active — atom typing matches RDKit 100% on both validation sets (0.00% mismatch). Energy accuracy r=1.0000 / RMSD=0.251 kcal/mol on 109-mol validation set (only 1 outlier >1.0: purine +1.12).
 
 ## Recently Completed
-- **All 3 energy outliers fixed → r=0.9999, RMSD=0.576 kcal/mol** (per PLAN.md "Fix remaining energy outliers"):
+- **6 of 7 energy outliers fixed → r=1.0000, RMSD=0.251 kcal/mol** (per PLAN.md "Fix remaining 7 energy outliers"):
+  - `src/mmff/bond.rs`: S_3-S_3 (added 2.050/2.531), C_3-S_3 (1.805/2.893), C-Cl (1.773/2.974), N_AR-N_AR Aromatic (1.246/5.002), C_3-P_3 (1.830/2.790), C_3-P_4 (1.810/2.980), P_4-O_CO2 Double (1.510/8.296), C5A-OFUR (1.360/5.787), NPYL-N5A (1.339/5.513), N5A-C5B (1.335/8.258), C_AR-I (2.075/1.781), C_2=N_2 Double (1.290/10.077), C_2-N_2 Single (1.360/6.385) — all from RDKit verbose.
+  - `src/mmff/mmff_tables.rs` (`lookup_stretch_bend_params`): **DFSB row canonicalization bug** — the default stretch-bend lookup used raw row_i/row_k instead of canonical (min,max). For asymmetric angles like P-O-H (rows 2,1,0), the table stores (0,1,2) but the query checked (2,1,0) → no match → stretch-bend skipped entirely. Fixed to canonicalize. Root cause for trimethylphosphine + methylphosphonic_acid.
+  - **Validation (109 mols)**: energy Pearson r→**1.0000**, RMSD 0.441→**0.251 kcal/mol**, max|Δ| 2.17→1.12, outliers >1.0: **7→1**. Atom types 0.00%; charges mean|Δ|=0.0003. 165 tests pass, 0 warnings. WASM rebuilt.
+  - Fixed: dimethyl_disulfide, CCl4, pyridazine, furan, pyrazole, trimethylphosphine, methylphosphonic_acid (all Δ<0.3 except mpa +0.2), iodobenzene (+0.1).
+  - Remaining: **purine (+1.12)** — stretch-bend sb_type classification for mixed Double/Single bond angles (compute_stretch_bend_type gives sb_type 2 where RDKit uses 1), causing kba to fall to DFSB default (0.3) instead of specific STBN entries (0.61/0.227). Subtle algorithmic issue needing RDKit source comparison.
   - `src/molecule/graph.rs` (`find_out_of_planes`): RDKit creates **3 cyclic OOP permutations** per 3-neighbor sp2 atom (each neighbor takes a turn as the out-of-plane atom1, other two define the reference plane). WebMM was creating only 1. Tripled the OOP terms, fixing guanidinium (OOP 1.81→5.57; Δ −3.9→−0.1).
   - `src/mmff/bond.rs`: C_3-O_R entry had stale params (1.43/5.0) instead of the RDKit-verified C_3-O_3 values (1.418/5.047). With 4 C-O bonds at 1.35 Å this caused +3.3 kcal/mol excess. Fixed dioxane (Δ +2.4→+0.01).
   - `src/mmff/bond.rs`: C_AR-N_AR Aromatic entry lacked the reverse `(N_AR, C_AR, Aromatic)` arm, so N→C-ordered aromatic ring bonds fell to wrong params (r0=1.368/4.0 instead of 1.333/5.737). This corrupted BOTH bond energy AND stretch-bend (which uses bond r0 for dr), flipping the stretch-bend sign. Corrected to RDKit-verbose values r0=1.333, kb=5.737. Fixed pyrimidine (Δ −2.4→0.0; all per-terms now match RDKit: bond/angle/sb/vdw/elec).
