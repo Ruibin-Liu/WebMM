@@ -365,6 +365,26 @@ fn lookup_bond_params_exact(
             k_bond: 4.0,
             r0: 1.71,
         }),
+        // 5-ring heteroaromatic specific bond params (C5A=63, C5B=64) from RDKit verbose
+        (MMFFAtomType::C5A, MMFFAtomType::S_AR, BondType::Aromatic)
+        | (MMFFAtomType::S_AR, MMFFAtomType::C5A, BondType::Aromatic) => Some(BondParams {
+            k_bond: 3.589,
+            r0: 1.717,
+        }),
+        (MMFFAtomType::C5B, MMFFAtomType::C5B, BondType::Aromatic) => Some(BondParams {
+            k_bond: 4.313,
+            r0: 1.418,
+        }),
+        (MMFFAtomType::C5A, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::C5A, BondType::Single) => Some(BondParams {
+            k_bond: 5.531,
+            r0: 1.080,
+        }),
+        (MMFFAtomType::C5B, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::C5B, BondType::Single) => Some(BondParams {
+            k_bond: 5.506,
+            r0: 1.080,
+        }),
 
         // C-H bonds (symmetric)
         (MMFFAtomType::H, MMFFAtomType::C_3, BondType::Single)
