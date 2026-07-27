@@ -1175,6 +1175,9 @@ impl MMFFForceField {
                 let bt_jk = get_mmff_bond_type(bkj.bond_type, self.type_ids[j], self.type_ids[k]);
                 let ring_size = self.angle_ring_size(i, j, k);
                 let angle_type_val = mmff_tables::compute_angle_type(bt_ij, bt_jk, ring_size);
+                if mmff_tables::is_linear_center(self.type_ids[j]) {
+                    continue;
+                }
                 if let (
                     Some(sb_params),
                     Some(bond_params_ij),
@@ -1442,6 +1445,9 @@ impl MMFFForceField {
                 let bt_jk = get_mmff_bond_type(bkj.bond_type, self.type_ids[j], self.type_ids[k]);
                 let ring_size = self.angle_ring_size(i, j, k);
                 let angle_type_val = mmff_tables::compute_angle_type(bt_ij, bt_jk, ring_size);
+                if mmff_tables::is_linear_center(self.type_ids[j]) {
+                    continue;
+                }
                 if let (
                     Some(sb_params),
                     Some(bond_params_ij),

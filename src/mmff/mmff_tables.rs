@@ -3008,6 +3008,12 @@ pub fn get_mmff_prop(type_id: u8) -> Option<(u8, u8, u8, u8, u8, u8, u8, u8)> {
     MMFF_PROP_TABLE.get(type_id as usize).copied()
 }
 
+/// Whether an atom type is a linear (sp) center (linh=1). RDKit skips
+/// stretch-bend terms for angles centered on linear atoms (e.g. CS2, CO2).
+pub fn is_linear_center(type_id: u8) -> bool {
+    get_mmff_prop(type_id).map(|p| p.6 == 1).unwrap_or(false)
+}
+
 /// RDKit MMFF94 angle empirical rule (Halgren eq. 20)
 /// Returns (ka, theta0) or None if types are invalid
 pub fn empirical_angle_params(
