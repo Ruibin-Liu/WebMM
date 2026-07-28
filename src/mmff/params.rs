@@ -39,6 +39,7 @@ pub fn mmff_type_id(t: MMFFAtomType) -> u8 {
         MMFFAtomType::N_2Z => 53,
         MMFFAtomType::N_SOM => 48,
         MMFFAtomType::N_NO2 => 45,
+        MMFFAtomType::N_NITROSO => 46,
         MMFFAtomType::N_SO2 => 43,
         MMFFAtomType::N5A => 65,
         MMFFAtomType::N5B => 66,

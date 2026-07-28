@@ -57,6 +57,7 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::O_R => MMFFAtomType::O_3,
         MMFFAtomType::O_3_Z => MMFFAtomType::O_3,
         // Water oxygen uses same params as generic sp3 oxygen
+        MMFFAtomType::N_NITROSO => MMFFAtomType::N_2,
         MMFFAtomType::OH2 => MMFFAtomType::O_3,
         // SP3D/SP3D2 types fall back to base sp3 types for parameters
         MMFFAtomType::P_3D => MMFFAtomType::P_3,
@@ -111,6 +112,7 @@ pub enum MMFFAtomType {
     N_SOM,
     N_NO2, // Nitro group nitrogen (MMFF 45)
     N_SO2, // Sulfonamide nitrogen, N bonded to SO2 sulfur (MMFF 43)
+    N_NITROSO, // Nitroso nitrogen N=O (MMFF 46)
     N5A, // Alpha N in 5-membered heteroaromatic ring (MMFF 65)
     N5B, // Beta N in 5-membered heteroaromatic ring (MMFF 66)
     N_POX, // Pyridine N-oxide nitrogen (MMFF 69)
@@ -769,6 +771,12 @@ impl MMFFForceField {
                             .any(|&c| aromatic_atoms.contains(&c)) =>
                     {
                         MMFFAtomType::N_PL3
+                    }
+                    // Nitroso N (N=O, no formal charge) → type 46
+                    (7, Hybridization::Sp2, false, _)
+                        if double_o_count == 1 && charge.abs() < 0.5 =>
+                    {
+                        MMFFAtomType::N_NITROSO
                     }
                     (7, Hybridization::Sp2, false, 2..) => MMFFAtomType::N_2,
                     (7, Hybridization::Sp1, false, 1..=2) => MMFFAtomType::N_1,

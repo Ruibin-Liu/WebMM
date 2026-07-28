@@ -256,6 +256,19 @@ fn lookup_bond_params_exact(
             r0: 1.233,
         cb: 1.0,
         }),
+        // Nitroso N bonds — from RDKit verbose (nitrosomethane)
+        (MMFFAtomType::N_NITROSO, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::N_NITROSO, BondType::Single) => Some(BondParams {
+            k_bond: 3.813,
+            r0: 1.482,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::N_NITROSO, MMFFAtomType::O_2, BondType::Double)
+        | (MMFFAtomType::O_2, MMFFAtomType::N_NITROSO, BondType::Double) => Some(BondParams {
+            k_bond: 9.329,
+            r0: 1.235,
+        cb: 1.0,
+        }),
 
         // Carboxylate bonds — RDKit-extracted values (MMFF94s)
         // (1,41) C_3-CO2M, (32,41) O_CO2-CO2M
