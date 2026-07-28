@@ -470,6 +470,19 @@ fn lookup_bond_params_exact(
             r0: 1.160,
         cb: 1.0,
         }),
+        // Cumulated N=N bonds (diazomethane/azide) — from RDKit verbose
+        (MMFFAtomType::C_2, MMFFAtomType::N_2Z, BondType::Double)
+        | (MMFFAtomType::N_2Z, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
+            k_bond: 7.637,
+            r0: 1.320,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::N_2Z, MMFFAtomType::N_1M, BondType::Double)
+        | (MMFFAtomType::N_1M, MMFFAtomType::N_2Z, BondType::Double) => Some(BondParams {
+            k_bond: 12.192,
+            r0: 1.140,
+        cb: 1.0,
+        }),
         (MMFFAtomType::C_3, MMFFAtomType::C_1, BondType::Single)
         | (MMFFAtomType::C_1, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
             k_bond: 4.707,
