@@ -735,11 +735,12 @@ impl MMFFForceField {
 
                     // Nitrogen: amide N (aromatic ring + bonded to C=O)
                     (7, _, true, _) if is_noxide_n => MMFFAtomType::N_POX,
-                    (7, _, true, _) if has_c_o_neighbor => MMFFAtomType::N_AM,
+                    (7, _, true, _) if has_c_o_neighbor && !n_owns_cn => MMFFAtomType::N_AM,
 
                     // Amide / carbamate / urea N: non-aromatic N directly bonded to a
-                    // carbonyl C is MMFF 10 (N_AM), regardless of detected hybridization.
-                    (7, _, false, _) if has_c_o_neighbor => MMFFAtomType::N_AM,
+                    // carbonyl C is MMFF 10 (N_AM). Excludes N=C imines (n_owns_cn)
+                    // like methyl isocyanate CH3-N=C=O where N has its own double bond.
+                    (7, _, false, _) if has_c_o_neighbor && !n_owns_cn => MMFFAtomType::N_AM,
 
                     // Enamine / vinylamine N: non-aromatic N bonded to a C=C carbon
                     // is planar → MMFF 40 (N_PL3) (analogous to aniline).
@@ -912,6 +913,12 @@ impl MMFFForceField {
                     {
                         MMFFAtomType::S2CM
                     }
+                    // Sulfonium S+ (3 bonds, positive charge) → type 17
+                    (16, _, _, 3) if charge > 0.5 => MMFFAtomType::S_OX,
+                    // Hypervalent S: specific Sp3D/Sp3D2 first, then catch-all type 18
+                    (16, Hybridization::Sp3D, _, 4..=5) => MMFFAtomType::S_3D,
+                    (16, Hybridization::Sp3D2, _, 6) => MMFFAtomType::S_3D2,
+                    (16, _, _, 4..) => MMFFAtomType::S_O2,
                     (16, Hybridization::Sp3, _, 2..) => MMFFAtomType::S_3,
                     (16, Hybridization::Sp2, _, _) => MMFFAtomType::S_2,
 
@@ -919,10 +926,6 @@ impl MMFFForceField {
                     (15, Hybridization::Sp3, _, 3..=4) => MMFFAtomType::P_3,
                     (15, Hybridization::Sp2, _, _) => MMFFAtomType::P_4,
                     (15, Hybridization::Sp3D, _, 5) => MMFFAtomType::P_3D,
-
-                    // Sulfur types
-                    (16, Hybridization::Sp3D, _, 4..=5) => MMFFAtomType::S_3D,
-                    (16, Hybridization::Sp3D2, _, 6) => MMFFAtomType::S_3D2,
 
                     // Silicon (MMFF 19) — always type 19 regardless of hybridization
                     (14, _, _, _) => MMFFAtomType::Si,
@@ -1083,8 +1086,9 @@ impl MMFFForceField {
                     MMFFAtomType::H_N3
                 }
             }
-            // Thiol H: H bonded to S → MMFF 71 (HS)
-            16 => MMFFAtomType::HS,
+            // H bonded to S (thiol) or P → MMFF 71
+            // (RDKit uses type 71 for both H-S and H-P)
+            16 | 15 => MMFFAtomType::HS,
             _ => MMFFAtomType::H,
         }
     }

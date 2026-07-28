@@ -302,6 +302,13 @@ fn lookup_bond_params_exact(
             r0: 1.660,
         cb: 1.0,
         }),
+        // Si-N bond (types 19,8) — from RDKit verbose
+        (MMFFAtomType::Si, MMFFAtomType::N_3, BondType::Single)
+        | (MMFFAtomType::N_3, MMFFAtomType::Si, BondType::Single) => Some(BondParams {
+            k_bond: 4.254,
+            r0: 1.700,
+        cb: 1.0,
+        }),
 
         // Imine N-H bond — RDKit-extracted value (MMFF94s)
         // (9,27) N_2-H_NIM
@@ -371,6 +378,28 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::C_1, MMFFAtomType::C_VIN, BondType::Double) => Some(BondParams {
             k_bond: 9.538,
             r0: 1.297,
+        cb: 1.0,
+        }),
+        // Cumulated double bonds: C_1 (CSP, type 4) double bonds
+        // C_1=O_2 (ketene C=C=O) — from RDKit verbose
+        (MMFFAtomType::C_1, MMFFAtomType::O_2, BondType::Double)
+        | (MMFFAtomType::O_2, MMFFAtomType::C_1, BondType::Double) => Some(BondParams {
+            k_bond: 14.916,
+            r0: 1.176,
+        cb: 1.0,
+        }),
+        // C_1=N_2 (carbodiimide, isocyanate, isothiocyanate N=C=X) — from RDKit verbose
+        (MMFFAtomType::C_1, MMFFAtomType::N_2, BondType::Double)
+        | (MMFFAtomType::N_2, MMFFAtomType::C_1, BondType::Double) => Some(BondParams {
+            k_bond: 15.589,
+            r0: 1.172,
+        cb: 1.0,
+        }),
+        // C_1=S_2 (isothiocyanate N=C=S) — from RDKit verbose
+        (MMFFAtomType::C_1, MMFFAtomType::S_2, BondType::Double)
+        | (MMFFAtomType::S_2, MMFFAtomType::C_1, BondType::Double) => Some(BondParams {
+            k_bond: 2.982,
+            r0: 1.798,
         cb: 1.0,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::N_2, BondType::Single)
@@ -473,6 +502,20 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::H, MMFFAtomType::CR4R, BondType::Single) => Some(BondParams {
             k_bond: 4.852,
             r0: 1.093,
+        cb: 1.0,
+        }),
+        // CR4R-S (4-ring S) — from RDKit verbose (thietane)
+        (MMFFAtomType::CR4R, MMFFAtomType::S_3, BondType::Single)
+        | (MMFFAtomType::S_3, MMFFAtomType::CR4R, BondType::Single) => Some(BondParams {
+            k_bond: 2.757,
+            r0: 1.822,
+        cb: 1.0,
+        }),
+        // CR4R-O_R (4-ring O) — from RDKit verbose (oxetane)
+        (MMFFAtomType::CR4R, MMFFAtomType::O_R, BondType::Single)
+        | (MMFFAtomType::O_R, MMFFAtomType::CR4R, BondType::Single) => Some(BondParams {
+            k_bond: 5.623,
+            r0: 1.433,
         cb: 1.0,
         }),
         (MMFFAtomType::CR3R, MMFFAtomType::N_3, BondType::Single)
@@ -909,8 +952,8 @@ fn lookup_bond_params_exact(
 
         // O-O bonds
         (MMFFAtomType::O_3, MMFFAtomType::O_3, BondType::Single) => Some(BondParams {
-            k_bond: 4.0,
-            r0: 1.48,
+            k_bond: 4.088,
+            r0: 1.449,
         cb: 1.0,
         }),
         (MMFFAtomType::O_3, MMFFAtomType::O_2, BondType::Single)
@@ -931,6 +974,13 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::O_3, MMFFAtomType::P_3, BondType::Single) => Some(BondParams {
             k_bond: 4.0,
             r0: 1.60,
+        cb: 1.0,
+        }),
+        // P-H bond (types 26,71) — from RDKit verbose
+        (MMFFAtomType::P_3, MMFFAtomType::HS, BondType::Single)
+        | (MMFFAtomType::HS, MMFFAtomType::P_3, BondType::Single) => Some(BondParams {
+            k_bond: 2.959,
+            r0: 1.415,
         cb: 1.0,
         }),
         (MMFFAtomType::P_4, MMFFAtomType::O_2, BondType::Double)

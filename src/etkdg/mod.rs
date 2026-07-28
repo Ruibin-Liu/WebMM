@@ -4256,6 +4256,98 @@ fn rotate_fragment_around_bond(coords: &mut [[f64; 3]], mol: &Molecule, j: usize
     }
 }
 
+/// 3-sphere intersection: given centers p1,p2,p3 and radii r1,r2,r3, return
+/// the two intersection points (or None if degenerate).
+fn trilaterate(p1: [f64; 3], p2: [f64; 3], p3: [f64; 3], r1: f64, r2: f64, r3: f64) -> Option<([f64; 3], [f64; 3])> {
+    let d = ((p2[0] - p1[0]).powi(2) + (p2[1] - p1[1]).powi(2) + (p2[2] - p1[2]).powi(2)).sqrt();
+    if d < 1e-10 {
+        return None;
+    }
+    let ex = [(p2[0] - p1[0]) / d, (p2[1] - p1[1]) / d, (p2[2] - p1[2]) / d];
+    let p3p1 = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
+    let i_val = ex[0] * p3p1[0] + ex[1] * p3p1[1] + ex[2] * p3p1[2];
+    let p3_perp = [p3p1[0] - i_val * ex[0], p3p1[1] - i_val * ex[1], p3p1[2] - i_val * ex[2]];
+    let ppl = (p3_perp[0] * p3_perp[0] + p3_perp[1] * p3_perp[1] + p3_perp[2] * p3_perp[2]).sqrt();
+    if ppl < 1e-10 {
+        return None;
+    }
+    let ey = [p3_perp[0] / ppl, p3_perp[1] / ppl, p3_perp[2] / ppl];
+    let ez = cross_product(ex, ey);
+    let x = (d * d + r1 * r1 - r2 * r2) / (2.0 * d);
+    let j_val = ey[0] * p3p1[0] + ey[1] * p3p1[1] + ey[2] * p3p1[2];
+    if j_val.abs() < 1e-10 {
+        return None;
+    }
+    let y = (i_val * i_val + j_val * j_val + r1 * r1 - r3 * r3 - 2.0 * i_val * x) / (2.0 * j_val);
+    let z2 = r1 * r1 - x * x - y * y;
+    if z2 < 0.0 {
+        return None;
+    }
+    let z = z2.sqrt();
+    let base = [p1[0] + x * ex[0] + y * ey[0], p1[1] + x * ex[1] + y * ey[1], p1[2] + x * ex[2] + y * ey[2]];
+    Some((
+        [base[0] + z * ez[0], base[1] + z * ez[1], base[2] + z * ez[2]],
+        [base[0] - z * ez[0], base[1] - z * ez[1], base[2] - z * ez[2]],
+    ))
+}
+
+/// Reposition misplaced H atoms via 3-sphere trilateration from the ETKDG
+/// distance bounds (1-2 bond + 1-3 angle constraints). For each H with ≥2 heavy
+/// neighbors on its bonded atom, analytically compute the correct position from
+/// the bounds — gives the minimizer a good starting point it can't reach from
+/// the 4D projection.
+fn trilaterate_hydrogens(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &DistanceBounds) {
+    for h_idx in 0..mol.atoms.len() {
+        if mol.atoms[h_idx].symbol != "H" {
+            continue;
+        }
+        let a_idx = match mol.adjacency[h_idx].iter().find(|&&n| mol.atoms[n].symbol != "H") {
+            Some(&n) => n,
+            None => continue,
+        };
+        let r0_ha = {
+            let (lo, hi) = (h_idx.min(a_idx), h_idx.max(a_idx));
+            (bounds.lower[lo][hi] + bounds.upper[lo][hi]) / 2.0
+        };
+        // only trilaterate if current bond is off
+        let cur_ha = ((coords[h_idx][0] - coords[a_idx][0]).powi(2)
+            + (coords[h_idx][1] - coords[a_idx][1]).powi(2)
+            + (coords[h_idx][2] - coords[a_idx][2]).powi(2)).sqrt();
+        if (cur_ha - r0_ha).abs() < 0.05 {
+            continue;
+        }
+        let heavy_nbrs: Vec<usize> = mol.adjacency[a_idx]
+            .iter()
+            .filter(|&&n| n != h_idx && mol.atoms[n].symbol != "H")
+            .copied()
+            .collect();
+        if heavy_nbrs.len() < 2 {
+            continue;
+        }
+        let n1 = heavy_nbrs[0];
+        let n2 = heavy_nbrs[1];
+        let mid_b = |a: usize, b: usize| -> f64 {
+            let (lo, hi) = (a.min(b), a.max(b));
+            (bounds.lower[lo][hi] + bounds.upper[lo][hi]) / 2.0
+        };
+        let r0_hn1 = mid_b(h_idx, n1);
+        let r0_hn2 = mid_b(h_idx, n2);
+        if let Some((sol1, sol2)) =
+            trilaterate(coords[a_idx], coords[n1], coords[n2], r0_ha, r0_hn1, r0_hn2)
+        {
+            // pick the solution closer to the current H position
+            let d1 = ((sol1[0] - coords[h_idx][0]).powi(2)
+                + (sol1[1] - coords[h_idx][1]).powi(2)
+                + (sol1[2] - coords[h_idx][2]).powi(2)).sqrt();
+            let d2 = ((sol2[0] - coords[h_idx][0]).powi(2)
+                + (sol2[1] - coords[h_idx][1]).powi(2)
+                + (sol2[2] - coords[h_idx][2]).powi(2)).sqrt();
+            let best = if d1 < d2 { sol1 } else { sol2 };
+            coords[h_idx] = best;
+        }
+    }
+}
+
 pub fn generate_initial_coords(mol: &Molecule) -> Vec<[f64; 3]> {
     let config = ETKDGConfig::default();
     generate_initial_coords_with_config(mol, &config)
@@ -4434,6 +4526,43 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
                 snaps += 1;
             } else {
                 break;
+            }
+        }
+
+        // H trilateration: analytically place misplaced H atoms via 3-sphere
+        // intersection from their ETKDG 1-2/1-3 distance bounds. Gives the
+        // H-only relaxation below a good starting point.
+        trilaterate_hydrogens(&mut coords_3d, mol, &bounds);
+
+        // H-only relaxation: fix all non-H atoms, re-minimize to let H atoms
+        // settle into their ideal positions (satisfying 1-2/1-3 bounds) without
+        // the heavy-atom landscape trapping them. Cheap (few DOF) and can't
+        // regress (heavy atoms are fixed).
+        {
+            let mut h_coord_map = std::collections::HashMap::new();
+            for i in 0..mol.atoms.len() {
+                if mol.atoms[i].symbol != "H" {
+                    h_coord_map.insert(i, coords_3d[i]);
+                }
+            }
+            for (&k, &v) in &config.coord_map {
+                h_coord_map.insert(k, v);
+            }
+            let he = minimize_etkdg(
+                &mut coords_3d,
+                &bounds,
+                &chiral_centers,
+                &tetrahedral,
+                &pc,
+                &torsion_prefs,
+                &bonds_12,
+                &angles_13,
+                300,
+                1e-3,
+                &h_coord_map,
+            );
+            if he < energy {
+                energy = he;
             }
         }
 
