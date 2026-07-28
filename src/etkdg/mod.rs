@@ -4336,9 +4336,26 @@ fn trilaterate_hydrogens(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &Dista
         }
         let n1 = heavy_nbrs[0];
         let n2 = heavy_nbrs[1];
-        let mid_b = |a: usize, b: usize| -> f64 {
-            let (lo, hi) = (a.min(b), a.max(b));
-            (bounds.lower[lo][hi] + bounds.upper[lo][hi]) / 2.0
+        // 1-3 distance target for H-N: use the bound if set, otherwise compute
+        // via law of cosines from the 1-2 bond lengths and a default tetrahedral
+        // angle (109.5°). Needed because build_distance_bounds only sets 1-3
+        // bounds for ring pairs — H-to-heavy 1-3 pairs are often missing.
+        let pa = coords[a_idx];
+        let dist3 = |a: usize, b: usize| -> f64 {
+            let d = [coords[a][0] - coords[b][0], coords[a][1] - coords[b][1], coords[a][2] - coords[b][2]];
+            (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+        };
+        let mid_b = |h: usize, n: usize| -> f64 {
+            let (lo, hi) = (h.min(n), h.max(n));
+            let upper = bounds.upper[lo][hi];
+            if upper >= MAX_UPPER || upper < 0.1 {
+                // bound not set: law of cosines with default tetrahedral angle
+                let r_an = dist3(a_idx, n);
+                let cos_a = (-1.0_f64 / 3.0); // cos(109.47°)
+                (r0_ha * r0_ha + r_an * r_an - 2.0 * r0_ha * r_an * cos_a).sqrt()
+            } else {
+                (bounds.lower[lo][hi] + upper) / 2.0
+            }
         };
         let r0_hn1 = mid_b(h_idx, n1);
         let r0_hn2 = mid_b(h_idx, n2);
@@ -4353,7 +4370,10 @@ fn trilaterate_hydrogens(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &Dista
                 + (sol2[1] - coords[h_idx][1]).powi(2)
                 + (sol2[2] - coords[h_idx][2]).powi(2)).sqrt();
             let best = if d1 < d2 { sol1 } else { sol2 };
+            eprintln!("TRIL H{h_idx} on A{a_idx}: r0_ha={r0_ha:.3} cur_ha={cur_ha:.3} placed=({:.3},{:.3},{:.3}) d_from_cur={:.3}", best[0], best[1], best[2], d1.min(d2));
             coords[h_idx] = best;
+        } else {
+            eprintln!("TRIL H{h_idx} on A{a_idx}: FAILED (None) r0_ha={r0_ha:.3} r0_hn1={r0_hn1:.3} r0_hn2={r0_hn2:.3} d_AN1={:.3} d_AN2={:.3}", dist3(a_idx, n1), dist3(a_idx, n2));
         }
     }
 }

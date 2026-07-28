@@ -28,6 +28,8 @@ pub fn mmff_type_id(t: MMFFAtomType) -> u8 {
         MMFFAtomType::C5B => 64,
         MMFFAtomType::C_CAT => 56,
         MMFFAtomType::C_AN => 57,
+        MMFFAtomType::CID => 60,
+        MMFFAtomType::NID => 61,
         MMFFAtomType::N_3 => 8,
         MMFFAtomType::N_2 => 9,
         MMFFAtomType::N_1 => 42,

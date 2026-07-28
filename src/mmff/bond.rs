@@ -470,6 +470,20 @@ fn lookup_bond_params_exact(
             r0: 1.160,
         cb: 1.0,
         }),
+        // Isonitrile CID≡NID triple bond — from RDKit verbose
+        (MMFFAtomType::CID, MMFFAtomType::NID, BondType::Triple)
+        | (MMFFAtomType::NID, MMFFAtomType::CID, BondType::Triple) => Some(BondParams {
+            k_bond: 15.749,
+            r0: 1.170,
+        cb: 1.0,
+        }),
+        // C_3-NID (methyl isocyanide) — from RDKit verbose
+        (MMFFAtomType::C_3, MMFFAtomType::NID, BondType::Single)
+        | (MMFFAtomType::NID, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
+            k_bond: 4.845,
+            r0: 1.424,
+        cb: 1.0,
+        }),
         // Cumulated N=N bonds (diazomethane/azide) — from RDKit verbose
         (MMFFAtomType::C_2, MMFFAtomType::N_2Z, BondType::Double)
         | (MMFFAtomType::N_2Z, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {

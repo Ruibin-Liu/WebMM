@@ -59,6 +59,8 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         // Water oxygen uses same params as generic sp3 oxygen
         MMFFAtomType::N_NITROSO => MMFFAtomType::N_2,
         MMFFAtomType::N_2Z | MMFFAtomType::N_1M => MMFFAtomType::N_1,
+        MMFFAtomType::CID => MMFFAtomType::C_1,
+        MMFFAtomType::NID => MMFFAtomType::N_1,
         MMFFAtomType::OH2 => MMFFAtomType::O_3,
         // SP3D/SP3D2 types fall back to base sp3 types for parameters
         MMFFAtomType::P_3D => MMFFAtomType::P_3,
@@ -99,6 +101,8 @@ pub enum MMFFAtomType {
     C5B, // Beta C in 5-membered heteroaromatic ring (MMFF 64)
     C_CAT,
     C_AN,
+    CID,   // Isonitrile carbon C- (MMFF 60)
+    NID,   // Isonitrile/nitrile-oxide nitrogen N+ (MMFF 61)
 
     // Nitrogens
     N_3,
@@ -682,6 +686,8 @@ impl MMFFForceField {
                         Self::determine_h_subtype(idx, mol, *neighbor_idx, &aromatic_atoms)
                     }
 
+                    // Isonitrile C- (sp, triple bond, negative charge) → CID (type 60)
+                    (6, Hybridization::Sp1, _, _) if charge < -0.5 => MMFFAtomType::CID,
                     // Carbon with formal charge
                     (6, _, _, _) if charge.abs() > 0.5 => {
                         if charge > 0.0 {
@@ -790,6 +796,8 @@ impl MMFFForceField {
                         MMFFAtomType::N_1M
                     }
                     (7, Hybridization::Sp2, false, 2..) => MMFFAtomType::N_2,
+                    // Isonitrile/nitrile-oxide N+ (sp, triple bond, positive charge) → NID (type 61)
+                    (7, Hybridization::Sp1, false, _) if charge > 0.5 => MMFFAtomType::NID,
                     (7, Hybridization::Sp1, false, 1..=2) => MMFFAtomType::N_1,
 
                     // Terminal O on SO2 (sulfone/sulfonamide/sulfonate) or nitro groups
