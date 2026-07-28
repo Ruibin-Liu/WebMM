@@ -61,6 +61,7 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::N_2Z | MMFFAtomType::N_1M => MMFFAtomType::N_1,
         MMFFAtomType::CID => MMFFAtomType::C_1,
         MMFFAtomType::NID => MMFFAtomType::N_1,
+        MMFFAtomType::NCN_PLUS => MMFFAtomType::N_AM,
         MMFFAtomType::OH2 => MMFFAtomType::O_3,
         // SP3D/SP3D2 types fall back to base sp3 types for parameters
         MMFFAtomType::P_3D => MMFFAtomType::P_3,
@@ -103,6 +104,7 @@ pub enum MMFFAtomType {
     C_AN,
     CID,   // Isonitrile carbon C- (MMFF 60)
     NID,   // Isonitrile/nitrile-oxide nitrogen N+ (MMFF 61)
+    NCN_PLUS, // Guanidinium/amidinium N (MMFF 55)
 
     // Nitrogens
     N_3,
@@ -689,6 +691,18 @@ impl MMFFForceField {
 
                     // Isonitrile C- (sp, triple bond, negative charge) → CID (type 60)
                     (6, Hybridization::Sp1, _, _) if charge < -0.5 => MMFFAtomType::CID,
+                    // Guanidinium/amidinium C (C=N+ with >=2 N neighbors) → CGD+ (type 57)
+                    (6, _, _, _) if double_bond_partners.contains(&7)
+                        && mol.adjacency[idx].iter()
+                            .filter(|&&n| mol.atoms[n].atomic_number == 7).count() >= 2
+                        && mol.bonds.iter().any(|b| {
+                            b.bond_type == BondType::Double
+                                && (b.atom1 == idx || b.atom2 == idx)
+                                && {
+                                    let other = if b.atom1 == idx { b.atom2 } else { b.atom1 };
+                                    mol.atoms[other].charge > 0.5
+                                }
+                        }) => MMFFAtomType::C_AN,
                     // Carbon with formal charge
                     (6, _, _, _) if charge.abs() > 0.5 => {
                         if charge > 0.0 {
@@ -747,6 +761,21 @@ impl MMFFForceField {
 
                     // Nitrogen: amide N (aromatic ring + bonded to C=O)
                     (7, _, true, _) if is_noxide_n => MMFFAtomType::N_POX,
+                    // Guanidinium/amidinium N+ (bonded to C that has C=N+ and >=2 N) → NCN+ (55)
+                    (7, _, false, _) if mol.adjacency[idx].iter().any(|&c| {
+                        mol.atoms[c].atomic_number == 6
+                            && mol.adjacency[c].iter()
+                                .filter(|&&n| mol.atoms[n].atomic_number == 7).count() >= 2
+                            && mol.bonds.iter().any(|b| {
+                                b.bond_type == BondType::Double
+                                    && (b.atom1 == c || b.atom2 == c)
+                                    && {
+                                        let other = if b.atom1 == c { b.atom2 } else { b.atom1 };
+                                        mol.atoms[other].atomic_number == 7
+                                            && mol.atoms[other].charge > 0.5
+                                    }
+                            })
+                    }) => MMFFAtomType::NCN_PLUS,
                     (7, _, true, _) if has_c_o_neighbor && !n_owns_cn => MMFFAtomType::N_AM,
 
                     // Amide / carbamate / urea N: non-aromatic N directly bonded to a
@@ -1053,6 +1082,23 @@ impl MMFFForceField {
                 }
             }
             7 => {
+                // Guanidinium/amidinium N-H → HNRP (36): N bonded to C with C=N+ and >=2 N
+                let n_is_guanidinium = mol.adjacency[neighbor_idx].iter().any(|&c| {
+                    mol.atoms[c].atomic_number == 6
+                        && mol.adjacency[c].iter()
+                            .filter(|&&n| mol.atoms[n].atomic_number == 7).count() >= 2
+                        && mol.bonds.iter().any(|b| {
+                            b.bond_type == BondType::Double
+                                && (b.atom1 == c || b.atom2 == c)
+                                && {
+                                    let o = if b.atom1 == c { b.atom2 } else { b.atom1 };
+                                    mol.atoms[o].atomic_number == 7 && mol.atoms[o].charge > 0.5
+                                }
+                        })
+                });
+                if n_is_guanidinium {
+                    return MMFFAtomType::HNRP;
+                }
                 // Imine H: H on sp2 N with C=N double bond, not aromatic → MMFF 27 (H_NIM)
                 let n_has_double_to_c = mol.bonds.iter().any(|b| {
                     b.bond_type == BondType::Double

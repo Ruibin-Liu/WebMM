@@ -4306,24 +4306,40 @@ fn trilaterate(p1: [f64; 3], p2: [f64; 3], p3: [f64; 3], r1: f64, r2: f64, r3: f
 /// neighbors on its bonded atom, analytically compute the correct position from
 /// the bounds — gives the minimizer a good starting point it can't reach from
 /// the 4D projection.
+fn atom_dist(coords: &[[f64; 3]], a: usize, b: usize) -> f64 {
+    let d = [coords[a][0] - coords[b][0], coords[a][1] - coords[b][1], coords[a][2] - coords[b][2]];
+    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+}
+
+fn dist_points(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+}
+
 fn trilaterate_hydrogens(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &DistanceBounds) {
+    let mut processed_a = vec![false; mol.atoms.len()];
     for h_idx in 0..mol.atoms.len() {
-        if mol.atoms[h_idx].symbol != "H" {
+        if mol.atoms[h_idx].symbol != "H" || processed_a[h_idx] {
             continue;
         }
         let a_idx = match mol.adjacency[h_idx].iter().find(|&&n| mol.atoms[n].symbol != "H") {
             Some(&n) => n,
             None => continue,
         };
+        if processed_a[a_idx] {
+            continue;
+        }
+        processed_a[a_idx] = true;
         let r0_ha = {
             let (lo, hi) = (h_idx.min(a_idx), h_idx.max(a_idx));
             (bounds.lower[lo][hi] + bounds.upper[lo][hi]) / 2.0
         };
-        // only trilaterate if current bond is off
-        let cur_ha = ((coords[h_idx][0] - coords[a_idx][0]).powi(2)
-            + (coords[h_idx][1] - coords[a_idx][1]).powi(2)
-            + (coords[h_idx][2] - coords[a_idx][2]).powi(2)).sqrt();
-        if (cur_ha - r0_ha).abs() < 0.05 {
+        let h_atoms: Vec<usize> = mol.adjacency[a_idx]
+            .iter()
+            .filter(|&&n| mol.atoms[n].symbol == "H")
+            .copied()
+            .collect();
+        if !h_atoms.iter().any(|&h| (atom_dist(coords, a_idx, h) - r0_ha).abs() > 0.05) {
             continue;
         }
         let heavy_nbrs: Vec<usize> = mol.adjacency[a_idx]
@@ -4336,44 +4352,40 @@ fn trilaterate_hydrogens(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &Dista
         }
         let n1 = heavy_nbrs[0];
         let n2 = heavy_nbrs[1];
-        // 1-3 distance target for H-N: use the bound if set, otherwise compute
-        // via law of cosines from the 1-2 bond lengths and a default tetrahedral
-        // angle (109.5°). Needed because build_distance_bounds only sets 1-3
-        // bounds for ring pairs — H-to-heavy 1-3 pairs are often missing.
-        let pa = coords[a_idx];
-        let dist3 = |a: usize, b: usize| -> f64 {
-            let d = [coords[a][0] - coords[b][0], coords[a][1] - coords[b][1], coords[a][2] - coords[b][2]];
-            (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
-        };
-        let mid_b = |h: usize, n: usize| -> f64 {
-            let (lo, hi) = (h.min(n), h.max(n));
+        let mid_13 = |n: usize| -> f64 {
+            let (lo, hi) = (h_idx.min(n), h_idx.max(n));
             let upper = bounds.upper[lo][hi];
-            if upper >= MAX_UPPER || upper < 0.1 {
-                // bound not set: law of cosines with default tetrahedral angle
-                let r_an = dist3(a_idx, n);
-                let cos_a = (-1.0_f64 / 3.0); // cos(109.47°)
+            if !(0.1..MAX_UPPER).contains(&upper) {
+                let r_an = atom_dist(coords, a_idx, n);
+                let cos_a = -1.0_f64 / 3.0;
                 (r0_ha * r0_ha + r_an * r_an - 2.0 * r0_ha * r_an * cos_a).sqrt()
             } else {
                 (bounds.lower[lo][hi] + upper) / 2.0
             }
         };
-        let r0_hn1 = mid_b(h_idx, n1);
-        let r0_hn2 = mid_b(h_idx, n2);
+        let r0_hn1 = mid_13(n1);
+        let r0_hn2 = mid_13(n2);
         if let Some((sol1, sol2)) =
             trilaterate(coords[a_idx], coords[n1], coords[n2], r0_ha, r0_hn1, r0_hn2)
         {
-            // pick the solution closer to the current H position
-            let d1 = ((sol1[0] - coords[h_idx][0]).powi(2)
-                + (sol1[1] - coords[h_idx][1]).powi(2)
-                + (sol1[2] - coords[h_idx][2]).powi(2)).sqrt();
-            let d2 = ((sol2[0] - coords[h_idx][0]).powi(2)
-                + (sol2[1] - coords[h_idx][1]).powi(2)
-                + (sol2[2] - coords[h_idx][2]).powi(2)).sqrt();
-            let best = if d1 < d2 { sol1 } else { sol2 };
-            eprintln!("TRIL H{h_idx} on A{a_idx}: r0_ha={r0_ha:.3} cur_ha={cur_ha:.3} placed=({:.3},{:.3},{:.3}) d_from_cur={:.3}", best[0], best[1], best[2], d1.min(d2));
-            coords[h_idx] = best;
-        } else {
-            eprintln!("TRIL H{h_idx} on A{a_idx}: FAILED (None) r0_ha={r0_ha:.3} r0_hn1={r0_hn1:.3} r0_hn2={r0_hn2:.3} d_AN1={:.3} d_AN2={:.3}", dist3(a_idx, n1), dist3(a_idx, n2));
+            match h_atoms.len() {
+                1 => {
+                    let d1 = dist_points(sol1, coords[h_atoms[0]]);
+                    let d2 = dist_points(sol2, coords[h_atoms[0]]);
+                    coords[h_atoms[0]] = if d1 < d2 { sol1 } else { sol2 };
+                }
+                _ => {
+                    let d1_0 = dist_points(sol1, coords[h_atoms[0]]);
+                    let d1_1 = dist_points(sol1, coords[h_atoms[1]]);
+                    if d1_0 <= d1_1 {
+                        coords[h_atoms[0]] = sol1;
+                        coords[h_atoms[1]] = sol2;
+                    } else {
+                        coords[h_atoms[0]] = sol2;
+                        coords[h_atoms[1]] = sol1;
+                    }
+                }
+            }
         }
     }
 }
