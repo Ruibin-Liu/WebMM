@@ -417,6 +417,16 @@ fn compute_bond_length(
     is_aromatic2: bool,
     bond_type: BondType,
 ) -> f64 {
+    // Specific overrides for bonds where the UFF formula is significantly off
+    // (avoids systematic S=O / C=S errors in the distance bounds).
+    if bond_type == BondType::Double {
+        let pair = (element1, element2);
+        match pair {
+            ("S", "O") | ("O", "S") => return 1.44, // MMFF sulfonyl S=O
+            ("C", "S") | ("S", "C") => return 1.56, // MMFF thiocarbonyl C=S
+            _ => {}
+        }
+    }
     let ri = uff_radius(element1, hyb1, is_aromatic1);
     let rj = uff_radius(element2, hyb2, is_aromatic2);
     let bo: f64 = if is_aromatic1 && is_aromatic2 {
