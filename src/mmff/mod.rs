@@ -915,9 +915,7 @@ impl MMFFForceField {
                     }
                     // Sulfonium S+ (3 bonds, positive charge) → type 17
                     (16, _, _, 3) if charge > 0.5 => MMFFAtomType::S_OX,
-                    // Hypervalent S: specific Sp3D/Sp3D2 first, then catch-all type 18
-                    (16, Hybridization::Sp3D, _, 4..=5) => MMFFAtomType::S_3D,
-                    (16, Hybridization::Sp3D2, _, 6) => MMFFAtomType::S_3D2,
+                    // Hypervalent S (4+ bonds) → type 18 (SX4) — RDKit-verified
                     (16, _, _, 4..) => MMFFAtomType::S_O2,
                     (16, Hybridization::Sp3, _, 2..) => MMFFAtomType::S_3,
                     (16, Hybridization::Sp2, _, _) => MMFFAtomType::S_2,
