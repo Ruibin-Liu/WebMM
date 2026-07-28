@@ -622,6 +622,7 @@ impl MMFFForceField {
                 let bonded_to_nitro_n = atom.atomic_number == 8
                     && mol.adjacency[idx].iter().any(|&n| {
                         mol.atoms[n].atomic_number == 7
+                            && mol.atoms[n].charge > 0.5
                             && mol.adjacency[n]
                                 .iter()
                                 .filter(|&&m| mol.atoms[m].atomic_number == 8)
