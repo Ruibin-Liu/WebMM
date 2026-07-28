@@ -778,6 +778,22 @@ fn lookup_bond_params_exact(
             r0: 1.093,
         cb: 1.0,
         }),
+        // Guanidinium CGD+-NCN+ bond — from RDKit verbose (same for Single/Double)
+        (MMFFAtomType::C_AN, MMFFAtomType::NCN_PLUS, BondType::Single)
+        | (MMFFAtomType::NCN_PLUS, MMFFAtomType::C_AN, BondType::Single)
+        | (MMFFAtomType::C_AN, MMFFAtomType::NCN_PLUS, BondType::Double)
+        | (MMFFAtomType::NCN_PLUS, MMFFAtomType::C_AN, BondType::Double) => Some(BondParams {
+            k_bond: 7.227,
+            r0: 1.319,
+        cb: 1.0,
+        }),
+        // NCN+-HNRP bond — from RDKit verbose
+        (MMFFAtomType::NCN_PLUS, MMFFAtomType::HNRP, BondType::Single)
+        | (MMFFAtomType::HNRP, MMFFAtomType::NCN_PLUS, BondType::Single) => Some(BondParams {
+            k_bond: 6.744,
+            r0: 1.014,
+        cb: 1.0,
+        }),
 
         // N-H bonds (symmetric)
         (MMFFAtomType::H, MMFFAtomType::N_3, BondType::Single)

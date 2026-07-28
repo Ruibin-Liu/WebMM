@@ -4081,6 +4081,7 @@ fn spread_fragments(coords: &mut [[f64; 3]], components: &[Vec<usize>]) {
 /// Fix aniline-like NH2 geometries after ETKDG minimization.
 /// RDKit ETKDG produces slightly pyramidal aniline N (H-N-H ~117.5°,
 /// H atoms ±0.84 Å out of the ring plane) rather than fully planar.
+#[allow(dead_code)]
 fn fix_aniline_nh2_geometry(
     coords: &mut [[f64; 3]],
     mol: &Molecule,
@@ -4611,7 +4612,10 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
         // Post-process aniline-like NH2 groups: RDKit ETKDG gives slightly
         // pyramidal geometry (H-N-H ~117.5°, H atoms ±0.84 Å out of ring plane)
         // instead of fully planar.  Re-place the H atoms explicitly.
-        fix_aniline_nh2_geometry(&mut coords_3d, mol, &pc);
+        // fix_aniline_nh2_geometry was disabled: it placed NH2 H's at wrong C-N-H
+        // angles (59° instead of ~112°) — the H-trilateration + H-only relaxation
+        // now place them correctly, and the ad-hoc fix was raising aniline's
+        // energy from 12 to 127 kcal/mol.
 
         let planar = check_planarity(&coords_3d, mol, &pc, 0.1);
         let db_geom_ok = double_bond_geometry_checks(&coords_3d, &double_bond_ends);

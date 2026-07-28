@@ -1033,9 +1033,26 @@ fn compute_mmff_formal_charges(mol: &Molecule, type_ids: &[u8]) -> Vec<f64> {
             88 => 3.0,
             // NPOX (69): pyridine N-oxide N — formal charge is 0 (neutralized)
             69 => 0.0,
+            // Guanidinium CGD+ C (57): formal charge distributed to NCN+ N's
+            57 => 0.0,
+            // NCN+ N (55): shares +1 from CGD+ C equally among NCN+ N's
+            55 => {
+                let mut fc = 0.0;
+                for &nbr in &mol.adjacency[i] {
+                    if type_ids[nbr] == 57 {
+                        let n_ncn = mol.adjacency[nbr]
+                            .iter()
+                            .filter(|&&m| type_ids[m] == 55)
+                            .count()
+                            .max(1);
+                        fc += 1.0 / n_ncn as f64;
+                    }
+                }
+                fc
+            }
             // Halide anions
             89..=91 => -1.0,
-            // Everything else: formal charge is 0 (RDKit initializes to 0, not molchg)
+            // Everything else: formal charge is 0
             _ => 0.0,
         };
     }
