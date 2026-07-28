@@ -483,6 +483,13 @@ fn lookup_bond_params_exact(
             r0: 1.140,
         cb: 1.0,
         }),
+        // N_2=N_2Z (azide central bond) — from RDKit verbose
+        (MMFFAtomType::N_2, MMFFAtomType::N_2Z, BondType::Double)
+        | (MMFFAtomType::N_2Z, MMFFAtomType::N_2, BondType::Double) => Some(BondParams {
+            k_bond: 7.291,
+            r0: 1.242,
+        cb: 1.0,
+        }),
         (MMFFAtomType::C_3, MMFFAtomType::C_1, BondType::Single)
         | (MMFFAtomType::C_1, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
             k_bond: 4.707,
