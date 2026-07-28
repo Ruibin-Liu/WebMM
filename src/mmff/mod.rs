@@ -609,7 +609,8 @@ impl MMFFForceField {
                 let is_nitro_n = atom.atomic_number == 7
                     && oxygen_neighbors.len() == 2
                     && h_neighbor_count == 0
-                    && double_o_count >= 1;
+                    && double_o_count >= 1
+                    && charge > 0.5;
 
                 // Bonded (single or double) to a nitro-group N
                 let bonded_to_nitro_n = atom.atomic_number == 8
