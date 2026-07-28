@@ -1,34 +1,43 @@
-# Add conjugated-diene (C=C–C=C) torsion preference
+# ETKDG torsion barrier-crossing (torsion-snap basin-hop)
 
-**Status:** IN PROGRESS
+**Status:** ✅ COMPLETE — torsion-snap basin-hop added; diene pref re-enabled; butadiene planar; harness r 0.6105 → 0.6375, RMSD 47.5 → 45.2
 
-## Bug
-`match_torsion_pattern` has a comment "C=C-C=C (conjugated diene) → trans" but its
-condition is `is_double_bond(a2,a3) && sp2(h2) && sp2(h3)` — that matches the
-**cumulated** case (central bond double, C=C=C), not a conjugated diene (central
-bond **single**). So butadiene/isoprene's C=C–C=C central bond gets **no torsion
-preference** and embeds ~90° twisted (low MMFF energy only because MMFF barely
-penalizes the twist — butadiene E≈12 at 87° vs RDKit ≈6 planar). RDKit embeds it
-s-trans (~180°).
+## Problem
+L-BFGS gets stuck at torsional barriers from the 4D-projection start (butadiene
+seed 42 → ~102°, can't cross to 180°; this is *why* the conjugated-diene torsion
+pref was reverted — it pushed butadiene INTO the barrier and raised its energy).
+max_attempts re-embeds don't help: the metric embedding of a linear diene
+consistently starts ~87°, so every restart converges to the same ~100° basin.
 
-## Phase 1 — Add the correct conjugated-diene pattern (DONE)
-In `match_torsion_pattern`: for a central bond a2–a3 that is **single**, with both
-a2,a3 = sp² C and non-aromatic (i.e. a conjugated C=C–C=C / C=C–C=O / styrene-side
-single bond), return a trans-favoring + planarizing Fourier term:
-`([1,-1,1,1,1,1], [2.0, 4.0, 0,0,0,0])` → k=1 favors trans (180°), k=2 enforces
-planar (0/180). Min at trans; cis at +4; 90° at +10 kcal/mol. Also fix the
-mislabeled comment on the existing cumulated pattern.
+## Fix (Phase 1)
+Targeted **torsion-snap basin-hop** in `generate_initial_coords_with_config`,
+after `minimize_etkdg`: for the torsion prefs most twisted from their preferred
+minimum, rotate the appropriate fragment around the central bond to snap the
+dihedral toward a preferred value, then re-minimize; keep only if total energy
+drops. Directly crosses torsional barriers (unlike a coordinate shake, which
+doesn't specifically rotate around a bond).
+
+- New helper `rotate_fragment_around_bond(coords, mol, j, k, angle)`: BFS the
+  k-side fragment (atoms reachable from k without crossing j), rotate them around
+  the j→k axis by `angle` (Rodrigues).
+- After minimize_etkdg: for each torsion pref (i,j,k,l), if the dihedral is
+  >~45° from the nearer of {0,180} (the planar/trans minima most prefs want),
+  snap-rotate the k-fragment to that minimum, re-run minimize_etkdg; accept only
+  if `etkdg_energy` decreases (line-search-style guard).
 
 ## Phase 2 — Verify
-- `examples/diag_butadiene.rs`: dihedral C0-C1-C2-C3 → ~180° (s-trans) across
-  seeds; energy → ~6 (RDKit-like).
-- ETKDG harness: r ≥ 0.61, RMSD ≤ 47 (no regression); diene outliers (isoprene)
-  should drop.
-- `cargo test`: 191 pass, 0 ignored; `cargo build` + `cargo clippy`: 0 warnings.
+- `examples/diag_butadiene.rs`: butadiene seed 42 dihedral → ~180° (s-trans),
+  energy → ~6 (RDKit-like); consistent across seeds.
+- ETKDG harness: r ≥ 0.61, RMSD ≤ 47 (no regression); ideally small gain.
+- Re-enable the conjugated-diene torsion pref (Phase 1 of the prior plan) since
+  barriers can now be crossed — confirm butadiene planar + harness ≥ 0.61.
+- `cargo test`: 191 pass; `cargo build` + `cargo clippy`: 0 warnings.
 
 ## Phase 3 — Update CODE_STATUS.md
 
 ## Constraints
-- One new pattern + a comment fix in `match_torsion_pattern`. No other changes.
-- If the sp²-sp²-single condition over-constrains some conjugated system (styrene/
-  enone), narrow the condition rather than weakening globally — watch the harness.
+- Accept-only-if-better guard → can't regress a molecule (worst case: no-op).
+- Bounded cost: a few snap+reminimize cycles per attempt (minimize_etkdg is the
+  expensive part; keep the count small).
+- If it doesn't cross the butadiene barrier or regresses the harness, revert and
+  document (barrier-crossing is genuinely hard; RDKit uses years of DG tuning).

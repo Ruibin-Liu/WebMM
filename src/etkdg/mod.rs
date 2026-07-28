@@ -3029,10 +3029,17 @@ fn match_torsion_pattern(
         }
     }
 
-    // 2. Conjugated C=C-C=C / C=C-C=O / styrene-side: central bond SINGLE between
-    //    two sp2 carbons (non-aromatic) -> trans + planar. (The old comment here
-    //    said "conjugated diene" but used is_double_bond(a2,a3), which is the
-    //    CUMULATED C=C=C case — see below.)
+    // 2. Conjugated C=C-C=C diene: central bond SINGLE between two sp2 carbons,
+    //    each carrying its own C=C -> trans + planar. (Old comment mislabeled the
+    //    cumulated case below as "conjugated diene".) The torsion-snap basin-hop
+    //    in generate_initial_coords_with_config now crosses the ~90° barrier that
+    //    previously left this pref unable to take effect.
+    let a2_has_cc = mol.adjacency[a2]
+        .iter()
+        .any(|&nb| nb != a3 && mol.atoms[nb].symbol == "C" && is_double_bond(mol, a2, nb));
+    let a3_has_cc = mol.adjacency[a3]
+        .iter()
+        .any(|&nb| nb != a2 && mol.atoms[nb].symbol == "C" && is_double_bond(mol, a3, nb));
     if !is_double_bond(mol, a2, a3)
         && s2 == "C"
         && s3 == "C"
@@ -3040,10 +3047,11 @@ fn match_torsion_pattern(
         && sp2(h3)
         && !ar2
         && !ar3
+        && a2_has_cc
+        && a3_has_cc
     {
-        // k=1 favors trans (180°); k=2 enforces planar (0/180°). Strong enough to
-        // overcome the random 4D-projection twist (~90°).
-        return Some(([1, -1, 1, 1, 1, 1], [5.0, 15.0, 0.0, 0.0, 0.0, 0.0]));
+        // k=1 favors trans (180°); k=2 enforces planar (0/180°).
+        return Some(([1, -1, 1, 1, 1, 1], [2.0, 4.0, 0.0, 0.0, 0.0, 0.0]));
     }
 
     // 2b. Cumulated C=C=C (central bond double, both sp2) -> cis/planar
@@ -3815,8 +3823,11 @@ fn minimize_etkdg(
     let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut rho_hist: Vec<f64> = Vec::with_capacity(M);
-
+    let mut iters_done = 0usize;
+    let mut converged = false;
+    let mut stall = 0usize;
     for _iter in 0..max_iter {
+        iters_done += 1;
         // convergence: max per-atom force (excluding fixed atoms)
         let mut max_g = 0.0f64;
         for i in 0..n {
@@ -3829,6 +3840,7 @@ fn minimize_etkdg(
             }
         }
         if max_g < force_tol {
+            converged = true;
             break;
         }
 
@@ -3904,10 +3916,23 @@ fn minimize_etkdg(
             step *= 0.5;
         }
         if !accepted {
-            break;
+            // line search failed: reset L-BFGS history and keep going with fresh
+            // steepest-descent steps; only give up after several consecutive
+            // failures. (Previously broke on the first failure, leaving strained-
+            // ring molecules under-relaxed after ~2 iters.)
+            stall += 1;
+            s_hist.clear();
+            y_hist.clear();
+            rho_hist.clear();
+            if stall >= 5 {
+                break;
+            }
+        } else {
+            stall = 0;
         }
     }
 
+    eprintln!("MIN n={n} iters={iters_done}/{max_iter} converged={converged} E={f:.1}");
     for i in 0..n {
         coords[i][0] = x[3 * i];
         coords[i][1] = x[3 * i + 1];
@@ -4188,6 +4213,49 @@ fn fix_aniline_nh2_geometry(
 
 // ============================================================================
 
+/// Rotate the k-side fragment of the j-k bond around the j->k axis by `angle`
+/// (Rodrigues). The fragment = atoms reachable from k without crossing j.
+/// Used by the torsion-snap basin-hop to cross torsional barriers.
+fn rotate_fragment_around_bond(coords: &mut [[f64; 3]], mol: &Molecule, j: usize, k: usize, angle: f64) {
+    let n = mol.atoms.len();
+    let mut visited = vec![false; n];
+    let mut frag: Vec<usize> = Vec::new();
+    let mut stack = vec![k];
+    visited[j] = true; // barrier — don't cross j
+    visited[k] = true;
+    while let Some(a) = stack.pop() {
+        frag.push(a);
+        for &nb in &mol.adjacency[a] {
+            if !visited[nb] {
+                visited[nb] = true;
+                stack.push(nb);
+            }
+        }
+    }
+    let p1 = coords[j];
+    let axis = [coords[k][0] - p1[0], coords[k][1] - p1[1], coords[k][2] - p1[2]];
+    let axlen = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+    if axlen < 1e-10 {
+        return;
+    }
+    let u = [axis[0] / axlen, axis[1] / axlen, axis[2] / axlen];
+    let ca = angle.cos();
+    let sa = angle.sin();
+    let omca = 1.0 - ca;
+    for &a in &frag {
+        let v = [coords[a][0] - p1[0], coords[a][1] - p1[1], coords[a][2] - p1[2]];
+        let nxv = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let ndv = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+        coords[a][0] = p1[0] + v[0] * ca + nxv[0] * sa + u[0] * ndv * omca;
+        coords[a][1] = p1[1] + v[1] * ca + nxv[1] * sa + u[1] * ndv * omca;
+        coords[a][2] = p1[2] + v[2] * ca + nxv[2] * sa + u[2] * ndv * omca;
+    }
+}
+
 pub fn generate_initial_coords(mol: &Molecule) -> Vec<[f64; 3]> {
     let config = ETKDGConfig::default();
     generate_initial_coords_with_config(mol, &config)
@@ -4307,7 +4375,7 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
             }
         }
 
-        let energy = minimize_etkdg(
+        let mut energy = minimize_etkdg(
             &mut coords_3d,
             &bounds,
             &chiral_centers,
@@ -4320,6 +4388,54 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
             1e-3,
             &config.coord_map,
         );
+
+        // Torsion barrier-crossing: L-BFGS gets stuck at torsional barriers from
+        // the 4D-projection start (e.g. butadiene ~100° instead of 180°). Snap the
+        // most-twisted torsion prefs toward a planar/trans minimum (rotate the
+        // k-side fragment around the central bond) and re-minimize; accept only if
+        // total ETKDG energy drops. Bounded to 3 snaps/attempt.
+        let mut snaps = 0usize;
+        while snaps < 3 {
+            let mut best_snap: Option<(usize, f64)> = None;
+            for (pi, p) in torsion_prefs.iter().enumerate() {
+                let phi = dihedral_angle(&coords_3d, p.i, p.j, p.k, p.l);
+                let target = if phi.abs() > std::f64::consts::FRAC_PI_2 {
+                    std::f64::consts::PI
+                } else {
+                    0.0
+                };
+                let delta = target - phi;
+                if delta.abs() > std::f64::consts::FRAC_PI_4
+                    && best_snap.is_none_or(|(_, d)| delta.abs() > d.abs())
+                {
+                    best_snap = Some((pi, delta));
+                }
+            }
+            let Some((pi, delta)) = best_snap else { break };
+            let p = &torsion_prefs[pi];
+            let mut trial = coords_3d.clone();
+            rotate_fragment_around_bond(&mut trial, mol, p.j, p.k, delta);
+            let te = minimize_etkdg(
+                &mut trial,
+                &bounds,
+                &chiral_centers,
+                &tetrahedral,
+                &pc,
+                &torsion_prefs,
+                &bonds_12,
+                &angles_13,
+                300,
+                1e-3,
+                &config.coord_map,
+            );
+            if te < energy {
+                energy = te;
+                coords_3d = trial;
+                snaps += 1;
+            } else {
+                break;
+            }
+        }
 
         // Post-process aniline-like NH2 groups: RDKit ETKDG gives slightly
         // pyramidal geometry (H-N-H ~117.5°, H atoms ±0.84 Å out of ring plane)

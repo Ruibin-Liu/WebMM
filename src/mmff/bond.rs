@@ -939,11 +939,12 @@ fn lookup_bond_params_exact(
             r0: 1.496,
         cb: 1.0,
         }),
-        // CS2 / S=C=S — S2CM (72) to C_1 (4) double (RDKit-extracted via symmetric scan)
+        // CS2 / S=C=S — S2CM (72) to C_1 (4) double
+        // Params from empirical rule: fitted to RDKit binary (verbose truncates to 3 dp)
         (MMFFAtomType::S2CM, MMFFAtomType::C_1, BondType::Double)
         | (MMFFAtomType::C_1, MMFFAtomType::S2CM, BondType::Double) => Some(BondParams {
-            k_bond: 2.982,
-            r0: 1.798,
+            k_bond: 2.982333,
+            r0: 1.798345,
         cb: 1.0,
         }),
 
