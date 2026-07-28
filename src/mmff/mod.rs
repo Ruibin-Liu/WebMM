@@ -58,6 +58,7 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::O_3_Z => MMFFAtomType::O_3,
         // Water oxygen uses same params as generic sp3 oxygen
         MMFFAtomType::N_NITROSO => MMFFAtomType::N_2,
+        MMFFAtomType::N_2Z | MMFFAtomType::N_1M => MMFFAtomType::N_1,
         MMFFAtomType::OH2 => MMFFAtomType::O_3,
         // SP3D/SP3D2 types fall back to base sp3 types for parameters
         MMFFAtomType::P_3D => MMFFAtomType::P_3,
@@ -109,6 +110,7 @@ pub enum MMFFAtomType {
     N_AM,
     N_4,
     N_2Z,
+    N_1M,  // Terminal anionic N in azide/diazo (MMFF 47)
     N_SOM,
     N_NO2, // Nitro group nitrogen (MMFF 45)
     N_SO2, // Sulfonamide nitrogen, N bonded to SO2 sulfur (MMFF 43)
@@ -778,6 +780,14 @@ impl MMFFForceField {
                         if double_o_count == 1 && charge.abs() < 0.5 =>
                     {
                         MMFFAtomType::N_NITROSO
+                    }
+                    // Cumulated =N= (central N with 2+ double bonds) → type 53 (N_2Z)
+                    (7, _, false, _) if double_bond_partners.len() >= 2 => {
+                        MMFFAtomType::N_2Z
+                    }
+                    // Terminal anionic N (azide/diazo N-) → type 47 (N_1M)
+                    (7, _, false, _) if charge < -0.5 => {
+                        MMFFAtomType::N_1M
                     }
                     (7, Hybridization::Sp2, false, 2..) => MMFFAtomType::N_2,
                     (7, Hybridization::Sp1, false, 1..=2) => MMFFAtomType::N_1,
