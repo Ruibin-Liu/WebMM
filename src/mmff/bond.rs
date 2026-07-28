@@ -665,6 +665,15 @@ fn lookup_bond_params_exact(
             r0: 1.360,
         cb: 1.0,
         }),
+        // N5A-OFUR (oxazole N-O) — from RDKit verbose
+        (MMFFAtomType::N5A, MMFFAtomType::OFUR, BondType::Single)
+        | (MMFFAtomType::N5A, MMFFAtomType::OFUR, BondType::Aromatic)
+        | (MMFFAtomType::OFUR, MMFFAtomType::N5A, BondType::Single)
+        | (MMFFAtomType::OFUR, MMFFAtomType::N5A, BondType::Aromatic) => Some(BondParams {
+            k_bond: 4.756,
+            r0: 1.388,
+        cb: 1.0,
+        }),
         (MMFFAtomType::C5A, MMFFAtomType::H, BondType::Single)
         | (MMFFAtomType::H, MMFFAtomType::C5A, BondType::Single) => Some(BondParams {
             k_bond: 5.531,
