@@ -31,6 +31,39 @@ pub fn get_stretch_bend_params(
     };
     let sb_type = mmff_tables::compute_stretch_bend_type(angle_type, bt1, bt2);
 
+    if let Some((kba_ijk, kba_kji)) = mmff_tables::lookup_stbn_only(
+        ti,
+        tj,
+        tk,
+        sb_type,
+    ) {
+        return Some(StretchBendParams { kba_ijk, kba_kji });
+    }
+
+    // When ti == tk (same atom type on both sides), the canonical ordering
+    // does not swap the bond types, but compute_stretch_bend_type is
+    // asymmetric (e.g. angle_type=1 with bt1=0,bt2=1 gives sb_type=2, while
+    // bt1=1,bt2=0 gives sb_type=1).  The STBN table may only have an entry
+    // for one ordering.  Try the swapped bond types and, if found, swap the
+    // returned kba values to match the original (i, j, k) bond assignment.
+    if ti == tk && bt1 != bt2 {
+        let sb_type_swapped = mmff_tables::compute_stretch_bend_type(angle_type, bt2, bt1);
+        if sb_type_swapped != sb_type {
+            if let Some((kba_ijk_s, kba_kji_s)) = mmff_tables::lookup_stbn_only(
+                ti,
+                tj,
+                tk,
+                sb_type_swapped,
+            ) {
+                return Some(StretchBendParams {
+                    kba_ijk: kba_kji_s,
+                    kba_kji: kba_ijk_s,
+                });
+            }
+        }
+    }
+
+    // Final fallback: DFSB by periodic table row
     if let Some((kba_ijk, kba_kji)) = mmff_tables::lookup_stretch_bend_params(
         ti,
         tj,

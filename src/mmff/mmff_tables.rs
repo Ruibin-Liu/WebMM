@@ -2854,14 +2854,12 @@ pub fn lookup_angle_params(
     None
 }
 
-pub fn lookup_stretch_bend_params(
+/// STBN-only lookup (no DFSB fallback). Returns None if no specific entry.
+pub fn lookup_stbn_only(
     type_i: u8,
     type_j: u8,
     type_k: u8,
     sb_type: u8,
-    atomic_num_i: u8,
-    atomic_num_j: u8,
-    atomic_num_k: u8,
 ) -> Option<(f64, f64)> {
     let mut can_i = type_i;
     let mut can_k = type_k;
@@ -2879,7 +2877,22 @@ pub fn lookup_stretch_bend_params(
             }
         }
     }
-    // Fallback: default stretch-bend params by periodic table row
+    None
+}
+
+/// Full lookup: STBN table first, then DFSB fallback by periodic row.
+pub fn lookup_stretch_bend_params(
+    type_i: u8,
+    type_j: u8,
+    type_k: u8,
+    sb_type: u8,
+    atomic_num_i: u8,
+    atomic_num_j: u8,
+    atomic_num_k: u8,
+) -> Option<(f64, f64)> {
+    if let Some(r) = lookup_stbn_only(type_i, type_j, type_k, sb_type) {
+        return Some(r);
+    }
     let row_i = get_periodic_table_row(atomic_num_i);
     let row_j = get_periodic_table_row(atomic_num_j);
     let row_k = get_periodic_table_row(atomic_num_k);

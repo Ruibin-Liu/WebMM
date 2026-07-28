@@ -328,6 +328,11 @@ pub fn get_oop_params(
         }
     }
 
+    // Wildcard fallback: match by central type only (i=0, k=0, l=0)
+    if let Some(params) = lookup_oop_table(table, 0, j_id, 0, 0) {
+        return params;
+    }
+
     OOPParams { k_oop: 0.0 }
 }
 

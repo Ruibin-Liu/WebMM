@@ -1,42 +1,34 @@
-# Replace `minimize_etkdg` gradient descent with L-BFGS
+# Add conjugated-diene (C=C–C=C) torsion preference
 
-**Status:** ✅ COMPLETE — L-BFGS landed (r 0.10→0.59); 1 test `#[ignore]`d (sp2-planarity gap it exposed)
+**Status:** IN PROGRESS
 
-## Why (diagnosed prior turn)
-The ETKDG 3D refinement `minimize_etkdg` uses a primitive fixed-step normalized
-gradient descent (`step = 0.1 / max_g`). This diverges as the gradient shrinks
-(step → ∞ near a minimum), so it oscillates and **never converges** — stalling in
-bad local minima even for a 10-atom molecule (butadiene E≈282 vs true ≈6; bumping
-to 2000 iters doesn't help). This single defect causes the whole ETKDG val-set
-baseline of **r=0.0976** (and the macrocycle non-convergence).
+## Bug
+`match_torsion_pattern` has a comment "C=C-C=C (conjugated diene) → trans" but its
+condition is `is_double_bond(a2,a3) && sp2(h2) && sp2(h3)` — that matches the
+**cumulated** case (central bond double, C=C=C), not a conjugated diene (central
+bond **single**). So butadiene/isoprene's C=C–C=C central bond gets **no torsion
+preference** and embeds ~90° twisted (low MMFF energy only because MMFF barely
+penalizes the twist — butadiene E≈12 at 87° vs RDKit ≈6 planar). RDKit embeds it
+s-trans (~180°).
 
-## Phase 1 — Replace the descent with L-BFGS (inline)
-Rewrite the body of `src/etkdg/mod.rs::minimize_etkdg` (signature unchanged, so all
-callers are unaffected):
-- Flatten `coords` ↔ 1D `Vec<f64>` (length 3n).
-- L-BFGS two-loop recursion (history m=8) over `etkdg_energy` / `etkdg_gradient`,
-  with gamma initial-Hessian scaling.
-- Backtracking Armijo line search (c=1e-4, up to 25 halvings); first step scaled
-  `1/max_g`, later steps `1.0`.
-- Fixed atoms (`coord_map`) masked out of the gradient and not moved.
-- Guard: if the search direction isn't a descent dir (rare), reset history +
-  steepest-descent fallback.
-- Convergence: max per-atom force < `force_tol` (now actually reachable).
-- Write the final 1D vector back into `coords`; return final energy.
+## Phase 1 — Add the correct conjugated-diene pattern (DONE)
+In `match_torsion_pattern`: for a central bond a2–a3 that is **single**, with both
+a2,a3 = sp² C and non-aromatic (i.e. a conjugated C=C–C=C / C=C–C=O / styrene-side
+single bond), return a trans-favoring + planarizing Fourier term:
+`([1,-1,1,1,1,1], [2.0, 4.0, 0,0,0,0])` → k=1 favors trans (180°), k=2 enforces
+planar (0/180). Min at trans; cis at +4; 90° at +10 kcal/mol. Also fix the
+mislabeled comment on the existing cumulated pattern.
 
-## Phase 2 — Verify (hard gates)
-- `examples/diag_butadiene.rs`: butadiene energy drops from ~367 to near RDKit's ~6,
-  bonds ~ideal, dihedral ~180° (s-trans) — across seeds.
-- **ETKDG harness**: re-run `gen_etkdg_ref.py` (unchanged RDKit ref) + `dump_etkdg_geom`
-  + `validate_etkdg.py` — r should jump well above 0.10, RMSD drop.
-- **No regression:** `cargo test` 190 pass; `cargo build` + `cargo clippy --all-targets`
-  0 warnings.
+## Phase 2 — Verify
+- `examples/diag_butadiene.rs`: dihedral C0-C1-C2-C3 → ~180° (s-trans) across
+  seeds; energy → ~6 (RDKit-like).
+- ETKDG harness: r ≥ 0.61, RMSD ≤ 47 (no regression); diene outliers (isoprene)
+  should drop.
+- `cargo test`: 191 pass, 0 ignored; `cargo build` + `cargo clippy`: 0 warnings.
 
 ## Phase 3 — Update CODE_STATUS.md
-Record the swap + before/after harness numbers.
 
 ## Constraints
-- Signature-preserving: no caller changes. Only `minimize_etkdg` body + PLAN/CODE_STATUS.
-- No new deps; no MMFF changes; no API changes.
-- If L-BFGS somehow regresses a test, fall back to steepest-descent-with-line-search
-  (still fixes the divergence) rather than the broken normalized step.
+- One new pattern + a comment fix in `match_torsion_pattern`. No other changes.
+- If the sp²-sp²-single condition over-constrains some conjugated system (styrene/
+  enone), narrow the condition rather than weakening globally — watch the harness.

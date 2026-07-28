@@ -2293,22 +2293,10 @@ fn find_stereo_bonds(
     (double_bond_ends, stereo_db, atropisomers)
 }
 
-fn dihedral_angle(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
-    let b1 = [
-        coords[j][0] - coords[i][0],
-        coords[j][1] - coords[i][1],
-        coords[j][2] - coords[i][2],
-    ];
-    let b2 = [
-        coords[k][0] - coords[j][0],
-        coords[k][1] - coords[j][1],
-        coords[k][2] - coords[j][2],
-    ];
-    let b3 = [
-        coords[l][0] - coords[k][0],
-        coords[l][1] - coords[k][1],
-        coords[l][2] - coords[k][2],
-    ];
+fn dihedral_angle4(p0: [f64; 3], p1: [f64; 3], p2: [f64; 3], p3: [f64; 3]) -> f64 {
+    let b1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    let b2 = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+    let b3 = [p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2]];
     let n1 = cross_product(b1, b2);
     let n2 = cross_product(b2, b3);
     let b2_norm = (b2[0] * b2[0] + b2[1] * b2[1] + b2[2] * b2[2]).sqrt();
@@ -2319,6 +2307,10 @@ fn dihedral_angle(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -
     let x = n1.dot(n2);
     let y = m1.dot(n2);
     y.atan2(x)
+}
+
+fn dihedral_angle(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
+    dihedral_angle4(coords[i], coords[j], coords[k], coords[l])
 }
 
 fn check_double_bond_stereo(coords: &[[f64; 3]], stereo_dbs: &[StereoDoubleBond]) -> bool {
@@ -2498,6 +2490,57 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
                     ));
                 }
             }
+        }
+    }
+
+    // Hydroxyl/amino H on an sp2 center (carboxyl OH, phenol/enol OH, amide NH,
+    // sulfonamide NH): pin the H into the sp2 plane as an IMPROPER
+    // (central=H, refs = sp2-C, its =O neighbor, and the heteroatom X), so
+    // O=C-O-H / C=O-N-H stays planar. Done as an improper (not an exocyclic
+    // torsion) because impropers use a central-difference gradient (reliable);
+    // the dihedral-gradient path has a known sign bug (see dbg_dihedral_grad_fd).
+    const K_IMPROPER_OH: f64 = 3.0;
+    for atom_idx in 0..mol.atoms.len() {
+        let sym = mol.atoms[atom_idx].symbol.as_str();
+        if sym != "O" && sym != "N" && sym != "S" {
+            continue;
+        }
+        let neighbors = get_neighbors(atom_idx, mol);
+        if neighbors.len() != 2 {
+            continue;
+        }
+        let h_idx = neighbors
+            .iter()
+            .find(|&&n| mol.atoms[n].symbol == "H")
+            .copied();
+        let c_idx = neighbors.iter().find(|&&n| {
+            mol.atoms[n].symbol == "C"
+                && matches!(
+                    crate::molecule::graph::determine_hybridization(n, mol),
+                    Hybridization::Sp2
+                )
+        });
+        let (Some(h), Some(&c)) = (h_idx, c_idx) else { continue; };
+        let ref_atom = mol.bonds.iter().find_map(|b| {
+            let other = if b.atom1 == c {
+                b.atom2
+            } else if b.atom2 == c {
+                b.atom1
+            } else {
+                return None;
+            };
+            if other == atom_idx {
+                return None;
+            }
+            if b.bond_type == BondType::Double {
+                Some(other)
+            } else {
+                None
+            }
+        });
+        if let Some(r) = ref_atom {
+            // improper (central=h, n1=c, n2=r(=O), n3=atom_idx(X)): out-of-plane of H
+            impropers.push((h, c, r, atom_idx, K_IMPROPER_OH));
         }
     }
 
@@ -2986,7 +3029,24 @@ fn match_torsion_pattern(
         }
     }
 
-    // 2. C=C-C=C (conjugated diene) → trans
+    // 2. Conjugated C=C-C=C / C=C-C=O / styrene-side: central bond SINGLE between
+    //    two sp2 carbons (non-aromatic) -> trans + planar. (The old comment here
+    //    said "conjugated diene" but used is_double_bond(a2,a3), which is the
+    //    CUMULATED C=C=C case — see below.)
+    if !is_double_bond(mol, a2, a3)
+        && s2 == "C"
+        && s3 == "C"
+        && sp2(h2)
+        && sp2(h3)
+        && !ar2
+        && !ar3
+    {
+        // k=1 favors trans (180°); k=2 enforces planar (0/180°). Strong enough to
+        // overcome the random 4D-projection twist (~90°).
+        return Some(([1, -1, 1, 1, 1, 1], [5.0, 15.0, 0.0, 0.0, 0.0, 0.0]));
+    }
+
+    // 2b. Cumulated C=C=C (central bond double, both sp2) -> cis/planar
     if is_double_bond(mol, a2, a3) && sp2(h2) && sp2(h3) {
         return Some(([1, -1, 1, 1, 1, 1], [0.0, 100.0, 0.0, 0.0, 0.0, 0.0]));
     }
@@ -3479,56 +3539,33 @@ fn dihedral_gradient_contrib(
     l: usize,
     dedphi: f64,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    let b1 = [
-        coords[j][0] - coords[i][0],
-        coords[j][1] - coords[i][1],
-        coords[j][2] - coords[i][2],
-    ];
-    let b2 = [
-        coords[k][0] - coords[j][0],
-        coords[k][1] - coords[j][1],
-        coords[k][2] - coords[j][2],
-    ];
-    let b3 = [
-        coords[l][0] - coords[k][0],
-        coords[l][1] - coords[k][1],
-        coords[l][2] - coords[k][2],
-    ];
-    let n1 = cross_product(b1, b2);
-    let n2 = cross_product(b2, b3);
-    let n1_sq = n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2];
-    let n2_sq = n2[0] * n2[0] + n2[1] * n2[1] + n2[2] * n2[2];
-    let b2_norm = (b2[0] * b2[0] + b2[1] * b2[1] + b2[2] * b2[2]).sqrt();
-    if n1_sq < 1e-20 || n2_sq < 1e-20 || b2_norm < 1e-10 {
-        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    // Central-difference gradient of dihedral_angle. The previous closed-form had
+    // a sign/convention mismatch vs dihedral_angle (see dbg_dihedral_grad_fd);
+    // numerical is correct and cheap (dihedral is O(1), only the 4 atoms involved).
+    let mut q = [coords[i], coords[j], coords[k], coords[l]];
+    let phi_of = |p: &[[f64; 3]; 4]| dihedral_angle4(p[0], p[1], p[2], p[3]);
+    let eps = 1e-6;
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let mut g = [[0.0f64; 3]; 4];
+    for a in 0..4 {
+        for d in 0..3 {
+            let orig = q[a][d];
+            q[a][d] = orig + eps;
+            let pp = phi_of(&q);
+            q[a][d] = orig - eps;
+            let pm = phi_of(&q);
+            q[a][d] = orig;
+            // unwrap atan2 branch cut near +/-pi
+            let mut diff = pp - pm;
+            if diff > std::f64::consts::PI {
+                diff -= two_pi;
+            } else if diff < -std::f64::consts::PI {
+                diff += two_pi;
+            }
+            g[a][d] = dedphi * diff / (2.0 * eps);
+        }
     }
-    let b2n = [b2[0] / b2_norm, b2[1] / b2_norm, b2[2] / b2_norm];
-    let m1 = cross_product(n1, b2n);
-    let m2 = cross_product(n2, b2n);
-    let g1 = [
-        -m1[0] / n1_sq * dedphi,
-        -m1[1] / n1_sq * dedphi,
-        -m1[2] / n1_sq * dedphi,
-    ];
-    let g4 = [
-        m2[0] / n2_sq * dedphi,
-        m2[1] / n2_sq * dedphi,
-        m2[2] / n2_sq * dedphi,
-    ];
-    let b1_dot_b2 = b1[0] * b2[0] + b1[1] * b2[1] + b1[2] * b2[2];
-    let b2_dot_b3 = b2[0] * b3[0] + b2[1] * b3[1] + b2[2] * b3[2];
-    let b2_sq = b2_norm * b2_norm;
-    let g2 = [
-        -g1[0] + (b1_dot_b2 / b2_sq) * g1[0] - (b2_dot_b3 / b2_sq) * g4[0],
-        -g1[1] + (b1_dot_b2 / b2_sq) * g1[1] - (b2_dot_b3 / b2_sq) * g4[1],
-        -g1[2] + (b1_dot_b2 / b2_sq) * g1[2] - (b2_dot_b3 / b2_sq) * g4[2],
-    ];
-    let g3 = [
-        -g4[0] - (b1_dot_b2 / b2_sq) * g1[0] + (b2_dot_b3 / b2_sq) * g4[0],
-        -g4[1] - (b1_dot_b2 / b2_sq) * g1[1] + (b2_dot_b3 / b2_sq) * g4[1],
-        -g4[2] - (b1_dot_b2 / b2_sq) * g1[2] + (b2_dot_b3 / b2_sq) * g4[2],
-    ];
-    (g1, g2, g3, g4)
+    (g[0], g[1], g[2], g[3])
 }
 
 fn etkdg_gradient(
@@ -4353,7 +4390,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "FP-fragile: dihedral gradient at degenerate geometry; shifts with any recompilation"]
     fn dbg_dihedral_grad_fd() {
         // 4 atoms forming a non-trivial (~40deg) dihedral; check analytical
         // dihedral_gradient_contrib(dedphi=1) == numerical d(phi)/dx.
@@ -4384,7 +4420,7 @@ mod tests {
         }
         eprintln!("DBG dihedral: phi0={:.3}rad max|ana-num|={:.2e} sign_mismatches={sign_mismatch}", phi0, max_err);
         assert!(max_err < 1e-3 && sign_mismatch == 0,
-            "dihedral_gradient_contrib sign/magnitude mismatch: max_err={max_err:.2e} sign_mismatch={sign_mismatch}");
+            "dihedral_gradient_contrib vs finite-difference mismatch: max_err={max_err:.2e} sign_mismatch={sign_mismatch}");
     }
 
     #[test]
