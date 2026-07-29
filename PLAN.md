@@ -1,45 +1,34 @@
-# Plan: Fix 3 confirmed ETKDG-vs-RDKit discrepancies (B1, B3, D1)
+# Plan: Phase 0 — multi-seed ETKDG harness + RDKit self-consistency ceiling
 
-## Final Status: DONE — shipped B3 + D1; reverted B1 (regresses; pipeline co-adapted)
+## Final Status: DONE
 
 ## Context
-Systematic review of `src/etkdg/mod.rs` vs RDKit 2025.09.3 source
-(`Code/DistGeom/TriangleSmooth.cpp`, `Code/DistGeom/DistGeomUtils.cpp`,
-`Code/GraphMol/DistGeomHelpers/BoundsMatrixBuilder.cpp` + `Embedder.cpp`).
-`ETKDG_MMFF_REVIEW.md` marks all 3 issues "FIXED" but the code shows otherwise.
-Baseline (current HEAD, 130 mols, seed 42): r=0.8565, RMSD=24.82.
+The single-seed harness (seed 42) is too noisy (±0.005 r per molecule flip) and
+r=1.0 is the wrong target — ETKDG is stochastic. Phase 0 builds the stable
+measurement gate that all later phases (§5 of ETKDG_MMFF_REVIEW.md) validate
+against. Measurement infrastructure only — no algorithmic change.
 
 ## Completed
-- [x] **B3. `is_larger_sp2_atom` ring check** (`src/etkdg/mod.rs:623`)
-  - Added the `numAtomRings > 0` condition RDKit's `isLargerSP2Atom` requires
-    (added `rings: &[Vec<usize>]` param + 2 call sites in `build_distance_bounds`).
-  - SHIPPED — correct, net neutral-to-positive (r 0.8565→0.8568).
+- [x] **`scripts/gen_etkdg_ref.py`** — multi-seed RDKit ref (env `WEBMM_SEEDS`,
+      default `42,43,100,7`); emits `{mean,stddev,seeds,n_embedded,n_atoms,embed_ok}`.
+- [x] **`examples/dump_etkdg_geom.rs`** — multi-seed WebMM dump (env `WEBMM_SEEDS`,
+      default `42,43,100,7`); same schema; hand-built JSON (no new serde dep).
+- [x] **`scripts/validate_etkdg.py`** — compares `mean` (fallback to legacy
+      `energy` for old single-seed files); reports r/RMSD/n/seed-count/outliers.
+- [x] **`scripts/rdkit_self_consistency.py`** (new) — pairwise per-seed r/RMSD +
+      multi-seed-mean-vs-single = the recorded ceiling.
+- [x] **End-to-end run** (4 seeds, 130 mols):
+  - Ceiling (RDKit vs RDKit): single-seed pairwise **r=0.990–0.996 (RMSD 4.3–6.4)**;
+    multi-seed-mean vs single **r=0.996–0.998 (RMSD 2.9–4.2)** → target ≈0.997.
+  - WebMM multi-seed mean: **r=0.8609, RMSD=24.66** (cf. single-seed r=0.8568 —
+    the new, more stable baseline). Real gap to ceiling ≈0.13.
+  - Harness now surfaces per-molecule seed-variance (e.g. DMF stddev 7.3:
+    seeds give 14.5/−5.1/−0.4/1.3 → flag WebMM embedding instability for that mol).
+- [x] `cargo build --release --example dump_etkdg_geom`; `cargo test` 191 pass;
+      `cargo clippy --all-targets` 0 warnings. No `src/` changes → WASM unaffected.
 
-- [x] **D1. `set_ring_angle` SP3D2** (`src/etkdg/mod.rs:487`)
-  - 135° → 90° to match RDKit `_setRingAngle` (octahedral cis ligands).
-  - SHIPPED — correct; no-op on the 130-mol val set (no Sp3D2 ring atoms).
-
-## Reverted (with reason)
-- [x] **B1. Triangle-smoothing lower-bound formula** (`src/etkdg/mod.rs:206`) — REVERTED
-  - The formula `|lower[ik] − lower[kj]|` is genuinely wrong vs RDKit's
-    `max(L_ik−U_kj, L_kj−U_ik)` and can yield infeasible lower bounds.
-  - Fixed the formula, but it REGRESSED the harness in every variant:
-    formula-only → r=0.8520; formula + single Floyd–Warshall sweep (matching
-    RDKit's `triangleSmoothBounds`, removing the `while changed` fixed point)
-    → r=0.8498. Dominant mover: cyclopentene +43.7 (a known hard 5-ring).
-  - Root cause: WebMM's downstream pipeline (L-BFGS + torsion-snap + H-trilateration
-    + H-only relaxation) is co-adapted to the old (over-loose) bound matrix.
-    RDKit-faithful smoothing in isolation makes the embedding worse. B1 needs a
-    bundled pipeline re-tuning effort, not a one-line fix. Reverted to original.
-
-## Validation
-- `cargo build --release --example dump_etkdg_geom` → regenerate
-  `scripts/etkdg_val/webmm_ref.json` → `scripts/validate_etkdg.py`.
-- r 0.8565→0.8568, RMSD 24.82→24.77; 129/130 embed OK; RDKit ref unchanged.
-- `cargo test`: 191 passed / 0 failed; `cargo clippy --all-targets`: 0 warnings.
-
-## Non-goals (deferred, tracked in review)
-B2 (MT19937 RNG — only affects bit-exact RDKit reproducibility), D2–D12
-(check_and_set widen-vs-tighten, sp2 123/114 heuristic, 3D long-range
-filter/double-count, 4D BFGS, full torsion SMARTS table, macrocycle handling),
-and a bundled B1+pipeline re-tuning.
+## Notes
+- `src/` untouched this turn (example + Python only); prior turn's ETKDG fixes
+  (B3 shipped, D1 shipped, B1 reverted) remain in place.
+- The multi-seed mean is the gate for Phases 1–6; the ceiling (~0.997) is the
+  target, not 1.0.

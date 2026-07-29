@@ -1,651 +1,1686 @@
 {
  "DMF": {
-  "energy": -12.6656,
+  "mean": -11.5107,
+  "stddev": 1.1236,
+  "seeds": {
+   "42": -12.6656,
+   "43": -12.5435,
+   "100": -10.775,
+   "7": -10.0587
+  },
+  "n_embedded": 4,
   "n_atoms": 12,
   "embed_ok": true
  },
  "DMSO": {
-  "energy": 14.3956,
+  "mean": 14.3463,
+  "stddev": 1.5066,
+  "seeds": {
+   "42": 14.3956,
+   "43": 12.4024,
+   "100": 13.9699,
+   "7": 16.6171
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "N_methylacetamide": {
-  "energy": -19.9526,
+  "mean": -19.294,
+  "stddev": 1.4134,
+  "seeds": {
+   "42": -19.9526,
+   "43": -17.0427,
+   "100": -20.8716,
+   "7": -19.3089
+  },
+  "n_embedded": 4,
   "n_atoms": 12,
   "embed_ok": true
  },
  "N_methylaniline": {
-  "energy": 16.3503,
+  "mean": 16.922,
+  "stddev": 0.527,
+  "seeds": {
+   "42": 16.3503,
+   "43": 17.1282,
+   "100": 16.5239,
+   "7": 17.6857
+  },
+  "n_embedded": 4,
   "n_atoms": 17,
   "embed_ok": true
  },
  "THF": {
-  "energy": 15.4897,
+  "mean": 15.0379,
+  "stddev": 2.1669,
+  "seeds": {
+   "42": 15.4897,
+   "43": 11.4543,
+   "100": 15.9595,
+   "7": 17.2482
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "acetaldehyde": {
-  "energy": 2.9684,
+  "mean": 2.759,
+  "stddev": 1.2709,
+  "seeds": {
+   "42": 2.9684,
+   "43": 1.7135,
+   "100": 4.7541,
+   "7": 1.5998
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "acetaldimine": {
-  "energy": 8.9723,
+  "mean": 10.9174,
+  "stddev": 2.1385,
+  "seeds": {
+   "42": 8.9723,
+   "43": 10.0186,
+   "100": 14.5367,
+   "7": 10.1419
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "acetamide": {
-  "energy": -5.3641,
+  "mean": -2.0186,
+  "stddev": 2.1476,
+  "seeds": {
+   "42": -5.3641,
+   "43": -0.4025,
+   "100": -2.4086,
+   "7": 0.1009
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "acetamidine": {
-  "energy": -36.4418,
+  "mean": -26.7522,
+  "stddev": 6.1766,
+  "seeds": {
+   "42": -36.4418,
+   "43": -27.0633,
+   "100": -23.8263,
+   "7": -19.6772
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "acetate": {
-  "energy": 15.7963,
+  "mean": 13.2676,
+  "stddev": 1.8037,
+  "seeds": {
+   "42": 15.7963,
+   "43": 13.3625,
+   "100": 13.2147,
+   "7": 10.6971
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "acetic_acid": {
-  "energy": -16.517,
+  "mean": -13.699,
+  "stddev": 2.5894,
+  "seeds": {
+   "42": -16.517,
+   "43": -16.0492,
+   "100": -11.1045,
+   "7": -11.1254
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "acetic_anhydride": {
-  "energy": -0.5406,
+  "mean": 0.2259,
+  "stddev": 4.1435,
+  "seeds": {
+   "42": -0.5406,
+   "43": 6.7566,
+   "100": -0.5558,
+   "7": -4.7565
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "acetone": {
-  "energy": 4.4245,
+  "mean": 4.8427,
+  "stddev": 0.6926,
+  "seeds": {
+   "42": 4.4245,
+   "43": 6.0095,
+   "100": 4.6942,
+   "7": 4.2425
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "acetonitrile": {
-  "energy": 0.6483,
+  "mean": 0.7425,
+  "stddev": 0.3269,
+  "seeds": {
+   "42": 0.6483,
+   "43": 1.233,
+   "100": 0.7672,
+   "7": 0.3213
+  },
+  "n_embedded": 4,
   "n_atoms": 6,
   "embed_ok": true
  },
  "acetyl_chloride": {
-  "energy": 4.4224,
+  "mean": 4.6412,
+  "stddev": 0.5295,
+  "seeds": {
+   "42": 4.4224,
+   "43": 4.1181,
+   "100": 4.4999,
+   "7": 5.5243
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "acetylene": {
-  "energy": 2.653,
+  "mean": 2.6351,
+  "stddev": 0.1516,
+  "seeds": {
+   "42": 2.653,
+   "43": 2.4269,
+   "100": 2.853,
+   "7": 2.6075
+  },
+  "n_embedded": 4,
   "n_atoms": 4,
   "embed_ok": true
  },
  "adamantane": {
-  "energy": 30.5701,
+  "mean": 32.993,
+  "stddev": 2.2299,
+  "seeds": {
+   "42": 30.5701,
+   "43": 34.4025,
+   "100": 35.8995,
+   "7": 31.0998
+  },
+  "n_embedded": 4,
   "n_atoms": 26,
   "embed_ok": true
  },
  "adenine": {
-  "energy": 50.5107,
+  "mean": 49.1315,
+  "stddev": 3.8714,
+  "seeds": {
+   "42": 50.5107,
+   "43": 50.416,
+   "100": 42.659,
+   "7": 52.9402
+  },
+  "n_embedded": 4,
   "n_atoms": 15,
   "embed_ok": true
  },
  "allene": {
-  "energy": -0.2197,
+  "mean": -0.3326,
+  "stddev": 0.1056,
+  "seeds": {
+   "42": -0.2197,
+   "43": -0.4017,
+   "100": -0.24,
+   "7": -0.4688
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "ammonium": {
-  "energy": null,
+  "mean": null,
+  "stddev": null,
+  "seeds": {},
+  "n_embedded": 0,
   "n_atoms": 5,
   "embed_ok": false
  },
  "aniline": {
-  "energy": 19.2835,
+  "mean": 20.038,
+  "stddev": 1.4254,
+  "seeds": {
+   "42": 19.2835,
+   "43": 21.0244,
+   "100": 18.1113,
+   "7": 21.733
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "anisole": {
-  "energy": 25.2593,
+  "mean": 25.7145,
+  "stddev": 1.0222,
+  "seeds": {
+   "42": 25.2593,
+   "43": 25.0931,
+   "100": 25.0267,
+   "7": 27.4788
+  },
+  "n_embedded": 4,
   "n_atoms": 16,
   "embed_ok": true
  },
  "anthracene": {
-  "energy": 79.8412,
+  "mean": 82.4345,
+  "stddev": 1.7255,
+  "seeds": {
+   "42": 79.8412,
+   "43": 84.1478,
+   "100": 81.9097,
+   "7": 83.8393
+  },
+  "n_embedded": 4,
   "n_atoms": 24,
   "embed_ok": true
  },
  "aspirin": {
-  "energy": 41.8827,
+  "mean": 43.0479,
+  "stddev": 1.3787,
+  "seeds": {
+   "42": 41.8827,
+   "43": 44.5857,
+   "100": 44.2419,
+   "7": 41.4812
+  },
+  "n_embedded": 4,
   "n_atoms": 21,
   "embed_ok": true
  },
  "aziridine": {
-  "energy": 24.5004,
+  "mean": 24.7334,
+  "stddev": 0.8912,
+  "seeds": {
+   "42": 24.5004,
+   "43": 26.2478,
+   "100": 24.0277,
+   "7": 24.1576
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "benzaldehyde": {
-  "energy": 33.7976,
+  "mean": 33.8114,
+  "stddev": 0.5742,
+  "seeds": {
+   "42": 33.7976,
+   "43": 33.7665,
+   "100": 33.0298,
+   "7": 34.6515
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "benzaldimine": {
-  "energy": 40.1057,
+  "mean": 37.3096,
+  "stddev": 2.257,
+  "seeds": {
+   "42": 40.1057,
+   "43": 38.8153,
+   "100": 35.8795,
+   "7": 34.438
+  },
+  "n_embedded": 4,
   "n_atoms": 15,
   "embed_ok": true
  },
  "benzamide": {
-  "energy": 20.0167,
+  "mean": 23.5009,
+  "stddev": 5.1191,
+  "seeds": {
+   "42": 20.0167,
+   "43": 23.5207,
+   "100": 31.8164,
+   "7": 18.65
+  },
+  "n_embedded": 4,
   "n_atoms": 16,
   "embed_ok": true
  },
  "benzene": {
-  "energy": 18.2013,
+  "mean": 18.1515,
+  "stddev": 0.4793,
+  "seeds": {
+   "42": 18.2013,
+   "43": 17.5616,
+   "100": 18.8812,
+   "7": 17.9618
+  },
+  "n_embedded": 4,
   "n_atoms": 12,
   "embed_ok": true
  },
  "benzimidazole": {
-  "energy": 37.5395,
+  "mean": 38.2217,
+  "stddev": 2.0709,
+  "seeds": {
+   "42": 37.5395,
+   "43": 38.1012,
+   "100": 35.7637,
+   "7": 41.4824
+  },
+  "n_embedded": 4,
   "n_atoms": 15,
   "embed_ok": true
  },
  "benzoate": {
-  "energy": 48.2884,
+  "mean": 48.2304,
+  "stddev": 0.7814,
+  "seeds": {
+   "42": 48.2884,
+   "43": 47.633,
+   "100": 47.5162,
+   "7": 49.4841
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "benzoic_acid": {
-  "energy": 23.4578,
+  "mean": 26.21,
+  "stddev": 1.6665,
+  "seeds": {
+   "42": 23.4578,
+   "43": 27.2461,
+   "100": 27.7708,
+   "7": 26.3654
+  },
+  "n_embedded": 4,
   "n_atoms": 15,
   "embed_ok": true
  },
  "benzonitrile": {
-  "energy": 31.3262,
+  "mean": 31.341,
+  "stddev": 0.3982,
+  "seeds": {
+   "42": 31.3262,
+   "43": 30.7042,
+   "100": 31.577,
+   "7": 31.7568
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "benzothiazole": {
-  "energy": 113.0042,
+  "mean": 106.9017,
+  "stddev": 16.7467,
+  "seeds": {
+   "42": 113.0042,
+   "43": 78.5448,
+   "100": 113.9779,
+   "7": 122.0798
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "benzothiophene": {
-  "energy": 51.9999,
+  "mean": 51.466,
+  "stddev": 1.9479,
+  "seeds": {
+   "42": 51.9999,
+   "43": 49.3741,
+   "100": 54.4017,
+   "7": 50.0884
+  },
+  "n_embedded": 4,
   "n_atoms": 15,
   "embed_ok": true
  },
  "biguanide": {
-  "energy": -143.9867,
+  "mean": -147.0708,
+  "stddev": 4.5499,
+  "seeds": {
+   "42": -143.9867,
+   "43": -152.3194,
+   "100": -150.6471,
+   "7": -141.33
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "bromobenzene": {
-  "energy": 18.552,
+  "mean": 17.9794,
+  "stddev": 0.5736,
+  "seeds": {
+   "42": 18.552,
+   "43": 17.0624,
+   "100": 18.3611,
+   "7": 17.9422
+  },
+  "n_embedded": 4,
   "n_atoms": 12,
   "embed_ok": true
  },
  "butadiene": {
-  "energy": 6.2566,
+  "mean": 6.1507,
+  "stddev": 0.1501,
+  "seeds": {
+   "42": 6.2566,
+   "43": 6.1214,
+   "100": 5.9186,
+   "7": 6.3062
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "caffeine": {
-  "energy": -106.0948,
+  "mean": -106.353,
+  "stddev": 1.6428,
+  "seeds": {
+   "42": -106.0948,
+   "43": -104.7595,
+   "100": -109.0781,
+   "7": -105.4796
+  },
+  "n_embedded": 4,
   "n_atoms": 24,
   "embed_ok": true
  },
  "carbon_disulfide": {
-  "energy": 17.2979,
+  "mean": 19.0538,
+  "stddev": 2.3536,
+  "seeds": {
+   "42": 17.2979,
+   "43": 22.9653,
+   "100": 17.1241,
+   "7": 18.8278
+  },
+  "n_embedded": 4,
   "n_atoms": 3,
   "embed_ok": true
  },
  "carbon_tetrachloride": {
-  "energy": 0.2676,
+  "mean": 0.376,
+  "stddev": 0.1584,
+  "seeds": {
+   "42": 0.2676,
+   "43": 0.5748,
+   "100": 0.1808,
+   "7": 0.4809
+  },
+  "n_embedded": 4,
   "n_atoms": 5,
   "embed_ok": true
  },
  "chloroform": {
-  "energy": 0.3353,
+  "mean": 0.3766,
+  "stddev": 0.1531,
+  "seeds": {
+   "42": 0.3353,
+   "43": 0.19,
+   "100": 0.3655,
+   "7": 0.6156
+  },
+  "n_embedded": 4,
   "n_atoms": 5,
   "embed_ok": true
  },
  "cyclobutane": {
-  "energy": 14.8619,
+  "mean": 16.9529,
+  "stddev": 2.6049,
+  "seeds": {
+   "42": 14.8619,
+   "43": 18.8987,
+   "100": 13.9456,
+   "7": 20.1055
+  },
+  "n_embedded": 4,
   "n_atoms": 12,
   "embed_ok": true
  },
  "cycloheptane": {
-  "energy": 22.7882,
+  "mean": 22.2953,
+  "stddev": 2.1001,
+  "seeds": {
+   "42": 22.7882,
+   "43": 24.5502,
+   "100": 22.9879,
+   "7": 18.8551
+  },
+  "n_embedded": 4,
   "n_atoms": 21,
   "embed_ok": true
  },
  "cyclohexane": {
-  "energy": 8.2356,
+  "mean": 7.1745,
+  "stddev": 1.1397,
+  "seeds": {
+   "42": 8.2356,
+   "43": 7.0422,
+   "100": 8.0556,
+   "7": 5.3645
+  },
+  "n_embedded": 4,
   "n_atoms": 18,
   "embed_ok": true
  },
  "cyclohexanone": {
-  "energy": 9.0426,
+  "mean": 12.6139,
+  "stddev": 2.2684,
+  "seeds": {
+   "42": 9.0426,
+   "43": 14.813,
+   "100": 12.2876,
+   "7": 14.3125
+  },
+  "n_embedded": 4,
   "n_atoms": 17,
   "embed_ok": true
  },
  "cyclohexene": {
-  "energy": 21.268,
+  "mean": 17.4097,
+  "stddev": 2.5509,
+  "seeds": {
+   "42": 21.268,
+   "43": 14.1226,
+   "100": 16.8298,
+   "7": 17.4183
+  },
+  "n_embedded": 4,
   "n_atoms": 16,
   "embed_ok": true
  },
  "cyclopentane": {
-  "energy": 11.8793,
+  "mean": 10.5107,
+  "stddev": 3.0294,
+  "seeds": {
+   "42": 11.8793,
+   "43": 13.7699,
+   "100": 5.5983,
+   "7": 10.7952
+  },
+  "n_embedded": 4,
   "n_atoms": 15,
   "embed_ok": true
  },
  "cyclopentene": {
-  "energy": 22.1858,
+  "mean": 17.4576,
+  "stddev": 4.9459,
+  "seeds": {
+   "42": 22.1858,
+   "43": 9.3115,
+   "100": 20.4496,
+   "7": 17.8833
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "cyclopropane": {
-  "energy": 17.7313,
+  "mean": 17.9977,
+  "stddev": 0.2553,
+  "seeds": {
+   "42": 17.7313,
+   "43": 17.9047,
+   "100": 18.4188,
+   "7": 17.9362
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "cyclopropene": {
-  "energy": 47.7626,
+  "mean": 46.8603,
+  "stddev": 1.4195,
+  "seeds": {
+   "42": 47.7626,
+   "43": 48.5389,
+   "100": 44.829,
+   "7": 46.3105
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "dibromomethane": {
-  "energy": 1.8294,
+  "mean": 1.2446,
+  "stddev": 0.4126,
+  "seeds": {
+   "42": 1.8294,
+   "43": 1.3605,
+   "100": 0.6943,
+   "7": 1.0942
+  },
+  "n_embedded": 4,
   "n_atoms": 5,
   "embed_ok": true
  },
  "dichloromethane": {
-  "energy": 1.1665,
+  "mean": 0.9159,
+  "stddev": 0.2146,
+  "seeds": {
+   "42": 1.1665,
+   "43": 1.0142,
+   "100": 0.901,
+   "7": 0.5819
+  },
+  "n_embedded": 4,
   "n_atoms": 5,
   "embed_ok": true
  },
  "diethyl_ether": {
-  "energy": 11.0727,
+  "mean": 15.7612,
+  "stddev": 3.8714,
+  "seeds": {
+   "42": 11.0727,
+   "43": 17.0378,
+   "100": 21.3734,
+   "7": 13.5608
+  },
+  "n_embedded": 4,
   "n_atoms": 15,
   "embed_ok": true
  },
  "diiodomethane": {
-  "energy": 1.2489,
+  "mean": 1.2908,
+  "stddev": 0.2568,
+  "seeds": {
+   "42": 1.2489,
+   "43": 1.4226,
+   "100": 1.5928,
+   "7": 0.899
+  },
+  "n_embedded": 4,
   "n_atoms": 5,
   "embed_ok": true
  },
  "dimethyl_disulfide": {
-  "energy": 8.749,
+  "mean": 9.4454,
+  "stddev": 1.8331,
+  "seeds": {
+   "42": 8.749,
+   "43": 12.5978,
+   "100": 8.1808,
+   "7": 8.2541
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "dimethyl_ether": {
-  "energy": 9.7895,
+  "mean": 9.0672,
+  "stddev": 0.4241,
+  "seeds": {
+   "42": 9.7895,
+   "43": 8.9257,
+   "100": 8.7099,
+   "7": 8.8438
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "dimethyl_sulfide": {
-  "energy": 15.0216,
+  "mean": 12.9722,
+  "stddev": 1.6774,
+  "seeds": {
+   "42": 15.0216,
+   "43": 13.3095,
+   "100": 10.3484,
+   "7": 13.2092
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "dimethyl_sulfone": {
-  "energy": 15.4921,
+  "mean": 17.9341,
+  "stddev": 2.6193,
+  "seeds": {
+   "42": 15.4921,
+   "43": 16.7575,
+   "100": 17.1406,
+   "7": 22.3461
+  },
+  "n_embedded": 4,
   "n_atoms": 11,
   "embed_ok": true
  },
  "dimethylamine": {
-  "energy": 9.8277,
+  "mean": 7.7929,
+  "stddev": 1.5505,
+  "seeds": {
+   "42": 9.8277,
+   "43": 8.7613,
+   "100": 6.1732,
+   "7": 6.4093
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "dioxane": {
-  "energy": 90.4352,
+  "mean": 79.6536,
+  "stddev": 8.048,
+  "seeds": {
+   "42": 90.4352,
+   "43": 82.0015,
+   "100": 68.0324,
+   "7": 78.1454
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "ethane": {
-  "energy": -2.3532,
+  "mean": -2.4617,
+  "stddev": 0.9112,
+  "seeds": {
+   "42": -2.3532,
+   "43": -1.3814,
+   "100": -3.9034,
+   "7": -2.2089
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "ethanol": {
-  "energy": 4.5577,
+  "mean": 3.4321,
+  "stddev": 1.2171,
+  "seeds": {
+   "42": 4.5577,
+   "43": 4.0474,
+   "100": 1.386,
+   "7": 3.7375
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "ethyl_acetate": {
-  "energy": -2.0736,
+  "mean": -0.6928,
+  "stddev": 1.2681,
+  "seeds": {
+   "42": -2.0736,
+   "43": -1.765,
+   "100": 0.9625,
+   "7": 0.1048
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "ethylene": {
-  "energy": 10.0792,
+  "mean": 9.2047,
+  "stddev": 0.5359,
+  "seeds": {
+   "42": 10.0792,
+   "43": 8.9386,
+   "100": 9.1538,
+   "7": 8.6472
+  },
+  "n_embedded": 4,
   "n_atoms": 6,
   "embed_ok": true
  },
  "ethylene_oxide": {
-  "energy": 10.5556,
+  "mean": 10.5857,
+  "stddev": 1.2607,
+  "seeds": {
+   "42": 10.5556,
+   "43": 9.1382,
+   "100": 10.0656,
+   "7": 12.5835
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "fluoromethane": {
-  "energy": 1.4459,
+  "mean": 1.3141,
+  "stddev": 0.1352,
+  "seeds": {
+   "42": 1.4459,
+   "43": 1.0922,
+   "100": 1.3941,
+   "7": 1.3242
+  },
+  "n_embedded": 4,
   "n_atoms": 5,
   "embed_ok": true
  },
  "formaldehyde": {
-  "energy": 1.5259,
+  "mean": 1.5922,
+  "stddev": 0.3823,
+  "seeds": {
+   "42": 1.5259,
+   "43": 1.2677,
+   "100": 1.3412,
+   "7": 2.2341
+  },
+  "n_embedded": 4,
   "n_atoms": 4,
   "embed_ok": true
  },
  "formamide": {
-  "energy": -21.8367,
+  "mean": -8.199,
+  "stddev": 8.5572,
+  "seeds": {
+   "42": -21.8367,
+   "43": 1.1278,
+   "100": -3.7373,
+   "7": -8.3498
+  },
+  "n_embedded": 4,
   "n_atoms": 6,
   "embed_ok": true
  },
  "formamidine": {
-  "energy": -24.3996,
+  "mean": -27.4773,
+  "stddev": 4.5546,
+  "seeds": {
+   "42": -24.3996,
+   "43": -26.2483,
+   "100": -24.0305,
+   "7": -35.2307
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "formic_acid": {
-  "energy": -14.6826,
+  "mean": -13.9261,
+  "stddev": 1.5368,
+  "seeds": {
+   "42": -14.6826,
+   "43": -11.2994,
+   "100": -14.5252,
+   "7": -15.1974
+  },
+  "n_embedded": 4,
   "n_atoms": 5,
   "embed_ok": true
  },
  "furan": {
-  "energy": 9.7228,
+  "mean": 9.5466,
+  "stddev": 2.067,
+  "seeds": {
+   "42": 9.7228,
+   "43": 12.7858,
+   "100": 8.4449,
+   "7": 7.2329
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "glycine_zwitterion": {
-  "energy": 6.6736,
+  "mean": 10.0782,
+  "stddev": 2.2923,
+  "seeds": {
+   "42": 6.6736,
+   "43": 9.3643,
+   "100": 11.67,
+   "7": 12.6048
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "guanidinium": {
-  "energy": -120.9943,
+  "mean": -121.9696,
+  "stddev": 5.5837,
+  "seeds": {
+   "42": -120.9943,
+   "43": -121.0087,
+   "100": -115.1607,
+   "7": -130.7147
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "guanine": {
-  "energy": 143.6679,
+  "mean": 142.7517,
+  "stddev": 2.8005,
+  "seeds": {
+   "42": 143.6679,
+   "43": 146.5844,
+   "100": 138.8663,
+   "7": 141.8882
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "histidine_sidechain": {
-  "energy": 11.9392,
+  "mean": 25.2167,
+  "stddev": 9.1565,
+  "seeds": {
+   "42": 11.9392,
+   "43": 22.7877,
+   "100": 36.9319,
+   "7": 29.2078
+  },
+  "n_embedded": 4,
   "n_atoms": 16,
   "embed_ok": true
  },
  "ibuprofen": {
-  "energy": 50.8242,
+  "mean": 52.5556,
+  "stddev": 1.3474,
+  "seeds": {
+   "42": 50.8242,
+   "43": 53.8954,
+   "100": 51.6577,
+   "7": 53.845
+  },
+  "n_embedded": 4,
   "n_atoms": 33,
   "embed_ok": true
  },
  "imidazole": {
-  "energy": 3.6892,
+  "mean": 4.3831,
+  "stddev": 0.5089,
+  "seeds": {
+   "42": 3.6892,
+   "43": 4.105,
+   "100": 4.9185,
+   "7": 4.8196
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "indole": {
-  "energy": 40.2595,
+  "mean": 43.1253,
+  "stddev": 2.1801,
+  "seeds": {
+   "42": 40.2595,
+   "43": 42.9224,
+   "100": 46.3988,
+   "7": 42.9203
+  },
+  "n_embedded": 4,
   "n_atoms": 16,
   "embed_ok": true
  },
  "iodobenzene": {
-  "energy": 19.2335,
+  "mean": 18.7923,
+  "stddev": 0.4883,
+  "seeds": {
+   "42": 19.2335,
+   "43": 17.9652,
+   "100": 18.9997,
+   "7": 18.9708
+  },
+  "n_embedded": 4,
   "n_atoms": 12,
   "embed_ok": true
  },
  "isobutane": {
-  "energy": 14.3121,
+  "mean": 11.8601,
+  "stddev": 4.301,
+  "seeds": {
+   "42": 14.3121,
+   "43": 6.2014,
+   "100": 9.538,
+   "7": 17.3891
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "isoprene": {
-  "energy": 11.7978,
+  "mean": 12.0405,
+  "stddev": 0.606,
+  "seeds": {
+   "42": 11.7978,
+   "43": 11.4165,
+   "100": 13.0417,
+   "7": 11.9059
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "isoquinoline": {
-  "energy": 64.1729,
+  "mean": 62.7112,
+  "stddev": 1.6814,
+  "seeds": {
+   "42": 64.1729,
+   "43": 64.5967,
+   "100": 60.952,
+   "7": 61.1232
+  },
+  "n_embedded": 4,
   "n_atoms": 17,
   "embed_ok": true
  },
  "methanesulfonamide": {
-  "energy": -61.5699,
+  "mean": -61.7932,
+  "stddev": 0.8549,
+  "seeds": {
+   "42": -61.5699,
+   "43": -62.3303,
+   "100": -62.7623,
+   "7": -60.5103
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "methanesulfonic_acid": {
-  "energy": -27.3421,
+  "mean": -21.6084,
+  "stddev": 4.5359,
+  "seeds": {
+   "42": -27.3421,
+   "43": -24.6949,
+   "100": -17.9051,
+   "7": -16.4916
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "methanethiol": {
-  "energy": 5.2939,
+  "mean": 4.9218,
+  "stddev": 0.4047,
+  "seeds": {
+   "42": 5.2939,
+   "43": 5.3579,
+   "100": 4.5194,
+   "7": 4.5161
+  },
+  "n_embedded": 4,
   "n_atoms": 6,
   "embed_ok": true
  },
  "methanol": {
-  "energy": 2.331,
+  "mean": 2.468,
+  "stddev": 0.7144,
+  "seeds": {
+   "42": 2.331,
+   "43": 1.8831,
+   "100": 1.9862,
+   "7": 3.6715
+  },
+  "n_embedded": 4,
   "n_atoms": 6,
   "embed_ok": true
  },
  "methyl_formate": {
-  "energy": 2.7997,
+  "mean": -0.0976,
+  "stddev": 2.2829,
+  "seeds": {
+   "42": 2.7997,
+   "43": -3.5997,
+   "100": 0.1545,
+   "7": 0.2549
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "methyl_salicylate": {
-  "energy": 54.5826,
+  "mean": 50.6092,
+  "stddev": 3.0255,
+  "seeds": {
+   "42": 54.5826,
+   "43": 46.0933,
+   "100": 50.502,
+   "7": 51.2588
+  },
+  "n_embedded": 4,
   "n_atoms": 19,
   "embed_ok": true
  },
  "methylamine": {
-  "energy": 1.3898,
+  "mean": 2.2194,
+  "stddev": 1.3816,
+  "seeds": {
+   "42": 1.3898,
+   "43": 4.6115,
+   "100": 1.3906,
+   "7": 1.4856
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "methylphosphonic_acid": {
-  "energy": -84.8188,
+  "mean": -89.3066,
+  "stddev": 11.1125,
+  "seeds": {
+   "42": -84.8188,
+   "43": -107.9682,
+   "100": -78.6768,
+   "7": -85.7624
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "naphthalene": {
-  "energy": 58.3015,
+  "mean": 58.484,
+  "stddev": 1.7065,
+  "seeds": {
+   "42": 58.3015,
+   "43": 61.3214,
+   "100": 57.014,
+   "7": 57.2991
+  },
+  "n_embedded": 4,
   "n_atoms": 18,
   "embed_ok": true
  },
  "neopentane": {
-  "energy": 29.8836,
+  "mean": 25.1203,
+  "stddev": 5.3413,
+  "seeds": {
+   "42": 29.8836,
+   "43": 20.5506,
+   "100": 30.9618,
+   "7": 19.0852
+  },
+  "n_embedded": 4,
   "n_atoms": 17,
   "embed_ok": true
  },
  "nicotine": {
-  "energy": 57.1034,
+  "mean": 52.6947,
+  "stddev": 3.9116,
+  "seeds": {
+   "42": 57.1034,
+   "43": 54.9993,
+   "100": 46.6997,
+   "7": 51.9763
+  },
+  "n_embedded": 4,
   "n_atoms": 30,
   "embed_ok": true
  },
  "nitrobenzene": {
-  "energy": 60.308,
+  "mean": 62.6413,
+  "stddev": 1.4552,
+  "seeds": {
+   "42": 60.308,
+   "43": 64.3173,
+   "100": 62.9985,
+   "7": 62.9413
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "nitromethane": {
-  "energy": 15.5637,
+  "mean": 15.4319,
+  "stddev": 0.3474,
+  "seeds": {
+   "42": 15.5637,
+   "43": 14.8894,
+   "100": 15.4292,
+   "7": 15.8454
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "norbornane": {
-  "energy": 30.4269,
+  "mean": 34.8467,
+  "stddev": 3.6091,
+  "seeds": {
+   "42": 30.4269,
+   "43": 32.7114,
+   "100": 36.3182,
+   "7": 39.9303
+  },
+  "n_embedded": 4,
   "n_atoms": 19,
   "embed_ok": true
  },
  "oxalic_acid": {
-  "energy": 57.3565,
+  "mean": 59.2828,
+  "stddev": 2.1502,
+  "seeds": {
+   "42": 57.3565,
+   "43": 56.9893,
+   "100": 61.9498,
+   "7": 60.8354
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "p_toluene_sulfonic_acid": {
-  "energy": 14.5642,
+  "mean": 10.4679,
+  "stddev": 3.7462,
+  "seeds": {
+   "42": 14.5642,
+   "43": 13.347,
+   "100": 8.8157,
+   "7": 5.1445
+  },
+  "n_embedded": 4,
   "n_atoms": 19,
   "embed_ok": true
  },
  "paracetamol": {
-  "energy": 21.6636,
+  "mean": 16.7018,
+  "stddev": 7.0526,
+  "seeds": {
+   "42": 21.6636,
+   "43": 4.7887,
+   "100": 22.2088,
+   "7": 18.1461
+  },
+  "n_embedded": 4,
   "n_atoms": 20,
   "embed_ok": true
  },
  "phenol": {
-  "energy": 14.2921,
+  "mean": 15.5888,
+  "stddev": 1.6018,
+  "seeds": {
+   "42": 14.2921,
+   "43": 18.2451,
+   "100": 14.3604,
+   "7": 15.4576
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "phosphoric_acid": {
-  "energy": -199.9241,
+  "mean": -216.8295,
+  "stddev": 12.0904,
+  "seeds": {
+   "42": -199.9241,
+   "43": -227.7993,
+   "100": -228.7684,
+   "7": -210.826
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "propane": {
-  "energy": 1.8101,
+  "mean": 0.9458,
+  "stddev": 1.7198,
+  "seeds": {
+   "42": 1.8101,
+   "43": 0.2004,
+   "100": 3.1799,
+   "7": -1.4073
+  },
+  "n_embedded": 4,
   "n_atoms": 11,
   "embed_ok": true
  },
  "propene": {
-  "energy": 7.7343,
+  "mean": 8.7797,
+  "stddev": 1.2217,
+  "seeds": {
+   "42": 7.7343,
+   "43": 7.9206,
+   "100": 10.8104,
+   "7": 8.6533
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "propyne": {
-  "energy": 3.3157,
+  "mean": 3.5373,
+  "stddev": 0.2765,
+  "seeds": {
+   "42": 3.3157,
+   "43": 3.923,
+   "100": 3.2379,
+   "7": 3.6726
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "purine": {
-  "energy": 27.3319,
+  "mean": 30.3399,
+  "stddev": 1.9678,
+  "seeds": {
+   "42": 27.3319,
+   "43": 32.6704,
+   "100": 30.0543,
+   "7": 31.303
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "pyrazine": {
-  "energy": 56.827,
+  "mean": 57.0513,
+  "stddev": 0.3641,
+  "seeds": {
+   "42": 56.827,
+   "43": 57.2304,
+   "100": 56.6012,
+   "7": 57.5465
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "pyrazole": {
-  "energy": 15.1005,
+  "mean": 13.3495,
+  "stddev": 1.4158,
+  "seeds": {
+   "42": 15.1005,
+   "43": 11.5542,
+   "100": 12.442,
+   "7": 14.3011
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "pyridazine": {
-  "energy": 4.5264,
+  "mean": 3.8093,
+  "stddev": 0.4801,
+  "seeds": {
+   "42": 4.5264,
+   "43": 3.619,
+   "100": 3.2048,
+   "7": 3.8871
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "pyridine": {
-  "energy": 20.1306,
+  "mean": 18.8833,
+  "stddev": 1.1203,
+  "seeds": {
+   "42": 20.1306,
+   "43": 19.7461,
+   "100": 18.3253,
+   "7": 17.3313
+  },
+  "n_embedded": 4,
   "n_atoms": 11,
   "embed_ok": true
  },
  "pyrimidine": {
-  "energy": -1.276,
+  "mean": -0.9426,
+  "stddev": 1.0823,
+  "seeds": {
+   "42": -1.276,
+   "43": -1.7664,
+   "100": 0.9061,
+   "7": -1.6342
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "pyrrole": {
-  "energy": 7.1454,
+  "mean": 6.826,
+  "stddev": 0.3546,
+  "seeds": {
+   "42": 7.1454,
+   "43": 6.8509,
+   "100": 7.0667,
+   "7": 6.2409
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "quinoline": {
-  "energy": 62.014,
+  "mean": 61.3079,
+  "stddev": 0.5069,
+  "seeds": {
+   "42": 62.014,
+   "43": 60.6185,
+   "100": 61.4637,
+   "7": 61.1354
+  },
+  "n_embedded": 4,
   "n_atoms": 17,
   "embed_ok": true
  },
  "sulfuric_acid": {
-  "energy": -115.3015,
+  "mean": -118.2524,
+  "stddev": 2.913,
+  "seeds": {
+   "42": -115.3015,
+   "43": -115.5143,
+   "100": -120.2149,
+   "7": -121.9789
+  },
+  "n_embedded": 4,
   "n_atoms": 7,
   "embed_ok": true
  },
  "tetrahydrofuran": {
-  "energy": 15.4897,
+  "mean": 15.0379,
+  "stddev": 2.1669,
+  "seeds": {
+   "42": 15.4897,
+   "43": 11.4543,
+   "100": 15.9595,
+   "7": 17.2482
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "tetramethylammonium": {
-  "energy": 43.1877,
+  "mean": 41.4015,
+  "stddev": 6.2683,
+  "seeds": {
+   "42": 43.1877,
+   "43": 30.9294,
+   "100": 47.5594,
+   "7": 43.9295
+  },
+  "n_embedded": 4,
   "n_atoms": 17,
   "embed_ok": true
  },
  "tetramethylsilane": {
-  "energy": 7.3259,
+  "mean": 6.4259,
+  "stddev": 0.7895,
+  "seeds": {
+   "42": 7.3259,
+   "43": 5.6887,
+   "100": 5.5939,
+   "7": 7.0951
+  },
+  "n_embedded": 4,
   "n_atoms": 17,
   "embed_ok": true
  },
  "theophylline": {
-  "energy": -108.4001,
+  "mean": -110.3128,
+  "stddev": 1.6173,
+  "seeds": {
+   "42": -108.4001,
+   "43": -109.2564,
+   "100": -110.9971,
+   "7": -112.5975
+  },
+  "n_embedded": 4,
   "n_atoms": 21,
   "embed_ok": true
  },
  "thiazole": {
-  "energy": 57.9228,
+  "mean": 57.7632,
+  "stddev": 6.8144,
+  "seeds": {
+   "42": 57.9228,
+   "43": 47.3273,
+   "100": 59.4367,
+   "7": 66.366
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "thioacetone": {
-  "energy": 40.4021,
+  "mean": 44.1497,
+  "stddev": 2.6613,
+  "seeds": {
+   "42": 40.4021,
+   "43": 43.4198,
+   "100": 47.7539,
+   "7": 45.0228
+  },
+  "n_embedded": 4,
   "n_atoms": 10,
   "embed_ok": true
  },
  "thiophene": {
-  "energy": 19.0561,
+  "mean": 18.462,
+  "stddev": 0.9526,
+  "seeds": {
+   "42": 19.0561,
+   "43": 19.5524,
+   "100": 18.1981,
+   "7": 17.0413
+  },
+  "n_embedded": 4,
   "n_atoms": 9,
   "embed_ok": true
  },
  "triethyl_phosphate": {
-  "energy": -47.6057,
+  "mean": -50.4925,
+  "stddev": 3.8835,
+  "seeds": {
+   "42": -47.6057,
+   "43": -55.5502,
+   "100": -52.8752,
+   "7": -45.939
+  },
+  "n_embedded": 4,
   "n_atoms": 26,
   "embed_ok": true
  },
  "trifluoromethane": {
-  "energy": 2.5591,
+  "mean": 3.6982,
+  "stddev": 0.7741,
+  "seeds": {
+   "42": 2.5591,
+   "43": 4.0539,
+   "100": 4.6671,
+   "7": 3.5129
+  },
+  "n_embedded": 4,
   "n_atoms": 5,
   "embed_ok": true
  },
  "trimethylamine": {
-  "energy": 21.5201,
+  "mean": 17.9662,
+  "stddev": 2.8379,
+  "seeds": {
+   "42": 21.5201,
+   "43": 19.9051,
+   "100": 15.8282,
+   "7": 14.6114
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "trimethylammonium": {
-  "energy": 17.455,
+  "mean": 19.6765,
+  "stddev": 1.8451,
+  "seeds": {
+   "42": 17.455,
+   "43": 20.4268,
+   "100": 22.2879,
+   "7": 18.5363
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "trimethylphosphine": {
-  "energy": 24.8703,
+  "mean": 19.2411,
+  "stddev": 4.6524,
+  "seeds": {
+   "42": 24.8703,
+   "43": 14.9687,
+   "100": 14.3367,
+   "7": 22.7888
+  },
+  "n_embedded": 4,
   "n_atoms": 13,
   "embed_ok": true
  },
  "trimethylphosphine_oxide": {
-  "energy": 16.1319,
+  "mean": 13.1966,
+  "stddev": 2.3465,
+  "seeds": {
+   "42": 16.1319,
+   "43": 14.0727,
+   "100": 12.9307,
+   "7": 9.6512
+  },
+  "n_embedded": 4,
   "n_atoms": 14,
   "embed_ok": true
  },
  "urea": {
-  "energy": -72.9915,
+  "mean": -81.0532,
+  "stddev": 4.7914,
+  "seeds": {
+   "42": -72.9915,
+   "43": -84.9986,
+   "100": -84.295,
+   "7": -81.9277
+  },
+  "n_embedded": 4,
   "n_atoms": 8,
   "embed_ok": true
  },
  "vinyl_chloride": {
-  "energy": 2.8362,
+  "mean": 3.7785,
+  "stddev": 0.8376,
+  "seeds": {
+   "42": 2.8362,
+   "43": 4.7307,
+   "100": 3.0622,
+   "7": 4.4848
+  },
+  "n_embedded": 4,
   "n_atoms": 6,
   "embed_ok": true
  },
  "xanthine": {
-  "energy": -141.2689,
+  "mean": -142.817,
+  "stddev": 1.7168,
+  "seeds": {
+   "42": -141.2689,
+   "43": -140.951,
+   "100": -144.7283,
+   "7": -144.3197
+  },
+  "n_embedded": 4,
   "n_atoms": 15,
   "embed_ok": true
  }

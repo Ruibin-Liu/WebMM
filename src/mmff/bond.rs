@@ -211,8 +211,8 @@ fn lookup_bond_params_exact(
         // S-F (hypervalent S type 18) — from RDKit verbose (SF4)
         (MMFFAtomType::S_O2, MMFFAtomType::F, BondType::Single)
         | (MMFFAtomType::F, MMFFAtomType::S_O2, BondType::Single) => Some(BondParams {
-            k_bond: 5.827,
-            r0: 1.594,
+            k_bond: 5.827352,
+            r0: 1.594267,
         cb: 1.0,
         }),
         (MMFFAtomType::S_O2, MMFFAtomType::N_SO2, BondType::Single)
