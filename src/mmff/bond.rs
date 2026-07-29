@@ -269,6 +269,13 @@ fn lookup_bond_params_exact(
             r0: 1.235,
         cb: 1.0,
         }),
+        // O_R-N_NITROSO (nitrite O-N) — from RDKit verbose
+        (MMFFAtomType::O_R, MMFFAtomType::N_NITROSO, BondType::Single)
+        | (MMFFAtomType::N_NITROSO, MMFFAtomType::O_R, BondType::Single) => Some(BondParams {
+            k_bond: 3.971,
+            r0: 1.424,
+        cb: 1.0,
+        }),
 
         // Carboxylate bonds — RDKit-extracted values (MMFF94s)
         // (1,41) C_3-CO2M, (32,41) O_CO2-CO2M
