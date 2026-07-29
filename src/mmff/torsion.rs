@@ -1950,6 +1950,8 @@ pub fn get_torsion_params(
     let can_tor_type = tor_type.0;
     let i_eq = get_eq_levels(i_type);
     let l_eq = get_eq_levels(l_type);
+    let j_eq = get_eq_levels(j_type);
+    let k_eq = get_eq_levels(k_type);
 
     let mut max_iter: u8 = 5;
     let mut iter: u8 = 0;
@@ -1979,8 +1981,10 @@ pub fn get_torsion_params(
         };
 
         let mut can_i = i_eq[i_wildcard as usize];
-        let mut can_j = j_type;
-        let mut can_k = k_type;
+        // Central atoms j,k: only generalize at iter >= 2 to avoid false matches
+        let jk_level = if iter >= 2 { 2 } else { 0 };
+        let mut can_j = j_eq[jk_level];
+        let mut can_k = k_eq[jk_level];
         let mut can_l = l_eq[l_wildcard as usize];
 
         if can_j > can_k {
