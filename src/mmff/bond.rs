@@ -795,8 +795,8 @@ fn lookup_bond_params_exact(
         }),
         (MMFFAtomType::H, MMFFAtomType::C_AN, BondType::Single)
         | (MMFFAtomType::C_AN, MMFFAtomType::H, BondType::Single) => Some(BondParams {
-            k_bond: 4.766,
-            r0: 1.093,
+            k_bond: 5.633,
+            r0: 1.076,
         cb: 1.0,
         }),
         // Guanidinium CGD+-NCN+ bond — from RDKit verbose (same for Single/Double)

@@ -482,7 +482,8 @@ fn set_ring_angle(hyb: Hybridization, ring_size: usize) -> f64 {
     } else if matches!(hyb, Hybridization::Sp3D) {
         105.0_f64.to_radians()
     } else if matches!(hyb, Hybridization::Sp3D2) {
-        135.0_f64.to_radians()
+        // RDKit _setRingAngle: SP3D2 -> 90 deg (octahedral cis ligands).
+        90.0_f64.to_radians()
     } else {
         120.0_f64.to_radians()
     }
@@ -619,11 +620,13 @@ fn find_bond_index(mol: &Molecule, i: usize, j: usize) -> Option<usize> {
         .map(|(idx, _)| idx)
 }
 
-fn is_larger_sp2_atom(atom_idx: usize, mol: &Molecule) -> bool {
+fn is_larger_sp2_atom(atom_idx: usize, mol: &Molecule, rings: &[Vec<usize>]) -> bool {
     let atom = &mol.atoms[atom_idx];
     let hyb = crate::molecule::graph::determine_hybridization(atom_idx, mol);
     let atomic_num = element_to_atomic_num(&atom.symbol);
-    atomic_num > 13 && matches!(hyb, Hybridization::Sp2)
+    // RDKit isLargerSP2Atom: atomicNum > 13 && SP2 && numAtomRings(idx) > 0.
+    let in_ring = rings.iter().any(|r| r.contains(&atom_idx));
+    atomic_num > 13 && matches!(hyb, Hybridization::Sp2) && in_ring
 }
 
 fn is_amide_bond(mol: &Molecule, a: usize, b: usize) -> bool {
@@ -833,9 +836,9 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                     let angle = set_ring_angle(hyb, rsize);
                     let dl =
                         compute_13_dist(accum.bond_lengths[bid1], accum.bond_lengths[bid2], angle);
-                    let dist_tol = if is_larger_sp2_atom(aid1, mol)
-                        || is_larger_sp2_atom(aid2, mol)
-                        || is_larger_sp2_atom(aid3, mol)
+                    let dist_tol = if is_larger_sp2_atom(aid1, mol, &rings)
+                        || is_larger_sp2_atom(aid2, mol, &rings)
+                        || is_larger_sp2_atom(aid3, mol, &rings)
                     {
                         DIST13_TOL * 2.0
                     } else {
@@ -970,9 +973,9 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                             accum.bond_lengths[bid2],
                             angle,
                         );
-                        let dist_tol = if is_larger_sp2_atom(aid1, mol)
-                            || is_larger_sp2_atom(aid2, mol)
-                            || is_larger_sp2_atom(aid3, mol)
+                        let dist_tol = if is_larger_sp2_atom(aid1, mol, &rings)
+                            || is_larger_sp2_atom(aid2, mol, &rings)
+                            || is_larger_sp2_atom(aid3, mol, &rings)
                         {
                             DIST13_TOL * 2.0
                         } else {
