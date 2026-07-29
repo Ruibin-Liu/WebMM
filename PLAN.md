@@ -1,34 +1,40 @@
-# Plan: Phase 0 — multi-seed ETKDG harness + RDKit self-consistency ceiling
+# Plan: Phase 1 — port RDKit RNG (investigated → PARKED)
 
-## Final Status: DONE
+## Final Status: PARKED — premise was wrong; low value for the r≈1.0 goal
 
-## Context
-The single-seed harness (seed 42) is too noisy (±0.005 r per molecule flip) and
-r=1.0 is the wrong target — ETKDG is stochastic. Phase 0 builds the stable
-measurement gate that all later phases (§5 of ETKDG_MMFF_REVIEW.md) validate
-against. Measurement infrastructure only — no algorithmic change.
+## What was investigated
+- **The old review doc claimed RDKit uses `std::mt19937`.** Verified against RDKit
+  2025.09.3 source `Code/RDGeneral/utils.h:36`:
+  `typedef boost::minstd_rand rng_type;` + `boost::uniform_real<double>`
+  (`variate_generator`). From the boost 1.84 header, `boost::minstd_rand` =
+  `linear_congruential_engine<uint32_t, 48271, 0, 2147483647>` — the **48271
+  Park–Miller LCG** (`x = 48271·x mod 2^31−1`), mapped to `[0,1)` by boost's
+  `uniform_real`. **Not MT19937.** So the roadmap's "Phase 1 = port MT19937" was
+  based on the doc's false claim.
+- **Bit-exact validation is not cleanly available:** `pickRandomDistMat` is not
+  exposed in the RDKit Python API (only `DoTriangleSmoothing`, `EmbedBoundsMatrix`),
+  and there are no local boost headers to compile a C++ reference probe.
 
-## Completed
-- [x] **`scripts/gen_etkdg_ref.py`** — multi-seed RDKit ref (env `WEBMM_SEEDS`,
-      default `42,43,100,7`); emits `{mean,stddev,seeds,n_embedded,n_atoms,embed_ok}`.
-- [x] **`examples/dump_etkdg_geom.rs`** — multi-seed WebMM dump (env `WEBMM_SEEDS`,
-      default `42,43,100,7`); same schema; hand-built JSON (no new serde dep).
-- [x] **`scripts/validate_etkdg.py`** — compares `mean` (fallback to legacy
-      `energy` for old single-seed files); reports r/RMSD/n/seed-count/outliers.
-- [x] **`scripts/rdkit_self_consistency.py`** (new) — pairwise per-seed r/RMSD +
-      multi-seed-mean-vs-single = the recorded ceiling.
-- [x] **End-to-end run** (4 seeds, 130 mols):
-  - Ceiling (RDKit vs RDKit): single-seed pairwise **r=0.990–0.996 (RMSD 4.3–6.4)**;
-    multi-seed-mean vs single **r=0.996–0.998 (RMSD 2.9–4.2)** → target ≈0.997.
-  - WebMM multi-seed mean: **r=0.8609, RMSD=24.66** (cf. single-seed r=0.8568 —
-    the new, more stable baseline). Real gap to ceiling ≈0.13.
-  - Harness now surfaces per-molecule seed-variance (e.g. DMF stddev 7.3:
-    seeds give 14.5/−5.1/−0.4/1.3 → flag WebMM embedding instability for that mol).
-- [x] `cargo build --release --example dump_etkdg_geom`; `cargo test` 191 pass;
-      `cargo clippy --all-targets` 0 warnings. No `src/` changes → WASM unaffected.
+## Why parked
+- **It does not move the r metric.** RNG selects *which* conformer a given seed
+  yields, not embedding *quality*. The r≈1.0 gate is the **multi-seed mean** (ceiling
+  ~0.997), which is RNG-independent. My own roadmap said Phase 1 "alone won't move r."
+- **Risk without validation:** a source-only port of boost's LCG + `uniform_real`
+  float-generation could be subtly wrong (seeding edge cases, multi-draw float
+  mapping) with no way to confirm bit-exactness here.
 
-## Notes
-- `src/` untouched this turn (example + Python only); prior turn's ETKDG fixes
-  (B3 shipped, D1 shipped, B1 reverted) remain in place.
-- The multi-seed mean is the gate for Phases 1–6; the ceiling (~0.997) is the
-  target, not 1.0.
+## Outcome
+- No code changes (correctness preserved; no unvalidated RNG shipped).
+- `ETKDG_MMFF_REVIEW.md` corrected: E11 + §4 table + §5 Phase 1 now state the real
+  target (`boost::minstd_rand`, not MT19937) and the low-value/hard-to-validate
+  status.
+
+## Recommendation (pending user decision)
+Skip Phase 1; proceed to **Phase 2 (faithful bound matrix bundle)** — that is where
+real r gains are, and it is fully validatable via the multi-seed harness with no RNG
+dependency. (If bit-exact RNG is still wanted later: `brew install boost` + a ~15-line
+C++ probe to capture the `minstd_rand`+`uniform_real` double sequence, then port +
+unit-test against that vector.)
+
+## Non-goals
+Any algorithmic change this turn.

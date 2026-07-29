@@ -36,11 +36,18 @@ Fixing (1) alone, or (1)+(2), **regressed** the harness (r→0.852 / 0.850) beca
 WebMM's downstream pipeline is co-adapted to the old bounds. Reverted; needs the
 bundled migration in §5 Phase 2.
 
-### E11: RNG — **NOT FIXED**
+### E11: RNG — **NOT FIXED** (and the target was mis-stated)
 `Rng` (`src/etkdg/mod.rs:59`) is **Xoshiro256\*\*** seeded by splitmix64
 (`rotl(s[1]*5,7)*9` output, `s[1]<<17`/`rotl(s[3],45)` update, splitmix64 constants).
-RDKit uses `std::mt19937`. Bit-exact conformer reproducibility is impossible until
-this is ported. (Only affects reproducibility, not average quality.)
+The old doc claimed RDKit uses `std::mt19937` — **that was wrong.** `Code/RDGeneral/utils.h`
+defines `typedef boost::minstd_rand rng_type;` + `boost::uniform_real<double>` (a
+`variate_generator`). From the boost 1.84 header, `boost::minstd_rand` =
+`linear_congruential_engine<uint32_t, 48271, 0, 2147483647>` — the **48271
+Park–Miller LCG**, `x = 48271·x mod 2^31−1`, mapped to `[0,1)` by boost's `uniform_real`.
+`pickRandomDistMat` is **not exposed** in the Python API (only `DoTriangleSmoothing`,
+`EmbedBoundsMatrix`), so there is no clean end-to-end probe, and no local boost to
+compile against. **Also: matching it won't improve the r metric** — RNG picks *which*
+conformer a seed yields, not its quality (the gate is multi-seed mean).
 
 ### E12: `is_larger_sp2_atom` ring check — **FIXED (this audit)**
 `src/etkdg/mod.rs:623` now requires `numAtomRings > 0`, matching RDKit's
@@ -131,7 +138,7 @@ Implications:
 | E8 Bridged ring exclusion | ⚠️ Not re-verified |
 | E9 Force constants | ✅ Constants match (old premise wrong; real issue is D4) |
 | E10 Timeout units | ✅ Seconds |
-| E11 RNG | ❌ **Not fixed** (still Xoshiro256**, not MT19937) |
+| E11 RNG | ❌ **Not fixed** (Xoshiro256\*\*; RDKit is `boost::minstd_rand` 48271-LCG + `uniform_real`, **not** MT19937) |
 | E12 is_larger_sp2_atom | ✅ **Fixed this audit** |
 | M1–M8 MMFF94s | ✅ Validated by MMFF harness (r=1.0000) |
 
@@ -149,9 +156,14 @@ removal once parity is shown.
 (≥4). Track the RDKit-vs-RDKit ceiling (≈0.99) as the target, not 1.0. Cheap,
 removes the noise that's been masking signal.
 
-**Phase 1 — RNG foundation (E11/B2).** Port `std::mt19937` + match `pickRandomDistMat`
-draw order (`i=1..n, j=0..i`). Necessary for reproducibility; alone it won't move r
-much but it unblocks Phases 2–4 validation.
+**Phase 1 — RNG (E11) — PARKED (low value, hard to validate).** RDKit uses
+`boost::minstd_rand` (48271 Park–Miller LCG) + `boost::uniform_real`, *not*
+MT19937 (the old doc/plan were wrong). Matching it does **not** improve the r metric
+(RNG picks *which* conformer, not its quality; the gate is multi-seed mean).
+`pickRandomDistMat` is not exposed in the Python API and there are no local boost
+headers, so bit-exact validation needs `brew install boost` + a C++ probe. **Defer**
+unless per-seed WebMM-vs-RDKit debugging is specifically wanted; it is not on the
+critical path to r≈1.0. → Skip to Phase 2.
 
 **Phase 2 — Faithful bound matrix.** Bundle (land together, single commit):
 B1 smoothing formula + single sweep; D2 `check_and_set` widen; D3 sp² 120°/
