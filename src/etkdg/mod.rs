@@ -4307,6 +4307,60 @@ fn trilaterate(p1: [f64; 3], p2: [f64; 3], p3: [f64; 3], r1: f64, r2: f64, r3: f
 /// neighbors on its bonded atom, analytically compute the correct position from
 /// the bounds — gives the minimizer a good starting point it can't reach from
 /// the 4D projection.
+/// Snap badly-violated 1-2 bonds (off > 0.15 Å) by translating the smaller
+/// fragment along the bond axis to the target distance. Helps the minimizer
+/// escape ring-closure failures (e.g. cyclopentene C4-C0 at 1.80 instead of 1.54).
+/// Guarded by accept-only-if-ETKDG-energy-drops at the call site.
+fn snap_bond_lengths(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &DistanceBounds) {
+    for b in &mol.bonds {
+        let (i, j) = (b.atom1, b.atom2);
+        let (lo, hi) = (i.min(j), i.max(j));
+        let target = (bounds.lower[lo][hi] + bounds.upper[lo][hi]) / 2.0;
+        let cur = atom_dist(coords, i, j);
+        if (cur - target).abs() < 0.15 || cur < 1e-10 {
+            continue;
+        }
+        // BFS fragment on each side; snap the smaller one
+        let frag_j = bfs_fragment(mol, j, i);
+        let frag_i = bfs_fragment(mol, i, j);
+        let (frag, anchor, mover) = if frag_j.len() <= frag_i.len() {
+            (frag_j, i, j)
+        } else {
+            (frag_i, j, i)
+        };
+        let axis = [
+            coords[mover][0] - coords[anchor][0],
+            coords[mover][1] - coords[anchor][1],
+            coords[mover][2] - coords[anchor][2],
+        ];
+        let unit = [axis[0] / cur, axis[1] / cur, axis[2] / cur];
+        let shift = target - cur; // negative = shorten (move mover-side toward anchor)
+        for &a in &frag {
+            coords[a][0] += shift * unit[0];
+            coords[a][1] += shift * unit[1];
+            coords[a][2] += shift * unit[2];
+        }
+    }
+}
+
+fn bfs_fragment(mol: &Molecule, start: usize, exclude: usize) -> Vec<usize> {
+    let mut visited = vec![false; mol.atoms.len()];
+    visited[exclude] = true;
+    visited[start] = true;
+    let mut frag = vec![start];
+    let mut stack = vec![start];
+    while let Some(a) = stack.pop() {
+        for &nb in &mol.adjacency[a] {
+            if !visited[nb] {
+                visited[nb] = true;
+                frag.push(nb);
+                stack.push(nb);
+            }
+        }
+    }
+    frag
+}
+
 fn atom_dist(coords: &[[f64; 3]], a: usize, b: usize) -> f64 {
     let d = [coords[a][0] - coords[b][0], coords[a][1] - coords[b][1], coords[a][2] - coords[b][2]];
     (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
@@ -4569,6 +4623,24 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
                 snaps += 1;
             } else {
                 break;
+            }
+        }
+
+        // Bond-snap: fix badly-violated 1-2 bonds (ring-closure failures) by
+        // translating the smaller fragment to the target distance. Guarded.
+        {
+            let e_before = etkdg_energy(
+                &coords_3d, &bounds, &chiral_centers, &tetrahedral, &pc,
+                &torsion_prefs, &bonds_12, &angles_13,
+            );
+            let mut trial = coords_3d.clone();
+            snap_bond_lengths(&mut trial, mol, &bounds);
+            let e_after = etkdg_energy(
+                &trial, &bounds, &chiral_centers, &tetrahedral, &pc,
+                &torsion_prefs, &bonds_12, &angles_13,
+            );
+            if e_after < e_before {
+                coords_3d = trial;
             }
         }
 

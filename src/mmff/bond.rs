@@ -477,6 +477,20 @@ fn lookup_bond_params_exact(
             r0: 1.170,
         cb: 1.0,
         }),
+        // C_1≡NID (nitrile/nitrile-oxide) — empirical rule from RDKit verbose
+        (MMFFAtomType::C_1, MMFFAtomType::NID, BondType::Triple)
+        | (MMFFAtomType::NID, MMFFAtomType::C_1, BondType::Triple) => Some(BondParams {
+            k_bond: 4.149,
+            r0: 1.461,
+        cb: 1.0,
+        }),
+        // NID-OXIDE (nitrile oxide N-O) — from RDKit verbose
+        (MMFFAtomType::NID, MMFFAtomType::OXIDE, BondType::Single)
+        | (MMFFAtomType::OXIDE, MMFFAtomType::NID, BondType::Single) => Some(BondParams {
+            k_bond: 3.971,
+            r0: 1.424,
+        cb: 1.0,
+        }),
         // C_3-NID (methyl isocyanide) — from RDKit verbose
         (MMFFAtomType::C_3, MMFFAtomType::NID, BondType::Single)
         | (MMFFAtomType::NID, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {

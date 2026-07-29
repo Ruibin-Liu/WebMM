@@ -62,6 +62,7 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::CID => MMFFAtomType::C_1,
         MMFFAtomType::NID => MMFFAtomType::N_1,
         MMFFAtomType::NCN_PLUS => MMFFAtomType::N_AM,
+        MMFFAtomType::OXIDE => MMFFAtomType::O_3,
         MMFFAtomType::OH2 => MMFFAtomType::O_3,
         // SP3D/SP3D2 types fall back to base sp3 types for parameters
         MMFFAtomType::P_3D => MMFFAtomType::P_3,
@@ -105,6 +106,7 @@ pub enum MMFFAtomType {
     CID,   // Isonitrile carbon C- (MMFF 60)
     NID,   // Isonitrile/nitrile-oxide nitrogen N+ (MMFF 61)
     NCN_PLUS, // Guanidinium/amidinium N (MMFF 55)
+    OXIDE,  // Nitrile oxide O- (MMFF 35)
 
     // Nitrogens
     N_3,
@@ -829,6 +831,14 @@ impl MMFFForceField {
                     // Isonitrile/nitrile-oxide N+ (sp, triple bond, positive charge) → NID (type 61)
                     (7, Hybridization::Sp1, false, _) if charge > 0.5 => MMFFAtomType::NID,
                     (7, Hybridization::Sp1, false, 1..=2) => MMFFAtomType::N_1,
+
+                    // Nitrile oxide O- (bonded to N+ with exactly 2 neighbors) → type 35
+                    (8, _, _, _) if charge < -0.5
+                        && mol.adjacency[idx].iter().any(|&n| {
+                            mol.atoms[n].atomic_number == 7
+                                && mol.atoms[n].charge > 0.5
+                                && mol.adjacency[n].len() == 2
+                        }) => MMFFAtomType::OXIDE,
 
                     // Terminal O on SO2 (sulfone/sulfonamide/sulfonate) or nitro groups
                     // is MMFF 32 (O2CM); bridging ester O's have carbon neighbors and

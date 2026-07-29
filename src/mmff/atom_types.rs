@@ -459,6 +459,7 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
         MMFFAtomType::CID => get_atom_type_props(MMFFAtomType::C_1),
         MMFFAtomType::NID => get_atom_type_props(MMFFAtomType::N_1),
         MMFFAtomType::NCN_PLUS => get_atom_type_props(MMFFAtomType::N_3),
+        MMFFAtomType::OXIDE => get_atom_type_props(MMFFAtomType::O_3),
         MMFFAtomType::N_POX => get_atom_type_props(MMFFAtomType::N_AR),
         MMFFAtomType::H_NIM | MMFFAtomType::HS => get_atom_type_props(MMFFAtomType::H),
         MMFFAtomType::CR4R => get_atom_type_props(MMFFAtomType::C_3),
