@@ -211,8 +211,8 @@ fn lookup_bond_params_exact(
         // S-F (hypervalent S type 18) — from RDKit verbose (SF4)
         (MMFFAtomType::S_O2, MMFFAtomType::F, BondType::Single)
         | (MMFFAtomType::F, MMFFAtomType::S_O2, BondType::Single) => Some(BondParams {
-            k_bond: 5.827352,
-            r0: 1.594267,
+            k_bond: 5.827362192285844,
+            r0: 1.594267567692851,
         cb: 1.0,
         }),
         (MMFFAtomType::S_O2, MMFFAtomType::N_SO2, BondType::Single)
@@ -425,8 +425,8 @@ fn lookup_bond_params_exact(
         // C_1=S_2 (isothiocyanate N=C=S) — from RDKit verbose
         (MMFFAtomType::C_1, MMFFAtomType::S_2, BondType::Double)
         | (MMFFAtomType::S_2, MMFFAtomType::C_1, BondType::Double) => Some(BondParams {
-            k_bond: 2.982,
-            r0: 1.798,
+            k_bond: 2.982332971118793,
+            r0: 1.798344875466168,
         cb: 1.0,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::N_2, BondType::Single)
@@ -487,15 +487,15 @@ fn lookup_bond_params_exact(
         // C_1≡NID (nitrile/nitrile-oxide) — empirical rule from RDKit verbose
         (MMFFAtomType::C_1, MMFFAtomType::NID, BondType::Triple)
         | (MMFFAtomType::NID, MMFFAtomType::C_1, BondType::Triple) => Some(BondParams {
-            k_bond: 4.149,
-            r0: 1.461,
+            k_bond: 4.148863731428771,
+            r0: 1.4613059914169322,
         cb: 1.0,
         }),
-        // NID-OXIDE (nitrile oxide N-O) — from RDKit verbose
+        // NID-OXIDE (nitrile oxide N-O)
         (MMFFAtomType::NID, MMFFAtomType::OXIDE, BondType::Single)
         | (MMFFAtomType::OXIDE, MMFFAtomType::NID, BondType::Single) => Some(BondParams {
-            k_bond: 3.971,
-            r0: 1.424,
+            k_bond: 3.971145145803896,
+            r0: 1.4239219710253257,
         cb: 1.0,
         }),
         // C_3-NID (methyl isocyanide) — from RDKit verbose
@@ -591,6 +591,13 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::O_R, MMFFAtomType::CR4R, BondType::Single) => Some(BondParams {
             k_bond: 5.623,
             r0: 1.433,
+        cb: 1.0,
+        }),
+        // CR4R-N_3 (4-ring N) — from RDKit GetMMFFBondStretchParams
+        (MMFFAtomType::CR4R, MMFFAtomType::N_3, BondType::Single)
+        | (MMFFAtomType::N_3, MMFFAtomType::CR4R, BondType::Single) => Some(BondParams {
+            k_bond: 5.107,
+            r0: 1.456,
         cb: 1.0,
         }),
         (MMFFAtomType::CR3R, MMFFAtomType::N_3, BondType::Single)
