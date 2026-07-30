@@ -7,48 +7,48 @@
 | Total MMFF types | 99 |
 | Real types (crd > 0) | 86 |
 | Pseudo/LP types (crd = 0) | 13 |
-| **Currently covered** | **73 / 86 real types (84.9%)** |
-| **Candidates found (ready to add)** | **7 more → 80/86 (93.0%)** |
-| Remaining unfound | 2 real types |
-| Molecules validated | 185 (all match RDKit < 0.01 kcal/mol) |
+| **All 86 real types covered** | **86 / 86 (100%)** |
 
 ## Validation Sets
 
-| Set | Molecules | Location |
-|-----|-----------|----------|
-| Original | 130 | `scripts/val_set/` |
-| New (diverse chemistry) | 41 | `scripts/val_set_new/` |
-| New (exotic batch 1) | 8 | `scripts/val_set_new2/` |
-| New (exotic batch 2) | 6 | `scripts/val_set_new3/` |
+| Set | Molecules | Type Match | Energy <0.01 | Location |
+|-----|-----------|------------|-------------|----------|
+| Original | 130 | 100% | 130/130 | `scripts/val_set/` |
+| New (diverse) | 41 | 100% | 41/41 | `scripts/val_set_new/` |
+| Exotic batch 1 | 8 | 100% | 8/8 | `scripts/val_set_new2/` |
+| Exotic batch 2 | 6 | 100% | 6/6 | `scripts/val_set_new3/` |
+| Charged/aromatic | 6 | 100% | 6/6 | `scripts/val_set_new4/` |
+| Types 52, 79 | 5 | 100% | 3/5 | `scripts/val_set_new5/` |
+| RDKit bulk.sdf | 32 | 31/32 | 24/32 | `scripts/val_set_bulk/` |
+| **TOTAL** | **228** | **227/228** | **218/228** | |
 
-## 7 Types with Found Candidates (ready to add)
+## All 86 Real Types Now Covered
 
-| Type | Element | SMILES | Molecule | Source |
-|------|---------|--------|----------|--------|
-| 48 | N | `S(=N)(=O)C` | Sulfinylamine | RDKit source: "Divalent N replacing O in SO2" |
-| 54 | N | `C=[NH2+]` | Methaniminium | RDKit source: "Iminium nitrogen N+=C" |
-| 56 | N | `CN(C)C(=[NH2+])N(C)C` | Tetramethylguanidinium | RDKit source: "Guanidinium nitrogen" |
-| 67 | N | `O=[n+]1cccc1` | Pyridine N-oxide (sp2 variant) | RDKit source: "sp2 N-oxide nitrogen" |
-| 80 | C | `CN1C=C[N+](C)=C1` | N,N'-Dimethylimidazolium | RDKit source: "C between N's in imidazolium" |
-| 81 | N | `CN1C=C[N+](C)=C1` | N,N'-Dimethylimidazolium | RDKit source: "Positive N in 5-ring" |
-| 82 | N | `O=n1ccoc1` | Isoxazole N-oxide | RDKit source: "N-oxide in 5-ring" |
+The final 2 types were found in this session:
 
-## 2 Remaining Unfound Types
+| Type | Element | Description | SMILES | Molecule |
+|------|---------|-------------|--------|----------|
+| 52 | H | HO=+ (H on oxenium O+=) | `[OH+]=C` | Oxenium methaniminium |
+| 79 | N | N5 (general N in 5-ring w/ alpha+beta N heteroatoms) | `C[n+]1cn[nH]c1` | Methyl triazolium |
 
-| Type | Elem | Crd | Val | mltb | arom | sbmb | RDKit source comment | Search notes |
-|------|------|-----|-----|------|------|------|---------------------|--------------|
-| 52 | H | 1 | 1 | 0 | 0 | 0 | "HO=+ — H on oxenium oxygen" | Requires O+ type 51 with bonded H in ring. Extremely rare/unstable species. |
-| 79 | N | 2 | 3 | 2 | 1 | 0 | "N5 — General N in 5-ring with alpha+beta heteroatoms" | Requires specific multi-heteroatom 5-ring where N has heteroatoms at both adjacent and non-adjacent positions. Existing NPYL/N5A/N5B classification may mask this type. |
+Type 79 requires a charged 5-ring (e.g. triazolium) where an N at degree 2
+has pyrrole-like N neighbors at both alpha and beta positions — achievable
+only with a pyrrole-like N (2 pi electrons) + a pyridinium-like N+ (1 pi
+electron) giving exactly 6 aromatic pi electrons.
+
+## Remaining Energy Gaps (10 molecules)
+
+| Molecule | dE | Root Cause |
+|----------|-----|------------|
+| 2289 (tryptophan deriv.) | +4.9 | Likely stretch-bend or charge param |
+| 2941 (furanium cation) | -27.3 | O+= (type 51) params in ring context |
+| 2805 (phloroglucinol) | -0.44 | Moderate param gap |
+| 1847 (azobenzene) | -0.43 | Type mismatch: azo N=9 vs 40 |
+| 3204 (sulfonamide salt) | -0.16 | Small param gap |
+| methyl_triazolium | -0.76 | Charge/param fine-tuning |
+| oxenium_formyl_fluoride | +0.55 | C=O+ bond param |
+| 1424, 1760, 3283 | <0.06 | Rounding-level |
 
 ## 13 Pseudo/LP Types (not real atoms — untestable)
 
 Types 87–99: lone-pair, dummy, and metal-ion pseudo-atoms (crd=0, val=0).
-
-## Methodology
-
-Types were found by:
-1. Parsing RDKit's MMFFProp table for all 99 type definitions
-2. Reading RDKit's `AtomTyper.cpp` source code for assignment conditions
-3. Systematic SMILES search with RDKit MMFF typing
-4. Cross-referencing with RDKit's `bulk.sdf` test data
-5. Using `GetMMFFBondStretchParams` / `GetMMFFStretchBendParams` APIs for exact params
