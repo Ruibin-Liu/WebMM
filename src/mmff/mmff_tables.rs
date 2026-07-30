@@ -2560,7 +2560,7 @@ pub const MMFF_ANGLE_TABLE: [(u8, u8, u8, u8, f64, f64); 2373 + 10 + 23 + 1 + 4 
 ];
 
 #[rustfmt::skip]
-pub const MMFF_STBN_TABLE: [(u8, u8, u8, u8, f64, f64); 309 + 1] = [
+pub const MMFF_STBN_TABLE: [(u8, u8, u8, u8, f64, f64); 309 + 1 + 5] = [
     (0, 1, 1, 1, 0.206, 0.206),
     (0, 1, 1, 2, 0.136, 0.197),
     (0, 1, 1, 3, 0.211, 0.092),
@@ -2876,6 +2876,12 @@ pub const MMFF_STBN_TABLE: [(u8, u8, u8, u8, f64, f64); 309 + 1] = [
     (10, 3, 75, 30, 0.3, 0.3),
     // N_GD (56) stretch-bend — guanidinium
     (0, 1, 56, 1, 0.3, 0.3),
+    // val_set_new5 + bulk STBN entries
+    (0, 9, 9, 37, 0.3, 0.3),
+    (0, 9, 37, 37, 0.3, 0.3),
+    (0, 37, 37, 51, 0.3, 0.3),
+    (0, 37, 51, 37, 0.3, 0.3),
+    (0, 1, 37, 51, 0.3, 0.3),
 ];
 
 #[rustfmt::skip]
