@@ -18,36 +18,23 @@
 | Exotic batch 1 | 8 | 100% | 8/8 | `scripts/val_set_new2/` |
 | Exotic batch 2 | 6 | 100% | 6/6 | `scripts/val_set_new3/` |
 | Charged/aromatic | 6 | 100% | 6/6 | `scripts/val_set_new4/` |
-| Types 52, 79 | 5 | 100% | 3/5 | `scripts/val_set_new5/` |
-| RDKit bulk.sdf | 32 | 31/32 | 24/32 | `scripts/val_set_bulk/` |
-| **TOTAL** | **228** | **227/228** | **218/228** | |
+| Types 52, 79 | 5 | 100% | 4/5 | `scripts/val_set_new5/` |
+| RDKit bulk.sdf | 32 | 32/32 | 26/32 | `scripts/val_set_bulk/` |
+| **TOTAL** | **228** | **228/228** | **221/228 (96.9%)** | |
 
-## All 86 Real Types Now Covered
-
-The final 2 types were found in this session:
-
-| Type | Element | Description | SMILES | Molecule |
-|------|---------|-------------|--------|----------|
-| 52 | H | HO=+ (H on oxenium O+=) | `[OH+]=C` | Oxenium methaniminium |
-| 79 | N | N5 (general N in 5-ring w/ alpha+beta N heteroatoms) | `C[n+]1cn[nH]c1` | Methyl triazolium |
-
-Type 79 requires a charged 5-ring (e.g. triazolium) where an N at degree 2
-has pyrrole-like N neighbors at both alpha and beta positions — achievable
-only with a pyrrole-like N (2 pi electrons) + a pyridinium-like N+ (1 pi
-electron) giving exactly 6 aromatic pi electrons.
-
-## Remaining Energy Gaps (10 molecules)
+## 7 Remaining Energy Gaps (all < 0.67 kcal/mol)
 
 | Molecule | dE | Root Cause |
 |----------|-----|------------|
-| 2289 (tryptophan deriv.) | +4.9 | Likely stretch-bend or charge param |
-| 2941 (furanium cation) | -27.3 | O+= (type 51) params in ring context |
-| 2805 (phloroglucinol) | -0.44 | Moderate param gap |
-| 1847 (azobenzene) | -0.43 | Type mismatch: azo N=9 vs 40 |
-| 3204 (sulfonamide salt) | -0.16 | Small param gap |
-| methyl_triazolium | -0.76 | Charge/param fine-tuning |
-| oxenium_formyl_fluoride | +0.55 | C=O+ bond param |
-| 1424, 1760, 3283 | <0.06 | Rounding-level |
+| 1847 (azobenzene sulfonate) | +0.67 | Stretch-bend params for S-O in sulfonate context |
+| 2941 (furanium cation) | -0.63 | Ring torsion param fine-tuning |
+| 3204 (sulfonamide salt) | -0.16 | Stretch-bend kba |
+| oxenium_formyl_fluoride | +0.07 | Near-threshold (C-F + angle params) |
+| 3283 | +0.05 | Rounding-level (RDKit 3-dp display) |
+| 1760 | +0.04 | Rounding-level |
+| 1424 | +0.03 | Rounding-level |
+
+The last 3 are within the known RDKit verbose (3-dp) vs CalcEnergy (full precision) gap (~0.025 kcal/mol).
 
 ## 13 Pseudo/LP Types (not real atoms — untestable)
 
