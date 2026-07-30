@@ -111,6 +111,7 @@ pub enum MMFFAtomType {
     S2CM,   // S in C(=S)=S / thiocarbonyl (MMFF 72)
     HOS,    // H on O bonded to S (sulfonic acid) (MMFF 33)
     H_OXP,  // H on oxonium O+ (MMFF 50)
+    H_OXP2, // H on oxenium O+= (MMFF 52)
 
     // Carbons
     C_3,
@@ -147,6 +148,7 @@ pub enum MMFFAtomType {
     N_NITROSO, // Nitroso nitrogen N=O (MMFF 46)
     N5A, // Alpha N in 5-membered heteroaromatic ring (MMFF 65)
     N5B, // Beta N in 5-membered heteroaromatic ring (MMFF 66)
+    N5,  // General N in 5-ring with both alpha+beta heteroatoms (MMFF 79)
     N_POX, // Pyridine N-oxide nitrogen (MMFF 69)
     N_RAD, // Nitrene / radical N (MMFF 62)
     NPYL_M, // Pyrrolide anion N (MMFF 76)
@@ -231,7 +233,7 @@ pub struct MMFFForceField {
 
 impl MMFFForceField {
     pub fn new(mol: &Molecule, variant: MMFFVariant) -> Self {
-        let atom_types = Self::assign_atom_types(mol);
+        let mut atom_types = Self::assign_atom_types(mol);
         let charges = Self::calculate_charges(mol, &atom_types);
 
         let angles = crate::molecule::graph::find_angles(mol);
@@ -279,6 +281,23 @@ impl MMFFForceField {
         // once the 5-ring N classification / charge bugs were fixed the collapse
         // became energy-neutral, so all types now keep their real IDs. (C5A vs
         // C5B alpha/beta is the one remaining cosmetic gap — both EQ-fall to C_2.)
+        // Post-process H types based on final N neighbor types (RDKit H typing
+        // depends on the N's final MMFF type, which isn't known during initial detection)
+        let n_atoms = mol.atoms.len();
+        for i in 0..n_atoms {
+            if mol.atoms[i].atomic_number != 1 { continue; }
+            if let Some(&nbr) = mol.adjacency[i].first() {
+                if mol.atoms[nbr].atomic_number == 7 {
+                    let nbr_id = mmff_type_id(atom_types[nbr]);
+                    match nbr_id {
+                        // Charged N types → HNRP (36)
+                        34 | 54 | 55 | 56 | 58 | 81 => atom_types[i] = MMFFAtomType::HNRP,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         let type_ids: Vec<u8> = atom_types.iter().map(|&at| mmff_type_id(at)).collect();
 
         let torsion_types: Vec<(u8, u8)> = torsions
@@ -413,7 +432,7 @@ impl MMFFForceField {
             for &atom_idx in ring {
                 match mol.atoms[atom_idx].atomic_number {
                     7 => {
-                        let n_neighbors = mol.adjacency[atom_idx].len();
+                        let n_degree = mol.adjacency[atom_idx].len();
                         let n_charge = mol.atoms[atom_idx].charge;
                         if n_charge < -0.5 {
                             tmp.insert(atom_idx, MMFFAtomType::NPYL_M);
@@ -422,17 +441,57 @@ impl MMFFForceField {
                             let has_oxide_o = mol.adjacency[atom_idx].iter().any(|&n| {
                                 mol.atoms[n].atomic_number == 8 && mol.atoms[n].charge < -0.5
                             });
-                            // Check if ANY ring N is charged (imidazolium)
-                            let ring_has_charge = ring.iter().any(|&r| mol.atoms[r].charge > 0.5);
                             if has_oxide_o {
                                 tmp.insert(atom_idx, MMFFAtomType::N_5OX2);
-                            } else if n_charge > 0.5 || (ring_has_charge && n_neighbors >= 3) {
-                                tmp.insert(atom_idx, MMFFAtomType::N_5POS);
                             } else {
-                                tmp.insert(
-                                    atom_idx,
-                                    if n_neighbors >= 3 { MMFFAtomType::NPYL } else { MMFFAtomType::N5B },
-                                );
+                                // Compute alpha/beta heteroatoms (RDKit AtomTyper logic)
+                                // Alpha: direct ring neighbors that are O, S, or N(deg3, not N-oxide)
+                                // Beta: 2-bond ring neighbors that are O, S, or N(deg3, not N-oxide)
+                                let mut alpha_het: Vec<usize> = Vec::new();
+                                let mut beta_het: Vec<usize> = Vec::new();
+                                for &nbr in &mol.adjacency[atom_idx] {
+                                    if !ringset.contains(&nbr) { continue; }
+                                    let nbr_z = mol.atoms[nbr].atomic_number;
+                                    let is_het = nbr_z == 8 || nbr_z == 16 ||
+                                        (nbr_z == 7 && mol.adjacency[nbr].len() == 3
+                                         && !mol.adjacency[nbr].iter().any(|&n|
+                                             mol.atoms[n].atomic_number == 8 && mol.atoms[n].charge < -0.5));
+                                    if is_het { alpha_het.push(nbr); }
+                                    // Check beta (2-bond neighbors of nbr in ring)
+                                    for &nbr2 in &mol.adjacency[nbr] {
+                                        if nbr2 == atom_idx || !ringset.contains(&nbr2) { continue; }
+                                        let nbr2_z = mol.atoms[nbr2].atomic_number;
+                                        let is_het2 = nbr2_z == 8 || nbr2_z == 16 ||
+                                            (nbr2_z == 7 && mol.adjacency[nbr2].len() == 3
+                                             && !mol.adjacency[nbr2].iter().any(|&n|
+                                                 mol.atoms[n].atomic_number == 8 && mol.atoms[n].charge < -0.5));
+                                        if is_het2 { beta_het.push(nbr2); }
+                                    }
+                                }
+                                let is_alpha_os = alpha_het.iter().any(|&a|
+                                    mol.atoms[a].atomic_number == 8 || mol.atoms[a].atomic_number == 16);
+                                let is_beta_os = beta_het.iter().any(|&b|
+                                    mol.atoms[b].atomic_number == 8 || mol.atoms[b].atomic_number == 16);
+
+                                // Cascading rules (RDKit AtomTyper case 7)
+                                if alpha_het.is_empty() && beta_het.is_empty() {
+                                    // No heteroatoms: pyrrole-like or anionic
+                                    if n_degree >= 3 { tmp.insert(atom_idx, MMFFAtomType::NPYL); }
+                                    else { tmp.insert(atom_idx, MMFFAtomType::N5B); }
+                                } else if n_degree == 3 && alpha_het.len() != beta_het.len() {
+                                    // Positive N with asymmetric heteroatom distribution
+                                    tmp.insert(atom_idx, MMFFAtomType::N_5POS);
+                                } else if !alpha_het.is_empty() && (beta_het.is_empty() || is_alpha_os) {
+                                    tmp.insert(atom_idx, MMFFAtomType::N5A);
+                                } else if !beta_het.is_empty() && (alpha_het.is_empty() || is_beta_os) {
+                                    tmp.insert(atom_idx, MMFFAtomType::N5B);
+                                } else if !alpha_het.is_empty() && !beta_het.is_empty() {
+                                    // Both alpha and beta heteroatoms, no O/S → N5 (type 79)
+                                    tmp.insert(atom_idx, MMFFAtomType::N5);
+                                } else {
+                                    if n_degree >= 3 { tmp.insert(atom_idx, MMFFAtomType::NPYL); }
+                                    else { tmp.insert(atom_idx, MMFFAtomType::N5B); }
+                                }
                             }
                         }
                     }
@@ -1217,8 +1276,13 @@ impl MMFFForceField {
         let neighbor = &mol.atoms[neighbor_idx];
         match neighbor.atomic_number {
             8 => {
-                // H on positively-charged oxonium O+ → MMFF 50 (H_OXP)
+                // H on positively-charged oxygen
                 if neighbor.charge > 0.5 {
+                    // O+= (oxenium, degree 2) → H type 52 (HO=+)
+                    // O+ (oxonium, degree 3) → H type 50 (HO+)
+                    if mol.adjacency[neighbor_idx].len() == 2 {
+                        return MMFFAtomType::H_OXP2;
+                    }
                     return MMFFAtomType::H_OXP;
                 }
 
@@ -1355,6 +1419,12 @@ impl MMFFForceField {
                     MMFFAtomType::H_NAM
                 } else if mol.atoms[neighbor_idx].charge > 0.5 {
                     // Ammonium (sp3 N+) N-H → MMFF 36 (HNR+)
+                    MMFFAtomType::HNRP
+                } else if n_is_aromatic && mol.atoms[neighbor_idx].charge.abs() < 0.5
+                    && mol.adjacency[neighbor_idx].iter().any(|&nbr|
+                        aromatic_atoms.contains(&nbr) && mol.atoms[nbr].charge > 0.5)
+                {
+                    // H on aromatic N in a charged 5-ring (e.g. triazolium N-5POS) → HNRP (36)
                     MMFFAtomType::HNRP
                 } else {
                     // Generic amine or aromatic-ring N-H (pyrrole/indole) → MMFF 23

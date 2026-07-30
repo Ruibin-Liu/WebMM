@@ -285,6 +285,7 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
             vdw_alpha: 0.167,
             oop_k: 0.02,
         }),
+        MMFFAtomType::N5 => get_atom_type_props(MMFFAtomType::N5B),
         MMFFAtomType::O_3 => Some(AtomTypeProperties {
             bond_class: 7,
             angle_class: 8,
@@ -469,6 +470,7 @@ pub fn get_atom_type_props(atom_type: MMFFAtomType) -> Option<AtomTypeProperties
         MMFFAtomType::S2CM => get_atom_type_props(MMFFAtomType::S_3),
         MMFFAtomType::HOS => get_atom_type_props(MMFFAtomType::H),
         MMFFAtomType::H_OXP => get_atom_type_props(MMFFAtomType::H),
+        MMFFAtomType::H_OXP2 => get_atom_type_props(MMFFAtomType::H),
         MMFFAtomType::O_3P => get_atom_type_props(MMFFAtomType::O_3),
         MMFFAtomType::O_2P => get_atom_type_props(MMFFAtomType::O_2),
         MMFFAtomType::N_RAD => get_atom_type_props(MMFFAtomType::N_3),

@@ -1,0 +1,75 @@
+{
+  "oxenium_methaniminium": {
+    "energy": 5.9102,
+    "atom_types": [
+      51,
+      3,
+      52,
+      5,
+      5
+    ]
+  },
+  "oxenium_formyl_fluoride": {
+    "energy": -5.4768,
+    "atom_types": [
+      51,
+      3,
+      11,
+      52,
+      5
+    ]
+  },
+  "methyl_triazolium": {
+    "energy": 22.1965,
+    "atom_types": [
+      1,
+      81,
+      78,
+      79,
+      81,
+      80,
+      5,
+      5,
+      5,
+      5,
+      36,
+      5
+    ]
+  },
+  "dimethyl_triazolium": {
+    "energy": 22.0433,
+    "atom_types": [
+      1,
+      81,
+      80,
+      81,
+      1,
+      79,
+      78,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5
+    ]
+  },
+  "methyl_tetrazolium": {
+    "energy": 50.1796,
+    "atom_types": [
+      1,
+      81,
+      79,
+      64,
+      79,
+      81,
+      5,
+      5,
+      5,
+      5,
+      36
+    ]
+  }
+}
