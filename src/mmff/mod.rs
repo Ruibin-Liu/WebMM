@@ -57,11 +57,18 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         // 5-membered heteroaromatic ring atoms use same params as generic aromatic
         MMFFAtomType::C5A | MMFFAtomType::C5B => MMFFAtomType::C_AR,
         MMFFAtomType::C5A_M => MMFFAtomType::C_AR,
+        MMFFAtomType::C_IM => MMFFAtomType::C5A,
         MMFFAtomType::NPYL | MMFFAtomType::N5A | MMFFAtomType::N5B => MMFFAtomType::N_AR,
         MMFFAtomType::NPYL_M => MMFFAtomType::N_AR,
         MMFFAtomType::N_PYR => MMFFAtomType::N_AR,
         MMFFAtomType::N_T3 => MMFFAtomType::N_4,
         MMFFAtomType::N_POX2 => MMFFAtomType::N_POX,
+        MMFFAtomType::N_SO => MMFFAtomType::N_2,
+        MMFFAtomType::N_IM => MMFFAtomType::N_2,
+        MMFFAtomType::N_GD => MMFFAtomType::NCN_PLUS,
+        MMFFAtomType::N_5OX => MMFFAtomType::N_POX,
+        MMFFAtomType::N_5POS => MMFFAtomType::N5A,
+        MMFFAtomType::N_5OX2 => MMFFAtomType::N5B,
         MMFFAtomType::N_RAD => MMFFAtomType::N_3,
         MMFFAtomType::OFUR => MMFFAtomType::O_3,
         MMFFAtomType::O_R => MMFFAtomType::O_3,
@@ -115,6 +122,7 @@ pub enum MMFFAtomType {
     C5A, // Alpha C in 5-membered heteroaromatic ring (MMFF 63)
     C5B, // Beta C in 5-membered heteroaromatic ring (MMFF 64)
     C5A_M, // Alpha C in pyrrolide anion ring (MMFF 78)
+    C_IM, // Aromatic C between N's in imidazolium (MMFF 80)
     C_CAT,
     C_AN,
     CID,   // Isonitrile carbon C- (MMFF 60)
@@ -145,6 +153,12 @@ pub enum MMFFAtomType {
     N_PYR, // N-methylpyridinium N (MMFF 58)
     N_T3, // Trimethylamine N-oxide N (MMFF 68)
     N_POX2, // Pyridine N-oxide N (MMFF 69)
+    N_SO, // Sulfinylamine N in S=N (MMFF 48)
+    N_IM, // Iminium N+=C (MMFF 54)
+    N_GD, // Guanidinium N variant (MMFF 56)
+    N_5OX, // N-oxide in 5-ring (MMFF 67)
+    N_5POS, // Positive N in 5-ring (MMFF 81)
+    N_5OX2, // N-oxide in 5-ring beta (MMFF 82)
 
     // Oxygens
     O_3,
@@ -400,13 +414,24 @@ impl MMFFForceField {
                 match mol.atoms[atom_idx].atomic_number {
                     7 => {
                         let n_neighbors = mol.adjacency[atom_idx].len();
-                        if mol.atoms[atom_idx].charge < -0.5 {
+                        let n_charge = mol.atoms[atom_idx].charge;
+                        if n_charge < -0.5 {
                             tmp.insert(atom_idx, MMFFAtomType::NPYL_M);
                         } else {
-                            tmp.insert(
-                                atom_idx,
-                                if n_neighbors >= 3 { MMFFAtomType::NPYL } else { MMFFAtomType::N5B },
-                            );
+                            // Check for N-oxide (O- neighbor) first
+                            let has_oxide_o = mol.adjacency[atom_idx].iter().any(|&n| {
+                                mol.atoms[n].atomic_number == 8 && mol.atoms[n].charge < -0.5
+                            });
+                            if has_oxide_o {
+                                tmp.insert(atom_idx, MMFFAtomType::N_5OX2);
+                            } else if n_charge > 0.5 {
+                                tmp.insert(atom_idx, MMFFAtomType::N_5POS);
+                            } else {
+                                tmp.insert(
+                                    atom_idx,
+                                    if n_neighbors >= 3 { MMFFAtomType::NPYL } else { MMFFAtomType::N5B },
+                                );
+                            }
                         }
                     }
                     8 => {
@@ -449,15 +474,21 @@ impl MMFFForceField {
                             lonepair_het += 1;
                             het_total += 1;
                         }
-                        Some(MMFFAtomType::N5B) => {
+                        Some(MMFFAtomType::N5B) | Some(MMFFAtomType::N_5POS) | Some(MMFFAtomType::N_5OX2) => {
                             het_total += 1;
                         }
                         _ => {}
                     }
                 }
+                // Check for C between two positive N's (imidazolium) → C_IM (80)
+                let n_pos_neighbors = mol.adjacency[atom_idx].iter()
+                    .filter(|&&n| ringset.contains(&n) && matches!(tmp.get(&n), Some(MMFFAtomType::N_5POS)))
+                    .count();
                 tmp.insert(
                     atom_idx,
-                    if tmp.values().any(|&t| t == MMFFAtomType::NPYL_M) {
+                    if n_pos_neighbors >= 2 {
+                        MMFFAtomType::C_IM
+                    } else if tmp.values().any(|&t| t == MMFFAtomType::NPYL_M) {
                         MMFFAtomType::C5A_M
                     } else if lonepair_het >= 1 || het_total >= 2 {
                         MMFFAtomType::C5A
@@ -827,6 +858,7 @@ impl MMFFForceField {
                     // N-methylpyridinium N (aromatic N+, degree 3) → type 58
                     (7, _, true, 3) if charge > 0.5 => MMFFAtomType::N_PYR,
                     // Guanidinium/amidinium N+ (bonded to C that has C=N+ and >=2 N) → NCN+ (55)
+                    // Split: 3+ N neighbors → N_GD (56), 2 N → NCN_PLUS (55)
                     (7, _, false, _) if mol.adjacency[idx].iter().any(|&c| {
                         mol.atoms[c].atomic_number == 6
                             && mol.adjacency[c].iter()
@@ -840,9 +872,23 @@ impl MMFFForceField {
                                             && mol.atoms[other].charge > 0.5
                                     }
                             })
-                    }) => MMFFAtomType::NCN_PLUS,
+                    }) => {
+                        // Check for guanidinium variant (3+ N on C)
+                        let is_gd = mol.adjacency[idx].iter().any(|&c| {
+                            mol.atoms[c].atomic_number == 6
+                                && mol.adjacency[c].iter()
+                                    .filter(|&&n| mol.atoms[n].atomic_number == 7).count() >= 3
+                        });
+                        if is_gd { MMFFAtomType::N_GD } else { MMFFAtomType::NCN_PLUS }
+                    },
                     (7, _, true, _) if has_c_o_neighbor && !n_owns_cn => MMFFAtomType::N_AM,
 
+                    // Iminium N+=C (type 54): charged sp2 N with double bond to C, NOT aromatic
+                    (7, Hybridization::Sp2, false, _) if charge > 0.5 && !aromatic && double_bond_partners.iter().any(|&an| an == 6) => MMFFAtomType::N_IM,
+                    // Sulfinylamine N=S (type 48): N double-bonded to S that also has S=O
+                    (7, _, false, _) if double_bond_partners.iter().any(|&an| an == 16) => {
+                        MMFFAtomType::N_SO
+                    }
                     // Amide / carbamate / urea N: non-aromatic N directly bonded to a
                     // carbonyl C is MMFF 10 (N_AM). Excludes N=C imines (n_owns_cn)
                     // like methyl isocyanate CH3-N=C=O where N has its own double bond.
@@ -1224,6 +1270,10 @@ impl MMFFForceField {
                         })
                 });
                 if n_is_guanidinium {
+                    return MMFFAtomType::HNRP;
+                }
+                // H on positively charged N (iminium, ammonium) → HNRP (36)
+                if neighbor.charge > 0.5 {
                     return MMFFAtomType::HNRP;
                 }
                 // Imine H: H on sp2 N with C=N double bond, not aromatic → MMFF 27 (H_NIM)
