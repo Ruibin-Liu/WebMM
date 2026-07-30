@@ -1200,9 +1200,26 @@ fn lookup_bond_params_exact(
         cb: 1.0,
         }),
         (MMFFAtomType::N_2, MMFFAtomType::N_2, BondType::Double) => Some(BondParams {
-            k_bond: 6.0,
-            r0: 1.25,
+            k_bond: 7.256,
+            r0: 1.243,
         cb: 1.0,
+        }),
+        // N_2-C_AR Single (azo N to aromatic C)
+        (MMFFAtomType::N_2, MMFFAtomType::C_AR, BondType::Single)
+        | (MMFFAtomType::C_AR, MMFFAtomType::N_2, BondType::Single) => Some(BondParams {
+            k_bond: 5.529, r0: 1.393, cb: 1.0,
+        }),
+        // C_2-S_3 Single (thioester/thioamide C-S)
+        (MMFFAtomType::C_2, MMFFAtomType::S_3, BondType::Single)
+        | (MMFFAtomType::S_3, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
+            k_bond: 3.536, r0: 1.748, cb: 1.0,
+        }),
+        // N_PL3-H (amidine H on N_PL3)
+        (MMFFAtomType::N_PL3, MMFFAtomType::H_NAM, BondType::Single)
+        | (MMFFAtomType::H_NAM, MMFFAtomType::N_PL3, BondType::Single)
+        | (MMFFAtomType::N_PL3, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::N_PL3, BondType::Single) => Some(BondParams {
+            k_bond: 6.576, r0: 1.018, cb: 1.0,
         }),
         (MMFFAtomType::N_3, MMFFAtomType::N_AR, BondType::Single)
         | (MMFFAtomType::N_AR, MMFFAtomType::N_3, BondType::Single) => Some(BondParams {
