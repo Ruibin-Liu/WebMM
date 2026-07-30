@@ -136,8 +136,8 @@ fn lookup_bond_params_exact(
         cb: 1.0,
         }),
         (MMFFAtomType::C_AR, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
-            k_bond: 5.0,
-            r0: 1.484,
+            k_bond: 5.178,
+            r0: 1.436,
         cb: 1.0,
         }),
 
@@ -1358,6 +1358,25 @@ fn lookup_bond_params_exact(
         }),
 
         // === val_set_new5 bond params ===
+        // C_AR-O_2P (furanium ring O+=)
+        // N_AM-H and N_AR-H bonds (indole/tryptophan NH)
+        (MMFFAtomType::N_AM, MMFFAtomType::H_NAM, BondType::Single)
+        | (MMFFAtomType::H_NAM, MMFFAtomType::N_AM, BondType::Single)
+        | (MMFFAtomType::N_AM, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::N_AM, BondType::Single) => Some(BondParams {
+            k_bond: 6.663, r0: 1.015, cb: 1.0,
+        }),
+        (MMFFAtomType::N_AR, MMFFAtomType::H_N3, BondType::Single)
+        | (MMFFAtomType::H_N3, MMFFAtomType::N_AR, BondType::Single)
+        | (MMFFAtomType::N_AR, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::N_AR, BondType::Single) => Some(BondParams {
+            k_bond: 7.112, r0: 1.012, cb: 1.0,
+        }),
+        // N_AM-O_3 bond (hydroxamic acid N-O)
+        (MMFFAtomType::N_AM, MMFFAtomType::O_3, BondType::Single)
+        | (MMFFAtomType::O_3, MMFFAtomType::N_AM, BondType::Single) => Some(BondParams {
+            k_bond: 5.982, r0: 1.410, cb: 1.0,
+        }),
         // C_AR-O_2P (furanium ring O+=)
         (MMFFAtomType::C_AR, MMFFAtomType::O_2P, BondType::Aromatic)
         | (MMFFAtomType::O_2P, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
