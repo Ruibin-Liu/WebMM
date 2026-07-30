@@ -1272,9 +1272,19 @@ impl MMFFForceField {
                 if n_is_guanidinium {
                     return MMFFAtomType::HNRP;
                 }
-                // H on positively charged N (iminium, ammonium) → HNRP (36)
+                // H on positively charged N with C=N double bond (iminium) → HNRP (36)
                 if neighbor.charge > 0.5 {
-                    return MMFFAtomType::HNRP;
+                    let n_has_double_to_c = mol.bonds.iter().any(|b| {
+                        b.bond_type == BondType::Double
+                            && (b.atom1 == neighbor_idx || b.atom2 == neighbor_idx)
+                            && {
+                                let other = if b.atom1 == neighbor_idx { b.atom2 } else { b.atom1 };
+                                mol.atoms[other].atomic_number == 6
+                            }
+                    });
+                    if n_has_double_to_c {
+                        return MMFFAtomType::HNRP;
+                    }
                 }
                 // Imine H: H on sp2 N with C=N double bond, not aromatic → MMFF 27 (H_NIM)
                 let n_has_double_to_c = mol.bonds.iter().any(|b| {
