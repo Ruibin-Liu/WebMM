@@ -235,7 +235,6 @@ pub struct MMFFForceField {
 impl MMFFForceField {
     pub fn new(mol: &Molecule, variant: MMFFVariant) -> Self {
         let mut atom_types = Self::assign_atom_types(mol);
-        let charges = Self::calculate_charges(mol, &atom_types);
 
         let angles = crate::molecule::graph::find_angles(mol);
         let torsions = crate::molecule::graph::find_torsions(mol);
@@ -298,6 +297,9 @@ impl MMFFForceField {
                 }
             }
         }
+
+        // Compute charges AFTER H post-processing (H subtypes affect BCI lookup)
+        let charges = Self::calculate_charges(mol, &atom_types);
 
         let type_ids: Vec<u8> = atom_types.iter().map(|&at| mmff_type_id(at)).collect();
 
