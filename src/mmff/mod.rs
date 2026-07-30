@@ -664,6 +664,10 @@ impl MMFFForceField {
                     .collect();
 
                 let double_o_count = double_bond_partners.iter().filter(|&&an| an == 8).count();
+                let double_on_count = double_bond_partners
+                    .iter()
+                    .filter(|&&an| an == 8 || an == 7)
+                    .count();
                 let has_double_to_nos = double_bond_partners
                     .iter()
                     .any(|&an| an == 7 || an == 8 || an == 16);
@@ -894,6 +898,12 @@ impl MMFFForceField {
                     (7, _, false, _) if double_bond_partners.iter().any(|&an| an == 16) => {
                         MMFFAtomType::N_SO
                     }
+                    // Non-aromatic N-oxide: sp2 N+ with double bond to O → N_5OX (67)
+                    (7, Hybridization::Sp2, false, _) if charge > 0.5
+                        && double_bond_partners.iter().any(|&an| an == 8) =>
+                    {
+                        MMFFAtomType::N_5OX
+                    }
                     // Amide / carbamate / urea N: non-aromatic N directly bonded to a
                     // carbonyl C is MMFF 10 (N_AM). Excludes N=C imines (n_owns_cn)
                     // like methyl isocyanate CH3-N=C=O where N has its own double bond.
@@ -997,7 +1007,8 @@ impl MMFFForceField {
                                             b2.bond_type == BondType::Double
                                                 && (b2.atom1 == other && b2.atom2 == n
                                                     || b2.atom1 == n && b2.atom2 == other)
-                                                && mol.atoms[n].atomic_number == 8
+                                                && (mol.atoms[n].atomic_number == 8
+                                                    || mol.atoms[n].atomic_number == 7)
                                         })).count();
                                     // Sulfone (2+ double O) or sulfite (O single neighbor) → 32
                                     // Sulfoxide (degree 3, 1 double O, no O single) → 7
@@ -1095,8 +1106,8 @@ impl MMFFForceField {
                     {
                         MMFFAtomType::S_CSO
                     }
-                    // Oxidized sulfur: SO2 -> MMFF 18, S=O -> MMFF 17 (RDKit-verified)
-                    (16, _, _, _) if double_o_count >= 2 => MMFFAtomType::S_O2,
+                    // Oxidized sulfur: SO2 or S(=O)(=N) -> MMFF 18, S=O -> MMFF 17 (RDKit-verified)
+                    (16, _, _, _) if double_on_count >= 2 => MMFFAtomType::S_O2,
                     // Sulfite S (type 73): S with 1 double O + an O single-bond neighbor
                     (16, _, _, 3) if double_o_count == 1
                         && mol.adjacency[idx].iter().any(|&n| {
