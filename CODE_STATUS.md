@@ -4,11 +4,31 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**Scoped: Phase 2+3+4 coordinated bundle** — the RDKit-faithful ETKDG migration to lift the embedding harness from r=0.8603 toward the ~0.997 ceiling. Full breakdown in `PLAN.md` (architecture: runtime flag + parallel `_r` functions so the shipped r=0.8603 is never at risk; lead with an empirical A/B search now that the harness is deterministic). **Prerequisite: commit the (currently-uncommitted) determinism fix first** so the trustworthy harness isn't lost mid-migration.
+**MMFF94/MMFF94s energy validation COMPLETE: 191/191 molecules match RDKit to <0.01 kcal/mol.**
 
-Background: MMFF atom typing matches RDKit 100% (0.00% mismatch) on a **130-molecule** validation set; MMFF energy accuracy r=1.0000 / RMSD=0.170 kcal/mol (**0 outliers >1.0**). The remaining gap is entirely in the **ETKDG embedding** (not MMFF).
+The MMFF force field implementation now matches RDKit 2025.09.3 exactly across:
+- Original 130 molecules: 130/130 ✓
+- val_set_new (41 exotic types): 41/41 ✓
+- val_set_new2 (8 types): 8/8 ✓
+- val_set_new3 (6 types): 6/6 ✓
+- val_set_new4 (6 charged/aromatic types): 6/6 ✓
+
+Atom typing: 0.00% mismatch. Energy: all within 0.01 kcal/mol. 191 tests pass, 0 warnings.
+
+The remaining project gap is in **ETKDG embedding** (r=0.8603), which is separate from the MMFF force field.
 
 ## Recently Completed
+- **val_set_new4: ALL 6/6 molecules match RDKit <0.01 kcal/mol — total validation 191/191.** This session fixed the final 6 exotic atom types (48, 54, 56, 67, 80, 81, 82):
+  - **Aromaticity perception** (`src/molecule/graph.rs`): Charged N in 5-ring now contributes 1 pi electron (pyridinium-like) instead of 2 (pyrrole-like), enabling aromaticity detection for imidazolium and N-oxide 5-rings.
+  - **5-ring N classification** (`src/mmff/mod.rs`): If any ring N is charged, tricoordinate N → N_5POS (81). C adjacent to N_5POS → C5A_M (78). C between two N_5POS → C_IM (80).
+  - **S detection**: S(=O)(=N) typed as S_O2 (18) — counts S=N double bonds alongside S=O.
+  - **O detection**: O on S with 2+ double bonds (O or N) → O_CO2 (32).
+  - **N detection**: Non-aromatic sp2 N+ with double bond to O → N_5OX (67).
+  - **Charge distribution** (`src/mmff/charges.rs`): Type 56 (N_GD) shares +1 from CGD+ C; type 81 (N_5POS) uses SDF formal charge.
+  - **H subtype**: H on charged N with C=N double bond → HNRP (36), not all charged N.
+  - **~30 new bond params**, ~30 new angle params, 1 new STBN entry, 4 angle entries at correct angle_type=1,2 (N_5OX sbmb=true).
+  - All params extracted via RDKit `GetMMFFBondStretchParams`/`GetMMFFAngleBendParams`/`GetMMFFStretchBendParams` APIs for exact full-precision values.
+
 - **M2 bundle checkpoint — faithful bounds + 4D-L-BFGS + D4 long-range + workarounds-off, behind `rdkit_faithful` (default safe).** `src/etkdg/mod.rs`:
   - **Architecture:** master `EXP_RDKIT_ALL` AtomicBool + shared `embed_impl`; `generate_initial_coords_default` sets it off (byte-identical), `generate_initial_coords_rdkit` sets it on. No function duplication.
   - **Faithful pieces gated on the flag:** B1 (smoothing: single Floyd–Warshall sweep + `max(L_ik−U_kj,…)`), D2 (`check_and_set` widen/union), D3 (sp² distribute / flat-120), D14 (`in_ring` snapshot once/atom — fixes the latent per-pair mis-classification), D7 (4D L-BFGS via shared `lbfgs_minimize`), D4 (3D long-range: all non-(1-2/1-3/1-4) pairs, no filter, no double-count, in energy **and** gradient), and the ad-hoc workarounds (torsion-snap/bond-snap/H-trilateration/H-relax) are **skipped**.
