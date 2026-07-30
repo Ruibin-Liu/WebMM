@@ -51,6 +51,17 @@ const FOURTH_MIN_WEIGHT_CHIRAL: f64 = 0.2;
 const FOURTH_MIN_WEIGHT_FOURTH: f64 = 1.0;
 const PLANARITY_ENERGY_TOL: f64 = 0.7;
 
+// M2 bundle: master RDKit-faithful toggle. Read throughout the shared embed path
+// (bounds, minimizer, 3D force field, workarounds). `generate_initial_coords_default`
+// sets it false (shipped path byte-identical); `generate_initial_coords_rdkit` sets
+// it true. Faithfulness is the goal — r-regression during the migration is
+// expected and accepted, not a gate.
+static EXP_RDKIT_ALL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+fn rdkit_all() -> bool {
+    EXP_RDKIT_ALL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 // ============================================================================
 // Seeded Random Number Generator
 // ============================================================================
@@ -184,6 +195,14 @@ impl DistanceBounds {
 
     fn check_and_set(&mut self, i: usize, j: usize, lb: f64, ub: f64) {
         assert!(ub > lb, "upper bound not greater than lower bound");
+        if rdkit_all() {
+            // RDKit _checkAndSetBounds: conservative/widening (union of ranges).
+            // set_lower/set_upper already widen monotonically (take smaller lower /
+            // larger upper, with the DIST12_DELTA / MAX_UPPER guards RDKit applies).
+            self.set_lower(i, j, lb);
+            self.set_upper(i, j, ub);
+            return;
+        }
         let clb = self.lower[i.min(j)][i.max(j)];
         let cub = self.upper[i.min(j)][i.max(j)];
         let nlb = clb.max(lb);
@@ -200,8 +219,41 @@ impl DistanceBounds {
     }
 
     pub fn smooth_triangle_inequality(&mut self, epsilon: f64) {
-        let mut changed = true;
         let n = self.n_atoms;
+        if rdkit_all() {
+            // RDKit triangleSmoothBounds: a single Floyd-Warshall sweep over k
+            // (upper = shortest path, converges in one sweep) with the correct
+            // lower bound d_ij >= max(L_ik - U_kj, L_kj - U_ik, 0).
+            for k in 0..n {
+                for i in 0..n {
+                    if i == k {
+                        continue;
+                    }
+                    for j in (i + 1)..n {
+                        if j == k {
+                            continue;
+                        }
+                        let new_lower = (self.lower[i][k] - self.upper[k][j])
+                            .max(self.lower[k][j] - self.upper[i][k]);
+                        if new_lower > self.lower[i][j] + epsilon {
+                            self.lower[i][j] = new_lower;
+                            self.lower[j][i] = new_lower;
+                        }
+                        let new_upper = self.upper[i][k] + self.upper[k][j];
+                        if new_upper < self.upper[i][j] - epsilon {
+                            self.upper[i][j] = new_upper;
+                            self.upper[j][i] = new_upper;
+                        }
+                        if self.lower[i][j] > self.upper[i][j] {
+                            self.lower[i][j] = self.upper[i][j];
+                            self.lower[j][i] = self.upper[i][j];
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        let mut changed = true;
         while changed {
             changed = false;
             for k in 0..n {
@@ -4477,13 +4529,17 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
     }
 }
 
-fn generate_initial_coords_rdkit(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
-    // M0: passthrough — identical to default. M1+ replaces this body with the
-    // RDKit-faithful bounds + 4D L-BFGS + 3D force field.
-    generate_initial_coords_default(mol, config)
+fn generate_initial_coords_default(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
+    EXP_RDKIT_ALL.store(false, std::sync::atomic::Ordering::Relaxed);
+    embed_impl(mol, config)
 }
 
-fn generate_initial_coords_default(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
+fn generate_initial_coords_rdkit(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
+    EXP_RDKIT_ALL.store(true, std::sync::atomic::Ordering::Relaxed);
+    embed_impl(mol, config)
+}
+
+fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
     if mol.atoms.is_empty() {
         return Vec::new();
     }

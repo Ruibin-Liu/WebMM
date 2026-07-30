@@ -51,6 +51,7 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::S2CM => MMFFAtomType::S_3,
         MMFFAtomType::S_O3 => MMFFAtomType::S_3,
         MMFFAtomType::S_CSO => MMFFAtomType::S_2,
+        MMFFAtomType::P_ARM => MMFFAtomType::P_3,
         MMFFAtomType::HOS => MMFFAtomType::H,
         MMFFAtomType::H_OXP => MMFFAtomType::H,
         // 5-membered heteroaromatic ring atoms use same params as generic aromatic
@@ -58,11 +59,15 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::C5A_M => MMFFAtomType::C_AR,
         MMFFAtomType::NPYL | MMFFAtomType::N5A | MMFFAtomType::N5B => MMFFAtomType::N_AR,
         MMFFAtomType::NPYL_M => MMFFAtomType::N_AR,
+        MMFFAtomType::N_PYR => MMFFAtomType::N_AR,
+        MMFFAtomType::N_T3 => MMFFAtomType::N_4,
+        MMFFAtomType::N_POX2 => MMFFAtomType::N_POX,
         MMFFAtomType::N_RAD => MMFFAtomType::N_3,
         MMFFAtomType::OFUR => MMFFAtomType::O_3,
         MMFFAtomType::O_R => MMFFAtomType::O_3,
         MMFFAtomType::O_3_Z => MMFFAtomType::O_3,
         MMFFAtomType::O_3P => MMFFAtomType::O_3,
+        MMFFAtomType::O_2P => MMFFAtomType::O_2,
         MMFFAtomType::N_NITROSO => MMFFAtomType::N_2,
         MMFFAtomType::CL4 => MMFFAtomType::Cl,
         MMFFAtomType::N_2Z | MMFFAtomType::N_1M => MMFFAtomType::N_1,
@@ -137,6 +142,9 @@ pub enum MMFFAtomType {
     N_POX, // Pyridine N-oxide nitrogen (MMFF 69)
     N_RAD, // Nitrene / radical N (MMFF 62)
     NPYL_M, // Pyrrolide anion N (MMFF 76)
+    N_PYR, // N-methylpyridinium N (MMFF 58)
+    N_T3, // Trimethylamine N-oxide N (MMFF 68)
+    N_POX2, // Pyridine N-oxide N (MMFF 69)
 
     // Oxygens
     O_3,
@@ -147,6 +155,7 @@ pub enum MMFFAtomType {
     O_CO2,
     O_3_Z,
     O_3P, // Oxonium oxygen O+ (MMFF 49)
+    O_2P, // Aromatic oxonium O+ in ring (MMFF 51)
 
     // Halogens
     F,
@@ -166,6 +175,7 @@ pub enum MMFFAtomType {
     S_O2, // Sulfone/sulfonamide sulfur, two double bonds to O (MMFF 18)
     S_O3, // Sulfite sulfur, 3-coord with 1 S=O (MMFF 73)
     S_CSO, // Sulfene sulfur, C=S=O (MMFF 74)
+    P_ARM, // P in aromatic 3-ring (MMFF 75)
     P_3,
     P_4,
     Si, // Silicon (MMFF 19)
@@ -706,6 +716,7 @@ impl MMFFForceField {
                     && atom.charge < -0.5
                     && mol.adjacency[idx].iter().any(|&n| {
                         let z = mol.atoms[n].atomic_number;
+                        if z == 7 { return true; } // N-oxide O⁻
                         if z != 16 && z != 17 { return false; }
                         // The center atom has multiple O neighbors
                         mol.adjacency[n].iter()
@@ -761,7 +772,17 @@ impl MMFFForceField {
                         MMFFAtomType::CR4R
                     }
                     (6, Hybridization::Sp2, false, _) if in_4ring.contains(&idx) => {
-                        MMFFAtomType::CE4R
+                        // C with double bond to heteroatom in 4-ring → C_2, not CE4R
+                        let has_double_to_het = mol.bonds.iter().any(|b| {
+                            b.bond_type == BondType::Double
+                                && (b.atom1 == idx || b.atom2 == idx)
+                                && {
+                                    let other = if b.atom1 == idx { b.atom2 } else { b.atom1 };
+                                    let z = mol.atoms[other].atomic_number;
+                                    z != 6 && z != 1
+                                }
+                        });
+                        if has_double_to_het { MMFFAtomType::C_2 } else { MMFFAtomType::CE4R }
                     }
                     (6, Hybridization::Sp3, false, 1..=4) => MMFFAtomType::C_3,
                     // sp2 C: carbonyl/imine/thiocarbonyl C (double bond to N/O/S) is MMFF 3;
@@ -785,6 +806,8 @@ impl MMFFForceField {
                     // Sulfonamide N: bonded to SO2 sulfur (MMFF 43)
                     (7, _, false, _) if bonded_to_so2_s => MMFFAtomType::N_SO2,
 
+                    // Trimethylamine N-oxide N+ (quaternary N with O neighbor) → type 68
+                    (7, Hybridization::Sp3, _, 4) if charge > 0.5 && !oxygen_neighbors.is_empty() => MMFFAtomType::N_T3,
                     // Nitrogen with formal charge +1 (quaternary ammonium). Exclude
                     // acyl/amidine/enamine Ns (e.g. charged guanidinium N), which
                     // RDKit types N_PL3/N_AM, not N_4.
@@ -799,6 +822,10 @@ impl MMFFForceField {
 
                     // Nitrogen: amide N (aromatic ring + bonded to C=O)
                     (7, _, true, _) if is_noxide_n => MMFFAtomType::N_POX,
+                    // Pyridine N-oxide N (aromatic N with O- neighbor, charge +1) → N_POX2 (69)
+                    (7, _, true, _) if charge > 0.5 && oxygen_neighbors.iter().any(|&o| mol.atoms[o].charge < -0.5) => MMFFAtomType::N_POX2,
+                    // N-methylpyridinium N (aromatic N+, degree 3) → type 58
+                    (7, _, true, 3) if charge > 0.5 => MMFFAtomType::N_PYR,
                     // Guanidinium/amidinium N+ (bonded to C that has C=N+ and >=2 N) → NCN+ (55)
                     (7, _, false, _) if mol.adjacency[idx].iter().any(|&c| {
                         mol.atoms[c].atomic_number == 6
@@ -932,6 +959,8 @@ impl MMFFForceField {
                         MMFFAtomType::O_CO2
                     },
 
+                    // Aromatic oxonium O+ (type 51): O+ with degree 2 (furanium)
+                    (8, _, _, 2) if charge > 0.5 => MMFFAtomType::O_2P,
                     // O_CO2: O double-bonded to C that is also double-bonded to another O (CO2),
                     // OR C=O on a carboxylate C (where the other O has formal charge -1)
                     (8, _, _, _) if has_double_bond_to_c => {
@@ -1067,6 +1096,8 @@ impl MMFFForceField {
                     (16, Hybridization::Sp2, _, _) => MMFFAtomType::S_2,
 
                     // Phosphorus types
+                    // P in small ring with double bond → type 75
+                    (15, _, _, 2) if double_bond_partners.len() >= 1 => MMFFAtomType::P_ARM,
                     (15, Hybridization::Sp3, _, 3..=4) => MMFFAtomType::P_3,
                     (15, Hybridization::Sp2, _, _) => MMFFAtomType::P_4,
                     (15, Hybridization::Sp3D, _, 5) => MMFFAtomType::P_3D,
