@@ -600,6 +600,73 @@ fn lookup_bond_params_exact(
             r0: 1.456,
         cb: 1.0,
         }),
+        // CE4R (sp2 C in 4-ring, type 30) bonds
+        (MMFFAtomType::CE4R, MMFFAtomType::CE4R, BondType::Double)
+        | (MMFFAtomType::CE4R, MMFFAtomType::CE4R, BondType::Aromatic) => Some(BondParams {
+            k_bond: 9.579,
+            r0: 1.343,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::CE4R, MMFFAtomType::CR4R, BondType::Single)
+        | (MMFFAtomType::CR4R, MMFFAtomType::CE4R, BondType::Single) => Some(BondParams {
+            k_bond: 3.977,
+            r0: 1.507,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::CE4R, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::CE4R, BondType::Single) => Some(BondParams {
+            k_bond: 5.176,
+            r0: 1.086,
+        cb: 1.0,
+        }),
+        // O_3P (oxonium O+, type 49) bonds
+        (MMFFAtomType::O_3P, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::O_3P, BondType::Single) => Some(BondParams {
+            k_bond: 5.129115902527102,
+            r0: 1.405,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::O_3P, MMFFAtomType::H_OXP, BondType::Single)
+        | (MMFFAtomType::H_OXP, MMFFAtomType::O_3P, BondType::Single) => Some(BondParams {
+            k_bond: 6.812,
+            r0: 0.991,
+        cb: 1.0,
+        }),
+        // S_O3 (sulfite S, type 73) bonds
+        (MMFFAtomType::S_O3, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::S_O3, BondType::Single) => Some(BondParams {
+            k_bond: 2.608,
+            r0: 1.839,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::S_O3, MMFFAtomType::O_CO2, BondType::Single)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::S_O3, BondType::Single)
+        | (MMFFAtomType::S_O3, MMFFAtomType::O_CO2, BondType::Double)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::S_O3, BondType::Double) => Some(BondParams {
+            k_bond: 8.427,
+            r0: 1.510,
+        cb: 1.0,
+        }),
+        // S_CSO (sulfene S, type 74) bonds
+        (MMFFAtomType::S_CSO, MMFFAtomType::C_2, BondType::Double)
+        | (MMFFAtomType::C_2, MMFFAtomType::S_CSO, BondType::Double) => Some(BondParams {
+            k_bond: 5.204,
+            r0: 1.639,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::S_CSO, MMFFAtomType::O_2, BondType::Double)
+        | (MMFFAtomType::O_2, MMFFAtomType::S_CSO, BondType::Double) => Some(BondParams {
+            k_bond: 9.129,
+            r0: 1.490,
+        cb: 1.0,
+        }),
+        // CL4 (perchlorate Cl, type 77) bonds
+        (MMFFAtomType::CL4, MMFFAtomType::O_CO2, BondType::Single)
+        | (MMFFAtomType::O_CO2, MMFFAtomType::CL4, BondType::Single) => Some(BondParams {
+            k_bond: 10.648,
+            r0: 1.450,
+        cb: 1.0,
+        }),
         (MMFFAtomType::CR3R, MMFFAtomType::N_3, BondType::Single)
         | (MMFFAtomType::N_3, MMFFAtomType::CR3R, BondType::Single) => Some(BondParams {
             k_bond: 4.223,

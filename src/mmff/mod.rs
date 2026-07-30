@@ -49,15 +49,22 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::CR3R => MMFFAtomType::C_3,
         MMFFAtomType::HNRP => MMFFAtomType::H,
         MMFFAtomType::S2CM => MMFFAtomType::S_3,
+        MMFFAtomType::S_O3 => MMFFAtomType::S_3,
+        MMFFAtomType::S_CSO => MMFFAtomType::S_2,
         MMFFAtomType::HOS => MMFFAtomType::H,
+        MMFFAtomType::H_OXP => MMFFAtomType::H,
         // 5-membered heteroaromatic ring atoms use same params as generic aromatic
         MMFFAtomType::C5A | MMFFAtomType::C5B => MMFFAtomType::C_AR,
+        MMFFAtomType::C5A_M => MMFFAtomType::C_AR,
         MMFFAtomType::NPYL | MMFFAtomType::N5A | MMFFAtomType::N5B => MMFFAtomType::N_AR,
+        MMFFAtomType::NPYL_M => MMFFAtomType::N_AR,
+        MMFFAtomType::N_RAD => MMFFAtomType::N_3,
         MMFFAtomType::OFUR => MMFFAtomType::O_3,
         MMFFAtomType::O_R => MMFFAtomType::O_3,
         MMFFAtomType::O_3_Z => MMFFAtomType::O_3,
-        // Water oxygen uses same params as generic sp3 oxygen
+        MMFFAtomType::O_3P => MMFFAtomType::O_3,
         MMFFAtomType::N_NITROSO => MMFFAtomType::N_2,
+        MMFFAtomType::CL4 => MMFFAtomType::Cl,
         MMFFAtomType::N_2Z | MMFFAtomType::N_1M => MMFFAtomType::N_1,
         MMFFAtomType::CID => MMFFAtomType::C_1,
         MMFFAtomType::NID => MMFFAtomType::N_1,
@@ -91,6 +98,7 @@ pub enum MMFFAtomType {
     HNRP,   // H on a positively-charged (ammonium) N (MMFF 36)
     S2CM,   // S in C(=S)=S / thiocarbonyl (MMFF 72)
     HOS,    // H on O bonded to S (sulfonic acid) (MMFF 33)
+    H_OXP,  // H on oxonium O+ (MMFF 50)
 
     // Carbons
     C_3,
@@ -101,6 +109,7 @@ pub enum MMFFAtomType {
     C_AR,
     C5A, // Alpha C in 5-membered heteroaromatic ring (MMFF 63)
     C5B, // Beta C in 5-membered heteroaromatic ring (MMFF 64)
+    C5A_M, // Alpha C in pyrrolide anion ring (MMFF 78)
     C_CAT,
     C_AN,
     CID,   // Isonitrile carbon C- (MMFF 60)
@@ -126,6 +135,8 @@ pub enum MMFFAtomType {
     N5A, // Alpha N in 5-membered heteroaromatic ring (MMFF 65)
     N5B, // Beta N in 5-membered heteroaromatic ring (MMFF 66)
     N_POX, // Pyridine N-oxide nitrogen (MMFF 69)
+    N_RAD, // Nitrene / radical N (MMFF 62)
+    NPYL_M, // Pyrrolide anion N (MMFF 76)
 
     // Oxygens
     O_3,
@@ -135,10 +146,12 @@ pub enum MMFFAtomType {
     OFUR, // Furan oxygen (MMFF 59)
     O_CO2,
     O_3_Z,
+    O_3P, // Oxonium oxygen O+ (MMFF 49)
 
     // Halogens
     F,
     Cl,
+    CL4, // Perchlorate / hypervalent Cl (MMFF 77)
     Br,
     I,
     F_M,  // Fluoride anion (MMFF 89)
@@ -151,6 +164,8 @@ pub enum MMFFAtomType {
     S_AR,
     S_OX, // Sulfoxide sulfur, one double bond to O (MMFF 17)
     S_O2, // Sulfone/sulfonamide sulfur, two double bonds to O (MMFF 18)
+    S_O3, // Sulfite sulfur, 3-coord with 1 S=O (MMFF 73)
+    S_CSO, // Sulfene sulfur, C=S=O (MMFF 74)
     P_3,
     P_4,
     Si, // Silicon (MMFF 19)
@@ -676,6 +691,17 @@ impl MMFFForceField {
                         mol.atoms[n].atomic_number == 7 && aromatic_atoms.contains(&n)
                     });
 
+                // O⁻ bonded to S/Cl with multiple O neighbors (sulfite/perchlorate) → O_CO2
+                let o_bonded_to_oxidized_center = atom.atomic_number == 8
+                    && atom.charge < -0.5
+                    && mol.adjacency[idx].iter().any(|&n| {
+                        let z = mol.atoms[n].atomic_number;
+                        if z != 16 && z != 17 { return false; }
+                        // The center atom has multiple O neighbors
+                        mol.adjacency[n].iter()
+                            .filter(|&&m| mol.atoms[m].atomic_number == 8).count() >= 2
+                    });
+
                 // Aromatic N bonded to O (for N-oxide N typing)
                 let is_noxide_n = atom.atomic_number == 7
                     && aromatic
@@ -855,20 +881,40 @@ impl MMFFForceField {
 
                     // Carboxylate [O-]: single-bonded O on a carboxylate C → MMFF 32 (O2CM)
                     (8, _, _, _) if o_bonded_to_carboxylate_c => MMFFAtomType::O_CO2,
+                    // O⁻ on sulfite/perchlorate center → O_CO2
+                    (8, _, _, _) if o_bonded_to_oxidized_center => MMFFAtomType::O_CO2,
 
-                    // O double-bonded to phosphorus (P=O, phosphine oxide) → MMFF 32
-                    // (O2CM). RDKit reuses the carbonyl-O type for P=O.
+                    // O double-bonded to P (P=O), Cl (perchlorate), or S (sulfone/sulfite/sulfene) → MMFF 32
+                    // Sulfoxide exception: S with degree 3, 2 C neighbors, 1 double O → O stays O_2
                     (8, _, _, _)
                         if mol.bonds.iter().any(|b| {
-                            b.bond_type == BondType::Double
-                                && (b.atom1 == idx || b.atom2 == idx)
-                                && mol.atoms[if b.atom1 == idx {
-                                    b.atom2
-                                } else {
-                                    b.atom1
-                                }]
-                                .atomic_number
-                                    == 15
+                            if b.bond_type != BondType::Double
+                                || (b.atom1 != idx && b.atom2 != idx)
+                            {
+                                return false;
+                            }
+                            let other = if b.atom1 == idx { b.atom2 } else { b.atom1 };
+                            match mol.atoms[other].atomic_number {
+                                15 | 17 => true, // P=O, Cl=O
+                                16 => { // S=O: type 32 unless sulfoxide/sulfinamide
+                                    // Sulfoxide exception: S degree 3, 1 double O,
+                                    // no other O neighbors (all non-=O neighbors are C/N)
+                                    let s_deg = mol.adjacency[other].len();
+                                    let s_has_o_single = mol.adjacency[other].iter()
+                                        .any(|&n| n != idx && mol.atoms[n].atomic_number == 8);
+                                    let s_double_o_total = mol.adjacency[other].iter()
+                                        .filter(|&&n| mol.bonds.iter().any(|b2| {
+                                            b2.bond_type == BondType::Double
+                                                && (b2.atom1 == other && b2.atom2 == n
+                                                    || b2.atom1 == n && b2.atom2 == other)
+                                                && mol.atoms[n].atomic_number == 8
+                                        })).count();
+                                    // Sulfone (2+ double O) or sulfite (O single neighbor) → 32
+                                    // Sulfoxide (degree 3, 1 double O, no O single) → 7
+                                    s_double_o_total >= 2 || s_has_o_single
+                                }
+                                _ => false,
+                            }
                         }) =>
                     {
                         MMFFAtomType::O_CO2
@@ -943,14 +989,35 @@ impl MMFFForceField {
                     }
 
                     // Oxygen types
+                    // Oxonium O+ (type 49): 3-coordinate sp3 O with positive charge
+                    (8, Hybridization::Sp3, _, 3) if charge > 0.5 => MMFFAtomType::O_3P,
                     (8, Hybridization::Sp3, _, 3..) => MMFFAtomType::O_3,
                     (8, Hybridization::Sp2, _, _) => MMFFAtomType::O_2,
                     (8, Hybridization::Sp3, true, _) => MMFFAtomType::O_3_Z,
 
                     // Sulfur types — aromatic takes priority
                     (16, _, true, 2..=3) => MMFFAtomType::S_AR,
+                    // Sulfene S (type 74): S with C=S=O (1 double to C + 1 double to O)
+                    (16, _, _, 2) if double_o_count == 1
+                        && double_bond_partners.iter().any(|&an| an == 6) =>
+                    {
+                        MMFFAtomType::S_CSO
+                    }
                     // Oxidized sulfur: SO2 -> MMFF 18, S=O -> MMFF 17 (RDKit-verified)
                     (16, _, _, _) if double_o_count >= 2 => MMFFAtomType::S_O2,
+                    // Sulfite S (type 73): S with 1 double O + an O single-bond neighbor
+                    (16, _, _, 3) if double_o_count == 1
+                        && mol.adjacency[idx].iter().any(|&n| {
+                            mol.atoms[n].atomic_number == 8
+                                && mol.bonds.iter().any(|b| {
+                                    (b.atom1 == idx && b.atom2 == n
+                                        || b.atom1 == n && b.atom2 == idx)
+                                        && b.bond_type == BondType::Single
+                                })
+                        }) =>
+                    {
+                        MMFFAtomType::S_O3
+                    }
                     (16, _, _, _) if double_o_count == 1 => MMFFAtomType::S_OX,
                     // CS2 / thiocarbonyl: S double-bonded to a C that is itself
                     // double-bonded to another S -> MMFF 72 (S2CM).
@@ -1014,6 +1081,8 @@ impl MMFFForceField {
 
                     // Halogens
                     (9, _, _, _) => MMFFAtomType::F,
+                    // Perchlorate Cl (type 77): 4+ coordinate Cl
+                    (17, _, _, 4..) => MMFFAtomType::CL4,
                     (17, _, _, _) => MMFFAtomType::Cl,
                     (35, _, _, _) => MMFFAtomType::Br,
                     (53, _, _, _) => MMFFAtomType::I,
@@ -1043,6 +1112,11 @@ impl MMFFForceField {
         let neighbor = &mol.atoms[neighbor_idx];
         match neighbor.atomic_number {
             8 => {
+                // H on positively-charged oxonium O+ → MMFF 50 (H_OXP)
+                if neighbor.charge > 0.5 {
+                    return MMFFAtomType::H_OXP;
+                }
+
                 let o_neighbors: Vec<usize> = mol.adjacency[neighbor_idx]
                     .iter()
                     .filter(|&&n| n != h_idx)

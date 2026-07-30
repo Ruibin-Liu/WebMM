@@ -93,6 +93,8 @@ These are the real reasons ETKDG embedding quality trails RDKit.
 | D10 | torsion preferences | ~12 hand-coded cases | full SMARTS tables (~hundreds) |
 | D11 | post-processing | torsion-snap, bond-snap, H-trilateration, H-relax, aniline-NH₂ | none (not needed) |
 | D12 | misc | "conjugated"≈non-Single; no in-ring 1-4 stereo; approximate macrocycle amide +0.1 | computed `getIsConjugated()`; stereo Z/E; dedicated macrocycle SMARTS |
+| D13 | aromatic-atom iteration order | ~~`HashSet` iterated raw → run-to-run non-determinism~~ **FIXED** (sort) | n/a (RDKit is deterministic) |
+| D14 | sp² ring-branch test | `visited_centers[aid2] >= 1` checked **per-pair** but incremented in-loop → non-ring sp² atoms' 2nd+ pair misclassified as "ring" (masked by 123/114 heuristic; RDKit checks once/atom) | check ring-membership once per atom |
 
 **What already matches RDKit well:** all 17 distance constants; weight staging
 (first min `1.0/0.1`, fourth-dim `0.2/1.0`); iteration counts `400/200/300`;
@@ -170,11 +172,15 @@ B1 smoothing formula + single sweep; D2 `check_and_set` widen; D3 sp² 120°/
 distribute; D12 conjugation/stereo/in-ring details. Re-tune nothing else yet —
 expect a dip, recovered in Phases 3–4.
 
-**Phase 3 — Faithful minimizers.** D7: generalize the existing L-BFGS to the 4D
+**Phase 3 — Faithful minimizers** *(attempted in isolation → REVERTED; needs the Phase 2+3+4 bundle).* D7: generalize the existing L-BFGS to the 4D
 kernels, run `while(needMore)` like RDKit. D8: restore `computeInitialCoords`
 failure/retry. D9: restore tetrahedral/chiral retry gates. **Then** delete the D11
 workarounds (torsion-snap, bond-snap, H-trilateration, H-relax, aniline) — they
 exist only to compensate for the weak minimizer and should become redundant.
+Measured (deterministic harness, baseline r=0.8603): every 4D-L-BFGS variant
+regressed — both→0.8548, collapse-only→0.8396, first-only→0.8515 — and broke
+`test_atropisomer_simple`. The 3D stage/downstream are co-adapted to the old
+under-converged 4D output. Confirms Phase 2+3+4 must land together.
 
 **Phase 4 — Faithful 3D force field.** D4: long-range over all non-(1-2/1-3/1-4)
 pairs, no `BASIN_THRESH`/`MAX_UPPER` filter, no 1-2/1-3 double-count. D5: pin 1-2/1-3

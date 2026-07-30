@@ -2414,7 +2414,13 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         }
     }
 
-    for &atom_idx in aromatic_atoms.iter() {
+    // Iterate aromatic atoms in a DETERMINISTIC (sorted) order. aromatic_atoms is
+    // a HashSet (Rust RandomState -> randomized per process); iterating it raw
+    // made the planarity-constraint Vec order — and thus the embedding —
+    // non-deterministic run-to-run (every aromatic molecule varied).
+    let mut arom_atoms: Vec<usize> = aromatic_atoms.iter().copied().collect();
+    arom_atoms.sort_unstable();
+    for &atom_idx in &arom_atoms {
         let neighbors = get_neighbors(atom_idx, mol);
         if neighbors.len() >= 3 {
             let k_improper = improper_k_for_atom(atom_idx, mol);
@@ -2706,7 +2712,10 @@ fn bond_lengths_reasonable(coords: &[[f64; 3]], mol: &Molecule) -> bool {
 fn flatten_aromatic_rings(coords: &mut [[f64; 3]], mol: &Molecule, pc: &PlanarityConstraints) {
     let mut visited = HashSet::new();
     let mut components: Vec<Vec<usize>> = Vec::new();
-    for &start in &pc.aromatic_atoms {
+    // Deterministic iteration order (see build_planarity_constraints).
+    let mut arom_starts: Vec<usize> = pc.aromatic_atoms.iter().copied().collect();
+    arom_starts.sort_unstable();
+    for &start in &arom_starts {
         if visited.contains(&start) {
             continue;
         }
