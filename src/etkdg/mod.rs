@@ -924,6 +924,10 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
         if n13 == visited_centers[aid2] {
             continue;
         }
+        // D14: snapshot ring-membership ONCE (reflects the ring pass above), before
+        // the pair loop increments visited_centers. The live per-pair check below
+        // (default path) mis-classifies a non-ring atom's 2nd+ pair as "ring".
+        let in_ring_atom = visited_centers[aid2] >= 1;
         let hyb = crate::molecule::graph::determine_hybridization(aid2, mol);
         let neighbors: Vec<usize> = mol.adjacency[aid2].to_vec();
         for i1 in 0..neighbors.len() {
@@ -937,7 +941,41 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                     if accum.bond_angles[bid1][bid2] >= 0.0 {
                         continue;
                     }
-                    let angle = {
+                    let angle = if rdkit_all() {
+                        // RDKit set13Bounds (D3 + D14): ring sp2 distributes the
+                        // remaining angle (2π - angleTaken)/(n13 - visited); non-ring
+                        // sp2 is flat 2π/3. Uses the snapshotted in_ring_atom.
+                        if in_ring_atom {
+                            if matches!(hyb, Hybridization::Sp2) {
+                                (2.0 * std::f64::consts::PI - angle_taken[aid2])
+                                    / (n13 - visited_centers[aid2]) as f64
+                            } else if matches!(hyb, Hybridization::Sp3) {
+                                let mut a = 109.5_f64.to_radians();
+                                for ring in &rings {
+                                    if ring.contains(&aid2) && ring.len() == 3 {
+                                        a = 116.0_f64.to_radians();
+                                    } else if ring.contains(&aid2) && ring.len() == 4 {
+                                        a = 112.0_f64.to_radians();
+                                    }
+                                }
+                                a
+                            } else if matches!(hyb, Hybridization::Sp3D) {
+                                105.0_f64.to_radians()
+                            } else if matches!(hyb, Hybridization::Sp3D2) {
+                                90.0_f64.to_radians()
+                            } else {
+                                120.0_f64.to_radians()
+                            }
+                        } else {
+                            match hyb {
+                                Hybridization::Sp1 => std::f64::consts::PI,
+                                Hybridization::Sp2 => 2.0 * std::f64::consts::PI / 3.0,
+                                Hybridization::Sp3 => 109.5_f64.to_radians(),
+                                Hybridization::Sp3D => 105.0_f64.to_radians(),
+                                Hybridization::Sp3D2 => 90.0_f64.to_radians(),
+                            }
+                        }
+                    } else {
                         // Helper to detect double bonds at central atom
                         let is_double = |a: usize| -> bool {
                             mol.bonds.iter().any(|b| {
@@ -1768,12 +1806,244 @@ fn jacobi_eigen(matrix: &[Vec<f64>], max_sweeps: usize) -> (Vec<f64>, Vec<Vec<f6
     (d, evecs)
 }
 
+/// Generic L-BFGS (two-loop recursion + backtracking Armijo line search) over a
+/// flattened coordinate vector. `gradient_at` must zero fixed-atom entries.
+fn lbfgs_minimize<E, G>(
+    x: &mut [f64],
+    n_atoms: usize,
+    cpa: usize,
+    energy_at: &E,
+    gradient_at: &G,
+    max_iter: usize,
+    force_tol: f64,
+) -> (f64, bool)
+where
+    E: Fn(&[f64]) -> f64,
+    G: Fn(&[f64]) -> Vec<f64>,
+{
+    let dim = cpa * n_atoms;
+    let mut f = energy_at(x);
+    let mut g = gradient_at(x);
+    const M: usize = 8;
+    let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
+    let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
+    let mut rho_hist: Vec<f64> = Vec::with_capacity(M);
+    let mut converged = false;
+    let mut stall = 0usize;
+    for _iter in 0..max_iter {
+        let mut max_g = 0.0f64;
+        for i in 0..n_atoms {
+            let mut gm2 = 0.0f64;
+            for d in 0..cpa {
+                gm2 += g[cpa * i + d] * g[cpa * i + d];
+            }
+            let gm = gm2.sqrt();
+            if gm > max_g {
+                max_g = gm;
+            }
+        }
+        if max_g < force_tol {
+            converged = true;
+            break;
+        }
+        let k = s_hist.len();
+        let mut q = g.clone();
+        let mut alpha = vec![0.0f64; k];
+        for j in (0..k).rev() {
+            let sjq: f64 = s_hist[j].iter().zip(q.iter()).map(|(a, b)| a * b).sum();
+            alpha[j] = rho_hist[j] * sjq;
+            let yj = &y_hist[j];
+            for d in 0..dim {
+                q[d] -= alpha[j] * yj[d];
+            }
+        }
+        let gamma = if k > 0 {
+            let sy: f64 = s_hist[k - 1].iter().zip(y_hist[k - 1].iter()).map(|(a, b)| a * b).sum();
+            let yy: f64 = y_hist[k - 1].iter().map(|v| v * v).sum();
+            if yy > 1e-20 { sy / yy } else { 1.0 }
+        } else {
+            1.0
+        };
+        for d in 0..dim {
+            q[d] *= gamma;
+        }
+        for j in 0..k {
+            let yjq: f64 = y_hist[j].iter().zip(q.iter()).map(|(a, b)| a * b).sum();
+            let beta = rho_hist[j] * yjq;
+            let sj = &s_hist[j];
+            for d in 0..dim {
+                q[d] += sj[d] * (alpha[j] - beta);
+            }
+        }
+        let mut dir: Vec<f64> = q.iter().map(|qi| -qi).collect();
+        let mut dg: f64 = dir.iter().zip(g.iter()).map(|(a, b)| a * b).sum();
+        if dg >= 0.0 {
+            s_hist.clear();
+            y_hist.clear();
+            rho_hist.clear();
+            dir = g.iter().map(|gi| -gi).collect();
+            dg = dir.iter().zip(g.iter()).map(|(a, b)| a * b).sum();
+        }
+        let c_armijo = 1e-4;
+        let mut step = if k == 0 { 1.0 / max_g.max(1e-10) } else { 1.0 };
+        let mut accepted = false;
+        for _ls in 0..25 {
+            let x_new: Vec<f64> = (0..dim).map(|d| x[d] + step * dir[d]).collect();
+            let f_new = energy_at(&x_new);
+            if f_new.is_finite() && f_new <= f + c_armijo * step * dg {
+                let g_new = gradient_at(&x_new);
+                let s: Vec<f64> = (0..dim).map(|d| x_new[d] - x[d]).collect();
+                let y: Vec<f64> = (0..dim).map(|d| g_new[d] - g[d]).collect();
+                let sy: f64 = s.iter().zip(y.iter()).map(|(a, b)| a * b).sum();
+                if sy > 1e-20 {
+                    if s_hist.len() >= M {
+                        s_hist.remove(0);
+                        y_hist.remove(0);
+                        rho_hist.remove(0);
+                    }
+                    s_hist.push(s);
+                    y_hist.push(y);
+                    rho_hist.push(1.0 / sy);
+                }
+                x.copy_from_slice(&x_new);
+                g = g_new;
+                f = f_new;
+                accepted = true;
+                break;
+            }
+            step *= 0.5;
+        }
+        if !accepted {
+            stall += 1;
+            s_hist.clear();
+            y_hist.clear();
+            rho_hist.clear();
+            if stall >= 5 {
+                break;
+            }
+        } else {
+            stall = 0;
+        }
+    }
+    (f, converged)
+}
+
+fn energy_4d(
+    c: &[[f64; 4]],
+    bounds: &DistanceBounds,
+    chiral_centers: &[ChiralCenter],
+    w_chiral: f64,
+    w_fourth: f64,
+) -> f64 {
+    let n = c.len();
+    let mut e = 0.0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let lo = bounds.lower[i][j];
+            let hi = bounds.upper[i][j];
+            if hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH {
+                continue;
+            }
+            let dx = c[i][0] - c[j][0];
+            let dy = c[i][1] - c[j][1];
+            let dz = c[i][2] - c[j][2];
+            let dw = c[i][3] - c[j][3];
+            let d4 = (dx * dx + dy * dy + dz * dz + dw * dw).sqrt().max(1e-10);
+            let lo_viol = (lo - d4).max(0.0);
+            let hi_viol = (d4 - hi).max(0.0);
+            e += lo_viol * lo_viol + hi_viol * hi_viol;
+        }
+    }
+    e += chiral_4d_penalty(c, chiral_centers, w_chiral);
+    for i in 0..n {
+        e += w_fourth * c[i][3] * c[i][3];
+    }
+    e
+}
+
+fn gradient_4d(
+    c: &[[f64; 4]],
+    bounds: &DistanceBounds,
+    chiral_centers: &[ChiralCenter],
+    w_chiral: f64,
+    w_fourth: f64,
+) -> Vec<[f64; 4]> {
+    let n = c.len();
+    let mut grad = vec![[0.0f64; 4]; n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let lo = bounds.lower[i][j];
+            let hi = bounds.upper[i][j];
+            if hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH {
+                continue;
+            }
+            let dx = c[i][0] - c[j][0];
+            let dy = c[i][1] - c[j][1];
+            let dz = c[i][2] - c[j][2];
+            let dw = c[i][3] - c[j][3];
+            let d4 = (dx * dx + dy * dy + dz * dz + dw * dw).sqrt().max(1e-10);
+            let lo_viol = (lo - d4).max(0.0);
+            let hi_viol = (d4 - hi).max(0.0);
+            let f = -2.0 * (lo_viol - hi_viol) / d4;
+            for dim in 0..4 {
+                let diff = c[i][dim] - c[j][dim];
+                grad[i][dim] += f * diff;
+                grad[j][dim] -= f * diff;
+            }
+        }
+    }
+    chiral_4d_gradient(c, chiral_centers, w_chiral, &mut grad);
+    for i in 0..n {
+        grad[i][3] += 2.0 * w_fourth * c[i][3];
+    }
+    grad
+}
+
 fn minimize_4d_first(
     coords_4d: &mut [[f64; 4]],
     bounds: &DistanceBounds,
     chiral_centers: &[ChiralCenter],
     max_iter: usize,
 ) -> f64 {
+    if rdkit_all() {
+        // D7: RDKit uses BFGS for the 4D stages (with while-needMore). Use the
+        // shared L-BFGS here; ignore the return convergence flag for now.
+        const CPA: usize = 4;
+        let n = coords_4d.len();
+        let dim = CPA * n;
+        let mut x = vec![0.0f64; dim];
+        for i in 0..n {
+            for d in 0..CPA {
+                x[CPA * i + d] = coords_4d[i][d];
+            }
+        }
+        let energy_at = |xx: &[f64]| {
+            let c: Vec<[f64; 4]> = (0..n)
+                .map(|i| [xx[CPA * i], xx[CPA * i + 1], xx[CPA * i + 2], xx[CPA * i + 3]])
+                .collect();
+            energy_4d(&c, bounds, chiral_centers, FIRST_MIN_WEIGHT_CHIRAL, FIRST_MIN_WEIGHT_FOURTH)
+        };
+        let gradient_at = |xx: &[f64]| {
+            let c: Vec<[f64; 4]> = (0..n)
+                .map(|i| [xx[CPA * i], xx[CPA * i + 1], xx[CPA * i + 2], xx[CPA * i + 3]])
+                .collect();
+            let g = gradient_4d(&c, bounds, chiral_centers, FIRST_MIN_WEIGHT_CHIRAL, FIRST_MIN_WEIGHT_FOURTH);
+            let mut gx = vec![0.0f64; dim];
+            for i in 0..n {
+                for d in 0..CPA {
+                    gx[CPA * i + d] = g[i][d];
+                }
+            }
+            gx
+        };
+        let (f, _) = lbfgs_minimize(&mut x, n, CPA, &energy_at, &gradient_at, max_iter, 1e-3);
+        for i in 0..n {
+            for d in 0..CPA {
+                coords_4d[i][d] = x[CPA * i + d];
+            }
+        }
+        return f;
+    }
     let n = coords_4d.len();
     let mut best_energy = f64::INFINITY;
     let mut best_coords = coords_4d.to_vec();
@@ -1842,6 +2112,43 @@ fn minimize_4d_collapse(
     chiral_centers: &[ChiralCenter],
     max_iter: usize,
 ) {
+    if rdkit_all() {
+        const CPA: usize = 4;
+        let n = coords_4d.len();
+        let dim = CPA * n;
+        let mut x = vec![0.0f64; dim];
+        for i in 0..n {
+            for d in 0..CPA {
+                x[CPA * i + d] = coords_4d[i][d];
+            }
+        }
+        let energy_at = |xx: &[f64]| {
+            let c: Vec<[f64; 4]> = (0..n)
+                .map(|i| [xx[CPA * i], xx[CPA * i + 1], xx[CPA * i + 2], xx[CPA * i + 3]])
+                .collect();
+            energy_4d(&c, bounds, chiral_centers, FOURTH_MIN_WEIGHT_CHIRAL, FOURTH_MIN_WEIGHT_FOURTH)
+        };
+        let gradient_at = |xx: &[f64]| {
+            let c: Vec<[f64; 4]> = (0..n)
+                .map(|i| [xx[CPA * i], xx[CPA * i + 1], xx[CPA * i + 2], xx[CPA * i + 3]])
+                .collect();
+            let g = gradient_4d(&c, bounds, chiral_centers, FOURTH_MIN_WEIGHT_CHIRAL, FOURTH_MIN_WEIGHT_FOURTH);
+            let mut gx = vec![0.0f64; dim];
+            for i in 0..n {
+                for d in 0..CPA {
+                    gx[CPA * i + d] = g[i][d];
+                }
+            }
+            gx
+        };
+        let _ = lbfgs_minimize(&mut x, n, CPA, &energy_at, &gradient_at, max_iter, 1e-3);
+        for i in 0..n {
+            for d in 0..CPA {
+                coords_4d[i][d] = x[CPA * i + d];
+            }
+        }
+        return;
+    }
     let n = coords_4d.len();
     for _ in 0..max_iter {
         let mut grad = vec![[0.0f64; 4]; n];
@@ -3546,11 +3853,35 @@ fn etkdg_energy(
     angles_13: &[(usize, usize, usize)],
 ) -> f64 {
     let mut energy = 0.0;
+    // D4 (rdkit_all): RDKit addLongRangeDistanceConstraints constrains ALL
+    // non-(1-2/1-3/1-4) pairs with no BASIN_THRESH/MAX_UPPER filter (no double-
+    // count with the K_12 1-2/1-3 terms below). Default keeps the filtered, double-
+    // counting behavior the pipeline is tuned to.
+    let excluded: Option<HashSet<(usize, usize)>> = if rdkit_all() {
+        let mut s = HashSet::new();
+        for &(a, b) in bonds_12 {
+            s.insert((a.min(b), a.max(b)));
+        }
+        for &(a, _, c) in angles_13 {
+            s.insert((a.min(c), a.max(c)));
+        }
+        for p in torsion_prefs {
+            s.insert((p.i.min(p.l), p.i.max(p.l)));
+        }
+        Some(s)
+    } else {
+        None
+    };
     for i in 0..bounds.n_atoms {
         for j in (i + 1)..bounds.n_atoms {
             let lo = bounds.lower[i][j];
             let hi = bounds.upper[i][j];
-            if hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH {
+            let skip = if let Some(ex) = &excluded {
+                ex.contains(&(i, j))
+            } else {
+                hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH
+            };
+            if skip {
                 continue;
             }
             let dx = coords[i][0] - coords[j][0];
@@ -3661,18 +3992,39 @@ fn etkdg_gradient(
     _tetrahedral: &[ChiralCenter],
     pc: &PlanarityConstraints,
     torsion_prefs: &[TorsionPreference],
-    _bonds_12: &[(usize, usize)],
-    _angles_13: &[(usize, usize, usize)],
+    bonds_12: &[(usize, usize)],
+    angles_13: &[(usize, usize, usize)],
 ) -> Vec<[f64; 3]> {
     let n = coords.len();
     let mut grad = vec![[0.0f64; 3]; n];
 
+    // D4 (rdkit_all): same long-range policy as etkdg_energy.
+    let excluded: Option<HashSet<(usize, usize)>> = if rdkit_all() {
+        let mut s = HashSet::new();
+        for &(a, b) in bonds_12 {
+            s.insert((a.min(b), a.max(b)));
+        }
+        for &(a, _, c) in angles_13 {
+            s.insert((a.min(c), a.max(c)));
+        }
+        for p in torsion_prefs {
+            s.insert((p.i.min(p.l), p.i.max(p.l)));
+        }
+        Some(s)
+    } else {
+        None
+    };
     // Distance bounds gradient (with basin threshold + long-range force)
     for i in 0..bounds.n_atoms {
         for j in (i + 1)..bounds.n_atoms {
             let lo = bounds.lower[i][j];
             let hi = bounds.upper[i][j];
-            if hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH {
+            let skip = if let Some(ex) = &excluded {
+                ex.contains(&(i, j))
+            } else {
+                hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH
+            };
+            if skip {
                 continue;
             }
             let dx = coords[i][0] - coords[j][0];
@@ -4667,6 +5019,9 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
             &config.coord_map,
         );
 
+        if !rdkit_all() {
+        // (RDKit-faithful path skips these workarounds — they compensate for the
+        //  old under-converged minimizer and are unfaithful to RDKit's algorithm.)
         // Torsion barrier-crossing: L-BFGS gets stuck at torsional barriers from
         // the 4D-projection start (e.g. butadiene ~100° instead of 180°). Snap the
         // most-twisted torsion prefs toward a planar/trans minimum (rotate the
@@ -4769,6 +5124,7 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
                 energy = he;
             }
         }
+        } // end !rdkit_all() workarounds
 
         // Post-process aniline-like NH2 groups: RDKit ETKDG gives slightly
         // pyramidal geometry (H-N-H ~117.5°, H atoms ±0.84 Å out of ring plane)
