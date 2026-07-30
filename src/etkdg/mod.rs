@@ -4050,6 +4050,60 @@ fn etkdg_gradient(
         }
     }
 
+    // D5 (rdkit_all): 1-2/1-3 K_12 gradient terms (RDKit add12Terms/add13Terms).
+    // The default long-range gradient already covers 1-2/1-3 (force 10); the
+    // faithful path excludes them from long-range (D4), so add the K_12 (100)
+    // gradient here to match etkdg_energy (energy/gradient consistency).
+    if rdkit_all() {
+        const K_12: f64 = 100.0;
+        for &(i, j) in bonds_12 {
+            let lo = bounds.lower[i.min(j)][i.max(j)];
+            let hi = bounds.upper[i.min(j)][i.max(j)];
+            if hi >= MAX_UPPER {
+                continue;
+            }
+            let dx = coords[i][0] - coords[j][0];
+            let dy = coords[i][1] - coords[j][1];
+            let dz = coords[i][2] - coords[j][2];
+            let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
+            let lo_viol = (lo - d).max(0.0);
+            let hi_viol = (d - hi).max(0.0);
+            let dedd = 2.0 * K_12 * (hi_viol - lo_viol);
+            let gx = dedd * dx / d;
+            let gy = dedd * dy / d;
+            let gz = dedd * dz / d;
+            grad[i][0] += gx;
+            grad[i][1] += gy;
+            grad[i][2] += gz;
+            grad[j][0] -= gx;
+            grad[j][1] -= gy;
+            grad[j][2] -= gz;
+        }
+        for &(i, _, k) in angles_13 {
+            let lo = bounds.lower[i.min(k)][i.max(k)];
+            let hi = bounds.upper[i.min(k)][i.max(k)];
+            if hi >= MAX_UPPER {
+                continue;
+            }
+            let dx = coords[i][0] - coords[k][0];
+            let dy = coords[i][1] - coords[k][1];
+            let dz = coords[i][2] - coords[k][2];
+            let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
+            let lo_viol = (lo - d).max(0.0);
+            let hi_viol = (d - hi).max(0.0);
+            let dedd = 2.0 * K_12 * (hi_viol - lo_viol);
+            let gx = dedd * dx / d;
+            let gy = dedd * dy / d;
+            let gz = dedd * dz / d;
+            grad[i][0] += gx;
+            grad[i][1] += gy;
+            grad[i][2] += gz;
+            grad[k][0] -= gx;
+            grad[k][1] -= gy;
+            grad[k][2] -= gz;
+        }
+    }
+
     // Chiral volume gradient
     for cc in chiral_centers {
         let c = cc.central;
