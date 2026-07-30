@@ -1358,6 +1358,11 @@ fn lookup_bond_params_exact(
         }),
 
         // === val_set_new5 bond params ===
+        // C_AR-O_2P (furanium ring O+=)
+        (MMFFAtomType::C_AR, MMFFAtomType::O_2P, BondType::Aromatic)
+        | (MMFFAtomType::O_2P, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
+            k_bond: 5.129116, r0: 1.405, cb: 1.0,
+        }),
         // O_2P (51) / H_OXP2 (52) bonds — oxenium
         (MMFFAtomType::O_2P, MMFFAtomType::H_OXP2, BondType::Single)
         | (MMFFAtomType::H_OXP2, MMFFAtomType::O_2P, BondType::Single) => Some(BondParams {

@@ -971,7 +971,8 @@ impl MMFFForceField {
 
                     // Enamine / vinylamine N: non-aromatic N bonded to a C=C carbon
                     // is planar → MMFF 40 (N_PL3) (analogous to aniline).
-                    (7, _, false, _) if has_c_c_neighbor => MMFFAtomType::N_PL3,
+                    // Excludes N with own double bond (azo N=N, imine N=C → N_2)
+                    (7, _, false, _) if has_c_c_neighbor && double_bond_partners.is_empty() => MMFFAtomType::N_PL3,
 
                     // Amidine / guanidinium N (bonded to C=N carbon) → MMFF 40 (N_PL3).
                     (7, _, false, _) if has_c_n_neighbor => MMFFAtomType::N_PL3,
@@ -990,10 +991,12 @@ impl MMFFForceField {
                     (7, _, true, _) => MMFFAtomType::N_AM,
                     (7, Hybridization::Sp3, false, 1..=3) => MMFFAtomType::N_3,
                     // N_PL3: sp2 N connected to aromatic carbon (aniline-like)
+                    // Excludes N with own double bond (azo N=N, imine N=C → N_2)
                     (7, Hybridization::Sp2, false, _)
-                        if carbon_neighbors
-                            .iter()
-                            .any(|&c| aromatic_atoms.contains(&c)) =>
+                        if double_bond_partners.is_empty()
+                            && carbon_neighbors
+                                .iter()
+                                .any(|&c| aromatic_atoms.contains(&c)) =>
                     {
                         MMFFAtomType::N_PL3
                     }
