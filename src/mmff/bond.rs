@@ -1357,6 +1357,76 @@ fn lookup_bond_params_exact(
         cb: 1.0,
         }),
 
+        // === val_set_new4 bond params ===
+        // N_GD (56) bonds — guanidinium
+        (MMFFAtomType::C_3, MMFFAtomType::N_GD, BondType::Single)
+        | (MMFFAtomType::N_GD, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
+            k_bond: 4.166, r0: 1.453, cb: 1.0,
+        }),
+        (MMFFAtomType::N_GD, MMFFAtomType::C_AN, BondType::Single)
+        | (MMFFAtomType::C_AN, MMFFAtomType::N_GD, BondType::Single) => Some(BondParams {
+            k_bond: 4.137, r0: 1.383, cb: 1.0,
+        }),
+        (MMFFAtomType::HNRP, MMFFAtomType::N_GD, BondType::Single)
+        | (MMFFAtomType::N_GD, MMFFAtomType::HNRP, BondType::Single) => Some(BondParams {
+            k_bond: 6.490, r0: 1.017, cb: 1.0,
+        }),
+        // N_5OX (67) bonds — pyridine N-oxide
+        (MMFFAtomType::O_2, MMFFAtomType::N_5OX, BondType::Double)
+        | (MMFFAtomType::N_5OX, MMFFAtomType::O_2, BondType::Double) => Some(BondParams {
+            k_bond: 3.971145, r0: 1.423922, cb: 1.0,
+        }),
+        (MMFFAtomType::N_5OX, MMFFAtomType::C_VIN, BondType::Single)
+        | (MMFFAtomType::C_VIN, MMFFAtomType::N_5OX, BondType::Single) => Some(BondParams {
+            k_bond: 4.685, r0: 1.432, cb: 1.0,
+        }),
+        // N_IM (54) bonds — iminium
+        (MMFFAtomType::C_2, MMFFAtomType::N_IM, BondType::Double)
+        | (MMFFAtomType::N_IM, MMFFAtomType::C_2, BondType::Double) => Some(BondParams {
+            k_bond: 10.333, r0: 1.280, cb: 1.0,
+        }),
+        (MMFFAtomType::HNRP, MMFFAtomType::N_IM, BondType::Single)
+        | (MMFFAtomType::N_IM, MMFFAtomType::HNRP, BondType::Single) => Some(BondParams {
+            k_bond: 6.529, r0: 1.022, cb: 1.0,
+        }),
+        // N_SO (48) bonds — sulfinylamine
+        (MMFFAtomType::S_O2, MMFFAtomType::N_SO, BondType::Double)
+        | (MMFFAtomType::N_SO, MMFFAtomType::S_O2, BondType::Double) => Some(BondParams {
+            k_bond: 6.186, r0: 1.540, cb: 1.0,
+        }),
+        (MMFFAtomType::S_O2, MMFFAtomType::HS, BondType::Single)
+        | (MMFFAtomType::HS, MMFFAtomType::S_O2, BondType::Single) => Some(BondParams {
+            k_bond: 3.806451, r0: 1.353219, cb: 1.0,
+        }),
+        (MMFFAtomType::H_NAM, MMFFAtomType::N_SO, BondType::Single)
+        | (MMFFAtomType::N_SO, MMFFAtomType::H_NAM, BondType::Single) => Some(BondParams {
+            k_bond: 6.413, r0: 1.024, cb: 1.0,
+        }),
+        // N_5POS (81) / C5A_M (78) / C_IM (80) bonds — imidazolium
+        (MMFFAtomType::C_3, MMFFAtomType::N_5POS, BondType::Single)
+        | (MMFFAtomType::N_5POS, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
+            k_bond: 4.512, r0: 1.441, cb: 1.0,
+        }),
+        (MMFFAtomType::H_NAM, MMFFAtomType::C5A_M, BondType::Single)
+        | (MMFFAtomType::C5A_M, MMFFAtomType::H_NAM, BondType::Single) => Some(BondParams {
+            k_bond: 5.506, r0: 1.080, cb: 1.0,
+        }),
+        (MMFFAtomType::H_NAM, MMFFAtomType::C_IM, BondType::Single)
+        | (MMFFAtomType::C_IM, MMFFAtomType::H_NAM, BondType::Single) => Some(BondParams {
+            k_bond: 5.633, r0: 1.076, cb: 1.0,
+        }),
+        (MMFFAtomType::C5A_M, MMFFAtomType::C5A_M, BondType::Aromatic) => Some(BondParams {
+            k_bond: 5.573, r0: 1.374, cb: 1.0,
+        }),
+        (MMFFAtomType::C5A_M, MMFFAtomType::N_5POS, BondType::Aromatic)
+        | (MMFFAtomType::N_5POS, MMFFAtomType::C5A_M, BondType::Aromatic) => Some(BondParams {
+            k_bond: 5.046, r0: 1.381, cb: 1.0,
+        }),
+        (MMFFAtomType::C_IM, MMFFAtomType::N_5POS, BondType::Aromatic)
+        | (MMFFAtomType::N_5POS, MMFFAtomType::C_IM, BondType::Aromatic) => Some(BondParams {
+            k_bond: 8.237, r0: 1.335, cb: 1.0,
+        }),
+
         _ => None,
     }
 }

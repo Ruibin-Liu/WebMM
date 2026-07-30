@@ -1037,14 +1037,14 @@ fn compute_mmff_formal_charges(mol: &Molecule, type_ids: &[u8]) -> Vec<f64> {
             69 => 0.0,
             // Guanidinium CGD+ C (57): formal charge distributed to NCN+ N's
             57 => 0.0,
-            // NCN+ N (55): shares +1 from CGD+ C equally among NCN+ N's
-            55 => {
+            // NCN+ N (55) and N_GD (56): shares +1 from CGD+ C equally among NCN+/N_GD N's
+            55 | 56 => {
                 let mut fc = 0.0;
                 for &nbr in &mol.adjacency[i] {
                     if type_ids[nbr] == 57 {
                         let n_ncn = mol.adjacency[nbr]
                             .iter()
-                            .filter(|&&m| type_ids[m] == 55)
+                            .filter(|&&m| type_ids[m] == 55 || type_ids[m] == 56)
                             .count()
                             .max(1);
                         fc += 1.0 / n_ncn as f64;
@@ -1052,6 +1052,8 @@ fn compute_mmff_formal_charges(mol: &Molecule, type_ids: &[u8]) -> Vec<f64> {
                 }
                 fc
             }
+            // N_5POS (81): use SDF formal charge (imidazolium has charge delocalized)
+            81 => mol.atoms[i].charge as f64,
             // Halide anions
             89..=91 => -1.0,
             // Everything else: formal charge is 0
