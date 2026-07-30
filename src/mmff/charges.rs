@@ -1037,23 +1037,38 @@ fn compute_mmff_formal_charges(mol: &Molecule, type_ids: &[u8]) -> Vec<f64> {
             69 => 0.0,
             // Guanidinium CGD+ C (57): formal charge distributed to NCN+ N's
             57 => 0.0,
-            // NCN+ N (55) and N_GD (56): shares +1 from CGD+ C equally among NCN+/N_GD N's
-            55 | 56 => {
-                let mut fc = 0.0;
-                for &nbr in &mol.adjacency[i] {
-                    if type_ids[nbr] == 57 {
-                        let n_ncn = mol.adjacency[nbr]
-                            .iter()
-                            .filter(|&&m| type_ids[m] == 55 || type_ids[m] == 56)
-                            .count()
-                            .max(1);
-                        fc += 1.0 / n_ncn as f64;
+            // N_5POS (81): conjugated charge distribution through C type 80/57
+            // Like NCN+, the total formal charge is shared among all conjugated N atoms
+            55 | 56 | 81 => {
+                // Find all conjugated N atoms (types 55/56/81) connected through C type 57 or 80
+                let mut conj: Vec<usize> = vec![i];
+                let mut changed = true;
+                while changed {
+                    changed = false;
+                    let current = conj.clone();
+                    for &ci in &current {
+                        for &nbr in &mol.adjacency[ci] {
+                            let nbr_type = type_ids[nbr];
+                            if nbr_type != 57 && nbr_type != 80 { continue; }
+                            // This C (type 57 or 80) is a conjugating atom
+                            for &nbr2 in &mol.adjacency[nbr] {
+                                let nbr2_type = type_ids[nbr2];
+                                if (nbr2_type == 55 || nbr2_type == 56 || nbr2_type == 81)
+                                    && !conj.contains(&nbr2)
+                                {
+                                    conj.push(nbr2);
+                                    changed = true;
+                                }
+                            }
+                        }
                     }
                 }
-                fc
+                // Sum formal charges of all conjugated N atoms and divide
+                let total_fc: f64 = conj.iter()
+                    .map(|&ci| mol.atoms[ci].charge as f64)
+                    .sum();
+                total_fc / conj.len() as f64
             }
-            // N_5POS (81): use SDF formal charge (imidazolium has charge delocalized)
-            81 => mol.atoms[i].charge as f64,
             // Halide anions
             89..=91 => -1.0,
             // Everything else: formal charge is 0

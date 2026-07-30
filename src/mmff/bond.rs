@@ -1357,6 +1357,36 @@ fn lookup_bond_params_exact(
         cb: 1.0,
         }),
 
+        // === val_set_new5 bond params ===
+        // O_2P (51) / H_OXP2 (52) bonds — oxenium
+        (MMFFAtomType::O_2P, MMFFAtomType::H_OXP2, BondType::Single)
+        | (MMFFAtomType::H_OXP2, MMFFAtomType::O_2P, BondType::Single) => Some(BondParams {
+            k_bond: 7.100, r0: 0.987, cb: 1.0,
+        }),
+        // N5 (79) bonds — general 5-ring N
+        (MMFFAtomType::C5A_M, MMFFAtomType::N5, BondType::Aromatic)
+        | (MMFFAtomType::N5, MMFFAtomType::C5A_M, BondType::Aromatic) => Some(BondParams {
+            k_bond: 8.890, r0: 1.287, cb: 1.0,
+        }),
+        (MMFFAtomType::N5, MMFFAtomType::N_5POS, BondType::Aromatic)
+        | (MMFFAtomType::N_5POS, MMFFAtomType::N5, BondType::Aromatic) => Some(BondParams {
+            k_bond: 4.305, r0: 1.356, cb: 1.0,
+        }),
+        (MMFFAtomType::C5B, MMFFAtomType::N5, BondType::Aromatic)
+        | (MMFFAtomType::N5, MMFFAtomType::C5B, BondType::Aromatic) => Some(BondParams {
+            k_bond: 4.148864, r0: 1.461306, cb: 1.0,
+        }),
+        (MMFFAtomType::N_5POS, MMFFAtomType::N_5POS, BondType::Aromatic) => Some(BondParams {
+            k_bond: 2.763084, r0: 1.460, cb: 1.0,
+        }),
+        // HNRP-N_5POS bond (H on charged 5-ring N)
+        (MMFFAtomType::HNRP, MMFFAtomType::N_5POS, BondType::Single)
+        | (MMFFAtomType::N_5POS, MMFFAtomType::HNRP, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::N_5POS, BondType::Single)
+        | (MMFFAtomType::N_5POS, MMFFAtomType::H, BondType::Single) => Some(BondParams {
+            k_bond: 6.980, r0: 1.016, cb: 1.0,
+        }),
+
         // === val_set_new4 bond params ===
         // N_GD (56) bonds — guanidinium
         (MMFFAtomType::C_3, MMFFAtomType::N_GD, BondType::Single)

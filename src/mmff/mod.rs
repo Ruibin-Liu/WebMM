@@ -69,6 +69,7 @@ pub fn base_type(t: MMFFAtomType) -> MMFFAtomType {
         MMFFAtomType::N_5OX => MMFFAtomType::N_POX,
         MMFFAtomType::N_5POS => MMFFAtomType::N5A,
         MMFFAtomType::N_5OX2 => MMFFAtomType::N5B,
+        MMFFAtomType::N5 => MMFFAtomType::N5B,
         MMFFAtomType::N_RAD => MMFFAtomType::N_3,
         MMFFAtomType::OFUR => MMFFAtomType::O_3,
         MMFFAtomType::O_R => MMFFAtomType::O_3,
