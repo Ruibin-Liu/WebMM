@@ -1011,6 +1011,8 @@ fn compute_mmff_formal_charges(mol: &Molecule, type_ids: &[u8]) -> Vec<f64> {
             35 => -1.0,
             // NM (62): anionic divalent nitrogen — formal -1
             62 => -1.0,
+            // NPYL_M (76): pyrrolide anion N — formal -1
+            76 => -1.0,
             // SM (72): anionic terminal sulfur
             72 => {
                 let mut fchg = 0.0;

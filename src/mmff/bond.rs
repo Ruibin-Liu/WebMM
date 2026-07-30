@@ -353,6 +353,19 @@ fn lookup_bond_params_exact(
             r0: 1.451,
         cb: 1.0,
         }),
+        // N_RAD (nitrene N, type 62) bonds
+        (MMFFAtomType::N_RAD, MMFFAtomType::C_3, BondType::Single)
+        | (MMFFAtomType::C_3, MMFFAtomType::N_RAD, BondType::Single) => Some(BondParams {
+            k_bond: 4.456,
+            r0: 1.444,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::N_RAD, MMFFAtomType::H_N3, BondType::Single)
+        | (MMFFAtomType::H_N3, MMFFAtomType::N_RAD, BondType::Single) => Some(BondParams {
+            k_bond: 6.339,
+            r0: 1.026,
+        cb: 1.0,
+        }),
         (MMFFAtomType::C_3, MMFFAtomType::N_2, BondType::Single)
         | (MMFFAtomType::N_2, MMFFAtomType::C_3, BondType::Single) => Some(BondParams {
             k_bond: 4.763,
@@ -451,6 +464,32 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::N_AR, MMFFAtomType::C_AR, BondType::Aromatic) => Some(BondParams {
             k_bond: 5.737,
             r0: 1.333,
+        cb: 1.0,
+        }),
+        // Pyrrolide anion ring bonds (NPYL_M=76, C5A_M=78)
+        (MMFFAtomType::NPYL_M, MMFFAtomType::C5A_M, BondType::Single)
+        | (MMFFAtomType::C5A_M, MMFFAtomType::NPYL_M, BondType::Single)
+        | (MMFFAtomType::NPYL_M, MMFFAtomType::C5A_M, BondType::Double)
+        | (MMFFAtomType::C5A_M, MMFFAtomType::NPYL_M, BondType::Double)
+        | (MMFFAtomType::NPYL_M, MMFFAtomType::C5A_M, BondType::Aromatic)
+        | (MMFFAtomType::C5A_M, MMFFAtomType::NPYL_M, BondType::Aromatic
+        ) => Some(BondParams {
+            k_bond: 6.824,
+            r0: 1.345,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::C5A_M, MMFFAtomType::C5A_M, BondType::Single)
+        | (MMFFAtomType::C5A_M, MMFFAtomType::C5A_M, BondType::Double)
+        | (MMFFAtomType::C5A_M, MMFFAtomType::C5A_M, BondType::Aromatic
+        ) => Some(BondParams {
+            k_bond: 5.573,
+            r0: 1.374,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::C5A_M, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::C5A_M, BondType::Single) => Some(BondParams {
+            k_bond: 5.506,
+            r0: 1.080,
         cb: 1.0,
         }),
         (MMFFAtomType::N_AR, MMFFAtomType::C5A, BondType::Aromatic)

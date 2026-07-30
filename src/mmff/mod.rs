@@ -390,10 +390,14 @@ impl MMFFForceField {
                 match mol.atoms[atom_idx].atomic_number {
                     7 => {
                         let n_neighbors = mol.adjacency[atom_idx].len();
-                        tmp.insert(
-                            atom_idx,
-                            if n_neighbors >= 3 { MMFFAtomType::NPYL } else { MMFFAtomType::N5B },
-                        );
+                        if mol.atoms[atom_idx].charge < -0.5 {
+                            tmp.insert(atom_idx, MMFFAtomType::NPYL_M);
+                        } else {
+                            tmp.insert(
+                                atom_idx,
+                                if n_neighbors >= 3 { MMFFAtomType::NPYL } else { MMFFAtomType::N5B },
+                            );
+                        }
                     }
                     8 => {
                         tmp.insert(atom_idx, MMFFAtomType::OFUR);
@@ -443,7 +447,13 @@ impl MMFFForceField {
                 }
                 tmp.insert(
                     atom_idx,
-                    if lonepair_het >= 1 || het_total >= 2 { MMFFAtomType::C5A } else { MMFFAtomType::C5B },
+                    if tmp.values().any(|&t| t == MMFFAtomType::NPYL_M) {
+                        MMFFAtomType::C5A_M
+                    } else if lonepair_het >= 1 || het_total >= 2 {
+                        MMFFAtomType::C5A
+                    } else {
+                        MMFFAtomType::C5B
+                    },
                 );
             }
             for (&atom_idx, &typ) in tmp.iter() {
@@ -853,6 +863,8 @@ impl MMFFForceField {
                     (7, _, false, _) if charge < -0.5 => {
                         MMFFAtomType::N_1M
                     }
+                    // Nitrene/radical N (type 62): sp2 N with degree 2 and no double bonds
+                    (7, Hybridization::Sp2, false, 2) if double_bond_partners.is_empty() => MMFFAtomType::N_RAD,
                     (7, Hybridization::Sp2, false, 2..) => MMFFAtomType::N_2,
                     // Isonitrile/nitrile-oxide N+ (sp, triple bond, positive charge) → NID (type 61)
                     (7, Hybridization::Sp1, false, _) if charge > 0.5 => MMFFAtomType::NID,
