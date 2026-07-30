@@ -277,8 +277,9 @@ fn count_pi_electrons(atom_idx: usize, ring: &[usize], mol: &Molecule) -> i32 {
     match atom.atomic_number {
         6 => 1,
         7 => {
-            if ring.len() == 5 && ring_bonds == 2 && atom.charge <= 0.5
+            if ring.len() == 5 && ring_bonds == 2
                 && (total_neighbors >= 3 || atom.charge < -0.5)
+                && atom.charge <= 0.5
             {
                 // Pyrrole-like N in 5-membered ring (has H/substituent, or anionic)
                 // Positively charged N contributes only 1 (pyridinium-like)

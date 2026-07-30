@@ -422,9 +422,11 @@ impl MMFFForceField {
                             let has_oxide_o = mol.adjacency[atom_idx].iter().any(|&n| {
                                 mol.atoms[n].atomic_number == 8 && mol.atoms[n].charge < -0.5
                             });
+                            // Check if ANY ring N is charged (imidazolium)
+                            let ring_has_charge = ring.iter().any(|&r| mol.atoms[r].charge > 0.5);
                             if has_oxide_o {
                                 tmp.insert(atom_idx, MMFFAtomType::N_5OX2);
-                            } else if n_charge > 0.5 {
+                            } else if n_charge > 0.5 || (ring_has_charge && n_neighbors >= 3) {
                                 tmp.insert(atom_idx, MMFFAtomType::N_5POS);
                             } else {
                                 tmp.insert(
@@ -484,10 +486,13 @@ impl MMFFForceField {
                 let n_pos_neighbors = mol.adjacency[atom_idx].iter()
                     .filter(|&&n| ringset.contains(&n) && matches!(tmp.get(&n), Some(MMFFAtomType::N_5POS)))
                     .count();
+                let ring_has_pos = tmp.values().any(|&t| t == MMFFAtomType::N_5POS);
                 tmp.insert(
                     atom_idx,
                     if n_pos_neighbors >= 2 {
                         MMFFAtomType::C_IM
+                    } else if ring_has_pos && het_total >= 1 {
+                        MMFFAtomType::C5A_M
                     } else if tmp.values().any(|&t| t == MMFFAtomType::NPYL_M) {
                         MMFFAtomType::C5A_M
                     } else if lonepair_het >= 1 || het_total >= 2 {
