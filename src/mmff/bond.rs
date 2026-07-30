@@ -128,6 +128,13 @@ fn lookup_bond_params_exact(
             r0: 1.457,
         cb: 1.0,
         }),
+        // C_2-CE4R (sp2 C in 4-ring) single bond
+        (MMFFAtomType::C_2, MMFFAtomType::CE4R, BondType::Single)
+        | (MMFFAtomType::CE4R, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
+            k_bond: 4.481,
+            r0: 1.471,
+        cb: 1.0,
+        }),
         (MMFFAtomType::C_AR, MMFFAtomType::C_AR, BondType::Single) => Some(BondParams {
             k_bond: 5.0,
             r0: 1.484,
