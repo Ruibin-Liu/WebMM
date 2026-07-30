@@ -1,5 +1,13 @@
 # Plan: Phase 2+3+4 coordinated bundle — RDKit-faithful ETKDG migration
 
+## Status
+- **M0 (scaffolding) — DONE.** `rdkit_faithful: bool` added to `ETKDGConfig`;
+  `generate_initial_coords_with_config` now dispatches to `_default` (unchanged
+  body) vs `_rdkit` (passthrough). Dump example toggles via `WEBMM_RDKIT_FAITHFUL`.
+  Verified: default r=0.8603, rdkit r=0.8603, **0 molecule diffs** (true passthrough);
+  191 tests; my code clippy-clean (1 pre-existing warning is in `src/mmff`, other
+  session). WASM rebuilt. Next: **M1** (empirical A/B — start with D4 long-range).
+
 ## Goal
 Lift the ETKDG embedding harness from **r=0.8603 / RMSD=24.75** toward the
 **~0.997 ceiling** (RDKit-vs-RDKit multi-seed mean; single-seed ceiling ~0.99).

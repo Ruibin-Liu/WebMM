@@ -114,6 +114,9 @@ pub struct ETKDGConfig {
     pub triangle_smoothing_epsilon: f64,
     pub timeout_ms: u64,
     pub coord_map: std::collections::HashMap<usize, [f64; 3]>,
+    /// M0+: when true, use the RDKit-faithful embedding path (bounds + 4D L-BFGS +
+    /// 3D force field) instead of the tuned default. Currently a passthrough.
+    pub rdkit_faithful: bool,
 }
 
 impl Default for ETKDGConfig {
@@ -132,6 +135,7 @@ impl Default for ETKDGConfig {
             triangle_smoothing_epsilon: 1e-6,
             timeout_ms: 0,
             coord_map: std::collections::HashMap::new(),
+            rdkit_faithful: false,
         }
     }
 }
@@ -4463,6 +4467,23 @@ pub fn generate_initial_coords(mol: &Molecule) -> Vec<[f64; 3]> {
 }
 
 pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
+    // M0 scaffolding: dispatch on the rdkit_faithful flag. The default path is
+    // unchanged; the _rdkit path is currently a passthrough (the real RDKit-faithful
+    // bounds/minimizer/force-field land in M1+, behind this same flag).
+    if config.rdkit_faithful {
+        generate_initial_coords_rdkit(mol, config)
+    } else {
+        generate_initial_coords_default(mol, config)
+    }
+}
+
+fn generate_initial_coords_rdkit(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
+    // M0: passthrough — identical to default. M1+ replaces this body with the
+    // RDKit-faithful bounds + 4D L-BFGS + 3D force field.
+    generate_initial_coords_default(mol, config)
+}
+
+fn generate_initial_coords_default(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
     if mol.atoms.is_empty() {
         return Vec::new();
     }

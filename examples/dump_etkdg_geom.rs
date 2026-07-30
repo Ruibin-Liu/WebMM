@@ -29,6 +29,11 @@ fn main() {
         .unwrap_or_else(|| "scripts/val_set".to_string());
     let seeds = parse_seeds();
     eprintln!("# seeds {:?}", seeds);
+    // M0+: toggle the RDKit-faithful embedding path for A/B measurement.
+    let rdkit_faithful = std::env::var("WEBMM_RDKIT_FAITHFUL")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false);
+    eprintln!("# rdkit_faithful={rdkit_faithful}");
     let mut files: Vec<String> = std::fs::read_dir(&dir)
         .expect("sdf dir")
         .flatten()
@@ -77,6 +82,7 @@ fn main() {
                 et_version: 2,
                 max_attempts: 10,
                 max_iterations: 2000,
+                rdkit_faithful,
                 ..Default::default()
             };
             let coords = generate_initial_coords_with_config(&mol, &config);

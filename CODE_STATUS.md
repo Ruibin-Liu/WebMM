@@ -9,6 +9,10 @@ WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force fi
 Background: MMFF atom typing matches RDKit 100% (0.00% mismatch) on a **130-molecule** validation set; MMFF energy accuracy r=1.0000 / RMSD=0.170 kcal/mol (**0 outliers >1.0**). The remaining gap is entirely in the **ETKDG embedding** (not MMFF).
 
 ## Recently Completed
+- **Phase 2+3+4 bundle — M0 scaffolding DONE (no behavior change).** `src/etkdg/mod.rs` + `examples/dump_etkdg_geom.rs`:
+  - Added `pub rdkit_faithful: bool` (default `false`) to `ETKDGConfig`; `generate_initial_coords_with_config` now dispatches to `generate_initial_coords_default` (the unchanged current body) vs `generate_initial_coords_rdkit` (currently a **passthrough** to default). The shipped r=0.8603 path is untouched; the `_rdkit` path is the slot M1+ fills with RDKit-faithful bounds/minimizer/force-field.
+  - Dump example toggles via `WEBMM_RDKIT_FAITHFUL=1` for one-build A/B on the deterministic harness.
+  - **Verified:** default r=0.8603, rdkit r=0.8603, **0 molecule diffs** (true passthrough); 191 tests pass; my code clippy-clean (1 pre-existing warning is in `src/mmff`, debugged in another session). WASM rebuilt. Next: **M1** — empirical A/B, starting with D4 (3D long-range: drop `BASIN_THRESH` filter + stop 1-2/1-3 double-count), the un-tested cheapest lever.
 - **Phase 3 (4D L-BFGS minimizer, D7) investigated → REVERTED: same co-adaptation wall as Phase 2.** Per PLAN.md:
   - **What:** extracted a generic `lbfgs_minimize` helper (the 3D path's good L-BFGS, generalized over coords-per-atom) + `energy_4d`/`gradient_4d`, and rewired both 4D stages (`minimize_4d_first`, `minimize_4d_collapse`) from fixed-step normalized descent to L-BFGS (RDKit uses BFGS for these stages). Left the working 3D `minimize_etkdg` untouched.
   - **Result — every variant regressed** on the (now-deterministic) multi-seed harness: both-L-BFGS r→0.8548, collapse-only→0.8396, first-only→0.8515 (baseline 0.8603). Also broke `test_atropisomer_simple` (4D L-BFGS converges to a less-twisted, still-chiral atropisomer at seed 42).
