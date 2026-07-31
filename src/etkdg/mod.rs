@@ -3345,6 +3345,17 @@ fn match_torsion_pattern(
     let hc4 = h_count(mol, a4);
     let b23_ring = bond_in_ring(rings, a2, a3);
 
+    // RDKit `[*:1][X3,X2:2]=[X3,X2:3][*:4]`: any C=C double bond is planarizing
+    // V2=100 (fires for ring C=C too — cyclopentene/cyclohexene/cyclopropene —
+    // where WebMM's ring branch only gave V2=10). Restrict to 2/3-coordinate
+    // (X3/X2) atoms so carbonyl C=O is not caught.
+    if is_double_bond(mol, a2, a3)
+        && (2..=3).contains(&atom_degree(a2, mol))
+        && (2..=3).contains(&atom_degree(a3, mol))
+    {
+        return Some(([1, -1, 1, 1, 1, 1], [0.0, 100.0, 0.0, 0.0, 0.0, 0.0]));
+    }
+
     let sp2 = |h: Hybridization| matches!(h, Hybridization::Sp2);
     let sp3 = |h: Hybridization| matches!(h, Hybridization::Sp3);
 

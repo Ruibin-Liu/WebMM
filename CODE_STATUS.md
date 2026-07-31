@@ -18,6 +18,10 @@ Atom typing: 0.00% mismatch. Energy: all within 0.01 kcal/mol. 191 tests pass, 0
 The remaining project gap is in **ETKDG embedding** (r=0.8603), which is separate from the MMFF force field.
 
 ## Recently Completed
+- **ETKDG: added RDKit's `[X3,X2]=[X3,X2]` C=C planarizing torsion pref (V2=100) — r 0.9572 → 0.9643, RMSD 13.90 → 13.16 (cyclopentene 51.5→9.9, cyclohexene 60.7→26.3; 0 regressions).** `src/etkdg/mod.rs` `match_torsion_pattern`:
+  - **Faithful (verified via GetExperimentalTorsions):** RDKit applies V2=100 to ANY `[X3,X2]=[X3,X2]` double bond (cyclopentene/cyclohexene/cyclopropene/butadiene), ring or chain. WebMM's ring all-sp² branch only gave V2=10 → under-planarized the C=C → twisted/strained rings.
+  - **Fix:** early check in `match_torsion_pattern`: `is_double_bond(a2,a3)` with a2/a3 degree 2–3 → V2=100 (sign −1). Aromatic rings (benzene) still get 0 RDKit prefs; the sp²-sp³ ring singles remain (next candidate).
+  - 186 tests, clippy 0, deterministic. Cumulative: **r 0.8603 → 0.9643** (3/4-ring pref, sp³-sp³ prefs, S-hybridization, C=C pref).
 - **ETKDG: fixed hypervalent-S hybridization (Sp1→Sp3/Sp3D) — r 0.9143 → 0.9572, RMSD 18.74 → 13.90; MMFF val set unaffected (0 type mismatches).** `src/molecule/graph.rs` `determine_hybridization`:
   - **Bug:** the generic `pi_bonds ≥ 2 → Sp1 (linear)` rule (correct for C≡C/allene) fired for **hypervalent sulfone/sulfonate/sulfonamide S(=O)₂** — typing the S linear (180°) → all its 1-3 bounds based on 180° → catastrophically wrong geometry (dimethyl_sulfone S=O 1.55, C-S 1.88; E=70.8). RDKit embeds sulfone S tetrahedral (~109.5°).
   - **Fix:** skip the generic pi_bonds→Sp1/Sp2 rule for **S with ≥3 bonds** (let the S branch assign Sp3/Sp3D). **Kept P out** — WebMM's pipeline empirically embeds P(=O) compounds better with sp² (reverting the P part of the experiment after it regressed phosphoric_acid +137).
