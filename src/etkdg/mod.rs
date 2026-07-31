@@ -2975,7 +2975,10 @@ fn out_of_plane_angle(coords: &[[f64; 3]], central: usize, n1: usize, n2: usize,
         return 0.0;
     }
     let dot = (v1[0] * normal[0] + v1[1] * normal[1] + v1[2] * normal[2]) / normal_norm;
-    dot.abs().asin()
+    // Clamp: |dot| can exceed 1 by rounding; asin of >1 is NaN, which poisoned
+    // the planarity energy and stalled L-BFGS (fused-ring purines xanthine/
+    // theophylline embedded with strained bonds).
+    dot.clamp(-1.0, 1.0).abs().asin()
 }
 
 fn planarity_energy(coords: &[[f64; 3]], pc: &PlanarityConstraints) -> f64 {

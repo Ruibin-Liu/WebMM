@@ -18,6 +18,10 @@ Atom typing: 0.00% mismatch. Energy: all within 0.01 kcal/mol. 191 tests pass, 0
 The remaining project gap is in **ETKDG embedding** (r=0.8603), which is separate from the MMFF force field.
 
 ## Recently Completed
+- **ETKDG: fixed NaN in planarity energy (`out_of_plane_angle` asin of |dot|>1) — r 0.9643 → 0.9648; no regressions.** `src/etkdg/mod.rs`:
+  - **Bug:** `dot.abs().asin()` returned **NaN** when rounding pushed `|dot|>1`, poisoning `planarity_energy` → the L-BFGS line search saw non-finite energy → stalled for fused-ring systems (xanthine/theophylline showed `plan=NaN` mid-minimization). Clamped to `[-1,1]`.
+  - **Note:** xanthine/theophylline remain outliers (+45/+30) — their minimizer stall is *also* driven by the large aromatic-ring torsion pref (V2=10 all-sp² branch, initial tor≈437), but that pref is **load-bearing** for other aromatics (removing it regressed methyl_salicylate/anthracene/paracetamol/theophylline: r→0.9538, reverted). The energy/gradient 1-2/1-3 inconsistency fix is also co-adapted-harmful (regressed r→0.57 twice). So these are at the co-adaptation wall.
+  - 186 tests, clippy 0, deterministic. Cumulative r **0.8603 → 0.9648**.
 - **ETKDG: added RDKit's `[X3,X2]=[X3,X2]` C=C planarizing torsion pref (V2=100) — r 0.9572 → 0.9643, RMSD 13.90 → 13.16 (cyclopentene 51.5→9.9, cyclohexene 60.7→26.3; 0 regressions).** `src/etkdg/mod.rs` `match_torsion_pattern`:
   - **Faithful (verified via GetExperimentalTorsions):** RDKit applies V2=100 to ANY `[X3,X2]=[X3,X2]` double bond (cyclopentene/cyclohexene/cyclopropene/butadiene), ring or chain. WebMM's ring all-sp² branch only gave V2=10 → under-planarized the C=C → twisted/strained rings.
   - **Fix:** early check in `match_torsion_pattern`: `is_double_bond(a2,a3)` with a2/a3 degree 2–3 → V2=100 (sign −1). Aromatic rings (benzene) still get 0 RDKit prefs; the sp²-sp³ ring singles remain (next candidate).
