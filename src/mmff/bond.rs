@@ -1226,6 +1226,11 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::N_AM, MMFFAtomType::N_3, BondType::Single) => Some(BondParams {
             k_bond: 3.909, r0: 1.378, cb: 1.0,
         }),
+        // S_3-C_AR (thioether to aromatic C)
+        (MMFFAtomType::S_3, MMFFAtomType::C_AR, BondType::Single)
+        | (MMFFAtomType::C_AR, MMFFAtomType::S_3, BondType::Single) => Some(BondParams {
+            k_bond: 3.565, r0: 1.765, cb: 1.0,
+        }),
         (MMFFAtomType::N_3, MMFFAtomType::H_N3, BondType::Single)
         | (MMFFAtomType::H_N3, MMFFAtomType::N_3, BondType::Single)
         | (MMFFAtomType::N_3, MMFFAtomType::H, BondType::Single)
