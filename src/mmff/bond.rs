@@ -1221,6 +1221,17 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::H, MMFFAtomType::N_PL3, BondType::Single) => Some(BondParams {
             k_bond: 6.576, r0: 1.018, cb: 1.0,
         }),
+        // N_3-N_AM (hydrazide N-N) and N_3-H (amine N-H)
+        (MMFFAtomType::N_3, MMFFAtomType::N_AM, BondType::Single)
+        | (MMFFAtomType::N_AM, MMFFAtomType::N_3, BondType::Single) => Some(BondParams {
+            k_bond: 3.909, r0: 1.378, cb: 1.0,
+        }),
+        (MMFFAtomType::N_3, MMFFAtomType::H_N3, BondType::Single)
+        | (MMFFAtomType::H_N3, MMFFAtomType::N_3, BondType::Single)
+        | (MMFFAtomType::N_3, MMFFAtomType::H, BondType::Single)
+        | (MMFFAtomType::H, MMFFAtomType::N_3, BondType::Single) => Some(BondParams {
+            k_bond: 6.490, r0: 1.019, cb: 1.0,
+        }),
         (MMFFAtomType::N_3, MMFFAtomType::N_AR, BondType::Single)
         | (MMFFAtomType::N_AR, MMFFAtomType::N_3, BondType::Single) => Some(BondParams {
             k_bond: 4.0,
