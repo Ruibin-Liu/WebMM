@@ -18,6 +18,16 @@ Atom typing: 0.00% mismatch. Energy: all within 0.01 kcal/mol. 191 tests pass, 0
 The remaining project gap is in **ETKDG embedding** (r=0.8603), which is separate from the MMFF force field.
 
 ## Recently Completed
+- **ETKDG: removed the spurious 3/4-ring torsion preference — r 0.8603 → 0.8733, RMSD 24.75 → 23.12 (0 regressions).** `src/etkdg/mod.rs` `match_torsion_pattern`:
+  - **Bug:** the 3/4-membered-ring branch returned `V1=30, sign=−1` (min at dihedral **0°**), forcing exocyclic **H–C–C–H dihedrals eclipsed** — wrong for small rings. The ETKDG energy for cyclopropane was dominated by `tor=116.6` of 117.4 initial energy; the minimizer stalled (`converged=false` on every call) and the H's ended up at C–H 1.05–1.23 Å.
+  - **Fix (verified faithful):** RDKit's `GetExperimentalTorsions` returns **ZERO** torsion prefs for cyclopropane/aziridine/ethylene_oxide/cyclobutane (with and without small-ring torsions). Removed the pref (`return None`).
+  - **Result:** cyclopropane 82.3→17.7 (RDKit 17.7), aziridine 83.6→23.8, ethylene_oxide 53.9→9.2, cyclopropene 71.7→53.0; **0 molecules regressed**; harness r 0.8603→0.8733. 186 tests pass (0 failed), clippy 0, deterministic. Next: the 5/6/7-ring outliers (cyclopentene/cyclohexene/cycloheptane/THF) likely have the same class of spurious torsion prefs, then the hypervalent-S cluster.
+- **MMFF cleanup — removed non-production code; restored `cargo clippy --all-targets` to 0 warnings.** Per request "clean up anything not for prod" in the MMFF code:
+  - **Removed 11 `unreachable pattern` warnings** in `src/mmff/bond.rs` — duplicate bond-param match arms left by later val-set sessions (N_PL3-H/N_3-H/N_AM-H/N_AR-H plain-H sub-patterns inside the H_NAM/H_N3 arms, plus a whole `(C5A_M,C5A_M,Aromatic)` arm). Each was shadowed by an earlier arm with **identical** parameter values (verified site-by-site), so removal is behavior-neutral; only the reachable H_NAM/H_N3 variants remain.
+  - **Removed 8 clippy lints in `src/mmff/mod.rs`** (collapsible_else_if, if_same_then_else, 4× manual_contains, len_zero) and **1 in `src/mmff/charges.rs`** (redundant `as f64` cast). All semantically identical refactors of atom-typing/charge code.
+  - **Removed dead `estimate_angle_params`/`default_torsion_params` from `src/mmff/estimation.rs`** (+ their 5 tests) — zero production callers; the angle fallback actually used is `mmff_tables::empirical_angle_params`. `estimate_bond_params` (the production bond fallback) is kept.
+  - **Validated:** `cargo test` 186 passed (191 − 5 removed dead-code tests); `cargo clippy --all-targets` **0 warnings** (was 19, all in src/mmff — CI's `-D warnings` was red); `wasm-pack build --release` succeeds. No parameter values or energy outputs changed.
+
 - **val_set_new4: ALL 6/6 molecules match RDKit <0.01 kcal/mol — total validation 191/191.** This session fixed the final 6 exotic atom types (48, 54, 56, 67, 80, 81, 82):
   - **Aromaticity perception** (`src/molecule/graph.rs`): Charged N in 5-ring now contributes 1 pi electron (pyridinium-like) instead of 2 (pyrrole-like), enabling aromaticity detection for imidazolium and N-oxide 5-rings.
   - **5-ring N classification** (`src/mmff/mod.rs`): If any ring N is charged, tricoordinate N → N_5POS (81). C adjacent to N_5POS → C5A_M (78). C between two N_5POS → C_IM (80).

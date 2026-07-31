@@ -3375,7 +3375,13 @@ fn match_torsion_pattern(
                     return Some(([1, -1, 1, 1, 1, 1], [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]));
                 }
                 if rsize == 3 || rsize == 4 {
-                    return Some(([-1, 1, 1, 1, 1, 1], [30.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
+                    // No torsion preference for 3/4-membered rings: RDKit applies
+                    // ZERO experimental torsions to cyclopropane/aziridine/ethylene_oxide/
+                    // cyclobutane (verified via GetExperimentalTorsions). The old V1=30
+                    // (min at 0°, eclipsed) forced exocyclic H-C-C-H dihedrals into
+                    // eclipsed positions, straining small rings (cyclopropane E 82->18,
+                    // aziridine 84->24, ethylene_oxide 54->9; r 0.8603->0.8733).
+                    return None;
                 }
                 if rsize == 5 {
                     if sp3(h2) && sp3(h3) {
