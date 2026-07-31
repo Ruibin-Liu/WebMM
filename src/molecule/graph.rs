@@ -55,10 +55,15 @@ pub fn determine_hybridization(atom_idx: usize, mol: &Molecule) -> Hybridization
         })
         .sum();
 
-    if pi_bonds >= 2.0 {
+    // Hypervalent S (sulfone/sulfonate/sulfonamide...): the generic pi_bonds ->
+    // Sp1/Sp2 rule is for C/N (linear/planar). S(=O)2 with >=3 neighbors is
+    // tetrahedral (RDKit embeds sulfone S at ~109.5 deg, not linear/sp2). Kept
+    // P out: WebMM's pipeline empirically embeds P(=O) compounds better with sp2.
+    let hypervalent_s = symbol == "S" && num_bonds >= 3;
+    if !hypervalent_s && pi_bonds >= 2.0 {
         return Hybridization::Sp1;
     }
-    if pi_bonds >= 1.0 {
+    if !hypervalent_s && pi_bonds >= 1.0 {
         return Hybridization::Sp2;
     }
 
