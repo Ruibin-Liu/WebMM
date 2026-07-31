@@ -3385,7 +3385,9 @@ fn match_torsion_pattern(
                 }
                 if rsize == 5 {
                     if sp3(h2) && sp3(h3) {
-                        return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 30.0, 0.0, 0.0, 0.0]));
+                        // RDKit applies ZERO prefs to 5-ring sp3-sp3 (THF/
+                        // cyclopentane verified). The old V3=30 strained 5-rings.
+                        return None;
                     }
                     if sp2(h2) && sp3(h3) {
                         return Some(([1, 0, 1, 1, 1, -1], [0.0, 0.0, 0.0, 0.0, 0.0, 15.0]));
@@ -3397,7 +3399,9 @@ fn match_torsion_pattern(
                 }
                 // 6-8 ring
                 if sp3(h2) && sp3(h3) {
-                    return Some(([-1, 1, 1, 1, 1, 1], [20.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
+                    // RDKit applies ZERO prefs to 6-8-ring sp3-sp3 (cycloheptane/
+                    // cyclohexane verified). The old V1=20 strained 7-rings.
+                    return None;
                 }
                 return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 5.0, 0.0, 0.0, 0.0]));
             }

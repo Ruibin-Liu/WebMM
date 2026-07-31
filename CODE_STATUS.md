@@ -18,6 +18,10 @@ Atom typing: 0.00% mismatch. Energy: all within 0.01 kcal/mol. 191 tests pass, 0
 The remaining project gap is in **ETKDG embedding** (r=0.8603), which is separate from the MMFF force field.
 
 ## Recently Completed
+- **ETKDG: removed spurious sp³-sp³ ring torsion prefs (5-ring V3=30 + 6-8-ring V1=20) — r 0.8733 → 0.9143, RMSD 23.12 → 18.74 (10 improved, 0 regressed).** `src/etkdg/mod.rs` `match_torsion_pattern`:
+  - **Faithful (verified via RDKit GetExperimentalTorsions):** RDKit applies ZERO torsion prefs to saturated 5-ring (THF/cyclopentane) and 6-8-ring (cycloheptane/cyclohexane) sp³-sp³ bonds. WebMM's hand-coded V3=30 (5-ring) and V1=20 (6-8-ring) strained every saturated ring.
+  - **Result:** cycloheptane 109.5→23.8 (RDKit 22.3), nicotine 127.9→46.7, THF 62.3→12.0, cyclopentane 54.9→5.1, cyclohexane 36.5→3.6, dioxane 92.3→61.3, cyclopentene 76.7→51.5, cyclohexanone 32.6→14.6; **0 regressed**. 186 tests, clippy 0, deterministic. Cumulative: r 0.8603→0.9143.
+  - **Remaining:** cyclopentene/cyclohexene (sp² ring bonds — RDKit applies exactly 1 pref each; WebMM over-applies V2=10/V6=15/V3=5) and the hypervalent-S cluster (sulfone/sulfonate/sulfonamide). Next: match the sp² ring prefs to RDKit's single pref, then S compounds.
 - **ETKDG: removed the spurious 3/4-ring torsion preference — r 0.8603 → 0.8733, RMSD 24.75 → 23.12 (0 regressions).** `src/etkdg/mod.rs` `match_torsion_pattern`:
   - **Bug:** the 3/4-membered-ring branch returned `V1=30, sign=−1` (min at dihedral **0°**), forcing exocyclic **H–C–C–H dihedrals eclipsed** — wrong for small rings. The ETKDG energy for cyclopropane was dominated by `tor=116.6` of 117.4 initial energy; the minimizer stalled (`converged=false` on every call) and the H's ended up at C–H 1.05–1.23 Å.
   - **Fix (verified faithful):** RDKit's `GetExperimentalTorsions` returns **ZERO** torsion prefs for cyclopropane/aziridine/ethylene_oxide/cyclobutane (with and without small-ring torsions). Removed the pref (`return None`).
