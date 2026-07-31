@@ -272,6 +272,40 @@ impl MMFFForceField {
             one_four_pairs.insert((a, d));
         }
 
+        // Exclude inter-fragment (disconnected) pairs from electrostatics,
+        // matching RDKit (which only computes non-bonded terms within a fragment).
+        {
+            let n_atoms = mol.atoms.len();
+            let mut fragment_id = vec![usize::MAX; n_atoms];
+            let mut next_frag = 0usize;
+            for start in 0..n_atoms {
+                if fragment_id[start] != usize::MAX {
+                    continue;
+                }
+                // BFS from start
+                let mut queue = std::collections::VecDeque::new();
+                queue.push_back(start);
+                fragment_id[start] = next_frag;
+                while let Some(u) = queue.pop_front() {
+                    for &v in &mol.adjacency[u] {
+                        if fragment_id[v] == usize::MAX {
+                            fragment_id[v] = next_frag;
+                            queue.push_back(v);
+                        }
+                    }
+                }
+                next_frag += 1;
+            }
+            // Add all cross-fragment pairs to excluded_pairs
+            for i in 0..n_atoms {
+                for j in (i + 1)..n_atoms {
+                    if fragment_id[i] != fragment_id[j] {
+                        excluded_pairs.insert((i, j));
+                    }
+                }
+            }
+        }
+
         // Compute torsion types using RDKit's classification
         let rings = crate::molecule::graph::find_rings(mol);
         // type_ids report each atom's actual MMFF type (matching RDKit's
