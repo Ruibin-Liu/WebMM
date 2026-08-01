@@ -3700,12 +3700,14 @@ fn match_torsion_pattern(
     if s2 == "O" && is_ch2(mol, a3) && sp3(h1) {
         return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 2.5, 0.0, 0.0, 0.0]));
     }
-    // General ether
+    // General ether: V3=2.5 (RDKit C(sp3)-O torsion, verified diethyl_ether/
+    // dimethyl_ether H-C-O-C and C-C-O-C V=[0,0,2.5,0,0,0]). Old V2=8 had the
+    // wrong symmetry AND 3.2x the force for methyl ethers (dimethyl_ether +5.5).
     if sp3(h2) && s3 == "O" {
-        return Some(([1, -1, 1, 1, 1, 1], [0.0, 8.0, 0.0, 0.0, 0.0, 0.0]));
+        return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 2.5, 0.0, 0.0, 0.0]));
     }
     if s2 == "O" && sp3(h3) {
-        return Some(([1, -1, 1, 1, 1, 1], [0.0, 8.0, 0.0, 0.0, 0.0, 0.0]));
+        return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 2.5, 0.0, 0.0, 0.0]));
     }
 
     // 22. Alkyl amine: *-CH2-N-C
