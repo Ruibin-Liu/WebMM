@@ -1,6 +1,6 @@
 [package]
 name = "webmm"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 
 [lib]
@@ -19,6 +19,6 @@ web-time = "1.1"
 proptest = "1.0"
 
 [profile.release]
-opt-level = "s"
+opt-level = 3
 lto = true
 codegen-units = 1

@@ -1,13 +1,16 @@
 //! Dump WebMM atom types + energy (at SDF coords) for all validation SDFs -> JSON.
-//! Run: cargo run --release --example dump_types_energy > scripts/val_set/webmm_ref.json
+//! Run: cargo run --release --example dump_types_energy [SDF_DIR]
+//! (SDF_DIR defaults to scripts/val_set)
 use std::io::Write;
 use webmm::mmff::MMFFForceField;
 use webmm::molecule::parser::parse_sdf;
 use webmm::MMFFVariant;
 
 fn main() {
-    let dir = "scripts/val_set";
-    let mut files: Vec<String> = std::fs::read_dir(dir)
+    let dir = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "scripts/val_set".to_string());
+    let mut files: Vec<String> = std::fs::read_dir(&dir)
         .expect("val_set dir")
         .flatten()
         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("sdf"))

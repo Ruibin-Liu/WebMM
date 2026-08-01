@@ -1064,9 +1064,7 @@ fn compute_mmff_formal_charges(mol: &Molecule, type_ids: &[u8]) -> Vec<f64> {
                     }
                 }
                 // Sum formal charges of all conjugated N atoms and divide
-                let total_fc: f64 = conj.iter()
-                    .map(|&ci| mol.atoms[ci].charge as f64)
-                    .sum();
+                let total_fc: f64 = conj.iter().map(|&ci| mol.atoms[ci].charge).sum();
                 total_fc / conj.len() as f64
             }
             // Halide anions

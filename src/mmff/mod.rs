@@ -230,6 +230,29 @@ pub struct MMFFForceField {
     pub one_four_pairs: HashSet<(usize, usize)>,
     pub bond_map: HashMap<(usize, usize), Bond>,
     pub rings: Vec<Vec<usize>>,
+    // Precomputed per-term parameters (looked up once in new(), not per call).
+    bond_terms: Vec<(usize, usize, BondParams)>,
+    angle_terms: Vec<(usize, usize, usize, AngleParams)>,
+    stretch_bend_terms: Vec<(usize, usize, usize, f64, f64, f64, StretchBendParams)>,
+    torsion_terms: Vec<(usize, usize, usize, usize, TorsionParams)>,
+    oop_terms: Vec<(usize, usize, usize, usize, OOPParams)>,
+    vdw_params: Vec<VDWParams>,
+    nonbonded_pairs: Vec<(usize, usize, bool)>,
+}
+
+/// Smallest 3- or 4-membered ring containing all of {i, j, k}, else 0.
+fn ring_size_for_angle(rings: &[Vec<usize>], i: usize, j: usize, k: usize) -> u8 {
+    for ring in rings {
+        let len = ring.len();
+        if (len == 3 || len == 4)
+            && ring.contains(&i)
+            && ring.contains(&j)
+            && ring.contains(&k)
+        {
+            return len as u8;
+        }
+    }
+    0
 }
 
 impl MMFFForceField {
@@ -388,6 +411,143 @@ impl MMFFForceField {
             })
             .collect();
 
+        // Precompute per-term parameters once (params depend only on atom
+        // types / bond types / ring membership, all fixed at construction).
+        let bond_terms: Vec<(usize, usize, BondParams)> = mol
+            .bonds
+            .iter()
+            .filter_map(|b| {
+                get_bond_params(atom_types[b.atom1], atom_types[b.atom2], b.bond_type)
+                    .map(|p| (b.atom1, b.atom2, p))
+            })
+            .collect();
+
+        let mut angle_terms: Vec<(usize, usize, usize, AngleParams)> = Vec::new();
+        let mut stretch_bend_terms: Vec<(
+            usize,
+            usize,
+            usize,
+            f64,
+            f64,
+            f64,
+            StretchBendParams,
+        )> = Vec::new();
+        for angle in &angles {
+            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
+            let bij_key = (i.min(j), i.max(j));
+            let bkj_key = (k.min(j), k.max(j));
+            let bt_ij = bond_map
+                .get(&bij_key)
+                .map(|b| get_mmff_bond_type(b.bond_type, type_ids[i], type_ids[j]))
+                .unwrap_or(0);
+            let bt_jk = bond_map
+                .get(&bkj_key)
+                .map(|b| get_mmff_bond_type(b.bond_type, type_ids[j], type_ids[k]))
+                .unwrap_or(0);
+            let ring_size = ring_size_for_angle(&rings, i, j, k);
+            let r0_ij = bond_map
+                .get(&bij_key)
+                .and_then(|b| get_bond_params(atom_types[i], atom_types[j], b.bond_type))
+                .map(|p| p.r0)
+                .unwrap_or(1.5);
+            let r0_kj = bond_map
+                .get(&bkj_key)
+                .and_then(|b| get_bond_params(atom_types[k], atom_types[j], b.bond_type))
+                .map(|p| p.r0)
+                .unwrap_or(1.5);
+            let angle_params = get_angle_params_with_bond_info(
+                atom_types[i],
+                atom_types[j],
+                atom_types[k],
+                bt_ij,
+                bt_jk,
+                ring_size,
+                r0_ij,
+                r0_kj,
+            );
+            if let Some(params) = angle_params {
+                angle_terms.push((i, j, k, params));
+            }
+            if let (Some(bij), Some(bkj)) = (bond_map.get(&bij_key), bond_map.get(&bkj_key)) {
+                if !mmff_tables::is_linear_center(type_ids[j]) {
+                    let angle_type_val =
+                        mmff_tables::compute_angle_type(bt_ij, bt_jk, ring_size);
+                    if let (Some(sb), Some(bp_ij), Some(bp_kj), Some(ap)) = (
+                        get_stretch_bend_params(
+                            atom_types[i],
+                            atom_types[j],
+                            atom_types[k],
+                            bt_ij,
+                            bt_jk,
+                            mol.atoms[i].atomic_number,
+                            mol.atoms[j].atomic_number,
+                            mol.atoms[k].atomic_number,
+                            angle_type_val,
+                        ),
+                        get_bond_params(atom_types[i], atom_types[j], bij.bond_type),
+                        get_bond_params(atom_types[k], atom_types[j], bkj.bond_type),
+                        angle_params,
+                    ) {
+                        stretch_bend_terms.push((
+                            i,
+                            j,
+                            k,
+                            bp_ij.r0,
+                            bp_kj.r0,
+                            ap.theta0.to_radians(),
+                            sb,
+                        ));
+                    }
+                }
+            }
+        }
+
+        let torsion_terms: Vec<(usize, usize, usize, usize, TorsionParams)> = torsions
+            .iter()
+            .enumerate()
+            .filter_map(|(ti, t)| {
+                get_torsion_params(
+                    atom_types[t.atom1],
+                    atom_types[t.atom2],
+                    atom_types[t.atom3],
+                    atom_types[t.atom4],
+                    torsion_types[ti],
+                    variant,
+                )
+                .map(|p| (t.atom1, t.atom2, t.atom3, t.atom4, p))
+            })
+            .collect();
+
+        let oop_terms: Vec<(usize, usize, usize, usize, OOPParams)> = oops
+            .iter()
+            .map(|o| {
+                let p = get_oop_params(
+                    atom_types[o.atom1],
+                    atom_types[o.central],
+                    atom_types[o.atom2],
+                    atom_types[o.atom3],
+                    variant,
+                );
+                (o.central, o.atom1, o.atom2, o.atom3, p)
+            })
+            .collect();
+
+        let vdw_params: Vec<VDWParams> =
+            atom_types.iter().map(|&at| get_vdw_params(at)).collect();
+
+        let nonbonded_pairs: Vec<(usize, usize, bool)> = {
+            let nbat = mol.atoms.len();
+            let mut pairs = Vec::new();
+            for i in 0..nbat {
+                for j in (i + 1)..nbat {
+                    if !excluded_pairs.contains(&(i, j)) {
+                        pairs.push((i, j, one_four_pairs.contains(&(i, j))));
+                    }
+                }
+            }
+            pairs
+        };
+
         Self {
             mol: mol.clone(),
             atom_types,
@@ -402,17 +562,18 @@ impl MMFFForceField {
             one_four_pairs,
             bond_map,
             rings,
+            bond_terms,
+            angle_terms,
+            stretch_bend_terms,
+            torsion_terms,
+            oop_terms,
+            vdw_params,
+            nonbonded_pairs,
         }
     }
 
     pub fn angle_ring_size(&self, i: usize, j: usize, k: usize) -> u8 {
-        let angle_set: HashSet<usize> = [i, j, k].iter().copied().collect();
-        for ring in &self.rings {
-            if (ring.len() == 3 || ring.len() == 4) && angle_set.iter().all(|a| ring.contains(a)) {
-                return ring.len() as u8;
-            }
-        }
-        0
+        ring_size_for_angle(&self.rings, i, j, k)
     }
 
     fn assign_atom_types(mol: &Molecule) -> Vec<MMFFAtomType> {
@@ -525,9 +686,10 @@ impl MMFFForceField {
                                 } else if !alpha_het.is_empty() && !beta_het.is_empty() {
                                     // Both alpha and beta heteroatoms, no O/S → N5 (type 79)
                                     tmp.insert(atom_idx, MMFFAtomType::N5);
+                                } else if n_degree >= 3 {
+                                    tmp.insert(atom_idx, MMFFAtomType::NPYL);
                                 } else {
-                                    if n_degree >= 3 { tmp.insert(atom_idx, MMFFAtomType::NPYL); }
-                                    else { tmp.insert(atom_idx, MMFFAtomType::N5B); }
+                                    tmp.insert(atom_idx, MMFFAtomType::N5B);
                                 }
                             }
                         }
@@ -587,9 +749,9 @@ impl MMFFForceField {
                     atom_idx,
                     if n_pos_neighbors >= 2 {
                         MMFFAtomType::C_IM
-                    } else if ring_has_pos && het_total >= 1 {
-                        MMFFAtomType::C5A_M
-                    } else if tmp.values().any(|&t| t == MMFFAtomType::NPYL_M) {
+                    } else if (ring_has_pos && het_total >= 1)
+                        || tmp.values().any(|&t| t == MMFFAtomType::NPYL_M)
+                    {
                         MMFFAtomType::C5A_M
                     } else if lonepair_het >= 1 || het_total >= 2 {
                         MMFFAtomType::C5A
@@ -989,14 +1151,14 @@ impl MMFFForceField {
                     (7, _, true, _) if has_c_o_neighbor && !n_owns_cn => MMFFAtomType::N_AM,
 
                     // Iminium N+=C (type 54): charged sp2 N with double bond to C, NOT aromatic
-                    (7, Hybridization::Sp2, false, _) if charge > 0.5 && !aromatic && double_bond_partners.iter().any(|&an| an == 6) => MMFFAtomType::N_IM,
+                    (7, Hybridization::Sp2, false, _) if charge > 0.5 && !aromatic && double_bond_partners.contains(&6) => MMFFAtomType::N_IM,
                     // Sulfinylamine N=S (type 48): N double-bonded to S that also has S=O
-                    (7, _, false, _) if double_bond_partners.iter().any(|&an| an == 16) => {
+                    (7, _, false, _) if double_bond_partners.contains(&16) => {
                         MMFFAtomType::N_SO
                     }
                     // Non-aromatic N-oxide: sp2 N+ with double bond to O → N_5OX (67)
                     (7, Hybridization::Sp2, false, _) if charge > 0.5
-                        && double_bond_partners.iter().any(|&an| an == 8) =>
+                        && double_bond_partners.contains(&8) =>
                     {
                         MMFFAtomType::N_5OX
                     }
@@ -1201,7 +1363,7 @@ impl MMFFForceField {
                     (16, _, true, 2..=3) => MMFFAtomType::S_AR,
                     // Sulfene S (type 74): S with C=S=O (1 double to C + 1 double to O)
                     (16, _, _, 2) if double_o_count == 1
-                        && double_bond_partners.iter().any(|&an| an == 6) =>
+                        && double_bond_partners.contains(&6) =>
                     {
                         MMFFAtomType::S_CSO
                     }
@@ -1258,7 +1420,7 @@ impl MMFFForceField {
 
                     // Phosphorus types
                     // P in small ring with double bond → type 75
-                    (15, _, _, 2) if double_bond_partners.len() >= 1 => MMFFAtomType::P_ARM,
+                    (15, _, _, 2) if !double_bond_partners.is_empty() => MMFFAtomType::P_ARM,
                     (15, Hybridization::Sp3, _, 3..=4) => MMFFAtomType::P_3,
                     (15, Hybridization::Sp2, _, _) => MMFFAtomType::P_4,
                     (15, Hybridization::Sp3D, _, 5) => MMFFAtomType::P_3D,
@@ -1483,277 +1645,107 @@ impl MMFFForceField {
         let mut gradient = vec![[0.0; 3]; self.mol.atoms.len()];
 
         // Bond stretching
-        for bond in &self.mol.bonds {
-            if let Some(params) = get_bond_params(
-                self.atom_types[bond.atom1],
-                self.atom_types[bond.atom2],
-                bond.bond_type,
-            ) {
-                energy += bond_energy(coords, bond.atom1, bond.atom2, &params);
-                let (gi, gj) = bond_gradient(coords, bond.atom1, bond.atom2, &params);
-                gradient[bond.atom1][0] += gi[0];
-                gradient[bond.atom1][1] += gi[1];
-                gradient[bond.atom1][2] += gi[2];
-                gradient[bond.atom2][0] += gj[0];
-                gradient[bond.atom2][1] += gj[1];
-                gradient[bond.atom2][2] += gj[2];
-            }
+        for &(i, j, params) in &self.bond_terms {
+            energy += bond_energy(coords, i, j, &params);
+            let (gi, gj) = bond_gradient(coords, i, j, &params);
+            gradient[i][0] += gi[0];
+            gradient[i][1] += gi[1];
+            gradient[i][2] += gi[2];
+            gradient[j][0] += gj[0];
+            gradient[j][1] += gj[1];
+            gradient[j][2] += gj[2];
         }
 
         // Angle bending
-        for angle in &self.angles {
-            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
-            let bij_key = (i.min(j), i.max(j));
-            let bkj_key = (k.min(j), k.max(j));
-            let bt_ij = self
-                .bond_map
-                .get(&bij_key)
-                .map(|b| get_mmff_bond_type(b.bond_type, self.type_ids[i], self.type_ids[j]))
-                .unwrap_or(0);
-            let bt_jk = self
-                .bond_map
-                .get(&bkj_key)
-                .map(|b| get_mmff_bond_type(b.bond_type, self.type_ids[j], self.type_ids[k]))
-                .unwrap_or(0);
-            let ring_size = self.angle_ring_size(i, j, k);
-            let r0_ij = self
-                .bond_map
-                .get(&bij_key)
-                .and_then(|b| get_bond_params(self.atom_types[i], self.atom_types[j], b.bond_type))
-                .map(|p| p.r0)
-                .unwrap_or(1.5);
-            let r0_jk = self
-                .bond_map
-                .get(&bkj_key)
-                .and_then(|b| get_bond_params(self.atom_types[k], self.atom_types[j], b.bond_type))
-                .map(|p| p.r0)
-                .unwrap_or(1.5);
-            if let Some(params) = get_angle_params_with_bond_info(
-                self.atom_types[i],
-                self.atom_types[j],
-                self.atom_types[k],
-                bt_ij,
-                bt_jk,
-                ring_size,
-                r0_ij,
-                r0_jk,
-            ) {
-                energy += angle_energy(coords, i, j, k, &params);
-                let (g1, g2, g3) = angle_gradient(coords, i, j, k, &params);
-                gradient[i][0] += g1[0];
-                gradient[i][1] += g1[1];
-                gradient[i][2] += g1[2];
-                gradient[j][0] += g2[0];
-                gradient[j][1] += g2[1];
-                gradient[j][2] += g2[2];
-                gradient[k][0] += g3[0];
-                gradient[k][1] += g3[1];
-                gradient[k][2] += g3[2];
-            }
+        for &(i, j, k, params) in &self.angle_terms {
+            energy += angle_energy(coords, i, j, k, &params);
+            let (g1, g2, g3) = angle_gradient(coords, i, j, k, &params);
+            gradient[i][0] += g1[0];
+            gradient[i][1] += g1[1];
+            gradient[i][2] += g1[2];
+            gradient[j][0] += g2[0];
+            gradient[j][1] += g2[1];
+            gradient[j][2] += g2[2];
+            gradient[k][0] += g3[0];
+            gradient[k][1] += g3[1];
+            gradient[k][2] += g3[2];
         }
 
         // Stretch-bend coupling
-        for angle in &self.angles {
-            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
-            let bij_key = (i.min(j), i.max(j));
-            let bkj_key = (k.min(j), k.max(j));
-            let bond_ij = self.bond_map.get(&bij_key);
-            let bond_kj = self.bond_map.get(&bkj_key);
-            if let (Some(bij), Some(bkj)) = (bond_ij, bond_kj) {
-                let bt_ij = get_mmff_bond_type(bij.bond_type, self.type_ids[i], self.type_ids[j]);
-                let bt_jk = get_mmff_bond_type(bkj.bond_type, self.type_ids[j], self.type_ids[k]);
-                let ring_size = self.angle_ring_size(i, j, k);
-                let angle_type_val = mmff_tables::compute_angle_type(bt_ij, bt_jk, ring_size);
-                if mmff_tables::is_linear_center(self.type_ids[j]) {
-                    continue;
-                }
-                if let (
-                    Some(sb_params),
-                    Some(bond_params_ij),
-                    Some(bond_params_kj),
-                    Some(angle_params),
-                ) = (
-                    get_stretch_bend_params(
-                        self.atom_types[i],
-                        self.atom_types[j],
-                        self.atom_types[k],
-                        bt_ij,
-                        bt_jk,
-                        self.mol.atoms[i].atomic_number,
-                        self.mol.atoms[j].atomic_number,
-                        self.mol.atoms[k].atomic_number,
-                        angle_type_val,
-                    ),
-                    get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type),
-                    get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type),
-                    get_angle_params_with_bond_info(
-                        self.atom_types[i],
-                        self.atom_types[j],
-                        self.atom_types[k],
-                        bt_ij,
-                        bt_jk,
-                        ring_size,
-                        get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type)
-                            .map(|p| p.r0)
-                            .unwrap_or(1.5),
-                        get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type)
-                            .map(|p| p.r0)
-                            .unwrap_or(1.5),
-                    ),
-                ) {
-                    energy += stretch_bend_energy(
-                        coords,
-                        i,
-                        j,
-                        k,
-                        bond_params_ij.r0,
-                        bond_params_kj.r0,
-                        angle_params.theta0.to_radians(),
-                        &sb_params,
-                    );
-                    let (g1, g2, g3) = stretch_bend_gradient(
-                        coords,
-                        i,
-                        j,
-                        k,
-                        bond_params_ij.r0,
-                        bond_params_kj.r0,
-                        angle_params.theta0.to_radians(),
-                        &sb_params,
-                    );
-                    gradient[i][0] += g1[0];
-                    gradient[i][1] += g1[1];
-                    gradient[i][2] += g1[2];
-                    gradient[j][0] += g2[0];
-                    gradient[j][1] += g2[1];
-                    gradient[j][2] += g2[2];
-                    gradient[k][0] += g3[0];
-                    gradient[k][1] += g3[1];
-                    gradient[k][2] += g3[2];
-                }
-            }
+        for &(i, j, k, r0_ij, r0_kj, theta0, params) in &self.stretch_bend_terms {
+            energy += stretch_bend_energy(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
+            let (g1, g2, g3) =
+                stretch_bend_gradient(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
+            gradient[i][0] += g1[0];
+            gradient[i][1] += g1[1];
+            gradient[i][2] += g1[2];
+            gradient[j][0] += g2[0];
+            gradient[j][1] += g2[1];
+            gradient[j][2] += g2[2];
+            gradient[k][0] += g3[0];
+            gradient[k][1] += g3[1];
+            gradient[k][2] += g3[2];
         }
 
         // Torsion
-        for (ti, torsion) in self.torsions.iter().enumerate() {
-            let tor_type = self.torsion_types[ti];
-            if let Some(params) = get_torsion_params(
-                self.atom_types[torsion.atom1],
-                self.atom_types[torsion.atom2],
-                self.atom_types[torsion.atom3],
-                self.atom_types[torsion.atom4],
-                tor_type,
-                self.variant,
-            ) {
-                energy += torsion_energy(
-                    coords,
-                    torsion.atom1,
-                    torsion.atom2,
-                    torsion.atom3,
-                    torsion.atom4,
-                    &params,
-                );
-                let (g1, g2, g3, g4) = torsion_gradient(
-                    coords,
-                    torsion.atom1,
-                    torsion.atom2,
-                    torsion.atom3,
-                    torsion.atom4,
-                    &params,
-                );
-                gradient[torsion.atom1][0] += g1[0];
-                gradient[torsion.atom1][1] += g1[1];
-                gradient[torsion.atom1][2] += g1[2];
-                gradient[torsion.atom2][0] += g2[0];
-                gradient[torsion.atom2][1] += g2[1];
-                gradient[torsion.atom2][2] += g2[2];
-                gradient[torsion.atom3][0] += g3[0];
-                gradient[torsion.atom3][1] += g3[1];
-                gradient[torsion.atom3][2] += g3[2];
-                gradient[torsion.atom4][0] += g4[0];
-                gradient[torsion.atom4][1] += g4[1];
-                gradient[torsion.atom4][2] += g4[2];
-            }
+        for &(i, j, k, l, params) in &self.torsion_terms {
+            energy += torsion_energy(coords, i, j, k, l, &params);
+            let (g1, g2, g3, g4) = torsion_gradient(coords, i, j, k, l, &params);
+            gradient[i][0] += g1[0];
+            gradient[i][1] += g1[1];
+            gradient[i][2] += g1[2];
+            gradient[j][0] += g2[0];
+            gradient[j][1] += g2[1];
+            gradient[j][2] += g2[2];
+            gradient[k][0] += g3[0];
+            gradient[k][1] += g3[1];
+            gradient[k][2] += g3[2];
+            gradient[l][0] += g4[0];
+            gradient[l][1] += g4[1];
+            gradient[l][2] += g4[2];
         }
 
         // Out-of-plane
-        for oop in &self.oops {
-            let params = get_oop_params(
-                self.atom_types[oop.atom1],
-                self.atom_types[oop.central],
-                self.atom_types[oop.atom2],
-                self.atom_types[oop.atom3],
-                self.variant,
-            );
-            energy += oop_energy(
-                coords,
-                oop.central,
-                oop.atom1,
-                oop.atom2,
-                oop.atom3,
-                &params,
-            );
-            let (g_central, g1, g2, g3) = oop_gradient(
-                coords,
-                oop.central,
-                oop.atom1,
-                oop.atom2,
-                oop.atom3,
-                &params,
-            );
-            gradient[oop.central][0] += g_central[0];
-            gradient[oop.central][1] += g_central[1];
-            gradient[oop.central][2] += g_central[2];
-            gradient[oop.atom1][0] += g1[0];
-            gradient[oop.atom1][1] += g1[1];
-            gradient[oop.atom1][2] += g1[2];
-            gradient[oop.atom2][0] += g2[0];
-            gradient[oop.atom2][1] += g2[1];
-            gradient[oop.atom2][2] += g2[2];
-            gradient[oop.atom3][0] += g3[0];
-            gradient[oop.atom3][1] += g3[1];
-            gradient[oop.atom3][2] += g3[2];
+        for &(central, a1, a2, a3, params) in &self.oop_terms {
+            energy += oop_energy(coords, central, a1, a2, a3, &params);
+            let (g_central, g1, g2, g3) =
+                oop_gradient(coords, central, a1, a2, a3, &params);
+            gradient[central][0] += g_central[0];
+            gradient[central][1] += g_central[1];
+            gradient[central][2] += g_central[2];
+            gradient[a1][0] += g1[0];
+            gradient[a1][1] += g1[1];
+            gradient[a1][2] += g1[2];
+            gradient[a2][0] += g2[0];
+            gradient[a2][1] += g2[1];
+            gradient[a2][2] += g2[2];
+            gradient[a3][0] += g3[0];
+            gradient[a3][1] += g3[1];
+            gradient[a3][2] += g3[2];
         }
 
-        // Van der Waals (all nonbonded pairs, excluding 1-2 and 1-3)
-        let n = self.mol.atoms.len();
-        for i in 0..n {
-            for j in (i + 1)..n {
-                if !self.excluded_pairs.contains(&(i, j)) {
-                    let params_i = get_vdw_params(self.atom_types[i]);
-                    let params_j = get_vdw_params(self.atom_types[j]);
-                    let is_14 = self.one_four_pairs.contains(&(i, j));
-                    let (e, grad_i, grad_j) =
-                        vdw_energy_and_gradient(coords, i, j, &params_i, &params_j, is_14);
-                    energy += e;
-                    gradient[i][0] += grad_i[0];
-                    gradient[i][1] += grad_i[1];
-                    gradient[i][2] += grad_i[2];
-                    gradient[j][0] += grad_j[0];
-                    gradient[j][1] += grad_j[1];
-                    gradient[j][2] += grad_j[2];
-                }
-            }
-        }
-
-        // Electrostatics (all charged pairs, excluding 1-2 and 1-3)
-        // 1-4 pairs are scaled by 0.75
-        for i in 0..n {
-            for j in (i + 1)..n {
-                if !self.excluded_pairs.contains(&(i, j))
-                    && (self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6)
-                {
-                    let is_14 = self.one_four_pairs.contains(&(i, j));
-                    let (e, grad_i, grad_j) =
-                        electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
-                    energy += e;
-                    gradient[i][0] += grad_i[0];
-                    gradient[i][1] += grad_i[1];
-                    gradient[i][2] += grad_i[2];
-                    gradient[j][0] += grad_j[0];
-                    gradient[j][1] += grad_j[1];
-                    gradient[j][2] += grad_j[2];
-                }
+        // Van der Waals + electrostatics (one pass over precomputed
+        // non-excluded pairs; 1-4 pairs scaled by 0.75)
+        for &(i, j, is_14) in &self.nonbonded_pairs {
+            let (e, grad_i, grad_j) =
+                vdw_energy_and_gradient(coords, i, j, &self.vdw_params[i], &self.vdw_params[j], is_14);
+            energy += e;
+            gradient[i][0] += grad_i[0];
+            gradient[i][1] += grad_i[1];
+            gradient[i][2] += grad_i[2];
+            gradient[j][0] += grad_j[0];
+            gradient[j][1] += grad_j[1];
+            gradient[j][2] += grad_j[2];
+            if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
+                let (e, grad_i, grad_j) =
+                    electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
+                energy += e;
+                gradient[i][0] += grad_i[0];
+                gradient[i][1] += grad_i[1];
+                gradient[i][2] += grad_i[2];
+                gradient[j][0] += grad_j[0];
+                gradient[j][1] += grad_j[1];
+                gradient[j][2] += grad_j[2];
             }
         }
 
@@ -1770,183 +1762,31 @@ impl MMFFForceField {
 
     pub fn calculate_energy_breakdown(&self, coords: &[[f64; 3]]) -> EnergyBreakdown {
         let mut bd = EnergyBreakdown::default();
-        let n = self.mol.atoms.len();
 
-        for bond in &self.mol.bonds {
-            if let Some(params) = get_bond_params(
-                self.atom_types[bond.atom1],
-                self.atom_types[bond.atom2],
-                bond.bond_type,
-            ) {
-                bd.bond += bond_energy(coords, bond.atom1, bond.atom2, &params);
-            }
+        for &(i, j, params) in &self.bond_terms {
+            bd.bond += bond_energy(coords, i, j, &params);
         }
-
-        for angle in &self.angles {
-            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
-            let bij_key = (i.min(j), i.max(j));
-            let bkj_key = (k.min(j), k.max(j));
-            let bt_ij = self
-                .bond_map
-                .get(&bij_key)
-                .map(|b| get_mmff_bond_type(b.bond_type, self.type_ids[i], self.type_ids[j]))
-                .unwrap_or(0);
-            let bt_jk = self
-                .bond_map
-                .get(&bkj_key)
-                .map(|b| get_mmff_bond_type(b.bond_type, self.type_ids[j], self.type_ids[k]))
-                .unwrap_or(0);
-            let ring_size = self.angle_ring_size(i, j, k);
-            let r0_ij = self
-                .bond_map
-                .get(&bij_key)
-                .and_then(|b| get_bond_params(self.atom_types[i], self.atom_types[j], b.bond_type))
-                .map(|p| p.r0)
-                .unwrap_or(1.5);
-            let r0_jk = self
-                .bond_map
-                .get(&bkj_key)
-                .and_then(|b| get_bond_params(self.atom_types[k], self.atom_types[j], b.bond_type))
-                .map(|p| p.r0)
-                .unwrap_or(1.5);
-            if let Some(params) = get_angle_params_with_bond_info(
-                self.atom_types[i],
-                self.atom_types[j],
-                self.atom_types[k],
-                bt_ij,
-                bt_jk,
-                ring_size,
-                r0_ij,
-                r0_jk,
-            ) {
-                bd.angle += angle_energy(coords, i, j, k, &params);
-            }
+        for &(i, j, k, params) in &self.angle_terms {
+            bd.angle += angle_energy(coords, i, j, k, &params);
         }
-
-        for angle in &self.angles {
-            let (i, j, k) = (angle.atom1, angle.atom2, angle.atom3);
-            let bij_key = (i.min(j), i.max(j));
-            let bkj_key = (k.min(j), k.max(j));
-            let bond_ij = self.bond_map.get(&bij_key);
-            let bond_kj = self.bond_map.get(&bkj_key);
-            if let (Some(bij), Some(bkj)) = (bond_ij, bond_kj) {
-                let bt_ij = get_mmff_bond_type(bij.bond_type, self.type_ids[i], self.type_ids[j]);
-                let bt_jk = get_mmff_bond_type(bkj.bond_type, self.type_ids[j], self.type_ids[k]);
-                let ring_size = self.angle_ring_size(i, j, k);
-                let angle_type_val = mmff_tables::compute_angle_type(bt_ij, bt_jk, ring_size);
-                if mmff_tables::is_linear_center(self.type_ids[j]) {
-                    continue;
-                }
-                if let (
-                    Some(sb_params),
-                    Some(bond_params_ij),
-                    Some(bond_params_kj),
-                    Some(angle_params),
-                ) = (
-                    get_stretch_bend_params(
-                        self.atom_types[i],
-                        self.atom_types[j],
-                        self.atom_types[k],
-                        bt_ij,
-                        bt_jk,
-                        self.mol.atoms[i].atomic_number,
-                        self.mol.atoms[j].atomic_number,
-                        self.mol.atoms[k].atomic_number,
-                        angle_type_val,
-                    ),
-                    get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type),
-                    get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type),
-                    get_angle_params_with_bond_info(
-                        self.atom_types[i],
-                        self.atom_types[j],
-                        self.atom_types[k],
-                        bt_ij,
-                        bt_jk,
-                        ring_size,
-                        get_bond_params(self.atom_types[i], self.atom_types[j], bij.bond_type)
-                            .map(|p| p.r0)
-                            .unwrap_or(1.5),
-                        get_bond_params(self.atom_types[k], self.atom_types[j], bkj.bond_type)
-                            .map(|p| p.r0)
-                            .unwrap_or(1.5),
-                    ),
-                ) {
-                    bd.stretch_bend += stretch_bend_energy(
-                        coords,
-                        i,
-                        j,
-                        k,
-                        bond_params_ij.r0,
-                        bond_params_kj.r0,
-                        angle_params.theta0.to_radians(),
-                        &sb_params,
-                    );
-                }
-            }
+        for &(i, j, k, r0_ij, r0_kj, theta0, params) in &self.stretch_bend_terms {
+            bd.stretch_bend +=
+                stretch_bend_energy(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
         }
-
-        for (ti, torsion) in self.torsions.iter().enumerate() {
-            let tor_type = self.torsion_types[ti];
-            if let Some(params) = get_torsion_params(
-                self.atom_types[torsion.atom1],
-                self.atom_types[torsion.atom2],
-                self.atom_types[torsion.atom3],
-                self.atom_types[torsion.atom4],
-                tor_type,
-                self.variant,
-            ) {
-                bd.torsion += torsion_energy(
-                    coords,
-                    torsion.atom1,
-                    torsion.atom2,
-                    torsion.atom3,
-                    torsion.atom4,
-                    &params,
-                );
-            }
+        for &(i, j, k, l, params) in &self.torsion_terms {
+            bd.torsion += torsion_energy(coords, i, j, k, l, &params);
         }
-
-        for oop in &self.oops {
-            let params = get_oop_params(
-                self.atom_types[oop.atom1],
-                self.atom_types[oop.central],
-                self.atom_types[oop.atom2],
-                self.atom_types[oop.atom3],
-                self.variant,
-            );
-            bd.oop += oop_energy(
-                coords,
-                oop.central,
-                oop.atom1,
-                oop.atom2,
-                oop.atom3,
-                &params,
-            );
+        for &(central, a1, a2, a3, params) in &self.oop_terms {
+            bd.oop += oop_energy(coords, central, a1, a2, a3, &params);
         }
-
-        for i in 0..n {
-            for j in (i + 1)..n {
-                if !self.excluded_pairs.contains(&(i, j)) {
-                    let params_i = get_vdw_params(self.atom_types[i]);
-                    let params_j = get_vdw_params(self.atom_types[j]);
-                    let is_14 = self.one_four_pairs.contains(&(i, j));
-                    let (e, _, _) =
-                        vdw_energy_and_gradient(coords, i, j, &params_i, &params_j, is_14);
-                    bd.vdw += e;
-                }
-            }
-        }
-
-        for i in 0..n {
-            for j in (i + 1)..n {
-                if !self.excluded_pairs.contains(&(i, j))
-                    && (self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6)
-                {
-                    let is_14 = self.one_four_pairs.contains(&(i, j));
-                    let (e, _, _) =
-                        electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
-                    bd.electrostatic += e;
-                }
+        for &(i, j, is_14) in &self.nonbonded_pairs {
+            let (e, _, _) =
+                vdw_energy_and_gradient(coords, i, j, &self.vdw_params[i], &self.vdw_params[j], is_14);
+            bd.vdw += e;
+            if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
+                let (e, _, _) =
+                    electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
+                bd.electrostatic += e;
             }
         }
 

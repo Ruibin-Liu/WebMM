@@ -140,10 +140,10 @@ fn lookup_vdw(type_id: u8) -> MMFFVdW {
 
 pub struct VDWParams {
     pub r_star: f64,
-    alpha_i: f64,
-    n_i: f64,
-    g_i: f64,
-    da: u8,
+    pub alpha_i: f64,
+    pub n_i: f64,
+    pub g_i: f64,
+    pub da: u8,
 }
 
 pub fn get_vdw_params(atom_type: MMFFAtomType) -> VDWParams {

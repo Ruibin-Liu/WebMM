@@ -8,7 +8,7 @@
 | Real types (crd > 0) | 86 |
 | Pseudo/LP types (crd = 0) | 13 |
 | **All 86 real types covered** | **86 / 86 (100%)** |
-| **Molecules matching RDKit <0.01 kcal/mol** | **228 / 228 (100%)** |
+| **Molecules matching RDKit <0.01 kcal/mol** | **230 / 230 (100%)** |
 
 ## Validation Sets
 
@@ -21,7 +21,8 @@
 | Charged/aromatic | 6 | 100% | 6/6 |
 | Types 52, 79 | 5 | 100% | 5/5 |
 | RDKit bulk.sdf | 32 | 100% | 32/32 |
-| **TOTAL** | **228** | **228/228** | **228/228 (100%)** |
+| Aryl phosphines (P–C_AR) | 2 | 100% | 2/2 |
+| **TOTAL** | **230** | **230/230** | **230/230 (100%)** |
 
 ## Final Fix History (this round)
 

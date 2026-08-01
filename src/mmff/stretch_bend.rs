@@ -1,6 +1,7 @@
 use super::mmff_tables;
 use super::params::mmff_type_id;
 
+#[derive(Debug, Clone, Copy)]
 pub struct StretchBendParams {
     pub kba_ijk: f64,
     pub kba_kji: f64,

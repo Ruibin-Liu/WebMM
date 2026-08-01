@@ -11,15 +11,12 @@ pub struct BondParams {
     pub cb: f64,     // cubic stretch constant (cs = -2*cb); 1.0 for most bonds
 }
 
-/// Per-bond-type cubic stretch constant (cb) overrides.
-/// Derived from RDKit verbose energy inversion (bonds with |dr|>0.02).
-/// cb=1.0 is the default; these override for specific type pairs where
-/// RDKit's MMFFBOND table uses a different value.
-const CB_OVERRIDES: &[(u8, u8, f64)] = &[
-    // (type_min, type_max, cb) — populated from RDKit MMFFBOND table when available.
-    // Derived-from-energy values were too noisy (biguanide regressed +0.43).
-    // cb=1.0 is the default and gives RMSD=0.014; overrides need exact table values.
-];
+/// MMFF94 uses a single universal cubic stretch constant `cs = -2.0` for every
+/// bond (Halgren 1996 eq. 3); `cb = -cs/2 = 1.0` everywhere. Verified empirically
+/// against RDKit 2025.09.3 by stretching isolated bonds (C-H, C-F, C-Cl, C-O,
+/// C-N, C-C, C=C, C#N, P=O) — every one yields `cs = -2.0000`. So there are NO
+/// per-bond `cb` values to override; this table stays empty by design.
+const CB_OVERRIDES: &[(u8, u8, f64)] = &[];
 
 fn apply_cb_override(params: &mut BondParams, type1: MMFFAtomType, type2: MMFFAtomType) {
     use super::params::mmff_type_id;
@@ -653,6 +650,13 @@ fn lookup_bond_params_exact(
             r0: 1.082,
         cb: 1.0,
         }),
+        // CR3R-P_3 (3-ring P-C, e.g. phosphirane) — was falling back to C_3-P_3 (2.79/1.83);
+        // RDKit's 3-ring-specific value. Found via full-precision param audit.
+        (MMFFAtomType::CR3R, MMFFAtomType::P_3, BondType::Single)
+        | (MMFFAtomType::P_3, MMFFAtomType::CR3R, BondType::Single) => Some(BondParams {
+            k_bond: 2.7618, r0: 1.8331,
+        cb: 1.0,
+        }),
         (MMFFAtomType::C_2, MMFFAtomType::CR3R, BondType::Single)
         | (MMFFAtomType::CR3R, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
             k_bond: 4.926,
@@ -1214,11 +1218,9 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::S_3, MMFFAtomType::C_2, BondType::Single) => Some(BondParams {
             k_bond: 3.536, r0: 1.748, cb: 1.0,
         }),
-        // N_PL3-H (amidine H on N_PL3)
+        // N_PL3-H_NAM (amidine H on N_PL3); plain H variants are covered by the earlier N_PL3-H arm
         (MMFFAtomType::N_PL3, MMFFAtomType::H_NAM, BondType::Single)
-        | (MMFFAtomType::H_NAM, MMFFAtomType::N_PL3, BondType::Single)
-        | (MMFFAtomType::N_PL3, MMFFAtomType::H, BondType::Single)
-        | (MMFFAtomType::H, MMFFAtomType::N_PL3, BondType::Single) => Some(BondParams {
+        | (MMFFAtomType::H_NAM, MMFFAtomType::N_PL3, BondType::Single) => Some(BondParams {
             k_bond: 6.576, r0: 1.018, cb: 1.0,
         }),
         // N_3-N_AM (hydrazide N-N) and N_3-H (amine N-H)
@@ -1232,9 +1234,7 @@ fn lookup_bond_params_exact(
             k_bond: 3.565, r0: 1.765, cb: 1.0,
         }),
         (MMFFAtomType::N_3, MMFFAtomType::H_N3, BondType::Single)
-        | (MMFFAtomType::H_N3, MMFFAtomType::N_3, BondType::Single)
-        | (MMFFAtomType::N_3, MMFFAtomType::H, BondType::Single)
-        | (MMFFAtomType::H, MMFFAtomType::N_3, BondType::Single) => Some(BondParams {
+        | (MMFFAtomType::H_N3, MMFFAtomType::N_3, BondType::Single) => Some(BondParams {
             k_bond: 6.490, r0: 1.019, cb: 1.0,
         }),
         (MMFFAtomType::N_3, MMFFAtomType::N_AR, BondType::Single)
@@ -1389,20 +1389,28 @@ fn lookup_bond_params_exact(
             r0: 1.510,
         cb: 1.0,
         }),
+        // P-C_AR (aryl phosphines / phosphine oxides) — was missing, fell back to
+        // estimation and overstated bond energy by ~+9 kcal on Ph3P=O. RDKit values.
+        (MMFFAtomType::P_4, MMFFAtomType::C_AR, BondType::Single)
+        | (MMFFAtomType::C_AR, MMFFAtomType::P_4, BondType::Single) => Some(BondParams {
+            k_bond: 3.586, r0: 1.755,
+        cb: 1.0,
+        }),
+        (MMFFAtomType::P_3, MMFFAtomType::C_AR, BondType::Single)
+        | (MMFFAtomType::C_AR, MMFFAtomType::P_3, BondType::Single) => Some(BondParams {
+            k_bond: 3.207, r0: 1.788,
+        cb: 1.0,
+        }),
 
         // === val_set_new5 bond params ===
         // C_AR-O_2P (furanium ring O+=)
-        // N_AM-H and N_AR-H bonds (indole/tryptophan NH)
+        // N_AM-H_NAM and N_AR-H_N3 bonds (indole/tryptophan NH); plain H variants are covered by the earlier N-H arms
         (MMFFAtomType::N_AM, MMFFAtomType::H_NAM, BondType::Single)
-        | (MMFFAtomType::H_NAM, MMFFAtomType::N_AM, BondType::Single)
-        | (MMFFAtomType::N_AM, MMFFAtomType::H, BondType::Single)
-        | (MMFFAtomType::H, MMFFAtomType::N_AM, BondType::Single) => Some(BondParams {
+        | (MMFFAtomType::H_NAM, MMFFAtomType::N_AM, BondType::Single) => Some(BondParams {
             k_bond: 6.663, r0: 1.015, cb: 1.0,
         }),
         (MMFFAtomType::N_AR, MMFFAtomType::H_N3, BondType::Single)
-        | (MMFFAtomType::H_N3, MMFFAtomType::N_AR, BondType::Single)
-        | (MMFFAtomType::N_AR, MMFFAtomType::H, BondType::Single)
-        | (MMFFAtomType::H, MMFFAtomType::N_AR, BondType::Single) => Some(BondParams {
+        | (MMFFAtomType::H_N3, MMFFAtomType::N_AR, BondType::Single) => Some(BondParams {
             k_bond: 7.112, r0: 1.012, cb: 1.0,
         }),
         // N_AM-O_3 bond (hydroxamic acid N-O)
@@ -1512,9 +1520,7 @@ fn lookup_bond_params_exact(
             k_bond: 4.512, r0: 1.441, cb: 1.0,
         }),
         (MMFFAtomType::H_NAM, MMFFAtomType::C5A_M, BondType::Single)
-        | (MMFFAtomType::C5A_M, MMFFAtomType::H_NAM, BondType::Single)
-        | (MMFFAtomType::H, MMFFAtomType::C5A_M, BondType::Single)
-        | (MMFFAtomType::C5A_M, MMFFAtomType::H, BondType::Single) => Some(BondParams {
+        | (MMFFAtomType::C5A_M, MMFFAtomType::H_NAM, BondType::Single) => Some(BondParams {
             k_bond: 5.506, r0: 1.080, cb: 1.0,
         }),
         (MMFFAtomType::H_NAM, MMFFAtomType::C_IM, BondType::Single)
@@ -1522,9 +1528,6 @@ fn lookup_bond_params_exact(
         | (MMFFAtomType::H, MMFFAtomType::C_IM, BondType::Single)
         | (MMFFAtomType::C_IM, MMFFAtomType::H, BondType::Single) => Some(BondParams {
             k_bond: 5.633, r0: 1.076, cb: 1.0,
-        }),
-        (MMFFAtomType::C5A_M, MMFFAtomType::C5A_M, BondType::Aromatic) => Some(BondParams {
-            k_bond: 5.573, r0: 1.374, cb: 1.0,
         }),
         (MMFFAtomType::C5A_M, MMFFAtomType::N_5POS, BondType::Aromatic)
         | (MMFFAtomType::N_5POS, MMFFAtomType::C5A_M, BondType::Aromatic) => Some(BondParams {
@@ -1626,6 +1629,21 @@ mod tests {
             (energy - 0.0).abs() < 1e-10,
             "Energy should be zero at equilibrium"
         );
+    }
+
+    // Regression: P_4-C_AR / P_3-C_AR bond params must come from the RDKit table
+    // (3.586/1.755 and 3.207/1.788), not the estimation fallback. Without these,
+    // Ph3P=O diverged +9.4 kcal/mol (bond term overstated). RDKit-verified.
+    #[test]
+    fn test_p_car_bond_params() {
+        let p4_car = get_bond_params(MMFFAtomType::P_4, MMFFAtomType::C_AR, BondType::Single).unwrap();
+        assert!((p4_car.k_bond - 3.586).abs() < 1e-3, "P_4-C_AR kb={}", p4_car.k_bond);
+        assert!((p4_car.r0 - 1.755).abs() < 1e-3, "P_4-C_AR r0={}", p4_car.r0);
+        let p3_car = get_bond_params(MMFFAtomType::P_3, MMFFAtomType::C_AR, BondType::Single).unwrap();
+        assert!((p3_car.k_bond - 3.207).abs() < 1e-3, "P_3-C_AR kb={}", p3_car.k_bond);
+        assert!((p3_car.r0 - 1.788).abs() < 1e-3, "P_3-C_AR r0={}", p3_car.r0);
+        // symmetric
+        assert!(get_bond_params(MMFFAtomType::C_AR, MMFFAtomType::P_4, BondType::Single).is_some());
     }
 
     #[test]
