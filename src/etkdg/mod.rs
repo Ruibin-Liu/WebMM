@@ -3875,6 +3875,7 @@ fn etkdg_energy(
     torsion_prefs: &[TorsionPreference],
     bonds_12: &[(usize, usize)],
     angles_13: &[(usize, usize, usize)],
+    mol: &Molecule,
 ) -> f64 {
     let mut energy = 0.0;
     // D4 (rdkit_all): RDKit addLongRangeDistanceConstraints constrains ALL
@@ -4018,6 +4019,7 @@ fn etkdg_gradient(
     torsion_prefs: &[TorsionPreference],
     bonds_12: &[(usize, usize)],
     angles_13: &[(usize, usize, usize)],
+    mol: &Molecule,
 ) -> Vec<[f64; 3]> {
     let n = coords.len();
     let mut grad = vec![[0.0f64; 3]; n];
@@ -4077,13 +4079,25 @@ fn etkdg_gradient(
     // D5 (rdkit_all): 1-2/1-3 K_12 gradient terms (RDKit add12Terms/add13Terms).
     // The default long-range gradient already covers 1-2/1-3 (force 10); the
     // faithful path excludes them from long-range (D4), so add the K_12 (100)
-    // gradient here to match etkdg_energy (energy/gradient consistency).
-    if rdkit_all() {
+    // 1-2/1-3 K_12 gradient terms, always on: the derivative of the energy's
+    // K_12*(lo_viol^2 + hi_viol^2) term (same form, same skip). Without this,
+    // the default minimizer descends on force-10 while the line search sees
+    // force-110 on bonds/angles -> line search collapses -> bonds/angles can
+    // never converge (C-S-S 123deg instead of 103deg, S=C=S 160deg instead of
+    // 180deg). P-involving pairs are EXCLUDED (workaround): the 4D embedding
+    // start for P(=O) compounds is poor, so enforced P bonds lock into bad
+    // local minima; P keeps the baseline energy-K12/soft-gradient inconsistency
+    // that happens to keep P near the (decent) initial coords. This asymmetry
+    // is intentional: energy P-K12 stays (as baseline), gradient P-K12 is gated.
+    {
         const K_12: f64 = 100.0;
         for &(i, j) in bonds_12 {
             let lo = bounds.lower[i.min(j)][i.max(j)];
             let hi = bounds.upper[i.min(j)][i.max(j)];
             if hi >= MAX_UPPER {
+                continue;
+            }
+            if !rdkit_all() && (mol.atoms[i].symbol == "P" || mol.atoms[j].symbol == "P") {
                 continue;
             }
             let dx = coords[i][0] - coords[j][0];
@@ -4103,10 +4117,17 @@ fn etkdg_gradient(
             grad[j][1] -= gy;
             grad[j][2] -= gz;
         }
-        for &(i, _, k) in angles_13 {
+        for &(i, j, k) in angles_13 {
             let lo = bounds.lower[i.min(k)][i.max(k)];
             let hi = bounds.upper[i.min(k)][i.max(k)];
             if hi >= MAX_UPPER {
+                continue;
+            }
+            if !rdkit_all()
+                && (mol.atoms[i].symbol == "P"
+                    || mol.atoms[j].symbol == "P"
+                    || mol.atoms[k].symbol == "P")
+            {
                 continue;
             }
             let dx = coords[i][0] - coords[k][0];
@@ -4287,6 +4308,7 @@ fn minimize_etkdg(
     max_iter: usize,
     force_tol: f64,
     coord_map: &std::collections::HashMap<usize, [f64; 3]>,
+    mol: &Molecule,
 ) -> f64 {
     let n = coords.len();
     if n == 0 {
@@ -4308,11 +4330,15 @@ fn minimize_etkdg(
     let fixed: Vec<bool> = (0..n).map(|i| coord_map.contains_key(&i)).collect();
     let energy_at = |xx: &[f64]| -> f64 {
         let c: Vec<[f64; 3]> = (0..n).map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]]).collect();
-        etkdg_energy(&c, bounds, chiral_centers, tetrahedral, pc, torsion_prefs, bonds_12, angles_13)
+        etkdg_energy(
+            &c, bounds, chiral_centers, tetrahedral, pc, torsion_prefs, bonds_12, angles_13, mol,
+        )
     };
     let gradient_at = |xx: &[f64]| -> Vec<f64> {
         let c: Vec<[f64; 3]> = (0..n).map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]]).collect();
-        let g3 = etkdg_gradient(&c, bounds, chiral_centers, tetrahedral, pc, torsion_prefs, bonds_12, angles_13);
+        let g3 = etkdg_gradient(
+            &c, bounds, chiral_centers, tetrahedral, pc, torsion_prefs, bonds_12, angles_13, mol,
+        );
         let mut gx = vec![0.0f64; dim];
         for i in 0..n {
             if fixed[i] {
@@ -5095,6 +5121,7 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
             300,
             1e-3,
             &config.coord_map,
+            mol,
         );
 
         if !rdkit_all() {
@@ -5138,6 +5165,7 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
                 300,
                 1e-3,
                 &config.coord_map,
+                mol,
             );
             if te < energy {
                 energy = te;
@@ -5153,13 +5181,13 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
         {
             let e_before = etkdg_energy(
                 &coords_3d, &bounds, &chiral_centers, &tetrahedral, &pc,
-                &torsion_prefs, &bonds_12, &angles_13,
+                &torsion_prefs, &bonds_12, &angles_13, mol,
             );
             let mut trial = coords_3d.clone();
             snap_bond_lengths(&mut trial, mol, &bounds);
             let e_after = etkdg_energy(
                 &trial, &bounds, &chiral_centers, &tetrahedral, &pc,
-                &torsion_prefs, &bonds_12, &angles_13,
+                &torsion_prefs, &bonds_12, &angles_13, mol,
             );
             if e_after < e_before {
                 coords_3d = trial;
@@ -5197,6 +5225,7 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
                 300,
                 1e-3,
                 &h_coord_map,
+                mol,
             );
             if he < energy {
                 energy = he;
