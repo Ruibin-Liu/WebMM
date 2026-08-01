@@ -4904,7 +4904,7 @@ fn snap_bond_lengths(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &DistanceB
         let (lo, hi) = (i.min(j), i.max(j));
         let target = (bounds.lower[lo][hi] + bounds.upper[lo][hi]) / 2.0;
         let cur = atom_dist(coords, i, j);
-        if (cur - target).abs() < 0.12 || cur < 1e-10 {
+        if (cur - target).abs() < 0.05 || cur < 1e-10 {
             continue;
         }
         // BFS fragment on each side; snap the smaller one
