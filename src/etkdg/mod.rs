@@ -3519,18 +3519,18 @@ fn match_torsion_pattern(
         return Some(([1, -1, 1, 1, 1, 1], [0.0, 8.0, 0.0, 0.0, 0.0, 0.0]));
     }
 
-    // 9. Amide side chain: C(=O)-N-CH2-*
-    if is_carbonyl_c(mol, a2) && s3 == "N" && is_ch2(mol, a3) {
-        if is_nh0(mol, a3) {
-            return Some(([1, -1, 1, 1, 1, 1], [0.0, 15.0, 0.0, 0.0, 0.0, 0.0]));
-        }
-        return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 2.0, 0.0, 0.0, 0.0]));
+    // 9. Tertiary amide C(=O)-N(H0)-alkyl: planar V2=8 (RDKit
+    //    [O:1]=[CX3:2]!@;-[NX3H0:3][!#1:4], verified via GetExperimentalTorsions:
+    //    DMF O=C-N-C V=[0,8,0,0,0,0]). The old guard `is_ch2(a3)` never fired
+    //    (a3 is N, is_ch2 requires C sp3) so DMF's amide had NO pref and twisted
+    //    (O=C-N-C 118.6° vs RDKit planar 0/180°; MMFF torsion +17.6). Pattern 8
+    //    only covers aryl a4; this covers alkyl. Imides (pattern 7) and secondary
+    //    amides (pattern 6) fire earlier.
+    if is_carbonyl_c(mol, a2) && is_nh0(mol, a3) {
+        return Some(([1, -1, 1, 1, 1, 1], [0.0, 8.0, 0.0, 0.0, 0.0, 0.0]));
     }
-    if s2 == "N" && is_carbonyl_c(mol, a3) && is_ch2(mol, a2) {
-        if is_nh0(mol, a2) {
-            return Some(([1, -1, 1, 1, 1, 1], [0.0, 15.0, 0.0, 0.0, 0.0, 0.0]));
-        }
-        return Some(([1, 0, 1, 1, 1, 1], [0.0, 0.0, 2.0, 0.0, 0.0, 0.0]));
+    if is_nh0(mol, a2) && is_carbonyl_c(mol, a3) {
+        return Some(([1, -1, 1, 1, 1, 1], [0.0, 8.0, 0.0, 0.0, 0.0, 0.0]));
     }
 
     // 10. Sulfonamide: S(=O)2-N
@@ -4454,6 +4454,10 @@ fn minimize_etkdg(
             // steepest-descent steps; only give up after several consecutive
             // failures. (Previously broke on the first failure, leaving strained-
             // ring molecules under-relaxed after ~2 iters.)
+            eprintln!(
+                "DBGLS stall iters={iters_done} max_g={max_g:.4} dg={dg:.4e} dir_norm={:.4} f={f:.4} step0={step:.4e}",
+                dir.iter().map(|d| d * d).sum::<f64>().sqrt()
+            );
             stall += 1;
             s_hist.clear();
             y_hist.clear();
