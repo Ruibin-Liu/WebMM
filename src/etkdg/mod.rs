@@ -479,7 +479,7 @@ fn compute_bond_length(
         let pair = (element1, element2);
         match pair {
             ("S", "O") | ("O", "S") => return 1.44, // MMFF sulfonyl S=O
-            ("C", "S") | ("S", "C") => return 1.56, // MMFF thiocarbonyl C=S
+            ("C", "S") | ("S", "C") => return 1.63, // MMFF thiocarbonyl C=S (MMFF r0 1.665; RDKit UFF 1.61)
             _ => {}
         }
     }
@@ -2749,6 +2749,11 @@ struct PlanarityConstraints {
     ring_torsions: Vec<(usize, usize, usize, usize)>,
     exocyclic_torsions: Vec<(usize, usize, usize, usize)>,
     aromatic_atoms: HashSet<usize>,
+    /// sp1 (linear) centers with exactly 2 neighbors: (central, n1, n2).
+    /// Enforces 180° (S=C=S, C≡N-R, C=C=C) — the 1-3 bound tolerance alone
+    /// allows up to ~9° of bend (DIST13_TOL=0.04 on a ~3.1 Å 1-3), which the
+    /// minimizer exploits (carbon_disulfide 160.9° vs RDKit 180°).
+    linear_centers: Vec<(usize, usize, usize)>,
 }
 
 fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
@@ -2931,6 +2936,19 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         ring_torsions,
         exocyclic_torsions,
         aromatic_atoms,
+        linear_centers: {
+            let mut lc = Vec::new();
+            for i in 0..mol.atoms.len() {
+                let hyb = crate::molecule::graph::determine_hybridization(i, mol);
+                if matches!(hyb, Hybridization::Sp1) {
+                    let nbrs = get_neighbors(i, mol);
+                    if nbrs.len() == 2 {
+                        lc.push((i, nbrs[0], nbrs[1]));
+                    }
+                }
+            }
+            lc
+        },
     }
 }
 
@@ -2981,13 +2999,36 @@ fn out_of_plane_angle(coords: &[[f64; 3]], central: usize, n1: usize, n2: usize,
     dot.clamp(-1.0, 1.0).abs().asin()
 }
 
+fn bond_angle(coords: &[[f64; 3]], a: usize, b: usize, c: usize) -> f64 {
+    let v1 = [
+        coords[a][0] - coords[b][0],
+        coords[a][1] - coords[b][1],
+        coords[a][2] - coords[b][2],
+    ];
+    let v2 = [
+        coords[c][0] - coords[b][0],
+        coords[c][1] - coords[b][1],
+        coords[c][2] - coords[b][2],
+    ];
+    let n1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt().max(1e-12);
+    let n2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]).sqrt().max(1e-12);
+    let cos = (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (n1 * n2);
+    cos.clamp(-1.0, 1.0).acos()
+}
+
 fn planarity_energy(coords: &[[f64; 3]], pc: &PlanarityConstraints) -> f64 {
     const K_RING_TOR: f64 = 10.0;
     const K_EXO_TOR: f64 = 2.0;
+    const K_LIN: f64 = 50.0;
     let mut energy = 0.0;
     for &(central, n1, n2, n3, k_imp) in &pc.impropers {
         let chi = out_of_plane_angle(coords, central, n1, n2, n3);
         energy += k_imp * chi * chi;
+    }
+    for &(central, n1, n2) in &pc.linear_centers {
+        let theta = bond_angle(coords, n1, central, n2);
+        let d = theta - std::f64::consts::PI;
+        energy += K_LIN * d * d;
     }
     for &(i, j, k, l) in &pc.ring_torsions {
         let phi = dihedral_angle(coords, i, j, k, l);
@@ -4272,6 +4313,24 @@ fn etkdg_gradient(
                 let ep = out_of_plane_angle(&cp, central, n1, n2, n3);
                 let em = out_of_plane_angle(coords, central, n1, n2, n3);
                 grad[atom][dim] += k_imp * (ep * ep - em * em) / eps;
+            }
+        }
+    }
+
+    // Planarity gradient: sp1 linearity (central-difference on K_LIN*(theta-pi)^2)
+    const K_LIN: f64 = 50.0;
+    for &(central, n1, n2) in &pc.linear_centers {
+        let eps = 1e-7;
+        for atom in [central, n1, n2] {
+            for dim in 0..3 {
+                let mut cp = coords.to_vec();
+                cp[atom][dim] += eps;
+                let t_p = bond_angle(&cp, n1, central, n2);
+                cp[atom][dim] -= 2.0 * eps;
+                let t_m = bond_angle(&cp, n1, central, n2);
+                let e_p = K_LIN * (t_p - std::f64::consts::PI) * (t_p - std::f64::consts::PI);
+                let e_m = K_LIN * (t_m - std::f64::consts::PI) * (t_m - std::f64::consts::PI);
+                grad[atom][dim] += (e_p - e_m) / (2.0 * eps);
             }
         }
     }
