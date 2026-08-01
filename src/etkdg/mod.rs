@@ -4901,6 +4901,13 @@ fn trilaterate(p1: [f64; 3], p2: [f64; 3], p3: [f64; 3], r1: f64, r2: f64, r3: f
 fn snap_bond_lengths(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &DistanceBounds) {
     for b in &mol.bonds {
         let (i, j) = (b.atom1, b.atom2);
+        // Skip H-involving bonds: the snap is for heavy-atom ring-closure
+        // failures; H placement is handled by trilaterate_hydrogens, and
+        // snapping N-H/C-H at a 0.05 threshold distorts amine/water angles
+        // (aniline H-N-H 125.3 deg in the geometry test).
+        if mol.atoms[i].symbol == "H" || mol.atoms[j].symbol == "H" {
+            continue;
+        }
         let (lo, hi) = (i.min(j), i.max(j));
         let target = (bounds.lower[lo][hi] + bounds.upper[lo][hi]) / 2.0;
         let cur = atom_dist(coords, i, j);
