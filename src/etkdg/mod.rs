@@ -3653,9 +3653,12 @@ fn match_torsion_pattern(
         return Some(([1, -1, 1, 1, 1, 1], [0.0, 39.4, 0.0, 0.0, 0.0, 0.0]));
     }
 
-    // 16. S-S (disulfide)
+    // 16. S-S (disulfide): signs [1,1,...] -> E=12.9*(1+cos 2phi), minimum at
+    // 90 deg (gauche), matching RDKit GetExperimentalTorsions for dimethyl_disulfide
+    // (C-S-S-C V=[0,12.9,0,0,0,0] signs=[1,1,1,1,1,1]). The old [1,-1,...] put the
+    // minimum at 0 deg (eclipsed) -> embedded C-S-S-C 0 deg vs RDKit 90 deg (+17).
     if is_sx2(mol, a2) && is_sx2(mol, a3) {
-        return Some(([1, -1, 1, 1, 1, 1], [0.0, 12.9, 0.0, 0.0, 0.0, 0.0]));
+        return Some(([1, 1, 1, 1, 1, 1], [0.0, 12.9, 0.0, 0.0, 0.0, 0.0]));
     }
 
     // 17. C-SX3 (sulfoxide/sulfone)
