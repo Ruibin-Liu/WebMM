@@ -417,7 +417,18 @@ fn uff_radius(element: &str, hyb: Hybridization, is_aromatic: bool) -> f64 {
         "H" => 0.354,
         "F" => 0.668,
         "Si" => 1.117,
-        "P" => 1.101,
+        "P" => {
+            // UFF P_3+3 (r=1.056) for P carrying a pi bond (P=O/P=S, typed Sp2
+            // by the generic rule); else P_3 (r=1.101). RDKit's bounds for
+            // phosphate/phosphine-oxide P are 0.03-0.05 A shorter (verified vs
+            // GetMoleculeBoundsMatrix: P=O [1.501,1.521], P-O [1.681,1.701],
+            // P-C [1.803,1.823]); P(CH3)3 keeps [1.848,1.868] with 1.101.
+            if matches!(hyb, Hybridization::Sp2) {
+                1.056
+            } else {
+                1.101
+            }
+        }
         "Cl" => 1.044,
         "Br" => 1.192,
         "I" => 1.382,
@@ -2832,6 +2843,13 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         if !matches!(hyb, Hybridization::Sp2) {
             continue;
         }
+        // P typed sp2 by the P=O rule is actually tetrahedral (RDKit never
+        // applies planarity/inversions to phosphate/phosphine-oxide P). The
+        // improper forced P planar -> 400 kcal of k*chi^2 energy -> the
+        // minimizer stalls with distorted P bonds (TMPO P-C 1.64 vs 1.81).
+        if mol.atoms[atom_idx].symbol == "P" {
+            continue;
+        }
         let neighbors = get_neighbors(atom_idx, mol);
         if neighbors.len() >= 3 {
             let k_improper = improper_k_for_atom(atom_idx, mol);
@@ -4131,9 +4149,6 @@ fn etkdg_gradient(
             if hi >= MAX_UPPER {
                 continue;
             }
-            if !rdkit_all() && (mol.atoms[i].symbol == "P" || mol.atoms[j].symbol == "P") {
-                continue;
-            }
             let dx = coords[i][0] - coords[j][0];
             let dy = coords[i][1] - coords[j][1];
             let dz = coords[i][2] - coords[j][2];
@@ -4157,6 +4172,8 @@ fn etkdg_gradient(
             if hi >= MAX_UPPER {
                 continue;
             }
+            // P-involving 1-3 stays gated: P is typed sp2 so the 1-3 angle bounds
+            // are 120 deg (wrong for tetrahedral P); enforcing them distorts P.
             if !rdkit_all()
                 && (mol.atoms[i].symbol == "P"
                     || mol.atoms[j].symbol == "P"
