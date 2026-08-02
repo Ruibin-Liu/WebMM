@@ -14,6 +14,15 @@ pub mod etkdg;
 /// MMFF94/MMFF94s force field implementation
 pub mod mmff;
 
+/// Force-source abstraction (energy + gradient) shared by optimizer and MD
+pub mod forces;
+
+/// Molecular dynamics engine (velocity-Verlet + Langevin)
+pub mod md;
+
+/// Metadynamics (enhanced sampling via collective variables)
+pub mod metad;
+
 /// L-BFGS optimization algorithm
 pub mod optimizer;
 
@@ -322,6 +331,343 @@ pub fn optimize_from_sdf_direct(sdf_content: &str, options: OptimizationOptions)
         iterations: optimizer_result.iterations,
         message: "Optimization completed".to_string(),
         coordinates: flat_coords,
+    }
+}
+
+// ===== Molecular dynamics (WASM) =====
+
+/// Options for running molecular dynamics (gas-phase MMFF).
+#[wasm_bindgen]
+pub struct MDOptions {
+    mmff_variant: String,
+    dt_fs: f64,
+    n_steps: usize,
+    temperature_k: f64,
+    friction_per_ps: f64,
+    snapshot_interval: usize,
+    seed: u64,
+}
+
+#[wasm_bindgen]
+impl MDOptions {
+    /// Defaults: MMFF94s, 1 fs step, 1000 steps, 300 K, friction 1/ps, snapshots off, seed 42.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            mmff_variant: "MMFF94s".to_string(),
+            dt_fs: 1.0,
+            n_steps: 1000,
+            temperature_k: 300.0,
+            friction_per_ps: 1.0,
+            snapshot_interval: 0,
+            seed: 42,
+        }
+    }
+    #[wasm_bindgen]
+    pub fn set_mmff_variant(&mut self, v: String) { self.mmff_variant = v; }
+    #[wasm_bindgen]
+    pub fn set_dt_fs(&mut self, v: f64) { self.dt_fs = v; }
+    #[wasm_bindgen]
+    pub fn set_n_steps(&mut self, v: usize) { self.n_steps = v; }
+    #[wasm_bindgen]
+    pub fn set_temperature_k(&mut self, v: f64) { self.temperature_k = v; }
+    #[wasm_bindgen]
+    pub fn set_friction_per_ps(&mut self, v: f64) { self.friction_per_ps = v; }
+    /// Save a trajectory frame every N steps. 0 (default) = final frame only.
+    #[wasm_bindgen]
+    pub fn set_snapshot_interval(&mut self, v: usize) { self.snapshot_interval = v; }
+    #[wasm_bindgen]
+    pub fn set_seed(&mut self, v: u64) { self.seed = v; }
+}
+
+impl Default for MDOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Result of an MD run: a sampled trajectory (flattened coordinates) plus per-frame
+/// energies/temperatures and final stats.
+#[wasm_bindgen]
+pub struct MDResult {
+    n_atoms: usize,
+    n_frames: usize,
+    coordinates: Vec<f64>,   // n_frames * n_atoms * 3, row-major [frame][atom][x,y,z]
+    energies: Vec<f64>,      // potential energy per frame (kcal/mol)
+    temperatures: Vec<f64>,  // K per frame
+    times_fs: Vec<f64>,      // simulation time per frame (fs)
+    final_energy: f64,
+    final_temperature: f64,
+    steps: usize,
+    success: bool,
+    error: String,
+}
+
+#[wasm_bindgen]
+impl MDResult {
+    #[wasm_bindgen] pub fn n_atoms(&self) -> usize { self.n_atoms }
+    #[wasm_bindgen] pub fn n_frames(&self) -> usize { self.n_frames }
+    /// Flattened trajectory, n_frames * n_atoms * 3 (Float64Array in JS).
+    #[wasm_bindgen] pub fn coordinates(&self) -> Vec<f64> { self.coordinates.clone() }
+    #[wasm_bindgen] pub fn energies(&self) -> Vec<f64> { self.energies.clone() }
+    #[wasm_bindgen] pub fn temperatures(&self) -> Vec<f64> { self.temperatures.clone() }
+    #[wasm_bindgen] pub fn times_fs(&self) -> Vec<f64> { self.times_fs.clone() }
+    #[wasm_bindgen] pub fn final_energy(&self) -> f64 { self.final_energy }
+    #[wasm_bindgen] pub fn final_temperature(&self) -> f64 { self.final_temperature }
+    #[wasm_bindgen] pub fn steps(&self) -> usize { self.steps }
+    #[wasm_bindgen] pub fn success(&self) -> bool { self.success }
+    #[wasm_bindgen] pub fn error(&self) -> String { self.error.clone() }
+    /// Single component: get_coord(frame, atom, axis), axis 0/1/2 = x/y/z.
+    #[wasm_bindgen]
+    pub fn get_coord(&self, frame: usize, atom: usize, axis: usize) -> f64 {
+        self.coordinates[(frame * self.n_atoms + atom) * 3 + axis]
+    }
+}
+
+fn md_snapshot(
+    runner: &crate::md::MDRunner,
+    n_atoms: usize,
+    coords: &mut Vec<f64>,
+    energies: &mut Vec<f64>,
+    temperatures: &mut Vec<f64>,
+    times_fs: &mut Vec<f64>,
+) {
+    for row in runner.coords() {
+        coords.push(row[0]);
+        coords.push(row[1]);
+        coords.push(row[2]);
+    }
+    energies.push(runner.potential_energy());
+    temperatures.push(runner.temperature());
+    times_fs.push(runner.time_fs());
+}
+
+/// Run molecular dynamics on an SDF molecule (gas-phase MMFF) and return a sampled
+/// trajectory. NVT (BAOAB Langevin) if `friction_per_ps > 0`, else NVE.
+#[wasm_bindgen]
+pub fn run_md_from_sdf(sdf_content: &str, options: MDOptions) -> MDResult {
+    console_error_panic_hook::set_once();
+    let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
+        Ok(mol) => mol,
+        Err(e) => {
+            return MDResult {
+                n_atoms: 0, n_frames: 0, coordinates: Vec::new(), energies: Vec::new(),
+                temperatures: Vec::new(), times_fs: Vec::new(), final_energy: 0.0,
+                final_temperature: 0.0, steps: 0, success: false,
+                error: format!("Parse error: {}", e),
+            };
+        }
+    };
+    let variant = match options.mmff_variant.as_str() {
+        "MMFF94" => MMFFVariant::MMFF94,
+        _ => MMFFVariant::MMFF94s,
+    };
+    let ff = crate::mmff::MMFFForceField::new(&mol, variant);
+    let config = crate::md::MDConfig {
+        dt_fs: options.dt_fs,
+        temperature_k: options.temperature_k,
+        friction_per_ps: options.friction_per_ps,
+        seed: options.seed,
+    };
+    let mut runner = crate::md::MDRunner::from_molecule(&ff, &mol, config);
+    let n_atoms = mol.atoms.len();
+    let mut coordinates = Vec::new();
+    let mut energies = Vec::new();
+    let mut temperatures = Vec::new();
+    let mut times_fs = Vec::new();
+    let snap = options.snapshot_interval;
+    if snap > 0 {
+        md_snapshot(&runner, n_atoms, &mut coordinates, &mut energies, &mut temperatures, &mut times_fs);
+    }
+    for i in 1..=options.n_steps {
+        runner.step();
+        if snap > 0 && i != options.n_steps && i % snap == 0 {
+            md_snapshot(&runner, n_atoms, &mut coordinates, &mut energies, &mut temperatures, &mut times_fs);
+        }
+    }
+    // final frame always
+    md_snapshot(&runner, n_atoms, &mut coordinates, &mut energies, &mut temperatures, &mut times_fs);
+    let final_energy = runner.potential_energy();
+    let final_temperature = runner.temperature();
+    MDResult {
+        n_atoms,
+        n_frames: energies.len(),
+        coordinates, energies, temperatures, times_fs,
+        final_energy, final_temperature, steps: options.n_steps,
+        success: true, error: String::new(),
+    }
+}
+
+// ===== Metadynamics (WASM) =====
+
+/// Options for a metadynamics run (well-tempered, gas-phase MMFF).
+#[wasm_bindgen]
+pub struct MetaDOptions {
+    mmff_variant: String,
+    dt_fs: f64,
+    n_steps: usize,
+    temperature_k: f64,
+    friction_per_ps: f64,
+    seed: u32,
+    snapshot_interval: usize,
+    cv_type: String,         // "dihedral" or "distance"
+    cv_atoms: String,        // comma-separated atom indices, e.g. "8,2,1,0"
+    hill_height: f64,        // kcal/mol
+    hill_width: f64,         // radians (dihedral) or angstrom (distance)
+    deposit_interval: usize, // deposit a hill every N steps
+    bias_factor: f64,        // 0 = standard; >1 = well-tempered
+    fes_grid_points: usize,  // FES reconstruction resolution
+}
+
+#[wasm_bindgen]
+impl MetaDOptions {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            mmff_variant: "MMFF94s".to_string(),
+            dt_fs: 1.0, n_steps: 5000, temperature_k: 300.0, friction_per_ps: 5.0,
+            seed: 42, snapshot_interval: 50,
+            cv_type: "dihedral".to_string(), cv_atoms: "0,1,2,3".to_string(),
+            hill_height: 0.3, hill_width: 0.2, deposit_interval: 50, bias_factor: 10.0,
+            fes_grid_points: 72,
+        }
+    }
+    #[wasm_bindgen] pub fn set_mmff_variant(&mut self, v: String) { self.mmff_variant = v; }
+    #[wasm_bindgen] pub fn set_dt_fs(&mut self, v: f64) { self.dt_fs = v; }
+    #[wasm_bindgen] pub fn set_n_steps(&mut self, v: usize) { self.n_steps = v; }
+    #[wasm_bindgen] pub fn set_temperature_k(&mut self, v: f64) { self.temperature_k = v; }
+    #[wasm_bindgen] pub fn set_friction_per_ps(&mut self, v: f64) { self.friction_per_ps = v; }
+    #[wasm_bindgen] pub fn set_seed(&mut self, v: u32) { self.seed = v; }
+    #[wasm_bindgen] pub fn set_snapshot_interval(&mut self, v: usize) { self.snapshot_interval = v; }
+    /// "dihedral" (4 atoms) or "distance" (2 atoms).
+    #[wasm_bindgen] pub fn set_cv_type(&mut self, v: String) { self.cv_type = v; }
+    /// Comma-separated atom indices, e.g. "8,2,1,0" for a dihedral.
+    #[wasm_bindgen] pub fn set_cv_atoms(&mut self, v: String) { self.cv_atoms = v; }
+    #[wasm_bindgen] pub fn set_hill_height(&mut self, v: f64) { self.hill_height = v; }
+    #[wasm_bindgen] pub fn set_hill_width(&mut self, v: f64) { self.hill_width = v; }
+    #[wasm_bindgen] pub fn set_deposit_interval(&mut self, v: usize) { self.deposit_interval = v; }
+    #[wasm_bindgen] pub fn set_bias_factor(&mut self, v: f64) { self.bias_factor = v; }
+    #[wasm_bindgen] pub fn set_fes_grid_points(&mut self, v: usize) { self.fes_grid_points = v; }
+}
+impl Default for MetaDOptions { fn default() -> Self { Self::new() } }
+
+/// Result of a metadynamics run: trajectory + CV trace + free-energy surface.
+#[wasm_bindgen]
+pub struct MetaDResult {
+    n_atoms: usize,
+    n_frames: usize,
+    n_hills: usize,
+    coordinates: Vec<f64>,
+    energies: Vec<f64>,
+    cv_values: Vec<f64>,
+    times_fs: Vec<f64>,
+    fes_s: Vec<f64>,
+    fes_f: Vec<f64>,
+    hill_centers: Vec<f64>,
+    final_energy: f64,
+    success: bool,
+    error: String,
+}
+
+#[wasm_bindgen]
+impl MetaDResult {
+    #[wasm_bindgen] pub fn n_atoms(&self) -> usize { self.n_atoms }
+    #[wasm_bindgen] pub fn n_frames(&self) -> usize { self.n_frames }
+    #[wasm_bindgen] pub fn n_hills(&self) -> usize { self.n_hills }
+    #[wasm_bindgen] pub fn coordinates(&self) -> Vec<f64> { self.coordinates.clone() }
+    #[wasm_bindgen] pub fn energies(&self) -> Vec<f64> { self.energies.clone() }
+    #[wasm_bindgen] pub fn cv_values(&self) -> Vec<f64> { self.cv_values.clone() }
+    #[wasm_bindgen] pub fn times_fs(&self) -> Vec<f64> { self.times_fs.clone() }
+    /// CV grid points for the FES.
+    #[wasm_bindgen] pub fn fes_s(&self) -> Vec<f64> { self.fes_s.clone() }
+    /// Free energy (kcal/mol) at each grid point.
+    #[wasm_bindgen] pub fn fes_f(&self) -> Vec<f64> { self.fes_f.clone() }
+    #[wasm_bindgen] pub fn hill_centers(&self) -> Vec<f64> { self.hill_centers.clone() }
+    #[wasm_bindgen] pub fn final_energy(&self) -> f64 { self.final_energy }
+    #[wasm_bindgen] pub fn success(&self) -> bool { self.success }
+    #[wasm_bindgen] pub fn error(&self) -> String { self.error.clone() }
+}
+
+/// Run well-tempered metadynamics on an SDF molecule (gas-phase MMFF) and return
+/// the trajectory + CV trace + free-energy surface (FES).
+#[wasm_bindgen]
+pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> MetaDResult {
+    console_error_panic_hook::set_once();
+    let err = |msg: String| MetaDResult {
+        n_atoms: 0, n_frames: 0, n_hills: 0, coordinates: vec![], energies: vec![],
+        cv_values: vec![], times_fs: vec![], fes_s: vec![], fes_f: vec![],
+        hill_centers: vec![], final_energy: 0.0, success: false, error: msg,
+    };
+    let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
+        Ok(m) => m,
+        Err(e) => return err(format!("Parse error: {}", e)),
+    };
+    let variant = match options.mmff_variant.as_str() {
+        "MMFF94" => MMFFVariant::MMFF94,
+        _ => MMFFVariant::MMFF94s,
+    };
+    let ff = crate::mmff::MMFFForceField::new(&mol, variant);
+
+    // Parse CV atoms
+    let atoms: Vec<usize> = options.cv_atoms.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+    let cv: Box<dyn crate::metad::CollectiveVariable> = match options.cv_type.as_str() {
+        "distance" => {
+            if atoms.len() < 2 { return err("distance CV needs >=2 atoms".into()); }
+            Box::new(crate::metad::DistanceCV::new(atoms[0], atoms[1]))
+        }
+        _ => {
+            if atoms.len() < 4 { return err("dihedral CV needs >=4 atoms".into()); }
+            Box::new(crate::metad::DihedralCV::new(atoms[0], atoms[1], atoms[2], atoms[3]))
+        }
+    };
+
+    let metad = crate::metad::MetaDynamics::new(&ff, cv, crate::metad::MetaDConfig {
+        hill_height: options.hill_height,
+        hill_width: options.hill_width,
+        deposit_interval: options.deposit_interval,
+        bias_factor: options.bias_factor,
+        temperature_k: options.temperature_k,
+    });
+    let mut runner = crate::md::MDRunner::from_molecule(&metad, &mol, crate::md::MDConfig {
+        dt_fs: options.dt_fs, temperature_k: options.temperature_k,
+        friction_per_ps: options.friction_per_ps, seed: options.seed as u64,
+    });
+    let n_atoms = mol.atoms.len();
+    let snap = options.snapshot_interval;
+
+    let mut coordinates = Vec::new();
+    let mut energies = Vec::new();
+    let mut cv_values = Vec::new();
+    let mut times_fs = Vec::new();
+    let mut snap_fn = |runner: &crate::md::MDRunner, metad: &crate::metad::MetaDynamics| {
+        for row in runner.coords() { coordinates.push(row[0]); coordinates.push(row[1]); coordinates.push(row[2]); }
+        energies.push(runner.potential_energy());
+        cv_values.push(metad.last_cv());
+        times_fs.push(runner.time_fs());
+    };
+    if snap > 0 { snap_fn(&runner, &metad); }
+    for i in 1..=options.n_steps {
+        runner.step();
+        if snap > 0 && i != options.n_steps && i.is_multiple_of(snap) {
+            snap_fn(&runner, &metad);
+        }
+    }
+    snap_fn(&runner, &metad); // final frame
+
+    // FES
+    let (smin, smax) = metad.cv_range();
+    let ng = options.fes_grid_points.max(2);
+    let fes_s: Vec<f64> = (0..ng).map(|i| smin + (smax - smin) * i as f64 / (ng - 1) as f64).collect();
+    let fes_f = metad.free_energy_surface(&fes_s);
+    let hill_centers = metad.hill_centers();
+    let n_hills = metad.hill_count();
+    let final_energy = runner.potential_energy();
+
+    MetaDResult {
+        n_atoms, n_frames: energies.len(), n_hills,
+        coordinates, energies, cv_values, times_fs,
+        fes_s, fes_f, hill_centers, final_energy,
+        success: true, error: String::new(),
     }
 }
 
