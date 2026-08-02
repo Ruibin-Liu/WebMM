@@ -1366,7 +1366,12 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                             } else if check_amide_ester_14(mol, aid1, aid2, aid3, aid4, bid1, bid3)
                                 || check_amide_ester_14(mol, aid4, aid3, aid2, aid1, bid3, bid1)
                             {
-                                if config.force_trans_amides {
+                                if config.force_trans_amides && !b2_in_ring {
+                                    // Acyclic amide: force trans (peptide preference).
+                                    // Cyclic amides (lactams: xanthine, β-lactam) skip
+                                    // this — the ring constrains the amide to cis,
+                                    // and forcing trans creates a 0.7 Å bound
+                                    // violation that distorts the ring junction.
                                     let a1_num = atom_num(aid1, mol);
                                     let a4_num = atom_num(aid4, mol);
                                     if (a1_num == 1
