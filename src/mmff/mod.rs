@@ -1816,6 +1816,15 @@ impl MMFFForceField {
 
         bd
     }
+
+    /// Per-angle diagnostic: (atom_i, atom_j, atom_k, equilibrium_angle_theta0_radians).
+    /// For identifying strained angles in ETKDG embeddings.
+    pub fn per_angle_theta0(&self) -> Vec<(usize, usize, usize, f64)> {
+        self.angle_terms
+            .iter()
+            .map(|&(i, j, k, p)| (i, j, k, p.theta0))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
