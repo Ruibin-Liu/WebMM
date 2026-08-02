@@ -3089,7 +3089,7 @@ fn h_bond_energy(coords: &[[f64; 3]], mol: &Molecule) -> f64 {
                 let dy = coords[h][1] - coords[a_idx][1];
                 let dz = coords[h][2] - coords[a_idx][2];
                 let d = (dx * dx + dy * dy + dz * dz).sqrt();
-                if d > 4.0 || d < 0.8 {
+                if !(0.8..=4.0).contains(&d) {
                     continue;
                 }
                 let theta = bond_angle(coords, d_idx, h, a_idx);
