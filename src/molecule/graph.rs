@@ -54,13 +54,29 @@ pub fn determine_hybridization(atom_idx: usize, mol: &Molecule) -> Hybridization
             BondType::Aromatic => 0.5,
         })
         .sum();
+    // For the Sp1 (linear) rule, count only REAL multiple bonds (double/triple):
+    // aromatic ring bonds contribute 0.5 each, so a carbonyl C in an aromatic
+    // ring (C=O + 2 aromatic bonds = pi 2.0) would be wrongly typed Sp1 (linear)
+    // once the ring is detected aromatic (e.g. xanthine's pyrimidinedione ring:
+    // C1 typed Sp1 -> broken geometry, -34 kcal). A linear center needs two
+    // genuine multiple bonds (C≡N, C≡C, C=C=C).
+    let pi_multi: f64 = mol
+        .bonds
+        .iter()
+        .filter(|b| b.atom1 == atom_idx || b.atom2 == atom_idx)
+        .map(|b| match b.bond_type {
+            BondType::Double => 1.0,
+            BondType::Triple => 2.0,
+            _ => 0.0,
+        })
+        .sum();
 
     // Hypervalent S (sulfone/sulfonate/sulfonamide...): the generic pi_bonds ->
     // Sp1/Sp2 rule is for C/N (linear/planar). S(=O)2 with >=3 neighbors is
     // tetrahedral (RDKit embeds sulfone S at ~109.5 deg, not linear/sp2). Kept
     // P out: WebMM's pipeline empirically embeds P(=O) compounds better with sp2.
     let hypervalent_s = symbol == "S" && num_bonds >= 3;
-    if !hypervalent_s && pi_bonds >= 2.0 {
+    if !hypervalent_s && pi_multi >= 2.0 {
         return Hybridization::Sp1;
     }
     if !hypervalent_s && pi_bonds >= 1.0 {

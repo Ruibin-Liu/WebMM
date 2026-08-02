@@ -3034,6 +3034,74 @@ fn bond_angle(coords: &[[f64; 3]], a: usize, b: usize, c: usize) -> f64 {
     cos.clamp(-1.0, 1.0).acos()
 }
 
+/// Intramolecular H-bond directionality: for each donor H (bonded to N/O) and
+/// each acceptor A (carbonyl O, or N with no H) within 4 A, add
+///   E = K_HB * (1 + cos(D-H-A)) * exp(-((d(H,A)-2.1)/1.0)^2)
+/// which is minimized when the D-H...A angle is linear (180 deg) and the
+/// H...A distance is ~2.1 A — i.e. a proper hydrogen bond. Without this,
+/// the H-relax puts N-H hydrogens on the far side of the cone (pointing away
+/// from the C=O acceptors): e.g. xanthine's N-H...O=C angles ~23 deg instead
+/// of ~160 deg, and the MMFF electrostatics/H-bonding pattern is wrong
+/// (RDKit's conformers have the N-H's pointing at the acceptors).
+fn h_bond_energy(coords: &[[f64; 3]], mol: &Molecule) -> f64 {
+    const K_HB: f64 = 4.0;
+    let mut energy = 0.0;
+    for (d_idx, d) in mol.atoms.iter().enumerate() {
+        if d.symbol != "N" && d.symbol != "O" {
+            continue;
+        }
+        let mut donors: Vec<usize> = Vec::new();
+        for &h in &mol.adjacency[d_idx] {
+            if mol.atoms[h].symbol == "H" {
+                donors.push(h);
+            }
+        }
+        if donors.is_empty() {
+            continue;
+        }
+        // Acceptors: O double-bonded to C, or N with no H. Skip 1-2/1-3
+        // neighbors of the donor (those are not H-bond contacts).
+        for (a_idx, a) in mol.atoms.iter().enumerate() {
+            let is_carbonyl_o = a.symbol == "O"
+                && mol.adjacency[a_idx].iter().any(|&n| {
+                    mol.atoms[n].atomic_number == 6
+                        && mol.bonds.iter().any(|b| {
+                            ((b.atom1 == a_idx && b.atom2 == n)
+                                || (b.atom2 == a_idx && b.atom1 == n))
+                                && matches!(b.bond_type, BondType::Double | BondType::Aromatic)
+                        })
+                });
+            let is_n_acceptor = a.symbol == "N"
+                && !mol.adjacency[a_idx].iter().any(|&n| mol.atoms[n].symbol == "H");
+            if !is_carbonyl_o && !is_n_acceptor {
+                continue;
+            }
+            if mol.adjacency[d_idx].contains(&a_idx) {
+                continue; // 1-2
+            }
+            // 1-3 (donor-X-acceptor) is not an H-bond contact
+            let is_13 = mol.adjacency[d_idx].iter().any(|&x| mol.adjacency[x].contains(&a_idx));
+            if is_13 {
+                continue;
+            }
+            for &h in &donors {
+                let dx = coords[h][0] - coords[a_idx][0];
+                let dy = coords[h][1] - coords[a_idx][1];
+                let dz = coords[h][2] - coords[a_idx][2];
+                let d = (dx * dx + dy * dy + dz * dz).sqrt();
+                if d > 4.0 || d < 0.8 {
+                    continue;
+                }
+                let theta = bond_angle(coords, d_idx, h, a_idx);
+                let ang = 1.0 + theta.cos();
+                let w = (-((d - 2.1) * (d - 2.1) / 1.0)).exp();
+                energy += K_HB * ang * w;
+            }
+        }
+    }
+    energy
+}
+
 fn planarity_energy(coords: &[[f64; 3]], pc: &PlanarityConstraints) -> f64 {
     const K_RING_TOR: f64 = 10.0;
     const K_EXO_TOR: f64 = 2.0;
@@ -4024,6 +4092,7 @@ fn etkdg_energy(
         }
     }
     energy += planarity_energy(coords, pc);
+    energy += h_bond_energy(coords, mol);
     energy += torsion_pref_energy(coords, torsion_prefs);
     energy
 }
@@ -4347,6 +4416,21 @@ fn etkdg_gradient(
             }
         }
     }
+
+    // H-bond directionality gradient (central difference of h_bond_energy)
+    let hb_eps = 1e-6;
+    let hb_e0 = h_bond_energy(coords, mol);
+    for a in 0..n {
+        for dim in 0..3 {
+            let mut cp = coords.to_vec();
+            cp[a][dim] += hb_eps;
+            let ep = h_bond_energy(&cp, mol);
+            cp[a][dim] -= 2.0 * hb_eps;
+            let em = h_bond_energy(&cp, mol);
+            grad[a][dim] += (ep - em) / (2.0 * hb_eps);
+        }
+    }
+    let _ = hb_e0;
 
     // Torsion preferences gradient
     for p in torsion_prefs {
