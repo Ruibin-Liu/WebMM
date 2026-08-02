@@ -1059,6 +1059,10 @@ impl MMFFForceField {
                         }
                     }
 
+                    // Carbonyl C (C=O double bond) → C_2 even in aromatic rings.
+                    // RDKit types ring carbonyl carbons (xanthine, uracil, 2-quinolone)
+                    // as C_2, not C_AR, regardless of aromaticity perception.
+                    (6, _, true, _) if double_bond_partners.contains(&8) => MMFFAtomType::C_2,
                     // Carbon types — aromatic takes priority over hybridization
                     (6, _, true, _) => MMFFAtomType::C_AR,
                     // Carbons in small rings: RDKit uses CR3R (sp3, 22) for 3-rings,
@@ -1613,11 +1617,15 @@ impl MMFFForceField {
                 if n_has_double_to_c && !n_is_aromatic {
                     // Imine N-H (C=N-H) → MMFF 27
                     MMFFAtomType::H_NIM
+                } else if n_is_acyl_or_amidine {
+                    // Amide / amidine N-H → MMFF 28, even in aromatic rings
+                    // (xanthine pyrimidinedione N-H). RDKit types amide N-H as
+                    // H_NAM regardless of ring aromaticity.
+                    MMFFAtomType::H_NAM
                 } else if !n_is_aromatic
-                    && (n_is_acyl_or_amidine || n_is_sulfonamide || n_is_aniline)
+                    && (n_is_sulfonamide || n_is_aniline)
                 {
-                    // Amide / amidine / enamine / sulfonamide / aniline N-H → MMFF 28
-                    // (covers charged guanidinium N-H, which is amidinium)
+                    // Sulfonamide / aniline N-H (non-aromatic N) → MMFF 28
                     MMFFAtomType::H_NAM
                 } else if mol.atoms[neighbor_idx].charge > 0.5 {
                     // Ammonium (sp3 N+) N-H → MMFF 36 (HNR+)
@@ -1641,34 +1649,50 @@ impl MMFFForceField {
     }
 
     pub fn calculate_energy_and_gradient(&self, coords: &[[f64; 3]]) -> (f64, Vec<[f64; 3]>) {
+        let mut g = vec![[0.0; 3]; self.mol.atoms.len()];
+        let e = self.compute_energy_and_gradient_into(coords, &mut g);
+        (e, g)
+    }
+
+    /// Allocation-free core: writes the gradient (dE/dx) into `grad` (zeroed first)
+    /// and returns the energy. Backs both `calculate_energy_and_gradient` and the
+    /// `ForceField` impl (used by the MD engine).
+    fn compute_energy_and_gradient_into(
+        &self,
+        coords: &[[f64; 3]],
+        grad: &mut [[f64; 3]],
+    ) -> f64 {
+        debug_assert_eq!(grad.len(), self.mol.atoms.len());
+        for g in grad.iter_mut() {
+            *g = [0.0; 3];
+        }
         let mut energy = 0.0;
-        let mut gradient = vec![[0.0; 3]; self.mol.atoms.len()];
 
         // Bond stretching
         for &(i, j, params) in &self.bond_terms {
             energy += bond_energy(coords, i, j, &params);
             let (gi, gj) = bond_gradient(coords, i, j, &params);
-            gradient[i][0] += gi[0];
-            gradient[i][1] += gi[1];
-            gradient[i][2] += gi[2];
-            gradient[j][0] += gj[0];
-            gradient[j][1] += gj[1];
-            gradient[j][2] += gj[2];
+            grad[i][0] += gi[0];
+            grad[i][1] += gi[1];
+            grad[i][2] += gi[2];
+            grad[j][0] += gj[0];
+            grad[j][1] += gj[1];
+            grad[j][2] += gj[2];
         }
 
         // Angle bending
         for &(i, j, k, params) in &self.angle_terms {
             energy += angle_energy(coords, i, j, k, &params);
             let (g1, g2, g3) = angle_gradient(coords, i, j, k, &params);
-            gradient[i][0] += g1[0];
-            gradient[i][1] += g1[1];
-            gradient[i][2] += g1[2];
-            gradient[j][0] += g2[0];
-            gradient[j][1] += g2[1];
-            gradient[j][2] += g2[2];
-            gradient[k][0] += g3[0];
-            gradient[k][1] += g3[1];
-            gradient[k][2] += g3[2];
+            grad[i][0] += g1[0];
+            grad[i][1] += g1[1];
+            grad[i][2] += g1[2];
+            grad[j][0] += g2[0];
+            grad[j][1] += g2[1];
+            grad[j][2] += g2[2];
+            grad[k][0] += g3[0];
+            grad[k][1] += g3[1];
+            grad[k][2] += g3[2];
         }
 
         // Stretch-bend coupling
@@ -1676,33 +1700,33 @@ impl MMFFForceField {
             energy += stretch_bend_energy(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
             let (g1, g2, g3) =
                 stretch_bend_gradient(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
-            gradient[i][0] += g1[0];
-            gradient[i][1] += g1[1];
-            gradient[i][2] += g1[2];
-            gradient[j][0] += g2[0];
-            gradient[j][1] += g2[1];
-            gradient[j][2] += g2[2];
-            gradient[k][0] += g3[0];
-            gradient[k][1] += g3[1];
-            gradient[k][2] += g3[2];
+            grad[i][0] += g1[0];
+            grad[i][1] += g1[1];
+            grad[i][2] += g1[2];
+            grad[j][0] += g2[0];
+            grad[j][1] += g2[1];
+            grad[j][2] += g2[2];
+            grad[k][0] += g3[0];
+            grad[k][1] += g3[1];
+            grad[k][2] += g3[2];
         }
 
         // Torsion
         for &(i, j, k, l, params) in &self.torsion_terms {
             energy += torsion_energy(coords, i, j, k, l, &params);
             let (g1, g2, g3, g4) = torsion_gradient(coords, i, j, k, l, &params);
-            gradient[i][0] += g1[0];
-            gradient[i][1] += g1[1];
-            gradient[i][2] += g1[2];
-            gradient[j][0] += g2[0];
-            gradient[j][1] += g2[1];
-            gradient[j][2] += g2[2];
-            gradient[k][0] += g3[0];
-            gradient[k][1] += g3[1];
-            gradient[k][2] += g3[2];
-            gradient[l][0] += g4[0];
-            gradient[l][1] += g4[1];
-            gradient[l][2] += g4[2];
+            grad[i][0] += g1[0];
+            grad[i][1] += g1[1];
+            grad[i][2] += g1[2];
+            grad[j][0] += g2[0];
+            grad[j][1] += g2[1];
+            grad[j][2] += g2[2];
+            grad[k][0] += g3[0];
+            grad[k][1] += g3[1];
+            grad[k][2] += g3[2];
+            grad[l][0] += g4[0];
+            grad[l][1] += g4[1];
+            grad[l][2] += g4[2];
         }
 
         // Out-of-plane
@@ -1710,18 +1734,18 @@ impl MMFFForceField {
             energy += oop_energy(coords, central, a1, a2, a3, &params);
             let (g_central, g1, g2, g3) =
                 oop_gradient(coords, central, a1, a2, a3, &params);
-            gradient[central][0] += g_central[0];
-            gradient[central][1] += g_central[1];
-            gradient[central][2] += g_central[2];
-            gradient[a1][0] += g1[0];
-            gradient[a1][1] += g1[1];
-            gradient[a1][2] += g1[2];
-            gradient[a2][0] += g2[0];
-            gradient[a2][1] += g2[1];
-            gradient[a2][2] += g2[2];
-            gradient[a3][0] += g3[0];
-            gradient[a3][1] += g3[1];
-            gradient[a3][2] += g3[2];
+            grad[central][0] += g_central[0];
+            grad[central][1] += g_central[1];
+            grad[central][2] += g_central[2];
+            grad[a1][0] += g1[0];
+            grad[a1][1] += g1[1];
+            grad[a1][2] += g1[2];
+            grad[a2][0] += g2[0];
+            grad[a2][1] += g2[1];
+            grad[a2][2] += g2[2];
+            grad[a3][0] += g3[0];
+            grad[a3][1] += g3[1];
+            grad[a3][2] += g3[2];
         }
 
         // Van der Waals + electrostatics (one pass over precomputed
@@ -1730,26 +1754,26 @@ impl MMFFForceField {
             let (e, grad_i, grad_j) =
                 vdw_energy_and_gradient(coords, i, j, &self.vdw_params[i], &self.vdw_params[j], is_14);
             energy += e;
-            gradient[i][0] += grad_i[0];
-            gradient[i][1] += grad_i[1];
-            gradient[i][2] += grad_i[2];
-            gradient[j][0] += grad_j[0];
-            gradient[j][1] += grad_j[1];
-            gradient[j][2] += grad_j[2];
+            grad[i][0] += grad_i[0];
+            grad[i][1] += grad_i[1];
+            grad[i][2] += grad_i[2];
+            grad[j][0] += grad_j[0];
+            grad[j][1] += grad_j[1];
+            grad[j][2] += grad_j[2];
             if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
                 let (e, grad_i, grad_j) =
                     electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
                 energy += e;
-                gradient[i][0] += grad_i[0];
-                gradient[i][1] += grad_i[1];
-                gradient[i][2] += grad_i[2];
-                gradient[j][0] += grad_j[0];
-                gradient[j][1] += grad_j[1];
-                gradient[j][2] += grad_j[2];
+                grad[i][0] += grad_i[0];
+                grad[i][1] += grad_i[1];
+                grad[i][2] += grad_i[2];
+                grad[j][0] += grad_j[0];
+                grad[j][1] += grad_j[1];
+                grad[j][2] += grad_j[2];
             }
         }
 
-        (energy, gradient)
+        energy
     }
 
     pub fn calculate_energy(&self, coords: &[[f64; 3]]) -> f64 {
@@ -1814,5 +1838,11 @@ impl EnergyBreakdown {
             + self.oop
             + self.vdw
             + self.electrostatic
+    }
+}
+
+impl crate::forces::ForceField for MMFFForceField {
+    fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
+        self.compute_energy_and_gradient_into(coords, grad)
     }
 }

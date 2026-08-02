@@ -4,20 +4,38 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**MMFF94/MMFF94s energy validation COMPLETE: 191/191 molecules match RDKit to <0.01 kcal/mol.**
+**MMFF94/MMFF94s energy validation COMPLETE: 230/230 molecules match RDKit to <0.01 kcal/mol.**
 
-The MMFF force field implementation now matches RDKit 2025.09.3 exactly across:
-- Original 130 molecules: 130/130 ✓
-- val_set_new (41 exotic types): 41/41 ✓
-- val_set_new2 (8 types): 8/8 ✓
-- val_set_new3 (6 types): 6/6 ✓
-- val_set_new4 (6 charged/aromatic types): 6/6 ✓
+Atom typing decoupled from aromaticity (carbonyl C → C_2, amide N-H → H_NAM regardless of
+aromaticity flag) — robust to future aromaticity-perception changes. 230/230, 195 tests, 0 clippy.
 
-Atom typing: 0.00% mismatch. Energy: all within 0.01 kcal/mol. 191 tests pass, 0 warnings.
-
-The remaining project gap is in **ETKDG embedding** (r=0.8603), which is separate from the MMFF force field.
+**ETKDG embedding** at r=0.9762 (RMSD 11.62, ceiling ~0.997). Remaining outliers: P(=O) compounds
+(+15/+14.6, 4D-start local minima), xanthine (+13.2, angle/electrostatic strain — rings now planar
+via fused-ring torsions). The systematic torsion/hybridization/K₁₂ fixes (r 0.86→0.97) are landed;
+further gains need 4D-embedding quality work.
 
 ## Recently Completed
+- **Decoupled MMFF atom typing from aromaticity + fused-ring ETKDG planarity — debunked the other session's "charges.rs bug" claim; xanthine MMFF now robust to aromaticity changes.** Investigation of the other session's graph.rs WIP (which broadened N aromaticity from 5-rings to any ring) that regressed 15 molecules:
+  - **The charges.rs "bug" was a misdiagnosis.** At HEAD, xanthine's types/charges/energy match RDKit byte-for-byte (types `[7,3,10,3,7,...]`, energy −141.2716). The divergence (webmm −177.8 vs RDKit −142.7) appeared ONLY with the graph.rs WIP. Root cause: the aromaticity fix retyped xanthine's **carbonyl carbons** C_2(3)→C_AR(37) → the neighboring N_AM's BCI charge shifted −0.49→−0.671 (BCI table `(0,3,10,−0.060)` vs `(0,10,37,+0.117)`). The N's own type was unchanged; only its neighbor's type changed. charges.rs faithfully implements MMFF eq. 15 — no bug.
+  - **Fix A (carbonyl C → C_2):** `src/mmff/mod.rs` carbon cascade — added `(6,_,true,_) if double_bond_partners.contains(&8) => C_2` BEFORE `(6,_,true,_) => C_AR`. RDKit types ring carbonyl carbons as C_2 regardless of aromaticity.
+  - **Fix B (amide N-H → H_NAM):** `determine_h_subtype` — split the `!n_is_aromatic && (acyl||...)` gate so amide/amidine N-H yields H_NAM even when the N is aromatic. Pyrrole N-H still → H_N3.
+  - **Graph.rs WIP reverted** (wrong layer): the broadening conflates ETKDG planarity with MMFF typing + `perceive_aromatic_bonds` (mutates ring bonds→Aromatic). It broke purine MMFF typing (6 atoms→C_AR/N_AR) AND xanthine energy (+3.9 via bond-type mutation). Decoupling is correct.
+  - **Fused-ring ETKDG planarity** (`src/etkdg/mod.rs` `build_planarity_constraints`): added ring torsions for non-aromatic rings **fused to an aromatic ring** (shared ≥2 atoms) that are **unsaturated** (have a double bond). Xanthine's pyrimidinedione is now planar (torsions ±180°); xanthine ETKDG +14.5→+13.2. Harness r 0.9755→0.9762, RMSD 11.82→11.62; 0 regressions. Remaining +13 is angle/electrostatic strain (4D-embedding quality), not planarity.
+  - **Validated:** `cargo test` 195 pass; `cargo clippy --all-targets` 0 warnings; `benchmark_mmff.py` 230/230 PASS.
+
+- **Metadynamics engine + WASM API + site integration — in-browser enhanced sampling with free-energy surface reconstruction.** `src/metad/mod.rs` (new) + `src/lib.rs` + `site/index.html`:
+  - **`CollectiveVariable` trait** with `DihedralCV`/`DistanceCV`, central-difference gradients. **`MetaDynamics`** implements `ForceField`, wrapping MMFF + well-tempered Gaussian bias; `free_energy_surface()` reconstructs the FES.
+  - **WASM:** `run_metadynamics_from_sdf(sdf, MetaDOptions) -> MetaDResult` — trajectory + CV trace + FES grid + hill centers. Site: purple 🔬 button, CV panel, FES canvas (curve + hill dots), trajectory playback with CV° overlay.
+  - **Tests:** 4 (dihedral known values, CV gradient finite, HO+FES, ethanol MMFF+dihedral).
+
+- **MD engine v1 (gas-phase): allocation-free force eval + composable `ForceField` trait + velocity-Verlet/Langevin integrator.** New `src/forces.rs` (trait), `src/md/mod.rs` (engine):
+  - **Allocation-free force eval:** extracted `MMFFForceField::compute_energy_and_gradient_into(coords, &mut grad) -> f64` (writes into a caller buffer, zeroed first); `calculate_energy_and_gradient` delegates. Energy-neutral (230/230 unchanged). Eliminates the per-call `Vec` alloc — matters for MD (one eval/step) and the optimizer.
+  - **`ForceField` trait** (`src/forces.rs`, one method): the composable force-source abstraction. `MMFFForceField` impls it; future GBSA / metadynamics-bias terms will impl it too so the integrator sums them without knowing internals.
+  - **`src/md/mod.rs`:** `MDRunner` with **velocity-Verlet (NVE)** and **BAOAB Langevin (NVT)**, one force eval per step. Internal units Å/amu/kcal·mol⁻¹/τ (1τ=48.885fs) so `a=F/m` and `KE=0.5Σmv²` need no conversion factors. Maxwell–Boltzmann init + COM-velocity removal + rescale-to-T; deterministic seeded PRNG (splitmix64→xoshiro256**) for Langevin; atomic-mass table. API: `MDRunner::from_molecule(&ff, &mol, config).step()`, with `potential_energy`/`kinetic_energy`/`temperature`/`coords`/`velocities`. No cutoff (all-pairs, faithful surface).
+  - **Tests:** harmonic-oscillator `ForceField` validates the integrator + units exactly — NVE rel-energy drift <1e-3 over 20k steps; Langevin ⟨T⟩ within 10% of 300 K; MMFF smoke (methane NVT) stays finite & sane. Full suite **190 pass** (187+3), clippy 0 (md).
+  - **WASM-exposed:** `run_md_from_sdf(sdf, MDOptions) -> MDResult` (new in lib.rs) — parses SDF, runs MD, returns a sampled trajectory (flattened coords + per-frame energy/temperature/time + final stats). `MDOptions` mirrors `MDConfig` + n_steps/snapshot_interval; `MDResult` exposes `coordinates()`/`energies()`/`temperatures()`/`n_frames()`/`get_coord(frame,atom,axis)` etc. Verified in the wasm bindings (`pkg/webmm.d.ts`).
+  - **Separate finding (not MD):** the user's in-progress `graph.rs` (xanthine aromaticity fix) regresses 15 molecules incl. purine (15 type mismatches, purine Δ −10 kcal vs RDKit) — it over-corrects purine's ring. MD work is clean with `graph.rs` at HEAD (230/230); flagged for the user.
+
 - **Full-precision bond/angle parameter audit vs RDKit — 1 real error found & fixed; rest verified correct.** (Per request to audit all params at RDKit precision. `examples/dump_params.rs` + `scripts/audit_params.py`.)
   - **Method:** dumped webmm's resolved per-bond/per-angle params for all 230 molecules and compared to RDKit's `GetMMFFBondStretchParams`/`GetMMFFAngleBendParams`. **Key finding: the RDKit Python APIs return the *primary-table* value, NOT the force-field's bt-resolved value** — so for any bond/angle involving sbmb/aromatic atoms (where MMFF uses bt=1), the API diverges from what the FF (and webmm) actually use. These are API artifacts, not errors (verified via per-term energy: all 230 match <0.01).
   - **Audited the bt-unambiguous subset** (neither atom sbmb/aromatic → bt=0 for both webmm & API): **1828 bonds, 3007 angles.**

@@ -2793,6 +2793,54 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         }
     }
 
+    // Fused-ring planarity: a non-aromatic ring fused to an aromatic ring
+    // (sharing >=2 atoms = a bond) that is unsaturated (has a double bond)
+    // is coplanar with the aromatic system. Force it planar via ring torsions.
+    // Targets purines (xanthine/caffeine pyrimidinedione), quinolones, etc.
+    // Excludes saturated fused rings (decalin — no double bonds).
+    let aromatic_ring_sets: Vec<HashSet<usize>> = rings
+        .iter()
+        .filter(|r| {
+            (4..=6).contains(&r.len()) && r.iter().all(|a| aromatic_atoms.contains(a))
+        })
+        .map(|r| r.iter().copied().collect())
+        .collect();
+    for ring in &rings {
+        if !(4..=6).contains(&ring.len()) {
+            continue;
+        }
+        if ring.iter().all(|a| aromatic_atoms.contains(a)) {
+            continue; // already handled above
+        }
+        let ring_set: HashSet<usize> = ring.iter().copied().collect();
+        let fused_to_aromatic = aromatic_ring_sets
+            .iter()
+            .any(|ar| ar.iter().filter(|a| ring_set.contains(a)).count() >= 2);
+        if !fused_to_aromatic {
+            continue;
+        }
+        // Unsaturated: at least one ring atom has a double bond (in-ring or
+        // exocyclic, e.g. C=O). This distinguishes purine/quinolone fused rings
+        // from saturated decalin-type systems.
+        let has_double = ring.iter().any(|&a| {
+            mol.bonds.iter().any(|b| {
+                b.bond_type == BondType::Double && (b.atom1 == a || b.atom2 == a)
+            })
+        });
+        if !has_double {
+            continue;
+        }
+        let rsize = ring.len();
+        for start in 0..rsize {
+            ring_torsions.push((
+                ring[start],
+                ring[(start + 1) % rsize],
+                ring[(start + 2) % rsize],
+                ring[(start + 3) % rsize],
+            ));
+        }
+    }
+
     // Iterate aromatic atoms in a DETERMINISTIC (sorted) order. aromatic_atoms is
     // a HashSet (Rust RandomState -> randomized per process); iterating it raw
     // made the planarity-constraint Vec order — and thus the embedding —
