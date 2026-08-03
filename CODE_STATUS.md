@@ -21,6 +21,13 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **Release v0.6.1 (patch).** Everything since v0.6.0 (922cfcb) is patch-level: demo page WASM
+  API fixes (embed/optimize/metad buttons), Rust CI green (cargo fmt, clippy 1.97
+  `collapsible_match`, wasm-pack v0.13.1 pin), README refresh, production debug-print cleanup.
+  Version bumped 0.6.0 → 0.6.1 in Cargo.toml/Cargo.lock/package.json; tagged `v0.6.1` at the
+  release commit; pushed commit + tag (Pages redeploys on v* tags — same artifact). No GitHub
+  Release object created (repo convention is tags only). Verified: cargo check, 199/199 tests,
+  clippy 0.
 - **Demo page WASM API fixes — Embed / Optimize buttons broken; metad readout hardened.**
   User-reported runtime errors on the deployed demo, root-caused against the generated bindings
   (pkg/webmm.d.ts) and REPRODUCED in node against the real wasm build:
