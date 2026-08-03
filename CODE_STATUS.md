@@ -15,9 +15,27 @@ aromaticity flag) — robust to future aromaticity-perception changes. 230/230, 
 ~117.5°); the small aggregate dip (r 0.9762→0.9749) is concentrated in already-WebMM-better
 molecules (guanine −54→−63). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local
 minima). The systematic torsion/hybridization/K₁₂ fixes (r 0.86→0.97) are landed; further gains
-need 4D-embedding quality work.
+need 4D-embedding quality work. Repo-hygiene pass 2 removed the leftover production `eprintln!`
+debug output in `minimize_etkdg` (no behavior change; embedding numbers identical) and turned
+`test_aniline_hh_bounds` into a real regression guard (H-H 1-3 bound center must imply ≈120°;
+the old 126° split fails by 6°).
 
 ## Recently Completed
+- **Review-fix pass 2: removed production debug prints in `minimize_etkdg`; `test_aniline_hh_bounds` is now a real regression guard.**
+  - **Debug prints removed** (`src/etkdg/mod.rs`): the unconditional `eprintln!("MIN n=…")` fired on
+    every embedding in the public/WASM-exposed default path, and `eprintln!("DBGLS stall …")` fired
+    on line-search stalls — both leftover diagnostics from earlier passes (a7a24b0, fb30419) that
+    clippy doesn't flag. Removed both plus the now-unread `iters_done`/`converged` bindings (the
+    `break` on `max_g < force_tol` is unchanged). The `stall`/history-reset/break logic is
+    functional and kept; the one-time `ETKDG timeout` failure diagnostic is kept (fires only on
+    embed failure, not per call). **No behavior change**: all 199 tests pass with identical
+    energies/geometries, 0 clippy warnings, 230/230 MMFF.
+  - **Aniline bounds regression guard** (`test_aniline_hh_bounds`): the old assertion
+    (`H-H lower > 1.6`) also passed with the *buggy* 114°/123° split (126° → lower ≈1.795), so it
+    could not catch the regression. Now asserts the H-H 1-3 bound center implies H-N-H ≈120°
+    (|angle−120°| < 2°, measured center 1.7831 Å = exactly 120°; buggy 126° fails by 6°).
+  - Verified: `cargo test` 199/199 (aniline ×3 deterministic), `cargo clippy --all-targets` 0
+    warnings, `python3 scripts/benchmark_mmff.py --no-speed` 230/230 PASS (MMFF untouched).
 - **Review-fix pass: flaky aniline ETKDG test root-caused + fixed, GBSA robustness, repo hygiene.**
   - **Aniline NH2 root cause**: `build_distance_bounds` gave an all-single sp2 center (aniline N in
     Kekulé form) pair angles 120°/114°/leftover, so the H-H 1-3 bound centered at **126°** and the

@@ -4574,11 +4574,8 @@ fn minimize_etkdg(
     let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut rho_hist: Vec<f64> = Vec::with_capacity(M);
-    let mut iters_done = 0usize;
-    let mut converged = false;
     let mut stall = 0usize;
     for _iter in 0..max_iter {
-        iters_done += 1;
         // convergence: max per-atom force (excluding fixed atoms)
         let mut max_g = 0.0f64;
         for i in 0..n {
@@ -4591,7 +4588,6 @@ fn minimize_etkdg(
             }
         }
         if max_g < force_tol {
-            converged = true;
             break;
         }
 
@@ -4671,10 +4667,6 @@ fn minimize_etkdg(
             // steepest-descent steps; only give up after several consecutive
             // failures. (Previously broke on the first failure, leaving strained-
             // ring molecules under-relaxed after ~2 iters.)
-            eprintln!(
-                "DBGLS stall iters={iters_done} max_g={max_g:.4} dg={dg:.4e} dir_norm={:.4} f={f:.4} step0={step:.4e}",
-                dir.iter().map(|d| d * d).sum::<f64>().sqrt()
-            );
             stall += 1;
             s_hist.clear();
             y_hist.clear();
@@ -4687,7 +4679,6 @@ fn minimize_etkdg(
         }
     }
 
-    eprintln!("MIN n={n} iters={iters_done}/{max_iter} converged={converged} E={f:.1}");
     for i in 0..n {
         coords[i][0] = x[3 * i];
         coords[i][1] = x[3 * i + 1];
@@ -5582,9 +5573,17 @@ mod tests {
         println!("N4-H10:  [{:.4}, {:.4}]", bounds.get_lower(4, 10), bounds.get_upper(4, 10));
         println!("N4-H11:  [{:.4}, {:.4}]", bounds.get_lower(4, 11), bounds.get_upper(4, 11));
         
-        // With sp2 N, 120° angle, N-H ~1.04:
-        // H-H should be ~2*1.04*sin(60°) = 1.80
-        assert!(bounds.get_lower(10, 11) > 1.6, "H-H lower bound too small: {:.4}", bounds.get_lower(10, 11));
+        // With sp2 N, 120° angle, N-H ~1.03: H-H should be ~2*1.03*sin(60°) = 1.78.
+        // The old 114°/123° single-bond split centered the H-H pair at 126°
+        // (H-H 1.835) — catch that regression here, not only in the
+        // probabilistic geometry test.
+        let hh_center = 0.5 * (bounds.get_lower(10, 11) + bounds.get_upper(10, 11));
+        let nh_center = 0.5 * (bounds.get_lower(4, 10) + bounds.get_upper(4, 10));
+        let hnh_angle = 2.0 * (hh_center / (2.0 * nh_center)).asin().to_degrees();
+        assert!(
+            (hnh_angle - 120.0).abs() < 2.0,
+            "H-N-H 1-3 bound center {hnh_angle:.1}° should be ≈120° (sp2 N, no double bond)"
+        );
     }
 
     #[test]
