@@ -3217,13 +3217,11 @@ pub fn empirical_angle_params(
                 theta0 = 180.0;
             }
         }
-        3 => {
-            if val_j == 3 && mltb_j == 0 {
-                if atno_j == 7 {
-                    theta0 = 107.0;
-                } else {
-                    theta0 = 92.0;
-                }
+        3 if val_j == 3 && mltb_j == 0 => {
+            if atno_j == 7 {
+                theta0 = 107.0;
+            } else {
+                theta0 = 92.0;
             }
         }
         _ => {}

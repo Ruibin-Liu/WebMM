@@ -311,13 +311,9 @@ fn count_pi_electrons(atom_idx: usize, ring: &[usize], mol: &Molecule) -> i32 {
                 1
             }
         }
-        8 | 16 => {
-            if ring.len() == 5 && ring_bonds == 2 {
-                // Furan/thiophene-like O/S always contributes lone pair
-                2
-            } else {
-                1
-            }
+        8 | 16 if ring.len() == 5 && ring_bonds == 2 => {
+            // Furan/thiophene-like O/S always contributes lone pair
+            2
         }
         _ => 1,
     }
