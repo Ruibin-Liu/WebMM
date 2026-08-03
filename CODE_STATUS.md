@@ -21,6 +21,21 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **GitHub CI/pages audit pass (part 2) — CI fully green: clippy 1.97 `collapsible_match` fixed.**
+  After the fmt + wasm-pack pin landed, Rust CI's lint job still failed at the clippy step while
+  passing locally. Root-caused via a temporary debug workflow (removed after use) that surfaced
+  the CI lint report through a public check annotation: **CI's `dtolnay@stable` clippy is 1.97.1
+  vs local 1.92.0**, and the newer lint `clippy::collapsible_match` fires at two sites:
+  - `src/molecule/graph.rs` `count_pi_electrons` — `8 | 16` arm: if/else folded into a match
+    guard (`8 | 16 if ring.len() == 5 && ring_bonds == 2`); the else falls through to the
+    existing `_ => 1` arm.
+  - `src/mmff/mmff_tables.rs` empirical theta0 — `3` arm: condition moved to a guard
+    (`3 if val_j == 3 && mltb_j == 0`); else falls through to `_ => {}`.
+  Semantics unchanged: 199/199 tests, fmt clean, local clippy clean; **Rust CI green on the
+  next push (fmt, check, clippy -D warnings, test, wasm build) and Pages deploy succeeded**.
+  Note: local clippy 1.92 cannot see the 1.97 lint — verify against CI (or update the local
+  toolchain) when touching these match arms. The three temporary debug commits (bc028a8,
+  ba0efe6, 0fbc76a) remain in history; can be squashed with a force-push if desired.
 - **GitHub CI/pages audit pass — rustfmt-clean repo, wasm-pack pinned in CI.** Careful audit of the
   GitHub setup found two real problems (Pages deploys themselves were healthy):
   - **Rust CI was red on every recent commit**: `cargo fmt --all -- --check` failed with 505 hunks
