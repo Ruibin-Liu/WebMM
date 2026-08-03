@@ -39,7 +39,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-pack (pinned v0.13.1, matches local devDependency)
+        run: |
+          curl -sL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz -o /tmp/wasm-pack.tar.gz
+          tar xzf /tmp/wasm-pack.tar.gz -C /tmp
+          sudo cp /tmp/wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack /usr/local/bin/wasm-pack
+          wasm-pack --version
       - name: wasm-pack build
         run: wasm-pack build --target web --release --out-dir pkg

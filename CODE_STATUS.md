@@ -21,6 +21,23 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **GitHub CI/pages audit pass — rustfmt-clean repo, wasm-pack pinned in CI.** Careful audit of the
+  GitHub setup found two real problems (Pages deploys themselves were healthy):
+  - **Rust CI was red on every recent commit**: `cargo fmt --all -- --check` failed with 505 hunks
+    across 28 files (long-standing, many commits), which also skipped the clippy step. Fixed by
+    `cargo fmt --all` (pure whitespace; rustfmt 1.8.0 matches CI's dtolnay@stable). One quirk:
+    `cargo fmt` left a leading blank line in `src/opt_compare.rs`; fixed with a direct
+    `rustfmt --edition 2021` pass. Verified: fmt --check 0 diffs, `cargo clippy -- -D warnings`
+    and `--all-targets` both 0 warnings, `cargo test` 199/199.
+  - **wasm-pack version drift CI vs local**: both workflows installed wasm-pack via the unpinned
+    `curl init.sh | sh` installer → CI got v0.15.0 while local dev builds with the pinned
+    devDependency 0.13.1 (the deployed artifact was built with a different tool than local). Both
+    workflows now download the pinned `wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz` release
+    asset (verified to exist). Local `wasm-pack build --target web --release` with 0.13.1 succeeds;
+    `pkg/` demo re-staged with `site/index.html`.
+  - **Pages status**: latest push (d48cfc1, incl. eb57769 src changes) deployed successfully per
+    the Actions API. Live-site runtime (https://ruibin-liu.github.io/WebMM/) cannot be verified
+    from the dev environment (github.io is SSL-blocked there) — open in a browser to confirm.
 - **README refreshed to match the 0.6.0 codebase (docs-only pass).** README.md had not been touched
   since the GitHub Pages commit and predated MD/metadynamics/GBSA; it also had a broken rustup
   URL and recommended `cargo install wasm-pack` (forbidden by AGENTS.md — the project pins
