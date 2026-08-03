@@ -1,45 +1,59 @@
-# Plan: GitHub CI/pages audit pass — rustfmt clean, pin wasm-pack in CI
+# Plan: Fix demo page WASM API bugs (Embed / Optimize / Metadynamics buttons)
 
 ## Context
-Careful audit of the GitHub setup found:
-1. **Rust CI is red on every recent commit** — `cargo fmt --all -- --check` fails
-   with 505 hunks across 28 files (long-standing; clippy/test/build-wasm steps
-   are skipped or green, but the lint job never passes). `cargo clippy -- -D
-   warnings` itself passes locally.
-2. **wasm-pack version drift CI vs local**: `pages.yml` and `rust.yml` install
-   wasm-pack via the unpinned installer script (`curl init.sh | sh`) → CI gets
-   v0.15.0, while local dev builds with the pinned devDependency 0.13.1
-   (package.json `^0.13.0`). The deployed Pages artifact is therefore built
-   with a different tool than local — reproducibility gap.
-3. Pages deploys themselves are healthy: latest push (d48cfc1, incl. eb57769
-   src changes) deployed successfully per the Actions API. Live page runtime
-   cannot be verified from this environment (github.io is SSL-blocked here).
+User reports three runtime errors on the deployed demo (site/index.html):
+1. **ETKDG Embed**: `Error: res.success is not a function`
+2. **Run Metadynamics**: `MetaD error: Cannot read properties of undefined (reading 'toFixed')`
+3. **Optimize (MMFF94s)**: `Error: res.coordinates is not a function`
 
-## Phase 1 — `cargo fmt --all` (formatting-only commit)
-- Run `cargo fmt --all`; commit the result. Purely mechanical whitespace
-  changes (same rustfmt 1.8.0/rustc 1.92.0 as CI's dtolnay@stable, so output
-  matches). No semantics change; this unblocks the lint job's fmt step.
+Root-caused by comparing site calls against the generated bindings
+(pkg/webmm.d.ts) and REPRODUCED in node against the real wasm build:
 
-## Phase 2 — Pin wasm-pack v0.13.1 in CI workflows
-- Replace the unpinned installer step in `.github/workflows/pages.yml` and
-  `.github/workflows/rust.yml` with a pinned download of
-  `wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz` (verified to exist on
-  the v0.13.1 release) → CI builds with the same version as local dev.
+- `ETKDGResult` exposes `get_success()` / `get_coordinates()` / `get_n_atoms()` /
+  `get_error()` — the site calls `success()` / `coordinates()` / `n_atoms()`.
+  Node repro: `EMBED ERROR (site bug): res.success is not a function` ✓.
+- `OptimizationResult` exposes only properties (`n_atoms`, `final_energy`,
+  `converged`, `iterations`, `message`) + methods (`get_final_energy()`,
+  `get_coord(atom, dim)`, …) — **no coordinates accessor at all**. The site
+  calls `coordinates()`, `final_energy()`, `steps()`. Node repro:
+  `OPTIMIZE ERROR (site bug): res.coordinates is not a function` ✓.
+- `MetaDResult` calls in the site all match the bindings (success(), n_atoms(),
+  n_frames(), energies(), times_fs(), cv_values(), fes_s(), fes_f(),
+  hill_centers(), n_hills()); node repro of the full metad flow with the site's
+  exact defaults (caffeine, dihedral 8,2,1,0, 5000 steps, snap 50) passes with
+  consistent arrays (101 frames / 72 FES points / 100 hills). The reported
+  toFixed crash is therefore either a stale cached webmm_bg.wasm in the
+  browser or an empty-array edge case — the site's `updateReadouts` /
+  FES-span code assumes non-empty arrays and calls `.toFixed` unconditionally.
+- MD button: all calls match the bindings; node repro passes (no fix needed).
+
+## Phase 1 — Fix confirmed API mismatches (site/index.html)
+- `runEmbed`: use `get_success()` / `get_coordinates()` / `get_n_atoms()` /
+  `get_error()`.
+- `runOptimize`: build the flat coordinate array via `get_coord(a, d)` over
+  `res.n_atoms`; read `final_energy` / `iterations` as properties; drop the
+  nonexistent `steps()` call (use `iterations`).
+
+## Phase 2 — Harden metad/MD readout code against empty/undefined arrays
+- `updateReadouts`: bail out when `traj.energies` is missing or `frame` is out
+  of range; guard `times`/`cvValues`/`temps` reads with fallbacks.
+- `runMetad` FES span: guard `fes_f().length` (show "—" instead of computing
+  on an empty array).
 
 ## Phase 3 — Docs per workflow
 - Overwrite `PLAN.md` (this file).
-- Update `CODE_STATUS.md`: Recently Completed entry + CI status note.
+- Update `CODE_STATUS.md` (Recently Completed).
 
 ## Verification
-- `cargo fmt --all -- --check` — 0 diffs.
-- `cargo clippy -- -D warnings` — 0 warnings (exactly as CI's lint job runs).
-- `cargo test` — 199/199.
-- `wasm-pack build --target web --release` (local 0.13.1) — succeeds; staged
-  `pkg/` demo is the same contract as CI output.
-- Push; poll GitHub Actions until both workflows complete green.
+- Node repro script (repro_demo.mjs, temporary) re-run with the site's exact
+  call patterns: embed/optimize succeed; metad readouts + FES span print
+  without errors.
+- `cargo test` 199/199, clippy 0 (no Rust change; site-only).
+- Stage `site/index.html` into local `pkg/` and commit; push; Pages deploys.
+- Advise the user to hard-refresh the deployed page (bust cached wasm) and
+  re-test; if metad still errors, capture the browser console stack.
 
 ## Out of scope
-- Live-site runtime verification (github.io unreachable from this environment;
-  user opens https://ruibin-liu.github.io/WebMM/ in a browser).
-- Reformatting `scripts/` Python or `site/index.html` (not rustfmt's domain).
-- Changing the deployed artifact layout or the pages.yml trigger paths.
+- Changing the Rust/WASM API (bindings are the contract; site was stale).
+- Cache-busting schemes (GitHub Pages 10-min cache; hard refresh suffices).
+- Other buttons (MD works; viewer/playback untouched).

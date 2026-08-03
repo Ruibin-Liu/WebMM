@@ -316,10 +316,17 @@ function runOptimize() {
       opts.set_max_iterations(500);
       const res = wasm.optimize_from_sdf(sdf, opts);
       const dt = ((performance.now() - t0) / 1000).toFixed(2);
-      renderCoords(res.coordinates(), sdf);
+      // OptimizationResult exposes n_atoms/final_energy/iterations as properties
+      // and get_coord(atom, dim) per coordinate (no flat coordinates array).
+      const nA = res.n_atoms;
+      const coords = new Float64Array(nA * 3);
+      for (let a = 0; a < nA; a++) {
+        for (let d = 0; d < 3; d++) coords[a * 3 + d] = res.get_coord(a, d);
+      }
+      renderCoords(coords, sdf);
       traj = null; disablePlayback();
-      setStatus(`Optimized: E = ${res.final_energy().toFixed(2)} kcal/mol in ${dt}s (${res.steps()} steps)`, 'success');
-      document.getElementById('overlay').innerHTML = `E = <span>${res.final_energy().toFixed(1)}</span> kcal/mol`;
+      setStatus(`Optimized: E = ${res.final_energy.toFixed(2)} kcal/mol in ${dt}s (${res.iterations} iterations)`, 'success');
+      document.getElementById('overlay').innerHTML = `E = <span>${res.final_energy.toFixed(1)}</span> kcal/mol`;
     } catch (e) { setStatus('Error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
   }, 20);
@@ -368,10 +375,10 @@ function runEmbed() {
   setTimeout(() => {
     try {
       const res = wasm.generate_initial_coordinates_wasm(sdf);
-      if (res.success()) {
-        renderCoords(res.coordinates(), sdf);
-        setStatus(`ETKDG embed: ${res.n_atoms()} atoms`, 'success');
-      } else { setStatus('ETKDG failed: ' + res.error(), 'error'); }
+      if (res.get_success()) {
+        renderCoords(res.get_coordinates(), sdf);
+        setStatus(`ETKDG embed: ${res.get_n_atoms()} atoms`, 'success');
+      } else { setStatus('ETKDG failed: ' + res.get_error(), 'error'); }
     } catch (e) { setStatus('Error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
   }, 20);
@@ -414,7 +421,10 @@ function runMetad() {
       drawChart();
       updateReadouts(currentFrame);
       drawFES(res.fes_s(), res.fes_f(), res.hill_centers());
-      const fesSpan = (Math.max(...res.fes_f()) - Math.min(...res.fes_f())).toFixed(1);
+      const fesF = res.fes_f();
+      const fesSpan = fesF.length > 0
+        ? (Math.max(...fesF) - Math.min(...fesF)).toFixed(1)
+        : '—';
       setStatus(`MetaD: ${res.n_hills()} hills in ${dt}s. FES span: ${fesSpan} kcal/mol`, 'success');
     } catch (e) { setStatus('MetaD error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
@@ -499,13 +509,14 @@ function updateViewerFrame(frame) {
   viewer.render();
 }
 function updateReadouts(frame) {
+  if (!traj || !traj.energies || frame < 0 || frame >= traj.energies.length) return;
   const e = traj.energies[frame].toFixed(1);
-  const time = (traj.times[frame] / 1000).toFixed(2);  // fs → ps
+  const time = ((traj.times && traj.times[frame] != null ? traj.times[frame] : 0) / 1000).toFixed(2);  // fs → ps
   let html = `Frame <span>${frame+1}/${traj.nFrames}</span> · ${time}ps · E=<span>${e}</span>`;
-  if (traj.cvValues) {
+  if (traj.cvValues && traj.cvValues.length > 0 && traj.cvValues[frame] != null) {
     const cvDeg = (traj.cvValues[frame] * 180 / Math.PI).toFixed(0);
     html += ` · CV=<span>${cvDeg}°</span>`;
-  } else if (traj.temps.length > 0) {
+  } else if (traj.temps && traj.temps.length > 0) {
     html += ` · T=<span>${traj.temps[frame].toFixed(0)}K</span>`;
   }
   document.getElementById('overlay').innerHTML = html;

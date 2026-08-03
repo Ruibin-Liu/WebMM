@@ -21,6 +21,29 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **Demo page WASM API fixes — Embed / Optimize buttons broken; metad readout hardened.**
+  User-reported runtime errors on the deployed demo, root-caused against the generated bindings
+  (pkg/webmm.d.ts) and REPRODUCED in node against the real wasm build:
+  - **ETKDG Embed** (`res.success is not a function`): `ETKDGResult` exposes `get_*` accessors
+    (`get_success`/`get_coordinates`/`get_n_atoms`/`get_error`) but the site called
+    `success()`/`coordinates()`/`n_atoms()`. Fixed in `site/index.html`.
+  - **Optimize** (`res.coordinates is not a function`): `OptimizationResult` exposes only
+    properties (`n_atoms`, `final_energy`, `converged`, `iterations`, `message`) plus
+    `get_coord(atom, dim)` — there is **no flat coordinates accessor at all**; the site also
+    called `final_energy()`/`steps()` as methods. Fixed: flat Float64Array built via
+    `get_coord` loop, `final_energy`/`iterations` read as properties.
+  - **Run Metadynamics** (`Cannot read properties of undefined (reading 'toFixed')`): all
+    `MetaDResult` calls in the site match the bindings, and the full metad flow with the
+    site's exact defaults (caffeine, dihedral 8,2,1,0, 5000 steps, snap 50) passes in node
+    (101 frames / 72 FES points / 100 hills — arrays consistent). The crash class is
+    unguarded `.toFixed` reads on possibly-empty/missing arrays: `updateReadouts` now bails
+    on missing/out-of-range data and guards `times`/`cvValues`/`temps`; the FES-span line
+    guards `fes_f().length` (shows —). If the user still sees it after a hard refresh, the
+    cause would be a stale cached `webmm_bg.wasm` (GitHub Pages 10-min cache).
+  - MD button: verified correct against the bindings (no change).
+  - Verified: node repro of all four fixed call patterns passes (embed 24 atoms, optimize
+    E=−123.49/475 iters, MD 11 frames, metad readout + FES span); `cargo test` 199/199 and
+    clippy 0 (no Rust change); `site/index.html` staged into local `pkg/`.
 - **GitHub CI/pages audit pass (part 2) — CI fully green: clippy 1.97 `collapsible_match` fixed.**
   After the fmt + wasm-pack pin landed, Rust CI's lint job still failed at the clippy step while
   passing locally. Root-caused via a temporary debug workflow (removed after use) that surfaced
