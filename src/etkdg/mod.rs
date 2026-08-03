@@ -19,7 +19,11 @@
 // Index-based loops, multi-argument kernels, and large table types are
 // pervasive in this distance-geometry numerical code; the indexed form is
 // clearer for matrix/coordinate access, so these lints are allowed here.
-#![allow(clippy::needless_range_loop, clippy::too_many_arguments, clippy::type_complexity)]
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::type_complexity
+)]
 
 use crate::molecule::{BondStereo, BondType, Hybridization, Molecule};
 use std::collections::HashSet;
@@ -56,8 +60,7 @@ const PLANARITY_ENERGY_TOL: f64 = 0.7;
 // sets it false (shipped path byte-identical); `generate_initial_coords_rdkit` sets
 // it true. Faithfulness is the goal — r-regression during the migration is
 // expected and accepted, not a gate.
-static EXP_RDKIT_ALL: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static EXP_RDKIT_ALL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn rdkit_all() -> bool {
     EXP_RDKIT_ALL.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -1882,9 +1885,17 @@ where
             }
         }
         let gamma = if k > 0 {
-            let sy: f64 = s_hist[k - 1].iter().zip(y_hist[k - 1].iter()).map(|(a, b)| a * b).sum();
+            let sy: f64 = s_hist[k - 1]
+                .iter()
+                .zip(y_hist[k - 1].iter())
+                .map(|(a, b)| a * b)
+                .sum();
             let yy: f64 = y_hist[k - 1].iter().map(|v| v * v).sum();
-            if yy > 1e-20 { sy / yy } else { 1.0 }
+            if yy > 1e-20 {
+                sy / yy
+            } else {
+                1.0
+            }
         } else {
             1.0
         };
@@ -2043,15 +2054,41 @@ fn minimize_4d_first(
         }
         let energy_at = |xx: &[f64]| {
             let c: Vec<[f64; 4]> = (0..n)
-                .map(|i| [xx[CPA * i], xx[CPA * i + 1], xx[CPA * i + 2], xx[CPA * i + 3]])
+                .map(|i| {
+                    [
+                        xx[CPA * i],
+                        xx[CPA * i + 1],
+                        xx[CPA * i + 2],
+                        xx[CPA * i + 3],
+                    ]
+                })
                 .collect();
-            energy_4d(&c, bounds, chiral_centers, FIRST_MIN_WEIGHT_CHIRAL, FIRST_MIN_WEIGHT_FOURTH)
+            energy_4d(
+                &c,
+                bounds,
+                chiral_centers,
+                FIRST_MIN_WEIGHT_CHIRAL,
+                FIRST_MIN_WEIGHT_FOURTH,
+            )
         };
         let gradient_at = |xx: &[f64]| {
             let c: Vec<[f64; 4]> = (0..n)
-                .map(|i| [xx[CPA * i], xx[CPA * i + 1], xx[CPA * i + 2], xx[CPA * i + 3]])
+                .map(|i| {
+                    [
+                        xx[CPA * i],
+                        xx[CPA * i + 1],
+                        xx[CPA * i + 2],
+                        xx[CPA * i + 3],
+                    ]
+                })
                 .collect();
-            let g = gradient_4d(&c, bounds, chiral_centers, FIRST_MIN_WEIGHT_CHIRAL, FIRST_MIN_WEIGHT_FOURTH);
+            let g = gradient_4d(
+                &c,
+                bounds,
+                chiral_centers,
+                FIRST_MIN_WEIGHT_CHIRAL,
+                FIRST_MIN_WEIGHT_FOURTH,
+            );
             let mut gx = vec![0.0f64; dim];
             for i in 0..n {
                 for d in 0..CPA {
@@ -2148,15 +2185,41 @@ fn minimize_4d_collapse(
         }
         let energy_at = |xx: &[f64]| {
             let c: Vec<[f64; 4]> = (0..n)
-                .map(|i| [xx[CPA * i], xx[CPA * i + 1], xx[CPA * i + 2], xx[CPA * i + 3]])
+                .map(|i| {
+                    [
+                        xx[CPA * i],
+                        xx[CPA * i + 1],
+                        xx[CPA * i + 2],
+                        xx[CPA * i + 3],
+                    ]
+                })
                 .collect();
-            energy_4d(&c, bounds, chiral_centers, FOURTH_MIN_WEIGHT_CHIRAL, FOURTH_MIN_WEIGHT_FOURTH)
+            energy_4d(
+                &c,
+                bounds,
+                chiral_centers,
+                FOURTH_MIN_WEIGHT_CHIRAL,
+                FOURTH_MIN_WEIGHT_FOURTH,
+            )
         };
         let gradient_at = |xx: &[f64]| {
             let c: Vec<[f64; 4]> = (0..n)
-                .map(|i| [xx[CPA * i], xx[CPA * i + 1], xx[CPA * i + 2], xx[CPA * i + 3]])
+                .map(|i| {
+                    [
+                        xx[CPA * i],
+                        xx[CPA * i + 1],
+                        xx[CPA * i + 2],
+                        xx[CPA * i + 3],
+                    ]
+                })
                 .collect();
-            let g = gradient_4d(&c, bounds, chiral_centers, FOURTH_MIN_WEIGHT_CHIRAL, FOURTH_MIN_WEIGHT_FOURTH);
+            let g = gradient_4d(
+                &c,
+                bounds,
+                chiral_centers,
+                FOURTH_MIN_WEIGHT_CHIRAL,
+                FOURTH_MIN_WEIGHT_FOURTH,
+            );
             let mut gx = vec![0.0f64; dim];
             for i in 0..n {
                 for d in 0..CPA {
@@ -2813,9 +2876,7 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
     // Excludes saturated fused rings (decalin — no double bonds).
     let aromatic_ring_sets: Vec<HashSet<usize>> = rings
         .iter()
-        .filter(|r| {
-            (4..=6).contains(&r.len()) && r.iter().all(|a| aromatic_atoms.contains(a))
-        })
+        .filter(|r| (4..=6).contains(&r.len()) && r.iter().all(|a| aromatic_atoms.contains(a)))
         .map(|r| r.iter().copied().collect())
         .collect();
     for ring in &rings {
@@ -2836,9 +2897,9 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         // exocyclic, e.g. C=O). This distinguishes purine/quinolone fused rings
         // from saturated decalin-type systems.
         let has_double = ring.iter().any(|&a| {
-            mol.bonds.iter().any(|b| {
-                b.bond_type == BondType::Double && (b.atom1 == a || b.atom2 == a)
-            })
+            mol.bonds
+                .iter()
+                .any(|b| b.bond_type == BondType::Double && (b.atom1 == a || b.atom2 == a))
         });
         if !has_double {
             continue;
@@ -2986,7 +3047,9 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
                     Hybridization::Sp2
                 )
         });
-        let (Some(h), Some(&c)) = (h_idx, c_idx) else { continue; };
+        let (Some(h), Some(&c)) = (h_idx, c_idx) else {
+            continue;
+        };
         let ref_atom = mol.bonds.iter().find_map(|b| {
             let other = if b.atom1 == c {
                 b.atom2
@@ -3089,8 +3152,12 @@ fn bond_angle(coords: &[[f64; 3]], a: usize, b: usize, c: usize) -> f64 {
         coords[c][1] - coords[b][1],
         coords[c][2] - coords[b][2],
     ];
-    let n1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt().max(1e-12);
-    let n2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]).sqrt().max(1e-12);
+    let n1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2])
+        .sqrt()
+        .max(1e-12);
+    let n2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2])
+        .sqrt()
+        .max(1e-12);
     let cos = (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (n1 * n2);
     cos.clamp(-1.0, 1.0).acos()
 }
@@ -3133,7 +3200,9 @@ fn h_bond_energy(coords: &[[f64; 3]], mol: &Molecule) -> f64 {
                         })
                 });
             let is_n_acceptor = a.symbol == "N"
-                && !mol.adjacency[a_idx].iter().any(|&n| mol.atoms[n].symbol == "H");
+                && !mol.adjacency[a_idx]
+                    .iter()
+                    .any(|&n| mol.atoms[n].symbol == "H");
             if !is_carbonyl_o && !is_n_acceptor {
                 continue;
             }
@@ -3141,7 +3210,9 @@ fn h_bond_energy(coords: &[[f64; 3]], mol: &Molecule) -> f64 {
                 continue; // 1-2
             }
             // 1-3 (donor-X-acceptor) is not an H-bond contact
-            let is_13 = mol.adjacency[d_idx].iter().any(|&x| mol.adjacency[x].contains(&a_idx));
+            let is_13 = mol.adjacency[d_idx]
+                .iter()
+                .any(|&x| mol.adjacency[x].contains(&a_idx));
             if is_13 {
                 continue;
             }
@@ -4546,15 +4617,35 @@ fn minimize_etkdg(
     }
     let fixed: Vec<bool> = (0..n).map(|i| coord_map.contains_key(&i)).collect();
     let energy_at = |xx: &[f64]| -> f64 {
-        let c: Vec<[f64; 3]> = (0..n).map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]]).collect();
+        let c: Vec<[f64; 3]> = (0..n)
+            .map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]])
+            .collect();
         etkdg_energy(
-            &c, bounds, chiral_centers, tetrahedral, pc, torsion_prefs, bonds_12, angles_13, mol,
+            &c,
+            bounds,
+            chiral_centers,
+            tetrahedral,
+            pc,
+            torsion_prefs,
+            bonds_12,
+            angles_13,
+            mol,
         )
     };
     let gradient_at = |xx: &[f64]| -> Vec<f64> {
-        let c: Vec<[f64; 3]> = (0..n).map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]]).collect();
+        let c: Vec<[f64; 3]> = (0..n)
+            .map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]])
+            .collect();
         let g3 = etkdg_gradient(
-            &c, bounds, chiral_centers, tetrahedral, pc, torsion_prefs, bonds_12, angles_13, mol,
+            &c,
+            bounds,
+            chiral_centers,
+            tetrahedral,
+            pc,
+            torsion_prefs,
+            bonds_12,
+            angles_13,
+            mol,
         );
         let mut gx = vec![0.0f64; dim];
         for i in 0..n {
@@ -4582,7 +4673,9 @@ fn minimize_etkdg(
             if fixed[i] {
                 continue;
             }
-            let gm = (g[3 * i] * g[3 * i] + g[3 * i + 1] * g[3 * i + 1] + g[3 * i + 2] * g[3 * i + 2]).sqrt();
+            let gm =
+                (g[3 * i] * g[3 * i] + g[3 * i + 1] * g[3 * i + 1] + g[3 * i + 2] * g[3 * i + 2])
+                    .sqrt();
             if gm > max_g {
                 max_g = gm;
             }
@@ -4604,9 +4697,17 @@ fn minimize_etkdg(
             }
         }
         let gamma = if k > 0 {
-            let sy: f64 = s_hist[k - 1].iter().zip(y_hist[k - 1].iter()).map(|(a, b)| a * b).sum();
+            let sy: f64 = s_hist[k - 1]
+                .iter()
+                .zip(y_hist[k - 1].iter())
+                .map(|(a, b)| a * b)
+                .sum();
             let yy: f64 = y_hist[k - 1].iter().map(|v| v * v).sum();
-            if yy > 1e-20 { sy / yy } else { 1.0 }
+            if yy > 1e-20 {
+                sy / yy
+            } else {
+                1.0
+            }
         } else {
             1.0
         };
@@ -4818,11 +4919,7 @@ fn spread_fragments(coords: &mut [[f64; 3]], components: &[Vec<usize>]) {
 /// RDKit ETKDG produces slightly pyramidal aniline N (H-N-H ~117.5°,
 /// H atoms ±0.84 Å out of the ring plane) rather than fully planar.
 #[allow(dead_code)]
-fn fix_aniline_nh2_geometry(
-    coords: &mut [[f64; 3]],
-    mol: &Molecule,
-    pc: &PlanarityConstraints,
-) {
+fn fix_aniline_nh2_geometry(coords: &mut [[f64; 3]], mol: &Molecule, pc: &PlanarityConstraints) {
     let aromatic_atoms = &pc.aromatic_atoms;
     for atom_idx in 0..mol.atoms.len() {
         // Only consider non-aromatic sp2 nitrogen atoms
@@ -4906,7 +5003,9 @@ fn fix_aniline_nh2_geometry(
             coords[heavy][1] - coords[atom_idx][1],
             coords[heavy][2] - coords[atom_idx][2],
         ];
-        let th_len = (to_heavy[0] * to_heavy[0] + to_heavy[1] * to_heavy[1] + to_heavy[2] * to_heavy[2]).sqrt();
+        let th_len =
+            (to_heavy[0] * to_heavy[0] + to_heavy[1] * to_heavy[1] + to_heavy[2] * to_heavy[2])
+                .sqrt();
         if th_len < 1e-10 {
             continue;
         }
@@ -4963,7 +5062,13 @@ fn fix_aniline_nh2_geometry(
 /// Rotate the k-side fragment of the j-k bond around the j->k axis by `angle`
 /// (Rodrigues). The fragment = atoms reachable from k without crossing j.
 /// Used by the torsion-snap basin-hop to cross torsional barriers.
-fn rotate_fragment_around_bond(coords: &mut [[f64; 3]], mol: &Molecule, j: usize, k: usize, angle: f64) {
+fn rotate_fragment_around_bond(
+    coords: &mut [[f64; 3]],
+    mol: &Molecule,
+    j: usize,
+    k: usize,
+    angle: f64,
+) {
     let n = mol.atoms.len();
     let mut visited = vec![false; n];
     let mut frag: Vec<usize> = Vec::new();
@@ -4980,7 +5085,11 @@ fn rotate_fragment_around_bond(coords: &mut [[f64; 3]], mol: &Molecule, j: usize
         }
     }
     let p1 = coords[j];
-    let axis = [coords[k][0] - p1[0], coords[k][1] - p1[1], coords[k][2] - p1[2]];
+    let axis = [
+        coords[k][0] - p1[0],
+        coords[k][1] - p1[1],
+        coords[k][2] - p1[2],
+    ];
     let axlen = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
     if axlen < 1e-10 {
         return;
@@ -4990,7 +5099,11 @@ fn rotate_fragment_around_bond(coords: &mut [[f64; 3]], mol: &Molecule, j: usize
     let sa = angle.sin();
     let omca = 1.0 - ca;
     for &a in &frag {
-        let v = [coords[a][0] - p1[0], coords[a][1] - p1[1], coords[a][2] - p1[2]];
+        let v = [
+            coords[a][0] - p1[0],
+            coords[a][1] - p1[1],
+            coords[a][2] - p1[2],
+        ];
         let nxv = [
             u[1] * v[2] - u[2] * v[1],
             u[2] * v[0] - u[0] * v[2],
@@ -5005,15 +5118,30 @@ fn rotate_fragment_around_bond(coords: &mut [[f64; 3]], mol: &Molecule, j: usize
 
 /// 3-sphere intersection: given centers p1,p2,p3 and radii r1,r2,r3, return
 /// the two intersection points (or None if degenerate).
-fn trilaterate(p1: [f64; 3], p2: [f64; 3], p3: [f64; 3], r1: f64, r2: f64, r3: f64) -> Option<([f64; 3], [f64; 3])> {
+fn trilaterate(
+    p1: [f64; 3],
+    p2: [f64; 3],
+    p3: [f64; 3],
+    r1: f64,
+    r2: f64,
+    r3: f64,
+) -> Option<([f64; 3], [f64; 3])> {
     let d = ((p2[0] - p1[0]).powi(2) + (p2[1] - p1[1]).powi(2) + (p2[2] - p1[2]).powi(2)).sqrt();
     if d < 1e-10 {
         return None;
     }
-    let ex = [(p2[0] - p1[0]) / d, (p2[1] - p1[1]) / d, (p2[2] - p1[2]) / d];
+    let ex = [
+        (p2[0] - p1[0]) / d,
+        (p2[1] - p1[1]) / d,
+        (p2[2] - p1[2]) / d,
+    ];
     let p3p1 = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
     let i_val = ex[0] * p3p1[0] + ex[1] * p3p1[1] + ex[2] * p3p1[2];
-    let p3_perp = [p3p1[0] - i_val * ex[0], p3p1[1] - i_val * ex[1], p3p1[2] - i_val * ex[2]];
+    let p3_perp = [
+        p3p1[0] - i_val * ex[0],
+        p3p1[1] - i_val * ex[1],
+        p3p1[2] - i_val * ex[2],
+    ];
     let ppl = (p3_perp[0] * p3_perp[0] + p3_perp[1] * p3_perp[1] + p3_perp[2] * p3_perp[2]).sqrt();
     if ppl < 1e-10 {
         return None;
@@ -5031,10 +5159,22 @@ fn trilaterate(p1: [f64; 3], p2: [f64; 3], p3: [f64; 3], r1: f64, r2: f64, r3: f
         return None;
     }
     let z = z2.sqrt();
-    let base = [p1[0] + x * ex[0] + y * ey[0], p1[1] + x * ex[1] + y * ey[1], p1[2] + x * ex[2] + y * ey[2]];
+    let base = [
+        p1[0] + x * ex[0] + y * ey[0],
+        p1[1] + x * ex[1] + y * ey[1],
+        p1[2] + x * ex[2] + y * ey[2],
+    ];
     Some((
-        [base[0] + z * ez[0], base[1] + z * ez[1], base[2] + z * ez[2]],
-        [base[0] - z * ez[0], base[1] - z * ez[1], base[2] - z * ez[2]],
+        [
+            base[0] + z * ez[0],
+            base[1] + z * ez[1],
+            base[2] + z * ez[2],
+        ],
+        [
+            base[0] - z * ez[0],
+            base[1] - z * ez[1],
+            base[2] - z * ez[2],
+        ],
     ))
 }
 
@@ -5105,7 +5245,11 @@ fn bfs_fragment(mol: &Molecule, start: usize, exclude: usize) -> Vec<usize> {
 }
 
 fn atom_dist(coords: &[[f64; 3]], a: usize, b: usize) -> f64 {
-    let d = [coords[a][0] - coords[b][0], coords[a][1] - coords[b][1], coords[a][2] - coords[b][2]];
+    let d = [
+        coords[a][0] - coords[b][0],
+        coords[a][1] - coords[b][1],
+        coords[a][2] - coords[b][2],
+    ];
     (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
 }
 
@@ -5120,7 +5264,10 @@ fn trilaterate_hydrogens(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &Dista
         if mol.atoms[h_idx].symbol != "H" || processed_a[h_idx] {
             continue;
         }
-        let a_idx = match mol.adjacency[h_idx].iter().find(|&&n| mol.atoms[n].symbol != "H") {
+        let a_idx = match mol.adjacency[h_idx]
+            .iter()
+            .find(|&&n| mol.atoms[n].symbol != "H")
+        {
             Some(&n) => n,
             None => continue,
         };
@@ -5137,7 +5284,10 @@ fn trilaterate_hydrogens(coords: &mut [[f64; 3]], mol: &Molecule, bounds: &Dista
             .filter(|&&n| mol.atoms[n].symbol == "H")
             .copied()
             .collect();
-        if !h_atoms.iter().any(|&h| (atom_dist(coords, a_idx, h) - r0_ha).abs() > 0.05) {
+        if !h_atoms
+            .iter()
+            .any(|&h| (atom_dist(coords, a_idx, h) - r0_ha).abs() > 0.05)
+        {
             continue;
         }
         let heavy_nbrs: Vec<usize> = mol.adjacency[a_idx]
@@ -5344,112 +5494,126 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
         );
 
         if !rdkit_all() {
-        // (RDKit-faithful path skips these workarounds — they compensate for the
-        //  old under-converged minimizer and are unfaithful to RDKit's algorithm.)
-        // Torsion barrier-crossing: L-BFGS gets stuck at torsional barriers from
-        // the 4D-projection start (e.g. butadiene ~100° instead of 180°). Snap the
-        // most-twisted torsion prefs toward a planar/trans minimum (rotate the
-        // k-side fragment around the central bond) and re-minimize; accept only if
-        // total ETKDG energy drops. Bounded to 3 snaps/attempt.
-        let mut snaps = 0usize;
-        while snaps < 3 {
-            let mut best_snap: Option<(usize, f64)> = None;
-            for (pi, p) in torsion_prefs.iter().enumerate() {
-                let phi = dihedral_angle(&coords_3d, p.i, p.j, p.k, p.l);
-                let target = if phi.abs() > std::f64::consts::FRAC_PI_2 {
-                    std::f64::consts::PI
+            // (RDKit-faithful path skips these workarounds — they compensate for the
+            //  old under-converged minimizer and are unfaithful to RDKit's algorithm.)
+            // Torsion barrier-crossing: L-BFGS gets stuck at torsional barriers from
+            // the 4D-projection start (e.g. butadiene ~100° instead of 180°). Snap the
+            // most-twisted torsion prefs toward a planar/trans minimum (rotate the
+            // k-side fragment around the central bond) and re-minimize; accept only if
+            // total ETKDG energy drops. Bounded to 3 snaps/attempt.
+            let mut snaps = 0usize;
+            while snaps < 3 {
+                let mut best_snap: Option<(usize, f64)> = None;
+                for (pi, p) in torsion_prefs.iter().enumerate() {
+                    let phi = dihedral_angle(&coords_3d, p.i, p.j, p.k, p.l);
+                    let target = if phi.abs() > std::f64::consts::FRAC_PI_2 {
+                        std::f64::consts::PI
+                    } else {
+                        0.0
+                    };
+                    let delta = target - phi;
+                    if delta.abs() > std::f64::consts::FRAC_PI_4
+                        && best_snap.is_none_or(|(_, d)| delta.abs() > d.abs())
+                    {
+                        best_snap = Some((pi, delta));
+                    }
+                }
+                let Some((pi, delta)) = best_snap else { break };
+                let p = &torsion_prefs[pi];
+                let mut trial = coords_3d.clone();
+                rotate_fragment_around_bond(&mut trial, mol, p.j, p.k, delta);
+                let te = minimize_etkdg(
+                    &mut trial,
+                    &bounds,
+                    &chiral_centers,
+                    &tetrahedral,
+                    &pc,
+                    &torsion_prefs,
+                    &bonds_12,
+                    &angles_13,
+                    300,
+                    1e-3,
+                    &config.coord_map,
+                    mol,
+                );
+                if te < energy {
+                    energy = te;
+                    coords_3d = trial;
+                    snaps += 1;
                 } else {
-                    0.0
-                };
-                let delta = target - phi;
-                if delta.abs() > std::f64::consts::FRAC_PI_4
-                    && best_snap.is_none_or(|(_, d)| delta.abs() > d.abs())
-                {
-                    best_snap = Some((pi, delta));
+                    break;
                 }
             }
-            let Some((pi, delta)) = best_snap else { break };
-            let p = &torsion_prefs[pi];
-            let mut trial = coords_3d.clone();
-            rotate_fragment_around_bond(&mut trial, mol, p.j, p.k, delta);
-            let te = minimize_etkdg(
-                &mut trial,
-                &bounds,
-                &chiral_centers,
-                &tetrahedral,
-                &pc,
-                &torsion_prefs,
-                &bonds_12,
-                &angles_13,
-                300,
-                1e-3,
-                &config.coord_map,
-                mol,
-            );
-            if te < energy {
-                energy = te;
-                coords_3d = trial;
-                snaps += 1;
-            } else {
-                break;
-            }
-        }
 
-        // Bond-snap: fix badly-violated 1-2 bonds (ring-closure failures) by
-        // translating the smaller fragment to the target distance. Guarded.
-        {
-            let e_before = etkdg_energy(
-                &coords_3d, &bounds, &chiral_centers, &tetrahedral, &pc,
-                &torsion_prefs, &bonds_12, &angles_13, mol,
-            );
-            let mut trial = coords_3d.clone();
-            snap_bond_lengths(&mut trial, mol, &bounds);
-            let e_after = etkdg_energy(
-                &trial, &bounds, &chiral_centers, &tetrahedral, &pc,
-                &torsion_prefs, &bonds_12, &angles_13, mol,
-            );
-            if e_after < e_before {
-                coords_3d = trial;
-            }
-        }
-
-        // H trilateration: analytically place misplaced H atoms via 3-sphere
-        // intersection from their ETKDG 1-2/1-3 distance bounds. Gives the
-        // H-only relaxation below a good starting point.
-        trilaterate_hydrogens(&mut coords_3d, mol, &bounds);
-
-        // H-only relaxation: fix all non-H atoms, re-minimize to let H atoms
-        // settle into their ideal positions (satisfying 1-2/1-3 bounds) without
-        // the heavy-atom landscape trapping them. Cheap (few DOF) and can't
-        // regress (heavy atoms are fixed).
-        {
-            let mut h_coord_map = std::collections::HashMap::new();
-            for i in 0..mol.atoms.len() {
-                if mol.atoms[i].symbol != "H" {
-                    h_coord_map.insert(i, coords_3d[i]);
+            // Bond-snap: fix badly-violated 1-2 bonds (ring-closure failures) by
+            // translating the smaller fragment to the target distance. Guarded.
+            {
+                let e_before = etkdg_energy(
+                    &coords_3d,
+                    &bounds,
+                    &chiral_centers,
+                    &tetrahedral,
+                    &pc,
+                    &torsion_prefs,
+                    &bonds_12,
+                    &angles_13,
+                    mol,
+                );
+                let mut trial = coords_3d.clone();
+                snap_bond_lengths(&mut trial, mol, &bounds);
+                let e_after = etkdg_energy(
+                    &trial,
+                    &bounds,
+                    &chiral_centers,
+                    &tetrahedral,
+                    &pc,
+                    &torsion_prefs,
+                    &bonds_12,
+                    &angles_13,
+                    mol,
+                );
+                if e_after < e_before {
+                    coords_3d = trial;
                 }
             }
-            for (&k, &v) in &config.coord_map {
-                h_coord_map.insert(k, v);
+
+            // H trilateration: analytically place misplaced H atoms via 3-sphere
+            // intersection from their ETKDG 1-2/1-3 distance bounds. Gives the
+            // H-only relaxation below a good starting point.
+            trilaterate_hydrogens(&mut coords_3d, mol, &bounds);
+
+            // H-only relaxation: fix all non-H atoms, re-minimize to let H atoms
+            // settle into their ideal positions (satisfying 1-2/1-3 bounds) without
+            // the heavy-atom landscape trapping them. Cheap (few DOF) and can't
+            // regress (heavy atoms are fixed).
+            {
+                let mut h_coord_map = std::collections::HashMap::new();
+                for i in 0..mol.atoms.len() {
+                    if mol.atoms[i].symbol != "H" {
+                        h_coord_map.insert(i, coords_3d[i]);
+                    }
+                }
+                for (&k, &v) in &config.coord_map {
+                    h_coord_map.insert(k, v);
+                }
+                let he = minimize_etkdg(
+                    &mut coords_3d,
+                    &bounds,
+                    &chiral_centers,
+                    &tetrahedral,
+                    &pc,
+                    &torsion_prefs,
+                    &bonds_12,
+                    &angles_13,
+                    300,
+                    1e-3,
+                    &h_coord_map,
+                    mol,
+                );
+                if he < energy {
+                    energy = he;
+                }
             }
-            let he = minimize_etkdg(
-                &mut coords_3d,
-                &bounds,
-                &chiral_centers,
-                &tetrahedral,
-                &pc,
-                &torsion_prefs,
-                &bonds_12,
-                &angles_13,
-                300,
-                1e-3,
-                &h_coord_map,
-                mol,
-            );
-            if he < energy {
-                energy = he;
-            }
-        }
         } // end !rdkit_all() workarounds
 
         // Post-process aniline-like NH2 groups: RDKit ETKDG gives slightly
@@ -5552,7 +5716,10 @@ mod tests {
                 }
             }
         }
-        eprintln!("DBG dihedral: phi0={:.3}rad max|ana-num|={:.2e} sign_mismatches={sign_mismatch}", phi0, max_err);
+        eprintln!(
+            "DBG dihedral: phi0={:.3}rad max|ana-num|={:.2e} sign_mismatches={sign_mismatch}",
+            phi0, max_err
+        );
         assert!(max_err < 1e-3 && sign_mismatch == 0,
             "dihedral_gradient_contrib vs finite-difference mismatch: max_err={max_err:.2e} sign_mismatch={sign_mismatch}");
     }
@@ -5563,16 +5730,39 @@ mod tests {
         let mol = crate::molecule::parser::parse_sdf(sdf).expect("parse");
         // Fixed seed: the embedding is stochastic by default (random_seed = -1);
         // a geometry assertion must be deterministic.
-        let config = ETKDGConfig { random_seed: 42, ..ETKDGConfig::default() };
+        let config = ETKDGConfig {
+            random_seed: 42,
+            ..ETKDGConfig::default()
+        };
         let bounds = build_distance_bounds(&mol, &config);
-        
+
         println!("\nAniline bounds:");
-        println!("H10-H11: [{:.4}, {:.4}]", bounds.get_lower(10, 11), bounds.get_upper(10, 11));
-        println!("C3-H10:  [{:.4}, {:.4}]", bounds.get_lower(3, 10), bounds.get_upper(3, 10));
-        println!("C3-H11:  [{:.4}, {:.4}]", bounds.get_lower(3, 11), bounds.get_upper(3, 11));
-        println!("N4-H10:  [{:.4}, {:.4}]", bounds.get_lower(4, 10), bounds.get_upper(4, 10));
-        println!("N4-H11:  [{:.4}, {:.4}]", bounds.get_lower(4, 11), bounds.get_upper(4, 11));
-        
+        println!(
+            "H10-H11: [{:.4}, {:.4}]",
+            bounds.get_lower(10, 11),
+            bounds.get_upper(10, 11)
+        );
+        println!(
+            "C3-H10:  [{:.4}, {:.4}]",
+            bounds.get_lower(3, 10),
+            bounds.get_upper(3, 10)
+        );
+        println!(
+            "C3-H11:  [{:.4}, {:.4}]",
+            bounds.get_lower(3, 11),
+            bounds.get_upper(3, 11)
+        );
+        println!(
+            "N4-H10:  [{:.4}, {:.4}]",
+            bounds.get_lower(4, 10),
+            bounds.get_upper(4, 10)
+        );
+        println!(
+            "N4-H11:  [{:.4}, {:.4}]",
+            bounds.get_lower(4, 11),
+            bounds.get_upper(4, 11)
+        );
+
         // With sp2 N, 120° angle, N-H ~1.03: H-H should be ~2*1.03*sin(60°) = 1.78.
         // The old 114°/123° single-bond split centered the H-H pair at 126°
         // (H-H 1.835) — catch that regression here, not only in the
@@ -5592,39 +5782,42 @@ mod tests {
         let mol = crate::molecule::parser::parse_sdf(sdf).expect("parse");
         // Fixed seed: the embedding is stochastic by default (random_seed = -1);
         // a geometry assertion must be deterministic.
-        let config = ETKDGConfig { random_seed: 42, ..ETKDGConfig::default() };
+        let config = ETKDGConfig {
+            random_seed: 42,
+            ..ETKDGConfig::default()
+        };
         let coords = generate_initial_coords_with_config(&mol, &config);
-        
+
         // Compute H-N-H angle (atoms 10, 4, 11 in 0-based)
         let n = coords[4];
         let h1 = coords[10];
         let h2 = coords[11];
-        let v1 = [h1[0]-n[0], h1[1]-n[1], h1[2]-n[2]];
-        let v2 = [h2[0]-n[0], h2[1]-n[1], h2[2]-n[2]];
-        let d1 = (v1[0]*v1[0] + v1[1]*v1[1] + v1[2]*v1[2]).sqrt();
-        let d2 = (v2[0]*v2[0] + v2[1]*v2[1] + v2[2]*v2[2]).sqrt();
-        let dot = v1[0]*v2[0] + v1[1]*v2[1] + v1[2]*v2[2];
+        let v1 = [h1[0] - n[0], h1[1] - n[1], h1[2] - n[2]];
+        let v2 = [h2[0] - n[0], h2[1] - n[1], h2[2] - n[2]];
+        let d1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt();
+        let d2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]).sqrt();
+        let dot = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
         let angle = (dot / (d1 * d2)).acos().to_degrees();
-        
+
         // H-H distance
         let hh_dx = h1[0] - h2[0];
         let hh_dy = h1[1] - h2[1];
         let hh_dz = h1[2] - h2[2];
-        let hh_dist = (hh_dx*hh_dx + hh_dy*hh_dy + hh_dz*hh_dz).sqrt();
-        
+        let hh_dist = (hh_dx * hh_dx + hh_dy * hh_dy + hh_dz * hh_dz).sqrt();
+
         // N-C bond distance (atom 4 to 3)
         let nc_dx = coords[4][0] - coords[3][0];
         let nc_dy = coords[4][1] - coords[3][1];
         let nc_dz = coords[4][2] - coords[3][2];
-        let nc_dist = (nc_dx*nc_dx + nc_dy*nc_dy + nc_dz*nc_dz).sqrt();
-        
+        let nc_dist = (nc_dx * nc_dx + nc_dy * nc_dy + nc_dz * nc_dz).sqrt();
+
         println!("\nAniline geometry:");
         println!("H-N-H angle: {:.2}°", angle);
         println!("H-H distance: {:.4} Å", hh_dist);
         println!("N-C distance: {:.4} Å", nc_dist);
         println!("N-H1 distance: {:.4} Å", d1);
         println!("N-H2 distance: {:.4} Å", d2);
-        
+
         // Check planarity: distance of N and H's from ring plane
         let ring_atoms = [0, 1, 2, 3, 5, 6];
         let mut center = [0.0f64; 3];
@@ -5633,31 +5826,52 @@ mod tests {
             center[1] += coords[a][1];
             center[2] += coords[a][2];
         }
-        for i in 0..3 { center[i] /= ring_atoms.len() as f64; }
-        
+        for i in 0..3 {
+            center[i] /= ring_atoms.len() as f64;
+        }
+
         let mut normal = [0.0f64; 3];
         for i in 0..ring_atoms.len() {
             let a = ring_atoms[i];
-            let b = ring_atoms[(i+1) % ring_atoms.len()];
-            let u = [coords[b][0]-coords[a][0], coords[b][1]-coords[a][1], coords[b][2]-coords[a][2]];
-            let v = [center[0]-coords[a][0], center[1]-coords[a][1], center[2]-coords[a][2]];
-            normal[0] += u[1]*v[2] - u[2]*v[1];
-            normal[1] += u[2]*v[0] - u[0]*v[2];
-            normal[2] += u[0]*v[1] - u[1]*v[0];
+            let b = ring_atoms[(i + 1) % ring_atoms.len()];
+            let u = [
+                coords[b][0] - coords[a][0],
+                coords[b][1] - coords[a][1],
+                coords[b][2] - coords[a][2],
+            ];
+            let v = [
+                center[0] - coords[a][0],
+                center[1] - coords[a][1],
+                center[2] - coords[a][2],
+            ];
+            normal[0] += u[1] * v[2] - u[2] * v[1];
+            normal[1] += u[2] * v[0] - u[0] * v[2];
+            normal[2] += u[0] * v[1] - u[1] * v[0];
         }
-        let n_norm = (normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2]).sqrt();
-        for i in 0..3 { normal[i] /= n_norm; }
-        
-        let n_dist = (coords[4][0]-center[0])*normal[0] + (coords[4][1]-center[1])*normal[1] + (coords[4][2]-center[2])*normal[2];
-        let h1_dist = (coords[10][0]-center[0])*normal[0] + (coords[10][1]-center[1])*normal[1] + (coords[10][2]-center[2])*normal[2];
-        let h2_dist = (coords[11][0]-center[0])*normal[0] + (coords[11][1]-center[1])*normal[1] + (coords[11][2]-center[2])*normal[2];
-        
+        let n_norm = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+        for i in 0..3 {
+            normal[i] /= n_norm;
+        }
+
+        let n_dist = (coords[4][0] - center[0]) * normal[0]
+            + (coords[4][1] - center[1]) * normal[1]
+            + (coords[4][2] - center[2]) * normal[2];
+        let h1_dist = (coords[10][0] - center[0]) * normal[0]
+            + (coords[10][1] - center[1]) * normal[1]
+            + (coords[10][2] - center[2]) * normal[2];
+        let h2_dist = (coords[11][0] - center[0]) * normal[0]
+            + (coords[11][1] - center[1]) * normal[1]
+            + (coords[11][2] - center[2]) * normal[2];
+
         println!("N from plane: {:.4} Å", n_dist);
         println!("H1 from plane: {:.4} Å", h1_dist);
         println!("H2 from plane: {:.4} Å", h2_dist);
-        
+
         // RDKit-like values: H-N-H ~117.5°, N ~-0.03Å, H's ~±0.84Å
-        assert!(angle > 110.0 && angle < 125.0, 
-                "H-N-H angle out of range: {:.2}° (expected 110-125°)", angle);
+        assert!(
+            angle > 110.0 && angle < 125.0,
+            "H-N-H angle out of range: {:.2}° (expected 110-125°)",
+            angle
+        );
     }
 }

@@ -39,7 +39,10 @@ fn main() {
         }
         first = false;
         let path = format!("{dir}/{name}.sdf");
-        let mol = match std::fs::read_to_string(&path).ok().and_then(|t| parse_sdf(&t).ok()) {
+        let mol = match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| parse_sdf(&t).ok())
+        {
             Some(m) => m,
             None => {
                 out.push_str(&format!("\"{name}\":{{\"error\":\"parse\"}}"));
@@ -59,7 +62,13 @@ fn main() {
             let (kb, r0) = p.map(|q| (q.k_bond, q.r0)).unwrap_or((f64::NAN, f64::NAN));
             bonds.push_str(&format!(
                 "{{\"i\":{},\"j\":{},\"ti\":{},\"tj\":{},\"bo\":{},\"kb\":{:?},\"r0\":{:?}}}",
-                b.atom1, b.atom2, tids[b.atom1], tids[b.atom2], bo(b.bond_type), kb, r0
+                b.atom1,
+                b.atom2,
+                tids[b.atom1],
+                tids[b.atom2],
+                bo(b.bond_type),
+                kb,
+                r0
             ));
         }
         bonds.push(']');
@@ -98,7 +107,9 @@ fn main() {
             let p = get_angle_params_with_bond_info(
                 at[i], at[j], at[k], bt_ij, bt_jk, ring, r0_ij, r0_jk,
             );
-            let (ka, t0) = p.map(|q| (q.k_theta, q.theta0)).unwrap_or((f64::NAN, f64::NAN));
+            let (ka, t0) = p
+                .map(|q| (q.k_theta, q.theta0))
+                .unwrap_or((f64::NAN, f64::NAN));
             angles.push_str(&format!(
                 "{{\"i\":{},\"j\":{},\"k\":{},\"ti\":{},\"tj\":{},\"tk\":{},\"ka\":{:?},\"t0\":{:?}}}",
                 i, j, k, tids[i], tids[j], tids[k], ka, t0

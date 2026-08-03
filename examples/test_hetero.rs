@@ -1,5 +1,5 @@
-use webmm::molecule::parser::parse_sdf;
 use webmm::etkdg::generate_initial_coords;
+use webmm::molecule::parser::parse_sdf;
 
 fn max_planar_deviation(coords: &[[f64; 3]], atoms: &[usize]) -> f64 {
     let n = atoms.len() as f64;
@@ -8,29 +8,50 @@ fn max_planar_deviation(coords: &[[f64; 3]], atoms: &[usize]) -> f64 {
     let cz = atoms.iter().map(|&i| coords[i][2]).sum::<f64>() / n;
     let mut cov = [[0.0f64; 3]; 3];
     for &idx in atoms {
-        let dx = coords[idx][0] - cx; let dy = coords[idx][1] - cy; let dz = coords[idx][2] - cz;
-        cov[0][0] += dx * dx; cov[0][1] += dx * dy; cov[0][2] += dx * dz;
-        cov[1][1] += dy * dy; cov[1][2] += dy * dz; cov[2][2] += dz * dz;
+        let dx = coords[idx][0] - cx;
+        let dy = coords[idx][1] - cy;
+        let dz = coords[idx][2] - cz;
+        cov[0][0] += dx * dx;
+        cov[0][1] += dx * dy;
+        cov[0][2] += dx * dz;
+        cov[1][1] += dy * dy;
+        cov[1][2] += dy * dz;
+        cov[2][2] += dz * dz;
     }
-    cov[1][0] = cov[0][1]; cov[2][0] = cov[0][2]; cov[2][1] = cov[1][2];
+    cov[1][0] = cov[0][1];
+    cov[2][0] = cov[0][2];
+    cov[2][1] = cov[1][2];
     let normal = webmm::etkdg::eigenvector_smallest_eigenvalue_3x3(&cov);
-    atoms.iter().map(|&idx| {
-        let dx = coords[idx][0] - cx; let dy = coords[idx][1] - cy; let dz = coords[idx][2] - cz;
-        (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs()
-    }).fold(0.0, f64::max)
+    atoms
+        .iter()
+        .map(|&idx| {
+            let dx = coords[idx][0] - cx;
+            let dy = coords[idx][1] - cy;
+            let dz = coords[idx][2] - cz;
+            (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs()
+        })
+        .fold(0.0, f64::max)
 }
 
 fn test_molecule(name: &str, sdf: &str, all_atoms: &[usize], ring_atoms: &[usize]) {
     let mol = parse_sdf(sdf).unwrap();
-    let mut max_ring = 0.0; let mut max_all = 0.0;
+    let mut max_ring = 0.0;
+    let mut max_all = 0.0;
     for _ in 0..10 {
         let coords = generate_initial_coords(&mol);
         let rd = max_planar_deviation(&coords, ring_atoms);
         let ad = max_planar_deviation(&coords, all_atoms);
-        if rd > max_ring { max_ring = rd; }
-        if ad > max_all { max_all = ad; }
+        if rd > max_ring {
+            max_ring = rd;
+        }
+        if ad > max_all {
+            max_all = ad;
+        }
     }
-    println!("{:15} ring_max={:.6}  all_max={:.6}", name, max_ring, max_all);
+    println!(
+        "{:15} ring_max={:.6}  all_max={:.6}",
+        name, max_ring, max_all
+    );
 }
 
 fn main() {
@@ -106,7 +127,22 @@ M  END"#;
 M  END"#;
 
     println!("Planarity stress test (10 runs each):");
-    test_molecule("Thiophene", thiophene, &[0,1,2,3,4,5,6,7,8], &[0,1,2,3,4]);
-    test_molecule("Furan", furan, &[0,1,2,3,4,5,6,7,8], &[0,1,2,3,4]);
-    test_molecule("Pyrrole", pyrrole, &[0,1,2,3,4,5,6,7,8,9], &[0,1,2,3,4]);
+    test_molecule(
+        "Thiophene",
+        thiophene,
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+        &[0, 1, 2, 3, 4],
+    );
+    test_molecule(
+        "Furan",
+        furan,
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+        &[0, 1, 2, 3, 4],
+    );
+    test_molecule(
+        "Pyrrole",
+        pyrrole,
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        &[0, 1, 2, 3, 4],
+    );
 }

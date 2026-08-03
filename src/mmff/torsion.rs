@@ -2067,8 +2067,7 @@ pub fn torsion_energy(
         return 0.0;
     }
 
-    let cos_phi =
-        (cp0[0] * cp1[0] + cp0[1] * cp1[1] + cp0[2] * cp1[2]) / (cp0_norm * cp1_norm);
+    let cos_phi = (cp0[0] * cp1[0] + cp0[1] * cp1[1] + cp0[2] * cp1[2]) / (cp0_norm * cp1_norm);
     let cos_phi = cos_phi.clamp(-1.0, 1.0);
 
     // RDKit's calcTorsionEnergy via Chebyshev identities (no atan2).

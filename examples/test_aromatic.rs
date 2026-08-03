@@ -27,5 +27,8 @@ M  END"#;
     let mol = parse_sdf(sdf).unwrap();
     let aromatic = webmm::molecule::graph::get_aromatic_atoms(&mol);
     println!("Aromatic atoms: {:?}", aromatic);
-    println!("Atoms: {:?}", mol.atoms.iter().map(|a| &a.symbol).collect::<Vec<_>>());
+    println!(
+        "Atoms: {:?}",
+        mol.atoms.iter().map(|a| &a.symbol).collect::<Vec<_>>()
+    );
 }

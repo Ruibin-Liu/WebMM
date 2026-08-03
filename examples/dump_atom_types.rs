@@ -2,7 +2,7 @@
 //! Run: cargo run --release --example dump_atom_types > scripts/webmm_atom_types.json
 
 use std::io::Write;
-use webmm::mmff::{MMFFForceField, MMFFAtomType};
+use webmm::mmff::{MMFFAtomType, MMFFForceField};
 use webmm::molecule::parser::parse_sdf;
 use webmm::MMFFVariant;
 
@@ -96,7 +96,13 @@ fn main() {
                     0
                 })
                 .collect();
-            let _ = (&syms, &charges, &bonds, &aromatic, type_id(&MMFFAtomType::C_3));
+            let _ = (
+                &syms,
+                &charges,
+                &bonds,
+                &aromatic,
+                type_id(&MMFFAtomType::C_3),
+            );
             out.push_str(&format!(
                 "{{\"types\":{:?},\"syms\":{:?},\"charges\":{:?},\"bonds\":{:?}}}",
                 type_ids, syms, charges, bonds

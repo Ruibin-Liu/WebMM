@@ -5,7 +5,7 @@ fn main() {
     let sdf = "Aniline\n     RDKit          3D\n\n 14 14  0  0  0  0  0  0  0  0999 V2000\n   -1.8551    0.3019   -0.2147 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9433    1.3121   -0.5108 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4265    1.0872   -0.3490 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9000   -0.1487    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2537   -0.3576    0.2878 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0248   -1.1486    0.4072 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3958   -0.9291    0.2472 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9206    0.4752   -0.3382 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2957    2.2773   -0.8642 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1231    1.8892   -0.5767 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.5964   -1.2716    0.5480 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9224    0.3435    0.0017 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3154   -2.1119    0.7767 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1023   -1.7188    0.4874 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  4  6  1  0\n  6  7  2  0\n  7  1  1  0\n  1  8  1  0\n  2  9  1  0\n  3 10  1  0\n  5 11  1  0\n  5 12  1  0\n  6 13  1  0\n  7 14  1  0\nM  END";
     let mol = parse_sdf(sdf).expect("parse");
     let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
-    
+
     // RDKit MMFF94s coords (planar NH2)
     let rdkit: Vec<[f64; 3]> = vec![
         [-1.8620, 0.3170, -0.1937],
@@ -23,7 +23,7 @@ fn main() {
         [0.3930, -2.1883, 0.2124],
         [-2.0534, -1.8347, -0.0338],
     ];
-    
+
     // Our optimized coords (slightly pyramidal NH2)
     let ours: Vec<[f64; 3]> = vec![
         [-1.0728, -0.2855, 0.3027],
@@ -41,24 +41,66 @@ fn main() {
         [-0.5946, -2.3347, -0.5800],
         [-2.7920, 0.2068, -0.1796],
     ];
-    
+
     println!("Energy at RDKit MMFF94s geometry:");
     let bd_rdkit = ff.calculate_energy_breakdown(&rdkit);
-    println!("  bond={:.4} angle={:.4} sb={:.4} tor={:.4} oop={:.4} vdw={:.4} elec={:.4} total={:.4}",
-        bd_rdkit.bond, bd_rdkit.angle, bd_rdkit.stretch_bend, bd_rdkit.torsion, bd_rdkit.oop, bd_rdkit.vdw, bd_rdkit.electrostatic,
-        bd_rdkit.bond+bd_rdkit.angle+bd_rdkit.stretch_bend+bd_rdkit.torsion+bd_rdkit.oop+bd_rdkit.vdw+bd_rdkit.electrostatic);
-    
+    println!(
+        "  bond={:.4} angle={:.4} sb={:.4} tor={:.4} oop={:.4} vdw={:.4} elec={:.4} total={:.4}",
+        bd_rdkit.bond,
+        bd_rdkit.angle,
+        bd_rdkit.stretch_bend,
+        bd_rdkit.torsion,
+        bd_rdkit.oop,
+        bd_rdkit.vdw,
+        bd_rdkit.electrostatic,
+        bd_rdkit.bond
+            + bd_rdkit.angle
+            + bd_rdkit.stretch_bend
+            + bd_rdkit.torsion
+            + bd_rdkit.oop
+            + bd_rdkit.vdw
+            + bd_rdkit.electrostatic
+    );
+
     println!("\nEnergy at our optimized geometry:");
     let bd_ours = ff.calculate_energy_breakdown(&ours);
-    println!("  bond={:.4} angle={:.4} sb={:.4} tor={:.4} oop={:.4} vdw={:.4} elec={:.4} total={:.4}",
-        bd_ours.bond, bd_ours.angle, bd_ours.stretch_bend, bd_ours.torsion, bd_ours.oop, bd_ours.vdw, bd_ours.electrostatic,
-        bd_ours.bond+bd_ours.angle+bd_ours.stretch_bend+bd_ours.torsion+bd_ours.oop+bd_ours.vdw+bd_ours.electrostatic);
-    
-    // Also check the SDF geometry energy  
+    println!(
+        "  bond={:.4} angle={:.4} sb={:.4} tor={:.4} oop={:.4} vdw={:.4} elec={:.4} total={:.4}",
+        bd_ours.bond,
+        bd_ours.angle,
+        bd_ours.stretch_bend,
+        bd_ours.torsion,
+        bd_ours.oop,
+        bd_ours.vdw,
+        bd_ours.electrostatic,
+        bd_ours.bond
+            + bd_ours.angle
+            + bd_ours.stretch_bend
+            + bd_ours.torsion
+            + bd_ours.oop
+            + bd_ours.vdw
+            + bd_ours.electrostatic
+    );
+
+    // Also check the SDF geometry energy
     let sdf_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
     println!("\nEnergy at SDF geometry:");
     let bd_sdf = ff.calculate_energy_breakdown(&sdf_coords);
-    println!("  bond={:.4} angle={:.4} sb={:.4} tor={:.4} oop={:.4} vdw={:.4} elec={:.4} total={:.4}",
-        bd_sdf.bond, bd_sdf.angle, bd_sdf.stretch_bend, bd_sdf.torsion, bd_sdf.oop, bd_sdf.vdw, bd_sdf.electrostatic,
-        bd_sdf.bond+bd_sdf.angle+bd_sdf.stretch_bend+bd_sdf.torsion+bd_sdf.oop+bd_sdf.vdw+bd_sdf.electrostatic);
+    println!(
+        "  bond={:.4} angle={:.4} sb={:.4} tor={:.4} oop={:.4} vdw={:.4} elec={:.4} total={:.4}",
+        bd_sdf.bond,
+        bd_sdf.angle,
+        bd_sdf.stretch_bend,
+        bd_sdf.torsion,
+        bd_sdf.oop,
+        bd_sdf.vdw,
+        bd_sdf.electrostatic,
+        bd_sdf.bond
+            + bd_sdf.angle
+            + bd_sdf.stretch_bend
+            + bd_sdf.torsion
+            + bd_sdf.oop
+            + bd_sdf.vdw
+            + bd_sdf.electrostatic
+    );
 }

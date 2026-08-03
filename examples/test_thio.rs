@@ -1,5 +1,5 @@
-use webmm::molecule::parser::parse_sdf;
 use webmm::etkdg::generate_initial_coords;
+use webmm::molecule::parser::parse_sdf;
 
 fn max_planar_deviation(coords: &[[f64; 3]], atoms: &[usize]) -> f64 {
     let n = atoms.len() as f64;
@@ -11,17 +11,26 @@ fn max_planar_deviation(coords: &[[f64; 3]], atoms: &[usize]) -> f64 {
         let dx = coords[idx][0] - cx;
         let dy = coords[idx][1] - cy;
         let dz = coords[idx][2] - cz;
-        cov[0][0] += dx * dx; cov[0][1] += dx * dy; cov[0][2] += dx * dz;
-        cov[1][1] += dy * dy; cov[1][2] += dy * dz; cov[2][2] += dz * dz;
+        cov[0][0] += dx * dx;
+        cov[0][1] += dx * dy;
+        cov[0][2] += dx * dz;
+        cov[1][1] += dy * dy;
+        cov[1][2] += dy * dz;
+        cov[2][2] += dz * dz;
     }
-    cov[1][0] = cov[0][1]; cov[2][0] = cov[0][2]; cov[2][1] = cov[1][2];
+    cov[1][0] = cov[0][1];
+    cov[2][0] = cov[0][2];
+    cov[2][1] = cov[1][2];
     let normal = webmm::etkdg::eigenvector_smallest_eigenvalue_3x3(&cov);
-    atoms.iter().map(|&idx| {
-        let dx = coords[idx][0] - cx;
-        let dy = coords[idx][1] - cy;
-        let dz = coords[idx][2] - cz;
-        (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs()
-    }).fold(0.0, f64::max)
+    atoms
+        .iter()
+        .map(|&idx| {
+            let dx = coords[idx][0] - cx;
+            let dy = coords[idx][1] - cy;
+            let dz = coords[idx][2] - cz;
+            (dx * normal[0] + dy * normal[1] + dz * normal[2]).abs()
+        })
+        .fold(0.0, f64::max)
 }
 
 fn main() {
@@ -51,11 +60,14 @@ M  END"#;
     let mol = parse_sdf(sdf).unwrap();
     let all_atoms: Vec<usize> = (0..9).collect();
     let ring_atoms: Vec<usize> = vec![0, 1, 2, 3, 4];
-    
+
     for run in 0..5 {
         let coords = generate_initial_coords(&mol);
         let all_dev = max_planar_deviation(&coords, &all_atoms);
         let ring_dev = max_planar_deviation(&coords, &ring_atoms);
-        println!("Run {}: ring_dev={:.6} Å  all_dev={:.6} Å", run, ring_dev, all_dev);
+        println!(
+            "Run {}: ring_dev={:.6} Å  all_dev={:.6} Å",
+            run, ring_dev, all_dev
+        );
     }
 }

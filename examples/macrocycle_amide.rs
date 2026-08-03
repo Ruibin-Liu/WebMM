@@ -30,10 +30,16 @@ fn dihedral(c: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or_else(|| "/tmp/macrocycle.sdf".to_string());
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "/tmp/macrocycle.sdf".to_string());
     let sdf = std::fs::read_to_string(&path).expect("read sdf");
     let mol = parse_sdf(&sdf).expect("parse");
-    eprintln!("parsed: {} atoms, {} bonds", mol.atoms.len(), mol.bonds.len());
+    eprintln!(
+        "parsed: {} atoms, {} bonds",
+        mol.atoms.len(),
+        mol.bonds.len()
+    );
 
     let cfg = ETKDGConfig {
         random_seed: 0xf00d, // matches the RDKit #9143 regression-test seed
@@ -97,7 +103,10 @@ fn main() {
     sizes.sort();
     eprintln!("\n=== RING DETECTION ===");
     eprintln!("find_rings: {} rings, sizes = {:?}", rings.len(), sizes);
-    eprintln!("any ring >= 9 (macrocycle)? {}", rings.iter().any(|r| r.len() >= 9));
+    eprintln!(
+        "any ring >= 9 (macrocycle)? {}",
+        rings.iter().any(|r| r.len() >= 9)
+    );
     for &(cc, nn, _o) in &amides {
         let containing: Vec<usize> = rings
             .iter()

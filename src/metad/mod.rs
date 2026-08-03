@@ -96,7 +96,7 @@ fn fd_gradient<F: Fn(&[[f64; 3]]) -> f64>(
             perturbed[a][c] = coords[a][c] - h;
             let sm = cv_fn(&perturbed);
             perturbed[a][c] = coords[a][c]; // restore
-            // handle periodic wraparound for angular CVs
+                                            // handle periodic wraparound for angular CVs
             let mut d = sp - sm;
             if d > std::f64::consts::PI {
                 d -= 2.0 * std::f64::consts::PI;
@@ -121,7 +121,10 @@ pub struct DihedralCV {
 impl DihedralCV {
     pub fn new(i: usize, j: usize, k: usize, l: usize) -> Self {
         DihedralCV {
-            i, j, k, l,
+            i,
+            j,
+            k,
+            l,
             label: format!("Dihedral {}-{}-{}-{}", i, j, k, l),
         }
     }
@@ -129,7 +132,12 @@ impl DihedralCV {
 
 impl CollectiveVariable for DihedralCV {
     fn value_and_gradient(&self, coords: &[[f64; 3]]) -> (f64, Vec<[f64; 3]>) {
-        let s = dihedral_angle(&coords[self.i], &coords[self.j], &coords[self.k], &coords[self.l]);
+        let s = dihedral_angle(
+            &coords[self.i],
+            &coords[self.j],
+            &coords[self.k],
+            &coords[self.l],
+        );
         let (i, j, k, l) = (self.i, self.j, self.k, self.l);
         let grad = fd_gradient(
             move |c| dihedral_angle(&c[i], &c[j], &c[k], &c[l]),
@@ -158,7 +166,11 @@ pub struct DistanceCV {
 
 impl DistanceCV {
     pub fn new(i: usize, j: usize) -> Self {
-        DistanceCV { i, j, label: format!("Distance {}-{}", i, j) }
+        DistanceCV {
+            i,
+            j,
+            label: format!("Distance {}-{}", i, j),
+        }
     }
 }
 
@@ -233,7 +245,11 @@ pub struct MetaDynamics<'a> {
 }
 
 impl<'a> MetaDynamics<'a> {
-    pub fn new(ff: &'a dyn ForceField, cv: Box<dyn CollectiveVariable>, config: MetaDConfig) -> Self {
+    pub fn new(
+        ff: &'a dyn ForceField,
+        cv: Box<dyn CollectiveVariable>,
+        config: MetaDConfig,
+    ) -> Self {
         MetaDynamics {
             ff,
             cv,
@@ -357,20 +373,37 @@ mod tests {
     fn dihedral_angle_known_values() {
         let pi = std::f64::consts::PI;
         // cis (0°): all 4 atoms in a line
-        let cis = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]];
+        let cis = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+        ];
         let d = dihedral_angle(&cis[0], &cis[1], &cis[2], &cis[3]);
         assert!(d.abs() < 0.01, "cis dihedral should be ~0, got {}", d);
         // trans (180°): p3 on the opposite side
-        let trans = [[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, -1.0, 0.0]];
+        let trans = [
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, -1.0, 0.0],
+        ];
         let d = dihedral_angle(&trans[0], &trans[1], &trans[2], &trans[3]);
-        assert!((d.abs() - pi).abs() < 0.01, "trans dihedral should be ~±π, got {}", d);
+        assert!(
+            (d.abs() - pi).abs() < 0.01,
+            "trans dihedral should be ~±π, got {}",
+            d
+        );
     }
 
     /// Test: CV gradient is finite and reasonable (no NaN/Inf, magnitude > 0).
     #[test]
     fn cv_gradient_is_finite() {
         let coords = vec![
-            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
         ];
         let cv = DihedralCV::new(0, 1, 2, 3);
         let (s, grad) = cv.value_and_gradient(&coords);
@@ -387,10 +420,14 @@ mod tests {
     }
 
     /// Harmonic oscillator for testing metadynamics without MMFF.
-    struct HO { k: f64 }
+    struct HO {
+        k: f64,
+    }
     impl ForceField for HO {
         fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
-            for g in grad.iter_mut() { *g = [0.0; 3]; }
+            for g in grad.iter_mut() {
+                *g = [0.0; 3];
+            }
             let mut e = 0.0;
             for i in 0..coords.len() {
                 for c in 0..3 {
@@ -436,14 +473,22 @@ mod tests {
         for _ in 0..2000 {
             runner.step();
         }
-        assert!(metad.hill_count() > 50, "expected >50 hills, got {}", metad.hill_count());
+        assert!(
+            metad.hill_count() > 50,
+            "expected >50 hills, got {}",
+            metad.hill_count()
+        );
         // FES over the CV range
         let grid: Vec<f64> = (0..100).map(|i| 0.5 + i as f64 * 0.05).collect();
         let fes = metad.free_energy_surface(&grid);
         let fes_range = fes.iter().cloned().fold(f64::INFINITY, f64::min)
             ..=fes.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let span = fes_range.end() - fes_range.start();
-        assert!(span > 0.5, "FES should have non-trivial range, got span {}", span);
+        assert!(
+            span > 0.5,
+            "FES should have non-trivial range, got span {}",
+            span
+        );
     }
 
     /// Test: metadynamics with MMFF on ethanol — dihedral CV, completes & explores.
@@ -482,10 +527,16 @@ mod tests {
         assert!(n_hills > 50, "expected >50 hills, got {}", n_hills);
         // FES
         let pi = std::f64::consts::PI;
-        let grid: Vec<f64> = (0..72).map(|i| -pi + i as f64 * (2.0 * pi / 71.0)).collect();
+        let grid: Vec<f64> = (0..72)
+            .map(|i| -pi + i as f64 * (2.0 * pi / 71.0))
+            .collect();
         let fes = metad.free_energy_surface(&grid);
         let span = fes.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
             - fes.iter().cloned().fold(f64::INFINITY, f64::min);
-        assert!(span.is_finite() && span > 0.5, "FES span should be >0.5, got {}", span);
+        assert!(
+            span.is_finite() && span > 0.5,
+            "FES span should be >0.5, got {}",
+            span
+        );
     }
 }

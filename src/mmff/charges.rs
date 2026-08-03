@@ -406,7 +406,8 @@ fn mmff_bond_type(bt: BondType, type_i: u8, type_j: u8) -> u8 {
         BondType::Single => {
             let both_sbmb =
                 crate::mmff::params::is_sbmb(type_i) && crate::mmff::params::is_sbmb(type_j);
-            let both_arom = crate::mmff::params::is_arom(type_i) && crate::mmff::params::is_arom(type_j);
+            let both_arom =
+                crate::mmff::params::is_arom(type_i) && crate::mmff::params::is_arom(type_j);
             if both_sbmb || both_arom {
                 1
             } else {
@@ -1049,7 +1050,9 @@ fn compute_mmff_formal_charges(mol: &Molecule, type_ids: &[u8]) -> Vec<f64> {
                     for &ci in &current {
                         for &nbr in &mol.adjacency[ci] {
                             let nbr_type = type_ids[nbr];
-                            if nbr_type != 57 && nbr_type != 80 { continue; }
+                            if nbr_type != 57 && nbr_type != 80 {
+                                continue;
+                            }
                             // This C (type 57 or 80) is a conjugating atom
                             for &nbr2 in &mol.adjacency[nbr] {
                                 let nbr2_type = type_ids[nbr2];
@@ -1133,9 +1136,11 @@ pub fn calculate_bci_charges(mol: &Molecule, atom_types: &[MMFFAtomType]) -> Vec
         for &nbr in &mol.adjacency[i] {
             let tj = type_ids[nbr];
             // Find the bond between i and nbr
-            if let Some(bond) = mol.bonds.iter().find(|b| {
-                (b.atom1 == i && b.atom2 == nbr) || (b.atom1 == nbr && b.atom2 == i)
-            }) {
+            if let Some(bond) = mol
+                .bonds
+                .iter()
+                .find(|b| (b.atom1 == i && b.atom2 == nbr) || (b.atom1 == nbr && b.atom2 == i))
+            {
                 let bt = mmff_bond_type(bond.bond_type, ti, tj);
                 let bci = match lookup_bci(bt, ti, tj) {
                     Some(v) => v,

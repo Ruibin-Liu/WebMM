@@ -21,7 +21,7 @@ pub fn get_bond_params_from_json(
             return Some(crate::mmff::bond::BondParams {
                 k_bond: val.get("kb")?.as_f64()?,
                 r0: val.get("r0")?.as_f64()?,
-            cb: 1.0,
+                cb: 1.0,
             });
         }
     }

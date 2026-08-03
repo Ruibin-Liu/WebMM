@@ -27,8 +27,17 @@ const OBC_GAMMA: f64 = 4.851_713_813_7;
 
 fn bondi_radius(z: u8) -> f64 {
     match z {
-        1 => 1.20, 6 => 1.70, 7 => 1.55, 8 => 1.52, 9 => 1.47,
-        14 => 2.10, 15 => 1.80, 16 => 1.80, 17 => 1.75, 35 => 1.85, 53 => 1.98,
+        1 => 1.20,
+        6 => 1.70,
+        7 => 1.55,
+        8 => 1.52,
+        9 => 1.47,
+        14 => 2.10,
+        15 => 1.80,
+        16 => 1.80,
+        17 => 1.75,
+        35 => 1.85,
+        53 => 1.98,
         _ => 1.5,
     }
 }
@@ -57,16 +66,21 @@ pub struct GBSAConfig {
 
 impl Default for GBSAConfig {
     fn default() -> Self {
-        Self { solvent_dielectric: 78.5, solute_dielectric: 1.0, radius_offset: 0.195,
-              obc2: true, sa_surface_tension: 0.0 }
+        Self {
+            solvent_dielectric: 78.5,
+            solute_dielectric: 1.0,
+            radius_offset: 0.195,
+            obc2: true,
+            sa_surface_tension: 0.0,
+        }
     }
 }
 
 pub struct GBSA<'a> {
     ff: &'a dyn ForceField,
     charges: Vec<f64>,
-    radii: Vec<f64>, // R_vdw + offset (Born radius boundary)
-    sa_radii: Vec<f64>, // R_vdw + probe (SASA boundary)
+    radii: Vec<f64>,     // R_vdw + offset (Born radius boundary)
+    sa_radii: Vec<f64>,  // R_vdw + probe (SASA boundary)
     lcpo: Vec<[f64; 3]>, // (a1, a2, a3) LCPO coefficients per atom
     dielectric_factor: f64,
     obc2: bool,
@@ -75,16 +89,39 @@ pub struct GBSA<'a> {
 }
 
 impl<'a> GBSA<'a> {
-    pub fn new(ff: &'a dyn ForceField, mol: &Molecule, charges: &[f64], config: &GBSAConfig) -> Self {
+    pub fn new(
+        ff: &'a dyn ForceField,
+        mol: &Molecule,
+        charges: &[f64],
+        config: &GBSAConfig,
+    ) -> Self {
         let n = mol.atoms.len();
-        let radii: Vec<f64> = mol.atoms.iter()
-            .map(|a| bondi_radius(a.atomic_number) + config.radius_offset).collect();
-        let sa_radii: Vec<f64> = mol.atoms.iter()
-            .map(|a| bondi_radius(a.atomic_number) + 1.4).collect();
-        let lcpo: Vec<[f64; 3]> = mol.atoms.iter().map(|a| lcpo_coeffs(a.atomic_number)).collect();
-        Self { ff, charges: charges.to_vec(), radii, sa_radii, lcpo,
+        let radii: Vec<f64> = mol
+            .atoms
+            .iter()
+            .map(|a| bondi_radius(a.atomic_number) + config.radius_offset)
+            .collect();
+        let sa_radii: Vec<f64> = mol
+            .atoms
+            .iter()
+            .map(|a| bondi_radius(a.atomic_number) + 1.4)
+            .collect();
+        let lcpo: Vec<[f64; 3]> = mol
+            .atoms
+            .iter()
+            .map(|a| lcpo_coeffs(a.atomic_number))
+            .collect();
+        Self {
+            ff,
+            charges: charges.to_vec(),
+            radii,
+            sa_radii,
+            lcpo,
             dielectric_factor: 1.0 / config.solute_dielectric - 1.0 / config.solvent_dielectric,
-            obc2: config.obc2, sa_tension: config.sa_surface_tension, n }
+            obc2: config.obc2,
+            sa_tension: config.sa_surface_tension,
+            n,
+        }
     }
 
     // ---- Pairwise desolvation: exact HCT integral over V_j outside V_i ----
@@ -95,7 +132,9 @@ impl<'a> GBSA<'a> {
     #[inline]
     fn f_full(s: f64, d: f64) -> f64 {
         let diff = d * d - s * s;
-        if diff.abs() < 1e-14 { return 0.0; }
+        if diff.abs() < 1e-14 {
+            return 0.0;
+        }
         (1.0 / (4.0 * d)) * (((d - s) / (d + s)).ln() + 2.0 * s * d / diff)
     }
     /// Antiderivative of the cap angular integral: (1/(4d))·∫ s·(1/ri²-1/(s+d)²) ds
@@ -112,7 +151,9 @@ impl<'a> GBSA<'a> {
         if d >= rsum {
             // Non-overlap: full sphere of j is outside i.
             let diff = d * d - rj * rj;
-            if diff <= 1e-12 { return 0.0; }
+            if diff <= 1e-12 {
+                return 0.0;
+            }
             return (0.25 / d) * ((d - rj) / (d + rj)).ln() + rj / (2.0 * diff);
         }
         if d + rj <= ri {
@@ -132,7 +173,9 @@ impl<'a> GBSA<'a> {
     #[inline]
     fn f_full_dd(s: f64, d: f64) -> f64 {
         let diff = d * d - s * s;
-        if diff.abs() < 1e-14 { return 0.0; }
+        if diff.abs() < 1e-14 {
+            return 0.0;
+        }
         let lr = ((d - s) / (d + s)).ln();
         (-1.0 / (4.0 * d * d)) * (lr + 2.0 * s * d / diff) - s.powi(3) / (d * diff * diff)
     }
@@ -153,7 +196,9 @@ impl<'a> GBSA<'a> {
             // Non-overlap.
             let d2 = d * d;
             let diff = d2 - rj * rj;
-            if diff <= 1e-12 { return 0.0; }
+            if diff <= 1e-12 {
+                return 0.0;
+            }
             let lr = ((d - rj) / (d + rj)).ln();
             return -lr / (4.0 * d2) + rj / (2.0 * d * diff) - rj * d / (diff * diff);
         }
@@ -203,8 +248,9 @@ impl<'a> ForceField for GBSA<'a> {
             let (born_inv, d_born_inv_dpsi) = if self.obc2 {
                 let arg = OBC_ALPHA * p - OBC_BETA * p * p + OBC_GAMMA * p.powi(3);
                 let unclamped = inv_ri * (1.0 - arg.tanh());
-                let deriv =
-                    -inv_ri * (1.0 - arg.tanh().powi(2)) * (OBC_ALPHA - 2.0 * OBC_BETA * p + 3.0 * OBC_GAMMA * p * p);
+                let deriv = -inv_ri
+                    * (1.0 - arg.tanh().powi(2))
+                    * (OBC_ALPHA - 2.0 * OBC_BETA * p + 3.0 * OBC_GAMMA * p * p);
                 if unclamped < min_inv {
                     (min_inv, 0.0) // clamp active: derivative is zero in this region
                 } else {
@@ -247,8 +293,12 @@ impl<'a> ForceField for GBSA<'a> {
                 let f3 = f * f2;
                 let d_inv_f_du = -(1.0 - exp_term / 4.0) / (2.0 * f3); // d(1/f)/du, u=r²
                 let g_dir = c * qq * d_inv_f_du * 2.0; // × du/dx = 2·dx
-                grad[i][0] += g_dir * dx; grad[i][1] += g_dir * dy; grad[i][2] += g_dir * dz;
-                grad[j][0] -= g_dir * dx; grad[j][1] -= g_dir * dy; grad[j][2] -= g_dir * dz;
+                grad[i][0] += g_dir * dx;
+                grad[i][1] += g_dir * dy;
+                grad[i][2] += g_dir * dz;
+                grad[j][0] -= g_dir * dx;
+                grad[j][1] -= g_dir * dy;
+                grad[j][2] -= g_dir * dz;
 
                 // Pair Born-radius coefficient: ∂(1/f)/∂R_i
                 // ∂(f²)/∂R_i = R_j·E·(1 + r²/(4a));  ∂(1/f)/∂R_i = -that/(2·f³)
@@ -277,9 +327,14 @@ impl<'a> ForceField for GBSA<'a> {
                 let dpsi_ij = Self::desolv_d(r, self.radii[i], self.radii[j]); // dψ_i/dr
                 let dpsi_ji = Self::desolv_d(r, self.radii[j], self.radii[i]); // dψ_j/dr
                 let inv_r = 1.0 / r;
-                let g_brn = (b_coeff[i] * chain[i] * dpsi_ij + b_coeff[j] * chain[j] * dpsi_ji) * inv_r;
-                grad[i][0] += g_brn * dx; grad[i][1] += g_brn * dy; grad[i][2] += g_brn * dz;
-                grad[j][0] -= g_brn * dx; grad[j][1] -= g_brn * dy; grad[j][2] -= g_brn * dz;
+                let g_brn =
+                    (b_coeff[i] * chain[i] * dpsi_ij + b_coeff[j] * chain[j] * dpsi_ji) * inv_r;
+                grad[i][0] += g_brn * dx;
+                grad[i][1] += g_brn * dy;
+                grad[i][2] += g_brn * dz;
+                grad[j][0] -= g_brn * dx;
+                grad[j][1] -= g_brn * dy;
+                grad[j][2] -= g_brn * dz;
             }
         }
 
@@ -298,18 +353,26 @@ impl<'a> ForceField for GBSA<'a> {
                     let d = (dx * dx + dy * dy + dz * dz).sqrt();
                     let ri = self.sa_radii[i];
                     let rj = self.sa_radii[j];
-                    if d >= ri + rj { continue; }
+                    if d >= ri + rj {
+                        continue;
+                    }
                     // Sij = π·Ri·(Ri - xi), xi = (d²+Ri²-Rj²)/(2d)
-                    let sij = if d + rj <= ri { 0.0 } else {
+                    let sij = if d + rj <= ri {
+                        0.0
+                    } else {
                         let xi = (d * d + ri * ri - rj * rj) / (2.0 * d);
                         std::f64::consts::PI * ri * (ri - xi).max(0.0)
                     };
-                    let sji = if d + ri <= rj { 0.0 } else {
+                    let sji = if d + ri <= rj {
+                        0.0
+                    } else {
                         let xj = (d * d + rj * rj - ri * ri) / (2.0 * d);
                         std::f64::consts::PI * rj * (rj - xj).max(0.0)
                     };
-                    s_sum[i] += sij; s_sq_sum[i] += sij * sij;
-                    s_sum[j] += sji; s_sq_sum[j] += sji * sji;
+                    s_sum[i] += sij;
+                    s_sq_sum[i] += sij * sij;
+                    s_sum[j] += sji;
+                    s_sq_sum[j] += sji * sji;
                 }
             }
             for i in 0..n {
@@ -329,10 +392,14 @@ impl<'a> ForceField for GBSA<'a> {
                     let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
                     let ri = self.sa_radii[i];
                     let rj = self.sa_radii[j];
-                    if d >= ri + rj { continue; }
+                    if d >= ri + rj {
+                        continue;
+                    }
                     let inv_d = 1.0 / d;
                     // Sij and its derivative
-                    let (sij, dsij_dd) = if d + rj <= ri { (0.0, 0.0) } else {
+                    let (sij, dsij_dd) = if d + rj <= ri {
+                        (0.0, 0.0)
+                    } else {
                         // NOTE: S_ij is identically 0 for full containment (d + rj <= ri)
                         // while dS_ij/dd is nonzero just outside that boundary, so the
                         // pairwise gradient has a small kink at d = ri - rj. This is
@@ -341,21 +408,29 @@ impl<'a> ForceField for GBSA<'a> {
                         // unphysical buried configurations.
                         let xi = (d * d + ri * ri - rj * rj) / (2.0 * d);
                         let s = std::f64::consts::PI * ri * (ri - xi).max(0.0);
-                        let ds = -std::f64::consts::PI * ri * (d * d - ri * ri + rj * rj) / (2.0 * d * d);
+                        let ds = -std::f64::consts::PI * ri * (d * d - ri * ri + rj * rj)
+                            / (2.0 * d * d);
                         (s, ds)
                     };
-                    let (sji, dsji_dd) = if d + ri <= rj { (0.0, 0.0) } else {
+                    let (sji, dsji_dd) = if d + ri <= rj {
+                        (0.0, 0.0)
+                    } else {
                         let xj = (d * d + rj * rj - ri * ri) / (2.0 * d);
                         let s = std::f64::consts::PI * rj * (rj - xj).max(0.0);
-                        let ds = -std::f64::consts::PI * rj * (d * d - rj * rj + ri * ri) / (2.0 * d * d);
+                        let ds = -std::f64::consts::PI * rj * (d * d - rj * rj + ri * ri)
+                            / (2.0 * d * d);
                         (s, ds)
                     };
                     // Gradient coefficient: (a2_k + 2·a3_k·Skj)·dSkj/dd + cross-term
                     let coef_i = g * (self.lcpo[i][1] + 2.0 * self.lcpo[i][2] * sij) * dsij_dd;
                     let coef_j = g * (self.lcpo[j][1] + 2.0 * self.lcpo[j][2] * sji) * dsji_dd;
                     let g_sa = (coef_i + coef_j) * inv_d;
-                    grad[i][0] += g_sa * dx; grad[i][1] += g_sa * dy; grad[i][2] += g_sa * dz;
-                    grad[j][0] -= g_sa * dx; grad[j][1] -= g_sa * dy; grad[j][2] -= g_sa * dz;
+                    grad[i][0] += g_sa * dx;
+                    grad[i][1] += g_sa * dy;
+                    grad[i][2] += g_sa * dz;
+                    grad[j][0] -= g_sa * dx;
+                    grad[j][1] -= g_sa * dy;
+                    grad[j][2] -= g_sa * dz;
                 }
             }
         }
@@ -373,7 +448,9 @@ mod tests {
     struct ZeroFF;
     impl ForceField for ZeroFF {
         fn energy_and_gradient(&self, _c: &[[f64; 3]], g: &mut [[f64; 3]]) -> f64 {
-            for r in g.iter_mut() { *r = [0.0; 3]; }
+            for r in g.iter_mut() {
+                *r = [0.0; 3];
+            }
             0.0
         }
     }
@@ -386,15 +463,26 @@ mod tests {
         let zff = ZeroFF;
         let mol = crate::molecule::Molecule {
             atoms: vec![crate::molecule::Atom {
-                symbol: "Cl".into(), atomic_number: 17, mass: 35.0, charge: q,
-                position: [0.0; 3], index: 0, stereo_parity: 0,
+                symbol: "Cl".into(),
+                atomic_number: 17,
+                mass: 35.0,
+                charge: q,
+                position: [0.0; 3],
+                index: 0,
+                stereo_parity: 0,
             }],
-            bonds: vec![], name: String::new(), adjacency: vec![vec![]],
+            bonds: vec![],
+            name: String::new(),
+            adjacency: vec![vec![]],
         };
         let gbsa = GBSA::new(&zff, &mol, &[q], &GBSAConfig::default());
         let e = gbsa.energy_and_gradient(&[[0.0; 3]], &mut [[0.0; 3]]);
-        assert!((e - expected).abs() / expected.abs() < 0.02,
-            "GB self-energy {:.4} vs Born {:.4}", e, expected);
+        assert!(
+            (e - expected).abs() / expected.abs() < 0.02,
+            "GB self-energy {:.4} vs Born {:.4}",
+            e,
+            expected
+        );
     }
 
     #[test]
@@ -403,7 +491,10 @@ mod tests {
         let mol = parse_sdf(&sdf).unwrap();
         let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
         // Test with SA enabled (full GBSA).
-        let cfg = GBSAConfig { sa_surface_tension: 0.00542, ..GBSAConfig::default() };
+        let cfg = GBSAConfig {
+            sa_surface_tension: 0.00542,
+            ..GBSAConfig::default()
+        };
         let gbsa = GBSA::new(&ff, &mol, &ff.charges, &cfg);
         let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
         let mut grad = vec![[0.0; 3]; mol.atoms.len()];
@@ -425,7 +516,11 @@ mod tests {
             }
         }
         eprintln!("GB+SA gradient max FD error: {:.6}", max_err);
-        assert!(max_err < 1e-4, "GB gradient max FD error {:.6} > 1e-4", max_err);
+        assert!(
+            max_err < 1e-4,
+            "GB gradient max FD error {:.6} > 1e-4",
+            max_err
+        );
     }
 
     #[test]
@@ -438,7 +533,12 @@ mod tests {
         let gbsa = GBSA::new(&ff, &mol, &ff.charges, &GBSAConfig::default());
         let mut g = vec![[0.0; 3]; mol.atoms.len()];
         let e_solv = gbsa.energy_and_gradient(&coords, &mut g);
-        assert!(e_solv < e_vac, "GBSA {:.2} should be < vacuum {:.2}", e_solv, e_vac);
+        assert!(
+            e_solv < e_vac,
+            "GBSA {:.2} should be < vacuum {:.2}",
+            e_solv,
+            e_vac
+        );
     }
 
     /// GBSA NVE stability smoke test. The GB gradient is verified correct by
@@ -452,9 +552,16 @@ mod tests {
         let mol = parse_sdf(&sdf).unwrap();
         let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
         let gbsa = GBSA::new(&ff, &mol, &ff.charges, &GBSAConfig::default());
-        let mut runner = MDRunner::from_molecule(&gbsa, &mol, MDConfig {
-            dt_fs: 0.25, temperature_k: 300.0, friction_per_ps: 0.0, seed: 42,
-        });
+        let mut runner = MDRunner::from_molecule(
+            &gbsa,
+            &mol,
+            MDConfig {
+                dt_fs: 0.25,
+                temperature_k: 300.0,
+                friction_per_ps: 0.0,
+                seed: 42,
+            },
+        );
         let e0 = runner.potential_energy() + runner.kinetic_energy();
         let mut max_drift: f64 = 0.0;
         for _ in 0..2000 {
@@ -464,6 +571,10 @@ mod tests {
             max_drift = max_drift.max((e - e0).abs() / e0.abs().max(1.0));
         }
         eprintln!("GB NVE drift over 2000 steps: {:.2}%", max_drift * 100.0);
-        assert!(max_drift < 0.01, "GB NVE drift {:.2}% > 1%", max_drift * 100.0);
+        assert!(
+            max_drift < 0.01,
+            "GB NVE drift {:.2}% > 1%",
+            max_drift * 100.0
+        );
     }
 }

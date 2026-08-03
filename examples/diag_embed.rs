@@ -42,8 +42,10 @@ fn main() {
     let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
     let e = ff.calculate_energy(&coords);
     let bd = ff.calculate_energy_breakdown(&coords);
-    println!("total={e:.2} bond={:.1} angle={:.1} sb={:.1} tor={:.1} oop={:.1} vdw={:.1} elec={:.1}",
-        bd.bond, bd.angle, bd.stretch_bend, bd.torsion, bd.oop, bd.vdw, bd.electrostatic);
+    println!(
+        "total={e:.2} bond={:.1} angle={:.1} sb={:.1} tor={:.1} oop={:.1} vdw={:.1} elec={:.1}",
+        bd.bond, bd.angle, bd.stretch_bend, bd.torsion, bd.oop, bd.vdw, bd.electrostatic
+    );
     println!("\nbond lengths (atom i-j sym sym : len):");
     for b in &mol.bonds {
         println!(
@@ -63,7 +65,12 @@ fn main() {
                 let (i, k) = (nbrs[xi], nbrs[xk]);
                 println!(
                     "  {}{}-{}{}-{}{} : {:.1}",
-                    mol.atoms[i].symbol, i, mol.atoms[j].symbol, j, mol.atoms[k].symbol, k,
+                    mol.atoms[i].symbol,
+                    i,
+                    mol.atoms[j].symbol,
+                    j,
+                    mol.atoms[k].symbol,
+                    k,
                     angle(&coords, i, j, k)
                 );
             }

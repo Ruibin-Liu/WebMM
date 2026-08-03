@@ -23,26 +23,26 @@ pub const KB: f64 = 0.0019872041;
 /// back to a rough estimate for anything missing.
 pub fn atomic_mass(z: u8) -> f64 {
     match z {
-        1 => 1.008,   // H
-        5 => 10.81,   // B
-        6 => 12.011,  // C
-        7 => 14.007,  // N
-        8 => 15.999,  // O
-        9 => 18.998,  // F
-        11 => 22.990, // Na
-        12 => 24.305, // Mg
-        13 => 26.982, // Al
-        14 => 28.085, // Si
-        15 => 30.974, // P
-        16 => 32.06,  // S
-        17 => 35.45,  // Cl
-        19 => 39.098, // K
-        20 => 40.078, // Ca
-        25 => 54.938, // Mn
-        26 => 55.845, // Fe
-        30 => 65.38,  // Zn
-        35 => 79.904, // Br
-        53 => 126.904,// I
+        1 => 1.008,    // H
+        5 => 10.81,    // B
+        6 => 12.011,   // C
+        7 => 14.007,   // N
+        8 => 15.999,   // O
+        9 => 18.998,   // F
+        11 => 22.990,  // Na
+        12 => 24.305,  // Mg
+        13 => 26.982,  // Al
+        14 => 28.085,  // Si
+        15 => 30.974,  // P
+        16 => 32.06,   // S
+        17 => 35.45,   // Cl
+        19 => 39.098,  // K
+        20 => 40.078,  // Ca
+        25 => 54.938,  // Mn
+        26 => 55.845,  // Fe
+        30 => 65.38,   // Zn
+        35 => 79.904,  // Br
+        53 => 126.904, // I
         _ => 2.0 * z as f64,
     }
 }
@@ -63,7 +63,9 @@ impl Rng {
             x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
             (x ^ (x >> 31)) | 1 // ensure nonzero state
         };
-        Rng { s: [next(), next(), next(), next()] }
+        Rng {
+            s: [next(), next(), next(), next()],
+        }
     }
     fn next_u64(&mut self) -> u64 {
         // xoshiro256**
@@ -104,7 +106,12 @@ pub struct MDConfig {
 }
 impl Default for MDConfig {
     fn default() -> Self {
-        MDConfig { dt_fs: 1.0, temperature_k: 300.0, friction_per_ps: 1.0, seed: 42 }
+        MDConfig {
+            dt_fs: 1.0,
+            temperature_k: 300.0,
+            friction_per_ps: 1.0,
+            seed: 42,
+        }
     }
 }
 
@@ -147,7 +154,11 @@ impl<'a> MDRunner<'a> {
             let s = (KB * config.temperature_k).sqrt();
             for i in 0..n {
                 let a = s / masses[i].sqrt();
-                vel[i] = [a * rng.next_gaussian(), a * rng.next_gaussian(), a * rng.next_gaussian()];
+                vel[i] = [
+                    a * rng.next_gaussian(),
+                    a * rng.next_gaussian(),
+                    a * rng.next_gaussian(),
+                ];
             }
             if n > 1 {
                 remove_com_velocity(&mut vel, &masses);
@@ -189,7 +200,11 @@ impl<'a> MDRunner<'a> {
         mol: &crate::molecule::Molecule,
         config: MDConfig,
     ) -> Self {
-        let masses: Vec<f64> = mol.atoms.iter().map(|a| atomic_mass(a.atomic_number)).collect();
+        let masses: Vec<f64> = mol
+            .atoms
+            .iter()
+            .map(|a| atomic_mass(a.atomic_number))
+            .collect();
         let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
         Self::new(ff, masses, coords, config)
     }
@@ -331,7 +346,10 @@ mod tests {
 
     /// Test force field: N independent 3-D harmonic oscillators, E = 0.5·k·|x|².
     /// Exact, so it validates the integrator + units without depending on MMFF.
-    struct HarmonicOscillator { n: usize, k: f64 }
+    struct HarmonicOscillator {
+        n: usize,
+        k: f64,
+    }
     impl ForceField for HarmonicOscillator {
         fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
             for g in grad.iter_mut() {
@@ -361,7 +379,12 @@ mod tests {
             &ho,
             masses,
             coords,
-            MDConfig { dt_fs: 0.5, temperature_k: 300.0, friction_per_ps: 0.0, seed: 1 },
+            MDConfig {
+                dt_fs: 0.5,
+                temperature_k: 300.0,
+                friction_per_ps: 0.0,
+                seed: 1,
+            },
         );
         let e0 = md.total_energy();
         for _ in 0..20_000 {
@@ -369,7 +392,13 @@ mod tests {
         }
         let e1 = md.total_energy();
         let rel = ((e1 - e0) / e0).abs();
-        assert!(rel < 1e-3, "NVE energy drift too large: {} -> {} (rel {})", e0, e1, rel);
+        assert!(
+            rel < 1e-3,
+            "NVE energy drift too large: {} -> {} (rel {})",
+            e0,
+            e1,
+            rel
+        );
     }
 
     #[test]
@@ -381,7 +410,12 @@ mod tests {
             &ho,
             masses,
             coords,
-            MDConfig { dt_fs: 1.0, temperature_k: 300.0, friction_per_ps: 5.0, seed: 7 },
+            MDConfig {
+                dt_fs: 1.0,
+                temperature_k: 300.0,
+                friction_per_ps: 5.0,
+                seed: 7,
+            },
         );
         let mut t_sum = 0.0;
         let mut n = 0;
@@ -408,7 +442,12 @@ mod tests {
         let mut md = MDRunner::from_molecule(
             &ff,
             &mol,
-            MDConfig { dt_fs: 0.5, temperature_k: 300.0, friction_per_ps: 2.0, seed: 3 },
+            MDConfig {
+                dt_fs: 0.5,
+                temperature_k: 300.0,
+                friction_per_ps: 2.0,
+                seed: 3,
+            },
         );
         for _ in 0..2000 {
             md.step();
@@ -420,7 +459,9 @@ mod tests {
             "MMFF MD temperature {} out of sane range",
             t
         );
-        assert!(coords.iter().all(|p| p[0].is_finite() && p[1].is_finite() && p[2].is_finite()));
+        assert!(coords
+            .iter()
+            .all(|p| p[0].is_finite() && p[1].is_finite() && p[2].is_finite()));
     }
 
     const METHANE_SDF: &str = "Methane\n     RDKit          3D\n\n  5  4  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0\n    0.6294    0.6294    0.6294 H   0  0  0  0  0  0  0  0  0\n   -0.6294   -0.6294    0.6294 H   0  0  0  0  0  0  0  0  0\n   -0.6294    0.6294   -0.6294 H   0  0  0  0  0  0  0  0  0\n    0.6294   -0.6294   -0.6294 H   0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  1  3  1  0\n  1  4  1  0\n  1  5  1  0\nM  END\n";
@@ -440,6 +481,10 @@ mod tests {
         assert_eq!(res.energies().len(), res.n_frames());
         assert_eq!(res.temperatures().len(), res.n_frames());
         assert!(res.final_energy().is_finite());
-        assert!(res.final_temperature() > 0.0, "final T = {}", res.final_temperature());
+        assert!(
+            res.final_temperature() > 0.0,
+            "final T = {}",
+            res.final_temperature()
+        );
     }
 }

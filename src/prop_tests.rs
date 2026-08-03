@@ -212,8 +212,13 @@ M  END"#, x, y, z, x + 1.5, y, z);
         let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
         let total = ff.calculate_energy(&coords);
         let bd = ff.calculate_energy_breakdown(&coords);
-        let sum = bd.bond + bd.angle + bd.stretch_bend + bd.torsion
-            + bd.oop + bd.vdw + bd.electrostatic;
-        assert!((total - sum).abs() < 1e-6, "total {} != breakdown sum {}", total, sum);
+        let sum =
+            bd.bond + bd.angle + bd.stretch_bend + bd.torsion + bd.oop + bd.vdw + bd.electrostatic;
+        assert!(
+            (total - sum).abs() < 1e-6,
+            "total {} != breakdown sum {}",
+            total,
+            sum
+        );
     }
 }

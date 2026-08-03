@@ -51,7 +51,11 @@ fn main() {
         let charges: Vec<f64> = ff.charges.iter().map(|c| (c * 1e4).round() / 1e4).collect();
         out.push_str(&format!(
             "\"{}\":{{\"types\":{:?},\"charges\":{:?},\"energy\":{:.4},\"n_atoms\":{}}}",
-            name, types, charges, energy, mol.atoms.len()
+            name,
+            types,
+            charges,
+            energy,
+            mol.atoms.len()
         ));
     }
     out.push('}');

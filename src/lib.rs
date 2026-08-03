@@ -294,7 +294,10 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
 /// Optimize from an SDF using the SDF coordinates directly (no ETKDG).
 /// If the SDF is 2D, coordinates are used as-is (z=0 plane).
 #[wasm_bindgen]
-pub fn optimize_from_sdf_direct(sdf_content: &str, options: OptimizationOptions) -> OptimizationResult {
+pub fn optimize_from_sdf_direct(
+    sdf_content: &str,
+    options: OptimizationOptions,
+) -> OptimizationResult {
     console_error_panic_hook::set_once();
     let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
         Ok(mol) => mol,
@@ -365,20 +368,34 @@ impl MDOptions {
         }
     }
     #[wasm_bindgen]
-    pub fn set_mmff_variant(&mut self, v: String) { self.mmff_variant = v; }
+    pub fn set_mmff_variant(&mut self, v: String) {
+        self.mmff_variant = v;
+    }
     #[wasm_bindgen]
-    pub fn set_dt_fs(&mut self, v: f64) { self.dt_fs = v; }
+    pub fn set_dt_fs(&mut self, v: f64) {
+        self.dt_fs = v;
+    }
     #[wasm_bindgen]
-    pub fn set_n_steps(&mut self, v: usize) { self.n_steps = v; }
+    pub fn set_n_steps(&mut self, v: usize) {
+        self.n_steps = v;
+    }
     #[wasm_bindgen]
-    pub fn set_temperature_k(&mut self, v: f64) { self.temperature_k = v; }
+    pub fn set_temperature_k(&mut self, v: f64) {
+        self.temperature_k = v;
+    }
     #[wasm_bindgen]
-    pub fn set_friction_per_ps(&mut self, v: f64) { self.friction_per_ps = v; }
+    pub fn set_friction_per_ps(&mut self, v: f64) {
+        self.friction_per_ps = v;
+    }
     /// Save a trajectory frame every N steps. 0 (default) = final frame only.
     #[wasm_bindgen]
-    pub fn set_snapshot_interval(&mut self, v: usize) { self.snapshot_interval = v; }
+    pub fn set_snapshot_interval(&mut self, v: usize) {
+        self.snapshot_interval = v;
+    }
     #[wasm_bindgen]
-    pub fn set_seed(&mut self, v: u64) { self.seed = v; }
+    pub fn set_seed(&mut self, v: u64) {
+        self.seed = v;
+    }
 }
 
 impl Default for MDOptions {
@@ -393,10 +410,10 @@ impl Default for MDOptions {
 pub struct MDResult {
     n_atoms: usize,
     n_frames: usize,
-    coordinates: Vec<f64>,   // n_frames * n_atoms * 3, row-major [frame][atom][x,y,z]
-    energies: Vec<f64>,      // potential energy per frame (kcal/mol)
-    temperatures: Vec<f64>,  // K per frame
-    times_fs: Vec<f64>,      // simulation time per frame (fs)
+    coordinates: Vec<f64>, // n_frames * n_atoms * 3, row-major [frame][atom][x,y,z]
+    energies: Vec<f64>,    // potential energy per frame (kcal/mol)
+    temperatures: Vec<f64>, // K per frame
+    times_fs: Vec<f64>,    // simulation time per frame (fs)
     final_energy: f64,
     final_temperature: f64,
     steps: usize,
@@ -406,18 +423,51 @@ pub struct MDResult {
 
 #[wasm_bindgen]
 impl MDResult {
-    #[wasm_bindgen] pub fn n_atoms(&self) -> usize { self.n_atoms }
-    #[wasm_bindgen] pub fn n_frames(&self) -> usize { self.n_frames }
+    #[wasm_bindgen]
+    pub fn n_atoms(&self) -> usize {
+        self.n_atoms
+    }
+    #[wasm_bindgen]
+    pub fn n_frames(&self) -> usize {
+        self.n_frames
+    }
     /// Flattened trajectory, n_frames * n_atoms * 3 (Float64Array in JS).
-    #[wasm_bindgen] pub fn coordinates(&self) -> Vec<f64> { self.coordinates.clone() }
-    #[wasm_bindgen] pub fn energies(&self) -> Vec<f64> { self.energies.clone() }
-    #[wasm_bindgen] pub fn temperatures(&self) -> Vec<f64> { self.temperatures.clone() }
-    #[wasm_bindgen] pub fn times_fs(&self) -> Vec<f64> { self.times_fs.clone() }
-    #[wasm_bindgen] pub fn final_energy(&self) -> f64 { self.final_energy }
-    #[wasm_bindgen] pub fn final_temperature(&self) -> f64 { self.final_temperature }
-    #[wasm_bindgen] pub fn steps(&self) -> usize { self.steps }
-    #[wasm_bindgen] pub fn success(&self) -> bool { self.success }
-    #[wasm_bindgen] pub fn error(&self) -> String { self.error.clone() }
+    #[wasm_bindgen]
+    pub fn coordinates(&self) -> Vec<f64> {
+        self.coordinates.clone()
+    }
+    #[wasm_bindgen]
+    pub fn energies(&self) -> Vec<f64> {
+        self.energies.clone()
+    }
+    #[wasm_bindgen]
+    pub fn temperatures(&self) -> Vec<f64> {
+        self.temperatures.clone()
+    }
+    #[wasm_bindgen]
+    pub fn times_fs(&self) -> Vec<f64> {
+        self.times_fs.clone()
+    }
+    #[wasm_bindgen]
+    pub fn final_energy(&self) -> f64 {
+        self.final_energy
+    }
+    #[wasm_bindgen]
+    pub fn final_temperature(&self) -> f64 {
+        self.final_temperature
+    }
+    #[wasm_bindgen]
+    pub fn steps(&self) -> usize {
+        self.steps
+    }
+    #[wasm_bindgen]
+    pub fn success(&self) -> bool {
+        self.success
+    }
+    #[wasm_bindgen]
+    pub fn error(&self) -> String {
+        self.error.clone()
+    }
     /// Single component: get_coord(frame, atom, axis), axis 0/1/2 = x/y/z.
     #[wasm_bindgen]
     pub fn get_coord(&self, frame: usize, atom: usize, axis: usize) -> f64 {
@@ -452,9 +502,16 @@ pub fn run_md_from_sdf(sdf_content: &str, options: MDOptions) -> MDResult {
         Ok(mol) => mol,
         Err(e) => {
             return MDResult {
-                n_atoms: 0, n_frames: 0, coordinates: Vec::new(), energies: Vec::new(),
-                temperatures: Vec::new(), times_fs: Vec::new(), final_energy: 0.0,
-                final_temperature: 0.0, steps: 0, success: false,
+                n_atoms: 0,
+                n_frames: 0,
+                coordinates: Vec::new(),
+                energies: Vec::new(),
+                temperatures: Vec::new(),
+                times_fs: Vec::new(),
+                final_energy: 0.0,
+                final_temperature: 0.0,
+                steps: 0,
+                success: false,
                 error: format!("Parse error: {}", e),
             };
         }
@@ -478,24 +535,51 @@ pub fn run_md_from_sdf(sdf_content: &str, options: MDOptions) -> MDResult {
     let mut times_fs = Vec::new();
     let snap = options.snapshot_interval;
     if snap > 0 {
-        md_snapshot(&runner, n_atoms, &mut coordinates, &mut energies, &mut temperatures, &mut times_fs);
+        md_snapshot(
+            &runner,
+            n_atoms,
+            &mut coordinates,
+            &mut energies,
+            &mut temperatures,
+            &mut times_fs,
+        );
     }
     for i in 1..=options.n_steps {
         runner.step();
         if snap > 0 && i != options.n_steps && i % snap == 0 {
-            md_snapshot(&runner, n_atoms, &mut coordinates, &mut energies, &mut temperatures, &mut times_fs);
+            md_snapshot(
+                &runner,
+                n_atoms,
+                &mut coordinates,
+                &mut energies,
+                &mut temperatures,
+                &mut times_fs,
+            );
         }
     }
     // final frame always
-    md_snapshot(&runner, n_atoms, &mut coordinates, &mut energies, &mut temperatures, &mut times_fs);
+    md_snapshot(
+        &runner,
+        n_atoms,
+        &mut coordinates,
+        &mut energies,
+        &mut temperatures,
+        &mut times_fs,
+    );
     let final_energy = runner.potential_energy();
     let final_temperature = runner.temperature();
     MDResult {
         n_atoms,
         n_frames: energies.len(),
-        coordinates, energies, temperatures, times_fs,
-        final_energy, final_temperature, steps: options.n_steps,
-        success: true, error: String::new(),
+        coordinates,
+        energies,
+        temperatures,
+        times_fs,
+        final_energy,
+        final_temperature,
+        steps: options.n_steps,
+        success: true,
+        error: String::new(),
     }
 }
 
@@ -526,31 +610,85 @@ impl MetaDOptions {
     pub fn new() -> Self {
         Self {
             mmff_variant: "MMFF94s".to_string(),
-            dt_fs: 1.0, n_steps: 5000, temperature_k: 300.0, friction_per_ps: 5.0,
-            seed: 42, snapshot_interval: 50,
-            cv_type: "dihedral".to_string(), cv_atoms: "0,1,2,3".to_string(),
-            hill_height: 0.3, hill_width: 0.2, deposit_interval: 50, bias_factor: 10.0,
+            dt_fs: 1.0,
+            n_steps: 5000,
+            temperature_k: 300.0,
+            friction_per_ps: 5.0,
+            seed: 42,
+            snapshot_interval: 50,
+            cv_type: "dihedral".to_string(),
+            cv_atoms: "0,1,2,3".to_string(),
+            hill_height: 0.3,
+            hill_width: 0.2,
+            deposit_interval: 50,
+            bias_factor: 10.0,
             fes_grid_points: 72,
         }
     }
-    #[wasm_bindgen] pub fn set_mmff_variant(&mut self, v: String) { self.mmff_variant = v; }
-    #[wasm_bindgen] pub fn set_dt_fs(&mut self, v: f64) { self.dt_fs = v; }
-    #[wasm_bindgen] pub fn set_n_steps(&mut self, v: usize) { self.n_steps = v; }
-    #[wasm_bindgen] pub fn set_temperature_k(&mut self, v: f64) { self.temperature_k = v; }
-    #[wasm_bindgen] pub fn set_friction_per_ps(&mut self, v: f64) { self.friction_per_ps = v; }
-    #[wasm_bindgen] pub fn set_seed(&mut self, v: u32) { self.seed = v; }
-    #[wasm_bindgen] pub fn set_snapshot_interval(&mut self, v: usize) { self.snapshot_interval = v; }
+    #[wasm_bindgen]
+    pub fn set_mmff_variant(&mut self, v: String) {
+        self.mmff_variant = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_dt_fs(&mut self, v: f64) {
+        self.dt_fs = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_n_steps(&mut self, v: usize) {
+        self.n_steps = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_temperature_k(&mut self, v: f64) {
+        self.temperature_k = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_friction_per_ps(&mut self, v: f64) {
+        self.friction_per_ps = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_seed(&mut self, v: u32) {
+        self.seed = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_snapshot_interval(&mut self, v: usize) {
+        self.snapshot_interval = v;
+    }
     /// "dihedral" (4 atoms) or "distance" (2 atoms).
-    #[wasm_bindgen] pub fn set_cv_type(&mut self, v: String) { self.cv_type = v; }
+    #[wasm_bindgen]
+    pub fn set_cv_type(&mut self, v: String) {
+        self.cv_type = v;
+    }
     /// Comma-separated atom indices, e.g. "8,2,1,0" for a dihedral.
-    #[wasm_bindgen] pub fn set_cv_atoms(&mut self, v: String) { self.cv_atoms = v; }
-    #[wasm_bindgen] pub fn set_hill_height(&mut self, v: f64) { self.hill_height = v; }
-    #[wasm_bindgen] pub fn set_hill_width(&mut self, v: f64) { self.hill_width = v; }
-    #[wasm_bindgen] pub fn set_deposit_interval(&mut self, v: usize) { self.deposit_interval = v; }
-    #[wasm_bindgen] pub fn set_bias_factor(&mut self, v: f64) { self.bias_factor = v; }
-    #[wasm_bindgen] pub fn set_fes_grid_points(&mut self, v: usize) { self.fes_grid_points = v; }
+    #[wasm_bindgen]
+    pub fn set_cv_atoms(&mut self, v: String) {
+        self.cv_atoms = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_hill_height(&mut self, v: f64) {
+        self.hill_height = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_hill_width(&mut self, v: f64) {
+        self.hill_width = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_deposit_interval(&mut self, v: usize) {
+        self.deposit_interval = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_bias_factor(&mut self, v: f64) {
+        self.bias_factor = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_fes_grid_points(&mut self, v: usize) {
+        self.fes_grid_points = v;
+    }
 }
-impl Default for MetaDOptions { fn default() -> Self { Self::new() } }
+impl Default for MetaDOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Result of a metadynamics run: trajectory + CV trace + free-energy surface.
 #[wasm_bindgen]
@@ -572,21 +710,60 @@ pub struct MetaDResult {
 
 #[wasm_bindgen]
 impl MetaDResult {
-    #[wasm_bindgen] pub fn n_atoms(&self) -> usize { self.n_atoms }
-    #[wasm_bindgen] pub fn n_frames(&self) -> usize { self.n_frames }
-    #[wasm_bindgen] pub fn n_hills(&self) -> usize { self.n_hills }
-    #[wasm_bindgen] pub fn coordinates(&self) -> Vec<f64> { self.coordinates.clone() }
-    #[wasm_bindgen] pub fn energies(&self) -> Vec<f64> { self.energies.clone() }
-    #[wasm_bindgen] pub fn cv_values(&self) -> Vec<f64> { self.cv_values.clone() }
-    #[wasm_bindgen] pub fn times_fs(&self) -> Vec<f64> { self.times_fs.clone() }
+    #[wasm_bindgen]
+    pub fn n_atoms(&self) -> usize {
+        self.n_atoms
+    }
+    #[wasm_bindgen]
+    pub fn n_frames(&self) -> usize {
+        self.n_frames
+    }
+    #[wasm_bindgen]
+    pub fn n_hills(&self) -> usize {
+        self.n_hills
+    }
+    #[wasm_bindgen]
+    pub fn coordinates(&self) -> Vec<f64> {
+        self.coordinates.clone()
+    }
+    #[wasm_bindgen]
+    pub fn energies(&self) -> Vec<f64> {
+        self.energies.clone()
+    }
+    #[wasm_bindgen]
+    pub fn cv_values(&self) -> Vec<f64> {
+        self.cv_values.clone()
+    }
+    #[wasm_bindgen]
+    pub fn times_fs(&self) -> Vec<f64> {
+        self.times_fs.clone()
+    }
     /// CV grid points for the FES.
-    #[wasm_bindgen] pub fn fes_s(&self) -> Vec<f64> { self.fes_s.clone() }
+    #[wasm_bindgen]
+    pub fn fes_s(&self) -> Vec<f64> {
+        self.fes_s.clone()
+    }
     /// Free energy (kcal/mol) at each grid point.
-    #[wasm_bindgen] pub fn fes_f(&self) -> Vec<f64> { self.fes_f.clone() }
-    #[wasm_bindgen] pub fn hill_centers(&self) -> Vec<f64> { self.hill_centers.clone() }
-    #[wasm_bindgen] pub fn final_energy(&self) -> f64 { self.final_energy }
-    #[wasm_bindgen] pub fn success(&self) -> bool { self.success }
-    #[wasm_bindgen] pub fn error(&self) -> String { self.error.clone() }
+    #[wasm_bindgen]
+    pub fn fes_f(&self) -> Vec<f64> {
+        self.fes_f.clone()
+    }
+    #[wasm_bindgen]
+    pub fn hill_centers(&self) -> Vec<f64> {
+        self.hill_centers.clone()
+    }
+    #[wasm_bindgen]
+    pub fn final_energy(&self) -> f64 {
+        self.final_energy
+    }
+    #[wasm_bindgen]
+    pub fn success(&self) -> bool {
+        self.success
+    }
+    #[wasm_bindgen]
+    pub fn error(&self) -> String {
+        self.error.clone()
+    }
 }
 
 /// Run well-tempered metadynamics on an SDF molecule (gas-phase MMFF) and return
@@ -595,9 +772,19 @@ impl MetaDResult {
 pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> MetaDResult {
     console_error_panic_hook::set_once();
     let err = |msg: String| MetaDResult {
-        n_atoms: 0, n_frames: 0, n_hills: 0, coordinates: vec![], energies: vec![],
-        cv_values: vec![], times_fs: vec![], fes_s: vec![], fes_f: vec![],
-        hill_centers: vec![], final_energy: 0.0, success: false, error: msg,
+        n_atoms: 0,
+        n_frames: 0,
+        n_hills: 0,
+        coordinates: vec![],
+        energies: vec![],
+        cv_values: vec![],
+        times_fs: vec![],
+        fes_s: vec![],
+        fes_f: vec![],
+        hill_centers: vec![],
+        final_energy: 0.0,
+        success: false,
+        error: msg,
     };
     let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
         Ok(m) => m,
@@ -610,29 +797,49 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
     let ff = crate::mmff::MMFFForceField::new(&mol, variant);
 
     // Parse CV atoms
-    let atoms: Vec<usize> = options.cv_atoms.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+    let atoms: Vec<usize> = options
+        .cv_atoms
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
     let cv: Box<dyn crate::metad::CollectiveVariable> = match options.cv_type.as_str() {
         "distance" => {
-            if atoms.len() < 2 { return err("distance CV needs >=2 atoms".into()); }
+            if atoms.len() < 2 {
+                return err("distance CV needs >=2 atoms".into());
+            }
             Box::new(crate::metad::DistanceCV::new(atoms[0], atoms[1]))
         }
         _ => {
-            if atoms.len() < 4 { return err("dihedral CV needs >=4 atoms".into()); }
-            Box::new(crate::metad::DihedralCV::new(atoms[0], atoms[1], atoms[2], atoms[3]))
+            if atoms.len() < 4 {
+                return err("dihedral CV needs >=4 atoms".into());
+            }
+            Box::new(crate::metad::DihedralCV::new(
+                atoms[0], atoms[1], atoms[2], atoms[3],
+            ))
         }
     };
 
-    let metad = crate::metad::MetaDynamics::new(&ff, cv, crate::metad::MetaDConfig {
-        hill_height: options.hill_height,
-        hill_width: options.hill_width,
-        deposit_interval: options.deposit_interval,
-        bias_factor: options.bias_factor,
-        temperature_k: options.temperature_k,
-    });
-    let mut runner = crate::md::MDRunner::from_molecule(&metad, &mol, crate::md::MDConfig {
-        dt_fs: options.dt_fs, temperature_k: options.temperature_k,
-        friction_per_ps: options.friction_per_ps, seed: options.seed as u64,
-    });
+    let metad = crate::metad::MetaDynamics::new(
+        &ff,
+        cv,
+        crate::metad::MetaDConfig {
+            hill_height: options.hill_height,
+            hill_width: options.hill_width,
+            deposit_interval: options.deposit_interval,
+            bias_factor: options.bias_factor,
+            temperature_k: options.temperature_k,
+        },
+    );
+    let mut runner = crate::md::MDRunner::from_molecule(
+        &metad,
+        &mol,
+        crate::md::MDConfig {
+            dt_fs: options.dt_fs,
+            temperature_k: options.temperature_k,
+            friction_per_ps: options.friction_per_ps,
+            seed: options.seed as u64,
+        },
+    );
     let n_atoms = mol.atoms.len();
     let snap = options.snapshot_interval;
 
@@ -641,12 +848,18 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
     let mut cv_values = Vec::new();
     let mut times_fs = Vec::new();
     let mut snap_fn = |runner: &crate::md::MDRunner, metad: &crate::metad::MetaDynamics| {
-        for row in runner.coords() { coordinates.push(row[0]); coordinates.push(row[1]); coordinates.push(row[2]); }
+        for row in runner.coords() {
+            coordinates.push(row[0]);
+            coordinates.push(row[1]);
+            coordinates.push(row[2]);
+        }
         energies.push(runner.potential_energy());
         cv_values.push(metad.last_cv());
         times_fs.push(runner.time_fs());
     };
-    if snap > 0 { snap_fn(&runner, &metad); }
+    if snap > 0 {
+        snap_fn(&runner, &metad);
+    }
     for i in 1..=options.n_steps {
         runner.step();
         if snap > 0 && i != options.n_steps && i.is_multiple_of(snap) {
@@ -658,17 +871,28 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
     // FES
     let (smin, smax) = metad.cv_range();
     let ng = options.fes_grid_points.max(2);
-    let fes_s: Vec<f64> = (0..ng).map(|i| smin + (smax - smin) * i as f64 / (ng - 1) as f64).collect();
+    let fes_s: Vec<f64> = (0..ng)
+        .map(|i| smin + (smax - smin) * i as f64 / (ng - 1) as f64)
+        .collect();
     let fes_f = metad.free_energy_surface(&fes_s);
     let hill_centers = metad.hill_centers();
     let n_hills = metad.hill_count();
     let final_energy = runner.potential_energy();
 
     MetaDResult {
-        n_atoms, n_frames: energies.len(), n_hills,
-        coordinates, energies, cv_values, times_fs,
-        fes_s, fes_f, hill_centers, final_energy,
-        success: true, error: String::new(),
+        n_atoms,
+        n_frames: energies.len(),
+        n_hills,
+        coordinates,
+        energies,
+        cv_values,
+        times_fs,
+        fes_s,
+        fes_f,
+        hill_centers,
+        final_energy,
+        success: true,
+        error: String::new(),
     }
 }
 
@@ -2809,9 +3033,16 @@ M  END"#;
             "  C-C dist: {:.4} (ideal 1.512)",
             dist3(&perfect_coords, 0, 1)
         );
-        assert!(e_perfect.is_finite(), "ethane: non-finite energy from perfect coords");
+        assert!(
+            e_perfect.is_finite(),
+            "ethane: non-finite energy from perfect coords"
+        );
         let cc0 = dist3(&perfect_coords, 0, 1);
-        assert!(cc0 > 1.45 && cc0 < 1.55, "ethane C-C dist {} out of [1.45, 1.55]", cc0);
+        assert!(
+            cc0 > 1.45 && cc0 < 1.55,
+            "ethane C-C dist {} out of [1.45, 1.55]",
+            cc0
+        );
         eprintln!(
             "  C-H dist: {:.4} (ideal 1.094)",
             dist3(&perfect_coords, 0, 2)
@@ -3874,12 +4105,17 @@ M  END"#;
             eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
         }
         let expected = [
-            "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "C_AR",
-            "N_PL3", "H_NAM", "H_NAM", "H", "H", "H", "H",
+            "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "N_PL3", "H_NAM", "H_NAM", "H", "H",
+            "H", "H",
         ];
         assert_eq!(mol.atoms.len(), expected.len(), "aniline atom count");
         for (i, exp) in expected.iter().enumerate() {
-            assert_eq!(format!("{:?}", ff.atom_types[i]), *exp, "aniline atom {}", i);
+            assert_eq!(
+                format!("{:?}", ff.atom_types[i]),
+                *exp,
+                "aniline atom {}",
+                i
+            );
         }
         let coords = crate::etkdg::generate_initial_coords(&mol);
         let (energy, _) = ff.calculate_energy_and_gradient(&coords);
@@ -3949,14 +4185,22 @@ M  END"#;
             let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
             eprintln!("\n=== {} ===", name);
             let expected: &[&str] = match name {
-                "pyrrole" => &["C5A", "C5B", "C5B", "C5A", "NPYL", "H", "H", "H", "H_N3", "H"],
+                "pyrrole" => &[
+                    "C5A", "C5B", "C5B", "C5A", "NPYL", "H", "H", "H", "H_N3", "H",
+                ],
                 "furan" => &["C5A", "C5B", "C5B", "C5A", "OFUR", "H", "H", "H", "H"],
                 _ => &[],
             };
             assert_eq!(mol.atoms.len(), expected.len(), "{} atom count", name);
             for (i, atom) in mol.atoms.iter().enumerate() {
                 eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
-                assert_eq!(format!("{:?}", ff.atom_types[i]), expected[i], "{} atom {}", name, i);
+                assert_eq!(
+                    format!("{:?}", ff.atom_types[i]),
+                    expected[i],
+                    "{} atom {}",
+                    name,
+                    i
+                );
             }
         }
     }
@@ -4045,15 +4289,21 @@ M  END"#,
                 "water" => &["OH2", "H_OH", "H_OH"],
                 "methanol" => &["C_3", "O_R", "H", "H", "H", "H_ONC"],
                 "phenol" => &[
-                    "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "O_R",
-                    "H", "H", "H", "H", "H", "H_OAR",
+                    "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "C_AR", "O_R", "H", "H", "H", "H", "H",
+                    "H_OAR",
                 ],
                 _ => &[],
             };
             assert_eq!(mol.atoms.len(), expected.len(), "{} atom count", name);
             for (i, atom) in mol.atoms.iter().enumerate() {
                 eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
-                assert_eq!(format!("{:?}", ff.atom_types[i]), expected[i], "{} atom {}", name, i);
+                assert_eq!(
+                    format!("{:?}", ff.atom_types[i]),
+                    expected[i],
+                    "{} atom {}",
+                    name,
+                    i
+                );
             }
         }
     }
@@ -4132,7 +4382,13 @@ M  END"#,
             assert_eq!(mol.atoms.len(), expected.len(), "{} atom count", name);
             for (i, atom) in mol.atoms.iter().enumerate() {
                 eprintln!("Atom {} {}: {:?}", i, atom.symbol, ff.atom_types[i]);
-                assert_eq!(format!("{:?}", ff.atom_types[i]), expected[i], "{} atom {}", name, i);
+                assert_eq!(
+                    format!("{:?}", ff.atom_types[i]),
+                    expected[i],
+                    "{} atom {}",
+                    name,
+                    i
+                );
             }
         }
     }
@@ -4321,7 +4577,10 @@ M  END"#;
             assert!(
                 (our_energy - rdkit_e).abs() < 0.01,
                 "{}: our energy {} vs RDKit {}, delta {} exceeds 0.01",
-                name, our_energy, rdkit_e, our_energy - rdkit_e
+                name,
+                our_energy,
+                rdkit_e,
+                our_energy - rdkit_e
             );
         }
     }
@@ -4339,7 +4598,7 @@ M  END"#;
             ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
         }
 
-#[test]
+        #[test]
         fn test_aniline_param_audit() {
             let atom_types = [
                 MMFFAtomType::C_AR,
@@ -4403,7 +4662,20 @@ M  END"#;
 
             println!("\n=== Stretch-bend params: WebMM vs RDKit ===");
             #[allow(clippy::type_complexity)]
-            let sb_tests: &[(usize, usize, usize, u8, u8, u8, u8, u8, u8, f64, f64, &str)] = &[
+            let sb_tests: &[(
+                usize,
+                usize,
+                usize,
+                u8,
+                u8,
+                u8,
+                u8,
+                u8,
+                u8,
+                f64,
+                f64,
+                &str,
+            )] = &[
                 (1, 0, 5, 0, 0, 6, 6, 6, 0, -0.411, -0.411, "C1-C0-C5"),
                 (1, 0, 6, 0, 0, 6, 6, 7, 0, 0.429, 0.901, "C1-C0-N6"),
                 (0, 6, 7, 0, 0, 6, 7, 1, 0, 0.423, 0.186, "C0-N6-H7"),
@@ -4584,7 +4856,8 @@ M  END"#;
             assert!(
                 (bd.total() - rdkit_total).abs() < 0.01,
                 "aniline: total energy {} vs RDKit {}",
-                bd.total(), rdkit_total
+                bd.total(),
+                rdkit_total
             );
 
             // Bond lengths at RDKit geometry
@@ -4626,7 +4899,6 @@ M  END"#;
         }
     }
 }
-
 
 // ============================================================================
 // RDKit-verified typing tests for 2026-07 atom typing gap fixes
@@ -5050,15 +5322,15 @@ M  END"#;
         assert_eq!(heavy_type_ids(ETHYLENE), vec![2, 2], "ethylene");
         assert_eq!(heavy_type_ids(ALLENE), vec![2, 4, 2], "allene");
         assert_eq!(heavy_type_ids(KETENE), vec![2, 4, 7], "ketene");
-        assert_eq!(
-            heavy_type_ids(ACRYLATE),
-            vec![2, 2, 3, 7, 6, 1],
-            "acrylate"
-        );
+        assert_eq!(heavy_type_ids(ACRYLATE), vec![2, 2, 3, 7, 6, 1], "acrylate");
         assert_eq!(heavy_type_ids(METHANIMINE), vec![3, 9], "methanimine");
         // Regression guards: carbonyl / thiocarbonyl C stays 3
         assert_eq!(heavy_type_ids(ACETONE), vec![1, 3, 7, 1], "acetone");
-        assert_eq!(heavy_type_ids(THIOACETONE), vec![1, 3, 16, 1], "thioacetone");
+        assert_eq!(
+            heavy_type_ids(THIOACETONE),
+            vec![1, 3, 16, 1],
+            "thioacetone"
+        );
         assert_eq!(heavy_type_ids(VINYL_ETHER), vec![2, 2, 6, 1], "vinyl ether");
     }
 
@@ -5072,12 +5344,20 @@ M  END"#;
             "sulfonamide"
         );
         // Sulfinamide N stays 8 (RDKit-verified; NOT 48)
-        assert_eq!(heavy_type_ids(SULFINAMIDE), vec![1, 17, 7, 8], "sulfinamide");
+        assert_eq!(
+            heavy_type_ids(SULFINAMIDE),
+            vec![1, 17, 7, 8],
+            "sulfinamide"
+        );
     }
 
     #[test]
     fn test_nitro_types() {
-        assert_eq!(heavy_type_ids(NITROMETHANE), vec![1, 45, 32, 32], "nitromethane");
+        assert_eq!(
+            heavy_type_ids(NITROMETHANE),
+            vec![1, 45, 32, 32],
+            "nitromethane"
+        );
         assert_eq!(
             heavy_type_ids(NITROBENZENE),
             vec![37, 37, 37, 37, 37, 37, 45, 32, 32],
@@ -5101,35 +5381,103 @@ M  END"#;
         // DMSO: atoms (0 C, 1 S=17, 2 O, 3 C)
         let mol = crate::molecule::parser::parse_sdf(DMSO).unwrap();
         let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
-        assert!((ff.charges[1] - 0.113).abs() < 1e-3, "DMSO S: {}", ff.charges[1]);
-        assert!((ff.charges[2] - (-0.5)).abs() < 1e-3, "DMSO O: {}", ff.charges[2]);
-        assert!((ff.charges[0] - 0.1935).abs() < 1e-3, "DMSO C0: {}", ff.charges[0]);
-        assert!((ff.charges[3] - 0.1935).abs() < 1e-3, "DMSO C3: {}", ff.charges[3]);
+        assert!(
+            (ff.charges[1] - 0.113).abs() < 1e-3,
+            "DMSO S: {}",
+            ff.charges[1]
+        );
+        assert!(
+            (ff.charges[2] - (-0.5)).abs() < 1e-3,
+            "DMSO O: {}",
+            ff.charges[2]
+        );
+        assert!(
+            (ff.charges[0] - 0.1935).abs() < 1e-3,
+            "DMSO C0: {}",
+            ff.charges[0]
+        );
+        assert!(
+            (ff.charges[3] - 0.1935).abs() < 1e-3,
+            "DMSO C3: {}",
+            ff.charges[3]
+        );
 
         // Sulfone: atoms (0 C, 1 S=18, 2 O=32, 3 O=32, 4 C)
         let mol = crate::molecule::parser::parse_sdf(SULFONE).unwrap();
         let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
-        assert!((ff.charges[1] - 1.0896).abs() < 1e-3, "sulfone S: {}", ff.charges[1]);
-        assert!((ff.charges[2] - (-0.65)).abs() < 1e-3, "sulfone O2: {}", ff.charges[2]);
-        assert!((ff.charges[3] - (-0.65)).abs() < 1e-3, "sulfone O3: {}", ff.charges[3]);
-        assert!((ff.charges[0] - 0.1052).abs() < 1e-3, "sulfone C0: {}", ff.charges[0]);
-        assert!((ff.charges[4] - 0.1052).abs() < 1e-3, "sulfone C4: {}", ff.charges[4]);
+        assert!(
+            (ff.charges[1] - 1.0896).abs() < 1e-3,
+            "sulfone S: {}",
+            ff.charges[1]
+        );
+        assert!(
+            (ff.charges[2] - (-0.65)).abs() < 1e-3,
+            "sulfone O2: {}",
+            ff.charges[2]
+        );
+        assert!(
+            (ff.charges[3] - (-0.65)).abs() < 1e-3,
+            "sulfone O3: {}",
+            ff.charges[3]
+        );
+        assert!(
+            (ff.charges[0] - 0.1052).abs() < 1e-3,
+            "sulfone C0: {}",
+            ff.charges[0]
+        );
+        assert!(
+            (ff.charges[4] - 0.1052).abs() < 1e-3,
+            "sulfone C4: {}",
+            ff.charges[4]
+        );
 
         // Nitromethane: atoms (0 C, 1 N=45, 2 O=32, 3 O=32)
         let mol = crate::molecule::parser::parse_sdf(NITROMETHANE).unwrap();
         let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
-        assert!((ff.charges[1] - 0.7998).abs() < 1e-3, "nitro N: {}", ff.charges[1]);
-        assert!((ff.charges[2] - (-0.52)).abs() < 1e-3, "nitro O2: {}", ff.charges[2]);
-        assert!((ff.charges[3] - (-0.52)).abs() < 1e-3, "nitro O3: {}", ff.charges[3]);
-        assert!((ff.charges[0] - 0.2402).abs() < 1e-3, "nitro C: {}", ff.charges[0]);
+        assert!(
+            (ff.charges[1] - 0.7998).abs() < 1e-3,
+            "nitro N: {}",
+            ff.charges[1]
+        );
+        assert!(
+            (ff.charges[2] - (-0.52)).abs() < 1e-3,
+            "nitro O2: {}",
+            ff.charges[2]
+        );
+        assert!(
+            (ff.charges[3] - (-0.52)).abs() < 1e-3,
+            "nitro O3: {}",
+            ff.charges[3]
+        );
+        assert!(
+            (ff.charges[0] - 0.2402).abs() < 1e-3,
+            "nitro C: {}",
+            ff.charges[0]
+        );
 
         // Benzaldehyde: atoms (0 ipso C, 6 CHO, 7 O, 13 aldehyde H)
         let mol = crate::molecule::parser::parse_sdf(BENZALDEHYDE).unwrap();
         let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
-        assert!((ff.charges[7] - (-0.57)).abs() < 1e-3, "PhCHO O: {}", ff.charges[7]);
-        assert!((ff.charges[6] - 0.4238).abs() < 1e-3, "PhCHO CHO: {}", ff.charges[6]);
-        assert!((ff.charges[0] - 0.0862).abs() < 1e-3, "PhCHO ipso: {}", ff.charges[0]);
-        assert!((ff.charges[13] - 0.06).abs() < 1e-3, "PhCHO H: {}", ff.charges[13]);
+        assert!(
+            (ff.charges[7] - (-0.57)).abs() < 1e-3,
+            "PhCHO O: {}",
+            ff.charges[7]
+        );
+        assert!(
+            (ff.charges[6] - 0.4238).abs() < 1e-3,
+            "PhCHO CHO: {}",
+            ff.charges[6]
+        );
+        assert!(
+            (ff.charges[0] - 0.0862).abs() < 1e-3,
+            "PhCHO ipso: {}",
+            ff.charges[0]
+        );
+        assert!(
+            (ff.charges[13] - 0.06).abs() < 1e-3,
+            "PhCHO H: {}",
+            ff.charges[13]
+        );
     }
 
     /// Energy evaluation and geometry optimization must converge for the
@@ -5176,7 +5524,7 @@ mod type_audit5 {
             .collect()
     }
 
-// ---- SDF fixtures (RDKit-generated 2D coordinates) ----
+    // ---- SDF fixtures (RDKit-generated 2D coordinates) ----
 
     const ACETATE: &str = r#"Acetate
      RDKit          2D
@@ -5411,16 +5759,8 @@ M  END"#;
         let mol = parse_sdf(METHANIMINE).expect("parse failed");
         let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
         // type_ids applies base_type() (all H subtypes → 5), so check raw atom_types
-        assert_eq!(
-            mmff_type_id(ff.atom_types[0]),
-            3,
-            "methanimine C type"
-        );
-        assert_eq!(
-            mmff_type_id(ff.atom_types[1]),
-            9,
-            "methanimine N type"
-        );
+        assert_eq!(mmff_type_id(ff.atom_types[0]), 3, "methanimine C type");
+        assert_eq!(mmff_type_id(ff.atom_types[1]), 9, "methanimine N type");
         // Atom 4 is the N-H (imine hydrogen); type 27, not 23 or 28
         assert_eq!(
             mmff_type_id(ff.atom_types[4]),
@@ -5582,11 +5922,19 @@ M  END"#;
             let b1 = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
             let b2 = [p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2]];
             let b3 = [p4[0] - p3[0], p4[1] - p3[1], p4[2] - p3[2]];
-            let n1 = [b1[1]*b2[2]-b1[2]*b2[1], b1[2]*b2[0]-b1[0]*b2[2], b1[0]*b2[1]-b1[1]*b2[0]];
-            let n2 = [b2[1]*b3[2]-b2[2]*b3[1], b2[2]*b3[0]-b2[0]*b3[2], b2[0]*b3[1]-b2[1]*b3[0]];
-            let m = (n1[0]*n1[0]+n1[1]*n1[1]+n1[2]*n1[2]).sqrt();
-            let n = (n2[0]*n2[0]+n2[1]*n2[1]+n2[2]*n2[2]).sqrt();
-            let dot = (n1[0]*n2[0]+n1[1]*n2[1]+n1[2]*n2[2]) / (m*n);
+            let n1 = [
+                b1[1] * b2[2] - b1[2] * b2[1],
+                b1[2] * b2[0] - b1[0] * b2[2],
+                b1[0] * b2[1] - b1[1] * b2[0],
+            ];
+            let n2 = [
+                b2[1] * b3[2] - b2[2] * b3[1],
+                b2[2] * b3[0] - b2[0] * b3[2],
+                b2[0] * b3[1] - b2[1] * b3[0],
+            ];
+            let m = (n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2]).sqrt();
+            let n = (n2[0] * n2[0] + n2[1] * n2[1] + n2[2] * n2[2]).sqrt();
+            let dot = (n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]) / (m * n);
             dot.clamp(-1.0, 1.0).acos().to_degrees()
         }
 
@@ -5597,22 +5945,25 @@ M  END"#;
         assert!(
             d1_planar && d2_planar,
             "Aniline NH2 not planar: H7-N-C-C={:.1}° H8-N-C-C={:.1}°",
-            d1, d2
+            d1,
+            d2
         );
     }
 }
-
 
 #[cfg(test)]
 mod aniline_etkdg_planarity {
     #[test]
     fn check_webmm_etkdg_aniline() {
-        use crate::etkdg::{ETKDGConfig, generate_initial_coords_with_config};
+        use crate::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
         use crate::molecule::parser::parse_sdf;
 
         let sdf = "Aniline\n     RDKit          3D\n\n 13 13  0  0  0  0  0  0  0  0999 V2000\n   -1.2000    0.6930    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.5000   -0.6000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3000   -1.2000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0000   -0.7000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3000    0.6000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0000    1.1000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1500    1.3000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2500    2.2800    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.0000    0.8000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.4000   -1.1000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3500   -2.2700    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.7500   -1.5500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.3000    1.0500    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  1  1  0\n  1  7  1  0\n  7  8  1  0\n  7  9  1  0\n  2 10  1  0\n  3 11  1  0\n  4 12  1  0\n  5 13  1  0\nM  END";
         let mol = parse_sdf(sdf).unwrap();
-        let config = ETKDGConfig { random_seed: 42, ..Default::default() };
+        let config = ETKDGConfig {
+            random_seed: 42,
+            ..Default::default()
+        };
         let coords = generate_initial_coords_with_config(&mol, &config);
 
         // Print all coords
@@ -5627,17 +5978,17 @@ mod aniline_etkdg_planarity {
         let c0 = coords[0];
 
         // H-N-H angle
-        let v1 = [h7[0]-n[0], h7[1]-n[1], h7[2]-n[2]];
-        let v2 = [h8[0]-n[0], h8[1]-n[1], h8[2]-n[2]];
-        let d1 = (v1[0]*v1[0]+v1[1]*v1[1]+v1[2]*v1[2]).sqrt();
-        let d2 = (v2[0]*v2[0]+v2[1]*v2[1]+v2[2]*v2[2]).sqrt();
-        let dot = (v1[0]*v2[0]+v1[1]*v2[1]+v1[2]*v2[2])/(d1*d2);
-        let hnh = dot.clamp(-1.0,1.0).acos().to_degrees();
+        let v1 = [h7[0] - n[0], h7[1] - n[1], h7[2] - n[2]];
+        let v2 = [h8[0] - n[0], h8[1] - n[1], h8[2] - n[2]];
+        let d1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt();
+        let d2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]).sqrt();
+        let dot = (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (d1 * d2);
+        let hnh = dot.clamp(-1.0, 1.0).acos().to_degrees();
         println!("H-N-H angle: {:.1} deg", hnh);
 
         // Distance of H atoms from ring plane
         // Ring atoms: 0-5
-        let ring: Vec<[f64;3]> = (0..6).map(|i| coords[i]).collect();
+        let ring: Vec<[f64; 3]> = (0..6).map(|i| coords[i]).collect();
         let center = [
             ring.iter().map(|c| c[0]).sum::<f64>() / 6.0,
             ring.iter().map(|c| c[1]).sum::<f64>() / 6.0,
@@ -5645,21 +5996,33 @@ mod aniline_etkdg_planarity {
         ];
 
         // Simple normal: cross product of two ring diagonals
-        let r1 = [ring[3][0]-ring[0][0], ring[3][1]-ring[0][1], ring[3][2]-ring[0][2]];
-        let r2 = [ring[4][1]-ring[1][0], ring[4][1]-ring[1][1], ring[4][2]-ring[1][2]];
-        let normal = [
-            r1[1]*r2[2]-r1[2]*r2[1],
-            r1[2]*r2[0]-r1[0]*r2[2],
-            r1[0]*r2[1]-r1[1]*r2[0],
+        let r1 = [
+            ring[3][0] - ring[0][0],
+            ring[3][1] - ring[0][1],
+            ring[3][2] - ring[0][2],
         ];
-        let nlen = (normal[0]*normal[0]+normal[1]*normal[1]+normal[2]*normal[2]).sqrt();
-        let nhat = [normal[0]/nlen, normal[1]/nlen, normal[2]/nlen];
+        let r2 = [
+            ring[4][1] - ring[1][0],
+            ring[4][1] - ring[1][1],
+            ring[4][2] - ring[1][2],
+        ];
+        let normal = [
+            r1[1] * r2[2] - r1[2] * r2[1],
+            r1[2] * r2[0] - r1[0] * r2[2],
+            r1[0] * r2[1] - r1[1] * r2[0],
+        ];
+        let nlen = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+        let nhat = [normal[0] / nlen, normal[1] / nlen, normal[2] / nlen];
 
         for (idx, h) in [(7usize, h7), (8, h8)] {
-            let d = (h[0]-center[0])*nhat[0] + (h[1]-center[1])*nhat[1] + (h[2]-center[2])*nhat[2];
+            let d = (h[0] - center[0]) * nhat[0]
+                + (h[1] - center[1]) * nhat[1]
+                + (h[2] - center[2]) * nhat[2];
             println!("H{} distance from ring plane: {:.4} A", idx, d.abs());
         }
-        let n_dist = (n[0]-center[0])*nhat[0] + (n[1]-center[1])*nhat[1] + (n[2]-center[2])*nhat[2];
+        let n_dist = (n[0] - center[0]) * nhat[0]
+            + (n[1] - center[1]) * nhat[1]
+            + (n[2] - center[2]) * nhat[2];
         println!("N distance from ring plane: {:.4} A", n_dist.abs());
         // Aniline NH2 must be pyramidal with ~117° H-N-H (RDKit ETKDG behavior)
         assert!(
@@ -5667,8 +6030,14 @@ mod aniline_etkdg_planarity {
             "aniline H-N-H angle {} out of [110, 125]",
             hnh
         );
-        let h7_oop = ((h7[0]-center[0])*nhat[0] + (h7[1]-center[1])*nhat[1] + (h7[2]-center[2])*nhat[2]).abs();
-        let h8_oop = ((h8[0]-center[0])*nhat[0] + (h8[1]-center[1])*nhat[1] + (h8[2]-center[2])*nhat[2]).abs();
+        let h7_oop = ((h7[0] - center[0]) * nhat[0]
+            + (h7[1] - center[1]) * nhat[1]
+            + (h7[2] - center[2]) * nhat[2])
+            .abs();
+        let h8_oop = ((h8[0] - center[0]) * nhat[0]
+            + (h8[1] - center[1]) * nhat[1]
+            + (h8[2] - center[2]) * nhat[2])
+            .abs();
         // NH2 may be planar (MMFF94s) or pyramidal (RDKit ETKDG) — both valid.
         // The old fix_aniline_nh2_geometry enforced pyramidal but placed H's at
         // wrong C-N-H angles; it's now disabled. Just check H-N-H is sane.
@@ -5688,9 +6057,9 @@ mod aniline_etkdg_planarity {
 #[cfg(test)]
 mod regression_tests {
     use crate::mmff::bond::get_bond_params;
-    use crate::mmff::stretch_bend::get_stretch_bend_params;
     use crate::mmff::mmff_tables::compute_angle_type;
     use crate::mmff::params::get_mmff_bond_type;
+    use crate::mmff::stretch_bend::get_stretch_bend_params;
     use crate::mmff::{MMFFAtomType, MMFFForceField};
     use crate::molecule::parser::parse_sdf;
     use crate::molecule::BondType;
@@ -5723,7 +6092,11 @@ mod regression_tests {
         // the 3 terms must cycle which neighbor is atom1
         let atom1_set: std::collections::HashSet<_> =
             central_oops.iter().map(|o| o.atom1).collect();
-        assert_eq!(atom1_set.len(), 3, "each of the 3 neighbors must be atom1 once");
+        assert_eq!(
+            atom1_set.len(),
+            3,
+            "each of the 3 neighbors must be atom1 once"
+        );
     }
 
     /// Bug #2: the default stretch-bend (DFSB) lookup didn't canonicalize
@@ -5761,10 +6134,17 @@ mod regression_tests {
                 mol.atoms[k].atomic_number,
                 at,
             );
-            assert!(p.is_some(), "P-O-H stretch-bend must resolve (was silently dropped)");
+            assert!(
+                p.is_some(),
+                "P-O-H stretch-bend must resolve (was silently dropped)"
+            );
             resolved += 1;
         }
-        assert!(resolved >= 2, "expected >=2 P-O-H angles, found {}", resolved);
+        assert!(
+            resolved >= 2,
+            "expected >=2 P-O-H angles, found {}",
+            resolved
+        );
     }
 
     /// Bug #3: the stretch-bend *type* depends on bond_type_1 = the bond to the
@@ -5776,21 +6156,45 @@ mod regression_tests {
         // N_2(9) - C_2(3) - C_VIN(2): the purine angle that was broken.
         // ti=9 > tk=2, so the lookup must canonicalize before computing sb_type.
         let fwd = get_stretch_bend_params(
-            MMFFAtomType::N_2, MMFFAtomType::C_2, MMFFAtomType::C_VIN,
-            0, 1, 7, 6, 6, 1, // bt_ij=0 (C=N dbl), bt_jk=1 (C-C sbmb); Z: N,C,C
+            MMFFAtomType::N_2,
+            MMFFAtomType::C_2,
+            MMFFAtomType::C_VIN,
+            0,
+            1,
+            7,
+            6,
+            6,
+            1, // bt_ij=0 (C=N dbl), bt_jk=1 (C-C sbmb); Z: N,C,C
         );
         let rev = get_stretch_bend_params(
-            MMFFAtomType::C_VIN, MMFFAtomType::C_2, MMFFAtomType::N_2,
-            1, 0, 6, 6, 7, 1, // same two bonds, swapped order
+            MMFFAtomType::C_VIN,
+            MMFFAtomType::C_2,
+            MMFFAtomType::N_2,
+            1,
+            0,
+            6,
+            6,
+            7,
+            1, // same two bonds, swapped order
         );
         let (kf, kr) = (fwd.expect("fwd"), rev.expect("rev"));
         // kba_ijk must correspond to the same physical bond in both orders:
         // fwd.kba_ijk (N-C side) == rev.kba_kji, and fwd.kba_kji == rev.kba_ijk
-        assert!((kf.kba_ijk - kr.kba_kji).abs() < 1e-9, "N-C kba differs on swap");
-        assert!((kf.kba_kji - kr.kba_ijk).abs() < 1e-9, "C-C kba differs on swap");
+        assert!(
+            (kf.kba_ijk - kr.kba_kji).abs() < 1e-9,
+            "N-C kba differs on swap"
+        );
+        assert!(
+            (kf.kba_kji - kr.kba_ijk).abs() < 1e-9,
+            "C-C kba differs on swap"
+        );
         // and it must NOT be the DFSB default (0.3, 0.3) — the specific entry is
         // (0.61, 0.227) for the N-C / C-C halves
-        assert!(kf.kba_ijk > 0.5, "expected specific kba ~0.61, got {}", kf.kba_ijk);
+        assert!(
+            kf.kba_ijk > 0.5,
+            "expected specific kba ~0.61, got {}",
+            kf.kba_ijk
+        );
     }
 
     /// Bond-param symmetry: every (A,B,bt) entry must equal (B,A,bt). The
@@ -5828,10 +6232,31 @@ mod regression_tests {
         for &(a, b, bt) in cases {
             let pa = get_bond_params(a, b, bt);
             let pb = get_bond_params(b, a, bt);
-            assert_eq!(pa.is_some(), pb.is_some(), "({:?},{:?},{:?}) asymmetry: one resolves, other doesn't", a, b, bt);
+            assert_eq!(
+                pa.is_some(),
+                pb.is_some(),
+                "({:?},{:?},{:?}) asymmetry: one resolves, other doesn't",
+                a,
+                b,
+                bt
+            );
             if let (Some(pa), Some(pb)) = (pa, pb) {
-                assert!((pa.r0 - pb.r0).abs() < 1e-9, "({:?},{:?}) r0 differs: {} vs {}", a, b, pa.r0, pb.r0);
-                assert!((pa.k_bond - pb.k_bond).abs() < 1e-9, "({:?},{:?}) kb differs: {} vs {}", a, b, pa.k_bond, pb.k_bond);
+                assert!(
+                    (pa.r0 - pb.r0).abs() < 1e-9,
+                    "({:?},{:?}) r0 differs: {} vs {}",
+                    a,
+                    b,
+                    pa.r0,
+                    pb.r0
+                );
+                assert!(
+                    (pa.k_bond - pb.k_bond).abs() < 1e-9,
+                    "({:?},{:?}) kb differs: {} vs {}",
+                    a,
+                    b,
+                    pa.k_bond,
+                    pb.k_bond
+                );
             }
         }
     }
@@ -5846,7 +6271,13 @@ mod regression_tests {
         let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
         let bd = ff.calculate_energy_breakdown(&c);
         let check = |name: &str, got: f64, want: f64| {
-            assert!((got - want).abs() < 0.05, "{}: got {:.3}, want {:.3}", name, got, want);
+            assert!(
+                (got - want).abs() < 0.05,
+                "{}: got {:.3}, want {:.3}",
+                name,
+                got,
+                want
+            );
         };
         check("bond", bd.bond, 0.8143);
         check("angle", bd.angle, 7.0014);
@@ -5866,16 +6297,24 @@ mod regression_tests {
     fn no_degenerate_torsions_in_3_ring() {
         let mol = parse_sdf(include_str!("../scripts/val_set/cyclopropane.sdf")).expect("parse");
         let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
-        let degenerate: Vec<_> = ff.torsions.iter()
-            .filter(|t| t.atom1 == t.atom4)
-            .collect();
-        assert!(degenerate.is_empty(),
+        let degenerate: Vec<_> = ff.torsions.iter().filter(|t| t.atom1 == t.atom4).collect();
+        assert!(
+            degenerate.is_empty(),
             "found {} torsions with atom1==atom4 (degenerate, should be 0)",
-            degenerate.len());
+            degenerate.len()
+        );
         // all 4 atoms of every torsion must be distinct
         for t in &ff.torsions {
             let s = std::collections::HashSet::from([t.atom1, t.atom2, t.atom3, t.atom4]);
-            assert_eq!(s.len(), 4, "torsion ({},{},{},{}) has non-distinct atoms", t.atom1, t.atom2, t.atom3, t.atom4);
+            assert_eq!(
+                s.len(),
+                4,
+                "torsion ({},{},{},{}) has non-distinct atoms",
+                t.atom1,
+                t.atom2,
+                t.atom3,
+                t.atom4
+            );
         }
     }
 
@@ -5889,6 +6328,10 @@ mod regression_tests {
         let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
         let e = ff.calculate_energy(&c);
         // RDKit 2025.09.3 MMFF94s total = 27.34
-        assert!((e - 27.34).abs() < 0.5, "purine energy {} vs RDKit 27.34", e);
+        assert!(
+            (e - 27.34).abs() < 0.5,
+            "purine energy {} vs RDKit 27.34",
+            e
+        );
     }
 }

@@ -1,49 +1,45 @@
-# Plan: README refresh — align with 0.6.0 codebase
+# Plan: GitHub CI/pages audit pass — rustfmt clean, pin wasm-pack in CI
 
 ## Context
-README.md is stale: last touched in the GitHub Pages commit (d3b43db), predating
-the MD engine, metadynamics, GBSA implicit solvation, the MMFF 230/230 RDKit
-validation, the site/ + gitignored pkg/ layout, and the pinned wasm-pack
-devDependency. It also contains a broken rustup URL and recommends
-`cargo install wasm-pack`, which AGENTS.md forbids. Docs-only pass — no code
-changes.
+Careful audit of the GitHub setup found:
+1. **Rust CI is red on every recent commit** — `cargo fmt --all -- --check` fails
+   with 505 hunks across 28 files (long-standing; clippy/test/build-wasm steps
+   are skipped or green, but the lint job never passes). `cargo clippy -- -D
+   warnings` itself passes locally.
+2. **wasm-pack version drift CI vs local**: `pages.yml` and `rust.yml` install
+   wasm-pack via the unpinned installer script (`curl init.sh | sh`) → CI gets
+   v0.15.0, while local dev builds with the pinned devDependency 0.13.1
+   (package.json `^0.13.0`). The deployed Pages artifact is therefore built
+   with a different tool than local — reproducibility gap.
+3. Pages deploys themselves are healthy: latest push (d48cfc1, incl. eb57769
+   src changes) deployed successfully per the Actions API. Live page runtime
+   cannot be verified from this environment (github.io is SSL-blocked here).
 
-## Phase 1 — README.md refresh (keep existing structure/format)
-- **Intro**: mention MMFF94/MMFF94s + ETKDG v3 + L-BFGS + MD + metadynamics + GBSA.
-- **Project structure**: reflect the actual tree — `src/forces.rs` (ForceField
-  trait), `src/md/`, `src/metad/`, `src/solvation/`, full `src/mmff/` module list,
-  `site/index.html` (committed demo), `pkg/` (gitignored build output),
-  `scripts/` (RDKit validation/benchmark tooling), `examples/`.
-- **Progress**: add MD (velocity-Verlet/BAOAB Langevin), metadynamics
-  (well-tempered, FES), GBSA (OBC2 + LCPO SA), MMFF validation 230/230 vs RDKit;
-  update test count 86 → 199.
-- **Build instructions**: fix the rustup URL typo; replace `cargo install
-  wasm-pack` with the pinned devDependency (`npm install` + `npm run build`,
-  matching package.json); keep the manual wasm-bindgen option with a version-
-  match note; note `wasm32-simd128` in `.cargo/config.toml` (scoped to wasm
-  target, native unaffected).
-- **Demo usage**: add the ⚙ Optimize / 🔥 MD / 🔬 Metadynamics / 🌐 Embed 3D
-  buttons and trajectory playback.
-- **WASM API**: document `init()`, `generate_initial_coordinates_wasm`,
-  `optimize_from_sdf` (+ `_direct`), `run_md_from_sdf`, `run_metadynamics_from_sdf`
-  with their options/results (from src/lib.rs).
-- **Validation**: brief section pointing at `scripts/benchmark_mmff.py`
-  (230/230 gate) and `scripts/validate_etkdg.py` (multi-seed harness).
-- **Resources**: add links to `docs/` (atom-type-coverage.md,
-  validation-energy-analysis.md).
+## Phase 1 — `cargo fmt --all` (formatting-only commit)
+- Run `cargo fmt --all`; commit the result. Purely mechanical whitespace
+  changes (same rustfmt 1.8.0/rustc 1.92.0 as CI's dtolnay@stable, so output
+  matches). No semantics change; this unblocks the lint job's fmt step.
 
-## Phase 2 — Docs per workflow
+## Phase 2 — Pin wasm-pack v0.13.1 in CI workflows
+- Replace the unpinned installer step in `.github/workflows/pages.yml` and
+  `.github/workflows/rust.yml` with a pinned download of
+  `wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz` (verified to exist on
+  the v0.13.1 release) → CI builds with the same version as local dev.
+
+## Phase 3 — Docs per workflow
 - Overwrite `PLAN.md` (this file).
-- Update `CODE_STATUS.md`: Recently Completed entry.
+- Update `CODE_STATUS.md`: Recently Completed entry + CI status note.
 
 ## Verification
-- README renders (markdown structure intact); every path/command in the README
-  matches the repo (verified against Cargo.toml, package.json, src tree,
-  site/index.html button ids, lib.rs exports).
-- `cargo test` still 199/199 (no code change, sanity only).
-- Commit the pass.
+- `cargo fmt --all -- --check` — 0 diffs.
+- `cargo clippy -- -D warnings` — 0 warnings (exactly as CI's lint job runs).
+- `cargo test` — 199/199.
+- `wasm-pack build --target web --release` (local 0.13.1) — succeeds; staged
+  `pkg/` demo is the same contract as CI output.
+- Push; poll GitHub Actions until both workflows complete green.
 
 ## Out of scope
-- License section (TBD — not decided).
-- Rewriting the historical Progress list into a changelog.
-- Updating `docs/` contents or `site/index.html` copy.
+- Live-site runtime verification (github.io unreachable from this environment;
+  user opens https://ruibin-liu.github.io/WebMM/ in a browser).
+- Reformatting `scripts/` Python or `site/index.html` (not rustfmt's domain).
+- Changing the deployed artifact layout or the pages.yml trigger paths.

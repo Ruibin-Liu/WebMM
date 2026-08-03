@@ -273,9 +273,7 @@ fn is_aromatic_candidate(atom_idx: usize, ring: &[usize], mol: &Molecule) -> boo
                 estimate_total_neighbors(atom_idx, mol) <= 3
             }
         }
-        7 => {
-            has_multiple || ring_bonds == 3 || (ring.len() == 5 && ring_bonds == 2)
-        }
+        7 => has_multiple || ring_bonds == 3 || (ring.len() == 5 && ring_bonds == 2),
         8 | 16 => ring.len() == 5 && ring_bonds == 2 || has_multiple,
         _ => has_multiple,
     }
@@ -298,7 +296,8 @@ fn count_pi_electrons(atom_idx: usize, ring: &[usize], mol: &Molecule) -> i32 {
     match atom.atomic_number {
         6 => 1,
         7 => {
-            if ring.len() == 5 && ring_bonds == 2
+            if ring.len() == 5
+                && ring_bonds == 2
                 && (total_neighbors >= 3 || atom.charge < -0.5)
                 && atom.charge <= 0.5
             {
