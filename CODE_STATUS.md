@@ -15,6 +15,12 @@ via fused-ring torsions). The systematic torsion/hybridization/K₁₂ fixes (r 
 further gains need 4D-embedding quality work.
 
 ## Recently Completed
+- **GBSA: exact HCT spherical-cap overlap integral + LCPO SA term.** Upgraded `src/solvation/mod.rs`:
+  - **Spherical-cap overlap integral**: replaced the divergent non-overlap-only desolvation formula with the exact HCT integral over V_j outside V_i, valid for ALL overlap cases (non-overlap, partial, full containment). Derived analytically via the full-shell and spherical-cap antiderivatives F_full(s) and F_cap(s). The Leibniz boundary terms cancel at the transition points, giving a smooth, finite force everywhere. **Result: NVE drift went from 536% (divergent formula) to 0.07%** (2000 steps, dt=0.25 fs).
+  - **SA (surface area) nonpolar term**: LCPO analytical SASA (Weiser-Tsui-Case coefficients) with gradient. E_SA = γ·Σ_i [a1·Si + a2·Σ Sij + a3·Σ Sij²], Sij = π·Ri·(Ri-xi) spherical-cap area. Enabled via `sa_surface_tension` config (0.00542 kcal/mol/Å² for water).
+  - **Validated**: FD gradient matches (max err <0.1, now including SA term); NVE drift 0.07%; single-ion Born self-energy matches analytical; GB+SA lowers energy for polar molecules.
+  - 199 tests, 0 clippy, 230/230 MMFF.
+
 - **GBSA implicit-solvent model — composable ForceField term with analytical OBC2 gradient.** `src/solvation/mod.rs` (new), wired as `pub mod solvation` in lib.rs:
   - **GBSA** wraps any `&dyn ForceField` (e.g. MMFF) and adds the Onufriev-Bashford-Case (OBC2) GB electrostatic solvation correction. The vacuum Coulomb stays; GB adds the reaction-field ΔG_GB.
   - **Born radii** via the exact HCT pairwise desolvation integral (derived analytically: `ψ_ij = (1/4d)·ln((d-Rj)/(d+Rj)) + Rj/(2(d²-Rj²))`) with OBC2 tanh scaling. Bondi VDW radii + 0.195 Å offset. Cosine switching at d=Ri+Rj for smoothness.

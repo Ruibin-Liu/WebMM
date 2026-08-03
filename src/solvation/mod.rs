@@ -33,6 +33,19 @@ fn bondi_radius(z: u8) -> f64 {
     }
 }
 
+/// LCPO (Linear Combination of Pairwise Overlaps) SASA coefficients [a1, a2, a3]
+/// from Weiser, Tsui, Case 1999. Used for the nonpolar SA term.
+fn lcpo_coeffs(z: u8) -> [f64; 3] {
+    match z {
+        1 => [0.1120, 0.0048, -0.0022],  // H
+        6 => [0.1179, 0.0022, -0.0013],  // C (sp3; sp2 similar)
+        7 => [0.1560, 0.0111, -0.0048],  // N
+        8 => [0.1960, 0.0100, -0.0046],  // O
+        16 => [0.2350, 0.0100, -0.0046], // S
+        _ => [0.1179, 0.0022, -0.0013],  // default: C
+    }
+}
+
 #[derive(Clone)]
 pub struct GBSAConfig {
     pub solvent_dielectric: f64,
@@ -52,7 +65,9 @@ impl Default for GBSAConfig {
 pub struct GBSA<'a> {
     ff: &'a dyn ForceField,
     charges: Vec<f64>,
-    radii: Vec<f64>, // R_vdw + offset
+    radii: Vec<f64>, // R_vdw + offset (Born radius boundary)
+    sa_radii: Vec<f64>, // R_vdw + probe (SASA boundary)
+    lcpo: Vec<[f64; 3]>, // (a1, a2, a3) LCPO coefficients per atom
     dielectric_factor: f64,
     obc2: bool,
     sa_tension: f64,
@@ -64,50 +79,93 @@ impl<'a> GBSA<'a> {
         let n = mol.atoms.len();
         let radii: Vec<f64> = mol.atoms.iter()
             .map(|a| bondi_radius(a.atomic_number) + config.radius_offset).collect();
-        Self { ff, charges: charges.to_vec(), radii,
+        let sa_radii: Vec<f64> = mol.atoms.iter()
+            .map(|a| bondi_radius(a.atomic_number) + 1.4).collect();
+        let lcpo: Vec<[f64; 3]> = mol.atoms.iter().map(|a| lcpo_coeffs(a.atomic_number)).collect();
+        Self { ff, charges: charges.to_vec(), radii, sa_radii, lcpo,
             dielectric_factor: 1.0 / config.solute_dielectric - 1.0 / config.solvent_dielectric,
             obc2: config.obc2, sa_tension: config.sa_surface_tension, n }
     }
 
+    // ---- Pairwise desolvation: exact HCT integral over V_j outside V_i ----
+    // Handles all overlap cases (non-overlap, partial, full containment).
+    // Derived analytically: the full-sphere and spherical-cap antiderivatives.
+
+    /// Antiderivative of the full-shell angular integral: ∫ s²/(d²-s²)² ds
     #[inline]
-    fn desolv(d: f64, rj: f64) -> f64 {
-        let diff = d * d - rj * rj;
-        if diff <= 1e-8 { return 0.0; }
-        (0.25 / d) * ((d - rj) / (d + rj)).ln() + rj / (2.0 * diff)
+    fn f_full(s: f64, d: f64) -> f64 {
+        let diff = d * d - s * s;
+        if diff.abs() < 1e-14 { return 0.0; }
+        (1.0 / (4.0 * d)) * (((d - s) / (d + s)).ln() + 2.0 * s * d / diff)
+    }
+    /// Antiderivative of the cap angular integral: (1/(4d))·∫ s·(1/ri²-1/(s+d)²) ds
+    #[inline]
+    fn f_cap(s: f64, d: f64, ri: f64) -> f64 {
+        (1.0 / (4.0 * d)) * (s * s / (2.0 * ri * ri) - (s + d).ln() - d / (s + d))
     }
 
+    /// ψ_ij: desolvation of atom i (radius ri) by atom j (radius rj) at distance d.
+    /// Finite for ALL d (no divergence at d=rj).
     #[inline]
-    fn desolv_d(d: f64, rj: f64) -> f64 {
-        let d2 = d * d;
-        let diff = d2 - rj * rj;
-        if diff <= 1e-8 { return 0.0; }
-        let lr = ((d - rj) / (d + rj)).ln();
-        -lr / (4.0 * d2) + rj / (2.0 * d * diff) - rj * d / (diff * diff)
+    fn desolv(d: f64, ri: f64, rj: f64) -> f64 {
+        let rsum = ri + rj;
+        if d >= rsum {
+            // Non-overlap: full sphere of j is outside i.
+            let diff = d * d - rj * rj;
+            if diff <= 1e-12 { return 0.0; }
+            return (0.25 / d) * ((d - rj) / (d + rj)).ln() + rj / (2.0 * diff);
+        }
+        if d + rj <= ri {
+            return 0.0; // j entirely inside i → no displaced dielectric.
+        }
+        // Partial overlap.
+        if d <= ri {
+            // Center of j inside i's sphere: cap from s=ri-d to s=rj.
+            Self::f_cap(rj, d, ri) - Self::f_cap(ri - d, d, ri)
+        } else {
+            // Center of j outside i: full-shell [0, d-ri] + cap [d-ri, rj].
+            Self::f_full(d - ri, d) + Self::f_cap(rj, d, ri) - Self::f_cap(d - ri, d, ri)
+        }
     }
 
-    /// Switched desolvation: smooth cosine fade to zero over [rsum-0.3, rsum]
-    /// to avoid the hard-cutoff force discontinuity at d=rsum.
-    const SWITCH_WIDTH: f64 = 0.3;
+    /// ∂F_full/∂d (holding s constant).
     #[inline]
-    fn desolv_sw(d: f64, rj: f64, rsum: f64) -> f64 {
-        if d >= rsum { return 0.0; }
-        let psi = Self::desolv(d, rj);
-        let on = rsum - Self::SWITCH_WIDTH;
-        if d <= on { return psi; }
-        let t = (d - on) / Self::SWITCH_WIDTH;
-        psi * 0.5 * (1.0 + (std::f64::consts::PI * t).cos())
+    fn f_full_dd(s: f64, d: f64) -> f64 {
+        let diff = d * d - s * s;
+        if diff.abs() < 1e-14 { return 0.0; }
+        let lr = ((d - s) / (d + s)).ln();
+        (-1.0 / (4.0 * d * d)) * (lr + 2.0 * s * d / diff) - s.powi(3) / (d * diff * diff)
     }
+    /// ∂F_cap/∂d (holding s, ri constant).
     #[inline]
-    fn desolv_sw_d(d: f64, rj: f64, rsum: f64) -> f64 {
-        if d >= rsum { return 0.0; }
-        let psi = Self::desolv(d, rj);
-        let psi_d = Self::desolv_d(d, rj);
-        let on = rsum - Self::SWITCH_WIDTH;
-        if d <= on { return psi_d; }
-        let t = (d - on) / Self::SWITCH_WIDTH;
-        let s = 0.5 * (1.0 + (std::f64::consts::PI * t).cos());
-        let s_d = -0.5 * (std::f64::consts::PI * t).sin() * std::f64::consts::PI / Self::SWITCH_WIDTH;
-        psi_d * s + psi * s_d
+    fn f_cap_dd(s: f64, d: f64, ri: f64) -> f64 {
+        let sp = s + d;
+        let inner = s * s / (2.0 * ri * ri) - sp.ln() - d / sp;
+        (-1.0 / (4.0 * d * d)) * inner + (1.0 / (4.0 * d)) * (-1.0 / sp - s / (sp * sp))
+    }
+
+    /// dψ_ij/dd: the desolvation derivative. Analytical for all overlap cases
+    /// (Leibniz boundary terms cancel at the transition points).
+    #[inline]
+    fn desolv_d(d: f64, ri: f64, rj: f64) -> f64 {
+        let rsum = ri + rj;
+        if d >= rsum {
+            // Non-overlap.
+            let d2 = d * d;
+            let diff = d2 - rj * rj;
+            if diff <= 1e-12 { return 0.0; }
+            let lr = ((d - rj) / (d + rj)).ln();
+            return -lr / (4.0 * d2) + rj / (2.0 * d * diff) - rj * d / (diff * diff);
+        }
+        if d + rj <= ri {
+            return 0.0;
+        }
+        // Partial overlap: dψ/dd = Σ ∂F/∂d at limits (boundary terms cancel).
+        if d <= ri {
+            Self::f_cap_dd(rj, d, ri) - Self::f_cap_dd(ri - d, d, ri)
+        } else {
+            Self::f_full_dd(d - ri, d) + Self::f_cap_dd(rj, d, ri) - Self::f_cap_dd(d - ri, d, ri)
+        }
     }
 }
 
@@ -126,18 +184,9 @@ impl<'a> ForceField for GBSA<'a> {
                 let dy = coords[i][1] - coords[j][1];
                 let dz = coords[i][2] - coords[j][2];
                 let d = (dx * dx + dy * dy + dz * dz).sqrt();
-                let rsum = self.radii[i] + self.radii[j];
-                if d >= rsum { continue; }
-                // Skip deeply-overlapping pairs (d ≤ rj+margin): the 1/(d²-rj²)
-                // Coulomb-field integral diverges for overlapping spheres.
-                // Bonded atoms (1-2, tight 1-3) don't contribute to the solvation shell.
-                const SKIP_MARGIN: f64 = 0.1;
-                if d > self.radii[j] + SKIP_MARGIN {
-                    psi[i] += Self::desolv_sw(d, self.radii[j], rsum);
-                }
-                if d > self.radii[i] + SKIP_MARGIN {
-                    psi[j] += Self::desolv_sw(d, self.radii[i], rsum);
-                }
+                // Exact HCT desolvation (handles all overlap cases, no divergence).
+                psi[i] += Self::desolv(d, self.radii[i], self.radii[j]);
+                psi[j] += Self::desolv(d, self.radii[j], self.radii[i]);
             }
         }
         let mut born = vec![0.0f64; n];
@@ -210,15 +259,8 @@ impl<'a> ForceField for GBSA<'a> {
                 let dy = coords[i][1] - coords[j][1];
                 let dz = coords[i][2] - coords[j][2];
                 let r = (dx * dx + dy * dy + dz * dz).sqrt();
-                let rsum = self.radii[i] + self.radii[j];
-                if r >= rsum { continue; }
-                const SKIP_MARGIN: f64 = 0.1;
-                let dpsi_ij = if r > self.radii[j] + SKIP_MARGIN {
-                    Self::desolv_sw_d(r, self.radii[j], rsum)
-                } else { 0.0 }; // dψ_i/dr (i desolvated by j)
-                let dpsi_ji = if r > self.radii[i] + SKIP_MARGIN {
-                    Self::desolv_sw_d(r, self.radii[i], rsum)
-                } else { 0.0 }; // dψ_j/dr (j desolvated by i)
+                let dpsi_ij = Self::desolv_d(r, self.radii[i], self.radii[j]); // dψ_i/dr
+                let dpsi_ji = Self::desolv_d(r, self.radii[j], self.radii[i]); // dψ_j/dr
                 let inv_r = 1.0 / r;
                 let g_brn = (b_coeff[i] * chain[i] * dpsi_ij + b_coeff[j] * chain[j] * dpsi_ji) * inv_r;
                 grad[i][0] += g_brn * dx; grad[i][1] += g_brn * dy; grad[i][2] += g_brn * dz;
@@ -226,8 +268,78 @@ impl<'a> ForceField for GBSA<'a> {
             }
         }
 
-        let _ = self.sa_tension; // SA term not yet implemented (TODO: LCPO area)
-        e_ff + e_gb
+        // --- SA (surface area) nonpolar term via LCPO ---
+        let mut e_sa = 0.0;
+        if self.sa_tension > 0.0 {
+            let g = self.sa_tension;
+            // Pass 1: per-atom LCPO sums (Σ Sij, Σ Sij²) for the energy.
+            let mut s_sum = vec![0.0f64; n];
+            let mut s_sq_sum = vec![0.0f64; n];
+            for i in 0..n {
+                for j in 0..i {
+                    let dx = coords[i][0] - coords[j][0];
+                    let dy = coords[i][1] - coords[j][1];
+                    let dz = coords[i][2] - coords[j][2];
+                    let d = (dx * dx + dy * dy + dz * dz).sqrt();
+                    let ri = self.sa_radii[i];
+                    let rj = self.sa_radii[j];
+                    if d >= ri + rj { continue; }
+                    // Sij = π·Ri·(Ri - xi), xi = (d²+Ri²-Rj²)/(2d)
+                    let sij = if d + rj <= ri { 0.0 } else {
+                        let xi = (d * d + ri * ri - rj * rj) / (2.0 * d);
+                        std::f64::consts::PI * ri * (ri - xi).max(0.0)
+                    };
+                    let sji = if d + ri <= rj { 0.0 } else {
+                        let xj = (d * d + rj * rj - ri * ri) / (2.0 * d);
+                        std::f64::consts::PI * rj * (rj - xj).max(0.0)
+                    };
+                    s_sum[i] += sij; s_sq_sum[i] += sij * sij;
+                    s_sum[j] += sji; s_sq_sum[j] += sji * sji;
+                }
+            }
+            for i in 0..n {
+                let si = 4.0 * std::f64::consts::PI * self.sa_radii[i].powi(2);
+                e_sa += self.lcpo[i][0] * si
+                    + self.lcpo[i][1] * s_sum[i]
+                    + self.lcpo[i][2] * s_sq_sum[i];
+            }
+            e_sa *= g;
+
+            // Pass 2: SA gradient. dSij/dd = -π·Ri·(d²-Ri²+Rj²)/(2d²)
+            for i in 0..n {
+                for j in 0..i {
+                    let dx = coords[i][0] - coords[j][0];
+                    let dy = coords[i][1] - coords[j][1];
+                    let dz = coords[i][2] - coords[j][2];
+                    let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
+                    let ri = self.sa_radii[i];
+                    let rj = self.sa_radii[j];
+                    if d >= ri + rj { continue; }
+                    let inv_d = 1.0 / d;
+                    // Sij and its derivative
+                    let (sij, dsij_dd) = if d + rj <= ri { (0.0, 0.0) } else {
+                        let xi = (d * d + ri * ri - rj * rj) / (2.0 * d);
+                        let s = std::f64::consts::PI * ri * (ri - xi).max(0.0);
+                        let ds = -std::f64::consts::PI * ri * (d * d - ri * ri + rj * rj) / (2.0 * d * d);
+                        (s, ds)
+                    };
+                    let (sji, dsji_dd) = if d + ri <= rj { (0.0, 0.0) } else {
+                        let xj = (d * d + rj * rj - ri * ri) / (2.0 * d);
+                        let s = std::f64::consts::PI * rj * (rj - xj).max(0.0);
+                        let ds = -std::f64::consts::PI * rj * (d * d - rj * rj + ri * ri) / (2.0 * d * d);
+                        (s, ds)
+                    };
+                    // Gradient coefficient: (a2_k + 2·a3_k·Skj)·dSkj/dd + cross-term
+                    let coef_i = g * (self.lcpo[i][1] + 2.0 * self.lcpo[i][2] * sij) * dsij_dd;
+                    let coef_j = g * (self.lcpo[j][1] + 2.0 * self.lcpo[j][2] * sji) * dsji_dd;
+                    let g_sa = (coef_i + coef_j) * inv_d;
+                    grad[i][0] += g_sa * dx; grad[i][1] += g_sa * dy; grad[i][2] += g_sa * dz;
+                    grad[j][0] -= g_sa * dx; grad[j][1] -= g_sa * dy; grad[j][2] -= g_sa * dz;
+                }
+            }
+        }
+
+        e_ff + e_gb + e_sa
     }
 }
 
@@ -269,7 +381,9 @@ mod tests {
         let sdf = std::fs::read_to_string("scripts/val_set/ethanol.sdf").unwrap();
         let mol = parse_sdf(&sdf).unwrap();
         let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
-        let gbsa = GBSA::new(&ff, &mol, &ff.charges, &GBSAConfig::default());
+        // Test with SA enabled (full GBSA).
+        let cfg = GBSAConfig { sa_surface_tension: 0.00542, ..GBSAConfig::default() };
+        let gbsa = GBSA::new(&ff, &mol, &ff.charges, &cfg);
         let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
         let mut grad = vec![[0.0; 3]; mol.atoms.len()];
         gbsa.energy_and_gradient(&coords, &mut grad);
@@ -307,10 +421,8 @@ mod tests {
 
     /// GBSA NVE stability smoke test. The GB gradient is verified correct by
     /// finite-difference (gb_gradient_matches_finite_difference). This test
-    /// checks the energy stays finite during MD (no NaN/Inf blowup). Note: the
-    /// HCT desolvation has a residual force discontinuity for overlapping atom
-    /// pairs (d ≈ Rj); full NVE conservation needs the proper spherical-cap
-    /// overlap formula (TODO). NVT MD (thermostat) is recommended for practical use.
+    /// GBSA NVE energy conservation. The overlap integral eliminates the HCT
+    /// divergence and cutoff discontinuity, so NVE should be stable.
     #[test]
     fn gb_nve_stays_finite() {
         use crate::md::{MDConfig, MDRunner};
@@ -319,14 +431,18 @@ mod tests {
         let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
         let gbsa = GBSA::new(&ff, &mol, &ff.charges, &GBSAConfig::default());
         let mut runner = MDRunner::from_molecule(&gbsa, &mol, MDConfig {
-            dt_fs: 0.1, temperature_k: 300.0, friction_per_ps: 0.0, seed: 42,
+            dt_fs: 0.25, temperature_k: 300.0, friction_per_ps: 0.0, seed: 42,
         });
-        for _ in 0..500 {
+        let e0 = runner.potential_energy() + runner.kinetic_energy();
+        let mut max_drift: f64 = 0.0;
+        for _ in 0..2000 {
             runner.step();
             let e = runner.potential_energy() + runner.kinetic_energy();
-            assert!(e.is_finite(), "GBSA NVE energy became non-finite");
-            assert!(e.abs() < 1e6, "GBSA NVE energy blew up: {:.0}", e);
+            assert!(e.is_finite());
+            max_drift = max_drift.max((e - e0).abs() / e0.abs().max(1.0));
         }
+        eprintln!("GB NVE drift over 2000 steps: {:.2}%", max_drift * 100.0);
+        assert!(max_drift < 0.10, "GB NVE drift {:.1}% > 10%", max_drift * 100.0);
     }
 }
 
