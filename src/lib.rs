@@ -22,6 +22,7 @@ pub mod md;
 
 /// Metadynamics (enhanced sampling via collective variables)
 pub mod metad;
+pub mod solvation;
 
 /// L-BFGS optimization algorithm
 pub mod optimizer;

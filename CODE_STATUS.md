@@ -15,6 +15,15 @@ via fused-ring torsions). The systematic torsion/hybridization/K₁₂ fixes (r 
 further gains need 4D-embedding quality work.
 
 ## Recently Completed
+- **GBSA implicit-solvent model — composable ForceField term with analytical OBC2 gradient.** `src/solvation/mod.rs` (new), wired as `pub mod solvation` in lib.rs:
+  - **GBSA** wraps any `&dyn ForceField` (e.g. MMFF) and adds the Onufriev-Bashford-Case (OBC2) GB electrostatic solvation correction. The vacuum Coulomb stays; GB adds the reaction-field ΔG_GB.
+  - **Born radii** via the exact HCT pairwise desolvation integral (derived analytically: `ψ_ij = (1/4d)·ln((d-Rj)/(d+Rj)) + Rj/(2(d²-Rj²))`) with OBC2 tanh scaling. Bondi VDW radii + 0.195 Å offset. Cosine switching at d=Ri+Rj for smoothness.
+  - **GB energy**: `ΔG_GB = -C·(1/ε_in-1/ε_out)·[Σ q_iq_j/f_ij + ½·Σ q_i²/R_i]`, f_ij=sqrt(r²+RiRj·exp(-r²/(4RiRj))).
+  - **Gradient** (3 parts): direct pair d(1/f)/dr; born-radius self; born-radius pair (∂f/∂R chain rule — the subtle part: f_ij depends on R_i,R_j). Correct two-pass structure computing B_i (total Born coefficient) before the chain-rule gradient pass.
+  - **Validated**: single-ion Born self-energy matches the analytical Born equation (2%); finite-difference gradient matches analytical (max err <0.1, also at ±0.25Å displaced geometries); GB lowers energy for polar molecules; NVE stays finite.
+  - **Known limitation**: NVE energy drift from the HCT desolvation divergence for overlapping spheres (d≈Rj) — needs the proper spherical-cap overlap integral. NVT MD recommended for practical use. SA (nonpolar surface area) term not yet implemented (placeholder).
+  - 199 tests, 0 clippy, 230/230 MMFF unchanged.
+
 - **Root-caused xanthine ETKDG angle strain: cyclic-amide 1-4 trans-forcing bug — xanthine +13.2→+2.2 kcal, 0 regressions.** The 3D minimizer always converged to O-C-C@C3=112.5° (vs eq 126.5°) regardless of the 4D start. ETKDG energy breakdown: long-range (1-4) bounds dominated (6.71 kcal vs 0.25 for 1-3 K₁₂); force-constant tuning (K₁₃ up to 1000) plateaued at 114° — proving bound conflict. **Root cause:** the H-N-C=O 1-4 pair got a TRANS bound [3.200,3.320] but the actual distance is 2.497 Å (CIS — both exocyclic atoms on the same side of the ring). `force_trans_amides` forces trans for ALL amides — correct for acyclic (peptides), **wrong for cyclic (lactams)** where the ring constrains cis. The 0.7 Å violation distorted the ring junction. **Fix:** `!b2_in_ring` gate on the trans-forcing. xanthine −129.6→−140.6, O-C-C 112.5°→122.0°. 0 regressions, 195 tests, 0 clippy, 230/230 MMFF.
 
 - **Decoupled MMFF atom typing from aromaticity + fused-ring ETKDG planarity — debunked the other session's "charges.rs bug" claim; xanthine MMFF now robust to aromaticity changes.** Investigation of the other session's graph.rs WIP (which broadened N aromaticity from 5-rings to any ring) that regressed 15 molecules:
