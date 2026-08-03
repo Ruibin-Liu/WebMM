@@ -10,21 +10,16 @@ Failure to follow these rules is an error.
 
 ## Stack Overview
 
-Backend:
-- FastAPI (async)
-- Python 3.11+
-- Async SQLAlchemy
-- PostgreSQL
-- JWT-based authentication
-- Dependency and execution management via **uv**
+Core library:
+- Rust (edition 2021), `cargo` as the sole build/dependency manager
+- `wasm-bindgen`/`wasm-pack` for the WASM target (demo entry: `site/index.html`,
+  staged into the gitignored `pkg/`)
+- MMFF94/MMFF94s force field, ETKDG v3 embedding, L-BFGS optimizer, MD engine,
+  metadynamics, GBSA implicit solvation
 
-Frontend:
-- React
-- TypeScript
-- Material UI
-- Zustand
-- React Router
-- Axios (centralized client with interceptors)
+Validation tooling:
+- Python 3 scripts under `scripts/` (RDKit reference generation, benchmark/audit)
+- RDKit is used only by scripts; the library itself has no Python runtime dependency
 
 ---
 
@@ -43,72 +38,63 @@ If a step cannot be completed, STOP and ask.
 
 ---
 
-## Python Dependency Management (Strict)
+## Rust Dependency Management (Strict)
 
-This repository uses **uv** as the sole Python dependency and execution manager.
+This repository uses **cargo** as the sole Rust dependency and build manager.
 
 ### Allowed Commands
-- Add dependencies: `uv add <package>`
-- Remove dependencies: `uv remove <package>`
-- Sync environment: `uv sync`
-- Run code or tools: `uv run <command>`
+- Add dependencies: `cargo add <crate>`
+- Remove dependencies: `cargo remove <crate>`
+- Build/test: `cargo build` / `cargo test`
+- Lint: `cargo clippy --all-targets`
+- WASM build: `wasm-pack build --target web --release`, then stage
+  `site/index.html` into `pkg/` as the landing page
 
 ### Forbidden Commands
-- `pip install`, `pipx`
-- `poetry`, `pipenv`, `conda`
-- `uv pip install` (pip-compatibility mode)
-- Manually editing dependency files unless explicitly instructed
+- `cargo install` for project-local tooling (use the pinned wasm-pack devDependency)
+- Manually editing `Cargo.toml`/`Cargo.lock` unless explicitly instructed
 
 ### Rationale
-- `uv add/remove/sync` are the canonical, state-aware workflow
-- `uv pip install` is a compatibility interface and MUST NOT be used in managed projects
+- `cargo add/remove` are the canonical, state-aware workflow
+- `Cargo.lock` is committed and must stay consistent with `Cargo.toml`
 
 ---
 
-## Running Backend Code & Tests
-
-All Python execution MUST go through `uv run`.
+## Running Code & Tests
 
 Examples:
-- Start API: `uv run fastapi dev`
-- Run scripts: `uv run python scripts/task.py`
-- Run tests: `uv run pytest`
-
-Do NOT assume:
-- An activated virtual environment
-- System Python
-- Global site-packages
+- Run tests: `cargo test`
+- Run lints: `cargo clippy --all-targets` (must be 0 warnings)
+- Run MMFF benchmark: `python3 scripts/benchmark_mmff.py --no-speed`
+- Run a diagnostic: `cargo run --release --example <name>`
+- Build WASM: `wasm-pack build --target web --release && cp site/index.html pkg/index.html`
 
 ---
 
-## Backend Coding Rules (FastAPI)
+## Rust Coding Rules
 
-- All API endpoints must be `async`
-- No blocking I/O in request handlers
-- Use dependency injection for:
-  - Database sessions
-  - Authentication
-- Do not bypass security dependencies
-- Follow existing error-handling patterns
-- Preserve existing response models unless explicitly changing the API
+- Keep `cargo clippy --all-targets` at 0 warnings; no dead code (use
+  `#[allow(dead_code)]` only with a comment explaining why)
+- No `unsafe` blocks
+- Keep tests green: `cargo test` must pass with no flakes (pin RNG seeds in
+  geometry/embedding tests — the ETKDG default seed is intentionally random)
+- Follow existing module/error-handling patterns; no speculative refactors
 
 ---
 
-## Frontend Rules (React + TypeScript)
+## WASM & Site Rules
 
-- TypeScript is mandatory (no `any` unless explicitly justified)
-- Prefer functional components
-- State management via **Zustand only**
-- All API calls must go through the shared Axios client
-- Do not call backend endpoints directly
-- Respect existing component and folder structure
+- `site/index.html` is the committed demo; `pkg/` is gitignored build output
+- WASM exports in `src/lib.rs` are a public contract — do not break them
+- New engine features that need browser access must be explicitly wired into
+  `src/lib.rs` with tests, and reflected in `pkg/webmm.d.ts` after a build
 
 ---
 
 ## API Contract Rules
 
-- Backend response shapes must remain stable
-- Frontend changes must respect existing API contracts
+- WASM export signatures must remain stable
+- Native changes must respect existing API contracts
 - Breaking API changes require:
   - Explicit mention in `PLAN.md`
   - Documentation in `CODE_STATUS.md`

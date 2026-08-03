@@ -1,47 +1,52 @@
-# Plan: Decouple MMFF atom typing from aromaticity + take over ETKDG aromaticity fix
+# Plan: Review-fix pass (flaky ETKDG test, GBSA robustness, repo hygiene)
 
 ## Context
-The other session's `graph.rs` WIP broadens the N aromatic-candidate rule from 5-rings
-to any ring (`ring_bonds == 2` without the `ring.len() == 5` gate). This is intended to
-improve ETKDG planarity for xanthine/purines, but it regresses 15 molecules because MMFF
-atom typing uses the aromaticity flag to override carbonyl-C and amide-N-H typing:
-- Carbonyl C: C_2(3) → C_AR(37)  →  neighbor N_AM charge −0.49 → −0.671 (35 kcal divergence)
-- Amide N-H:  H_NAM(28) → H_N3(23)
+Review of HEAD found: (1) `etkdg::tests::test_aniline_geometry` is flaky — aniline NH2
+H-N-H embeds at 122–126° (RDKit ~117.5°) and the 110–125° assertion fails ~30% of seeds;
+root cause is the sp2 1-3 angle heuristic giving the H-H pair the leftover 126° when the
+center has three single bonds (aniline N in Kekulé form), plus the default random seed.
+(2) GBSA has no d≈0 guard in the Born-radius passes, the born_inv floor clamp is not
+reflected in `chain`, the NVE/FD test guards are much looser than the measured values,
+and the LCPO containment-boundary force kink is undocumented. (3) PLAN.md is stale,
+`Cargo.lock` version bump is uncommitted, and AGENTS.md describes a FastAPI/React stack
+that does not match this Rust/WASM repository.
 
-**Root cause:** MMFF atom typing is coupled to the aromaticity flag. RDKit's MMFF typer
-types ring carbonyl carbons as C_2 and amide N-H as H_NAM **regardless of aromaticity**.
-At HEAD this is latent (graph.rs doesn't over-mark), but it breaks under the new
-aromaticity perception.
+## Phase 1 — Fix flaky aniline ETKDG geometry test
+- `src/etkdg/mod.rs` `build_distance_bounds`: in the sp2 `visited_centers >= 1` branch,
+  when the center has NO double bond (all-single neighbors, e.g. aniline N), distribute
+  the remaining angle equally (`remaining / remaining_pairs`) instead of applying the
+  carbonyl 114°/123° split — matches RDKit set13Bounds (flat 2π/3 for non-ring sp2).
+  Carbonyl-like centers (has_double) keep the existing split.
+- Pin `random_seed` in `test_aniline_geometry` (and `test_aniline_hh_bounds`) so the
+  embedding is deterministic.
+- Verify: `examples/diag_aniline_seeds.rs` (temporary) — all 40 seeds pass; full
+  `cargo test` twice in a row (no flakes); `cargo clippy --all-targets` 0 warnings.
 
-## Phase 1 — Harden MMFF atom typing (decouple from aromaticity flag)
+## Phase 2 — GBSA robustness (`src/solvation/mod.rs`)
+- Guard `d ≈ 0` in the ψ (pass 1) and born-radius-gradient (pass 3) pair loops so
+  coincident atoms cannot produce NaN.
+- Make `chain` consistent with the `born_inv` floor clamp: when the clamp is active the
+  derivative is 0 (piecewise chain).
+- Tighten `gb_nve_stays_finite` assertion (10% → measured 0.07% with margin) and the FD
+  gradient threshold to the measured max error with margin.
+- Document the LCPO S_ij containment-boundary force kink in a code comment and in
+  CODE_STATUS.md known limitations (model-fidelity, not smoothed).
 
-### Fix A: Carbonyl C → C_2, not C_AR
-`src/mmff/mod.rs` carbon cascade, before `(6, _, true, _) => C_AR`:
-```rust
-// Carbonyl C (C=O double bond) → C_2 even in aromatic rings.
-// RDKit types ring carbonyl C (xanthine, uracil, 2-quinolone) as C_2, not C_AR.
-(6, _, true, _) if double_bond_partners.contains(&8) => MMFFAtomType::C_2,
-```
+## Phase 3 — Repo hygiene
+- Overwrite `PLAN.md` (this file) per workflow.
+- Update `CODE_STATUS.md` (Recently Completed + Current Focus + Known Risks/Issues).
+- Align `AGENTS.md` stack overview with the actual Rust/WASM toolchain (cargo,
+  wasm-pack; python3 + RDKit for validation scripts); keep the mandatory
+  CODE_STATUS.md/PLAN.md workflow and scope constraints.
+- Commit: Cargo.lock 0.5.0→0.6.0 bump + all fix changes.
 
-### Fix B: Amide/amidine N-H → H_NAM regardless of aromaticity
-`src/mmff/mod.rs` `determine_h_subtype`: split the `!n_is_aromatic && (acyl || ...)` gate
-so the acyl/amidine case (N with a C neighbor that is C=O/C=N/C=C) yields H_NAM even when
-the N is aromatic. Pyrrole (aromatic, no acyl) still → H_N3; sulfonamide/aniline unchanged.
-
-### Verification
-- `cargo test` — all pass (no MMFF regressions; fix is no-op at HEAD since graph.rs
-  doesn't over-mark carbonyl C as aromatic there)
-- `python3 scripts/benchmark_mmff.py` — 230/230 still match RDKit <0.01 kcal/mol
-- With graph.rs WIP applied: xanthine types revert to HEAD values (C_2, H_NAM, charge −0.49)
-
-## Phase 2 — Evaluate graph.rs aromaticity change for ETKDG
-
-After Phase 1 makes MMFF typing robust, re-apply the graph.rs N-aromaticity broadening
-and measure ETKDG harness impact:
-- Does xanthine's ETKDG quality improve (was +14.5)?
-- Do the 15 regressed molecules recover (MMFF energy now correct)?
-- If net-positive and no ETKDG regressions → keep; else → refine the aromaticity rule
+## Verification
+- `cargo test` ×2 — all pass, no flake.
+- `cargo clippy --all-targets` — 0 warnings.
+- `python3 scripts/benchmark_mmff.py --no-speed` — 230/230 PASS (no MMFF change).
+- `examples/diag_aniline_seeds.rs` — 40/40 seeds within bounds (temporary, removed).
 
 ## Out of scope
-- Metadynamics WASM API + site (already done this session)
-- Further ETKDG phases (4D embedding, torsion SMARTS) — separate efforts
+- GBSA WASM API (native-only by design, not part of this pass).
+- Smoothing the LCPO model (deviates from Weiser-Tsui-Case; documented instead).
+- Other ETKDG embedding quality (4D embedding, macrocycles) — separate efforts.

@@ -1003,7 +1003,15 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
                                 let remaining = 2.0 * std::f64::consts::PI - angle_taken[aid2];
                                 let remaining_pairs = n13 - visited_centers[aid2];
 
-                                if is_double(aid1) || is_double(aid3) {
+                                if !mol.adjacency[aid2].iter().any(|&n| is_double(n)) {
+                                    // No double bond at the center (e.g. aniline N with
+                                    // three single neighbors in Kekulé form): distribute
+                                    // the remaining angle equally, matching RDKit
+                                    // set13Bounds (flat 2π/3 for non-ring sp2). The
+                                    // 114°/123° split below is for carbonyl-like
+                                    // centers and would leave the H-H pair at ~126°.
+                                    remaining / remaining_pairs as f64
+                                } else if is_double(aid1) || is_double(aid3) {
                                     // This pair involves the double bond
                                     // Give it a larger share if the other remaining pair
                                     // is the single-single pair
@@ -5562,7 +5570,9 @@ mod tests {
     fn test_aniline_hh_bounds() {
         let sdf = "Aniline\n     RDKit          3D\n\n 14 14  0  0  0  0  0  0  0  0999 V2000\n   -1.8551    0.3019   -0.2147 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9433    1.3121   -0.5108 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4265    1.0872   -0.3490 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9000   -0.1487    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2537   -0.3576    0.2878 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0248   -1.1486    0.4072 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3958   -0.9291    0.2472 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9206    0.4752   -0.3382 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2957    2.2773   -0.8642 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1231    1.8892   -0.5767 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.5964   -1.2716    0.5480 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9224    0.3435    0.0017 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3154   -2.1119    0.7767 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1023   -1.7188    0.4874 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  4  6  1  0\n  6  7  2  0\n  7  1  1  0\n  1  8  1  0\n  2  9  1  0\n  3 10  1  0\n  5 11  1  0\n  5 12  1  0\n  6 13  1  0\n  7 14  1  0\nM  END";
         let mol = crate::molecule::parser::parse_sdf(sdf).expect("parse");
-        let config = ETKDGConfig::default();
+        // Fixed seed: the embedding is stochastic by default (random_seed = -1);
+        // a geometry assertion must be deterministic.
+        let config = ETKDGConfig { random_seed: 42, ..ETKDGConfig::default() };
         let bounds = build_distance_bounds(&mol, &config);
         
         println!("\nAniline bounds:");
@@ -5581,7 +5591,9 @@ mod tests {
     fn test_aniline_geometry() {
         let sdf = "Aniline\n     RDKit          3D\n\n 14 14  0  0  0  0  0  0  0  0999 V2000\n   -1.8551    0.3019   -0.2147 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9433    1.3121   -0.5108 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.4265    1.0872   -0.3490 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9000   -0.1487    0.0976 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2537   -0.3576    0.2878 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0248   -1.1486    0.4072 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.3958   -0.9291    0.2472 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.9206    0.4752   -0.3382 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2957    2.2773   -0.8642 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1231    1.8892   -0.5767 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.5964   -1.2716    0.5480 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9224    0.3435    0.0017 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.3154   -2.1119    0.7767 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1023   -1.7188    0.4874 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  4  6  1  0\n  6  7  2  0\n  7  1  1  0\n  1  8  1  0\n  2  9  1  0\n  3 10  1  0\n  5 11  1  0\n  5 12  1  0\n  6 13  1  0\n  7 14  1  0\nM  END";
         let mol = crate::molecule::parser::parse_sdf(sdf).expect("parse");
-        let config = ETKDGConfig::default();
+        // Fixed seed: the embedding is stochastic by default (random_seed = -1);
+        // a geometry assertion must be deterministic.
+        let config = ETKDGConfig { random_seed: 42, ..ETKDGConfig::default() };
         let coords = generate_initial_coords_with_config(&mol, &config);
         
         // Compute H-N-H angle (atoms 10, 4, 11 in 0-based)

@@ -184,6 +184,11 @@ impl<'a> ForceField for GBSA<'a> {
                 let dy = coords[i][1] - coords[j][1];
                 let dz = coords[i][2] - coords[j][2];
                 let d = (dx * dx + dy * dy + dz * dz).sqrt();
+                // Coincident atoms (degenerate input): the desolvation integral
+                // has no meaningful value; skip rather than propagate NaN.
+                if d < 1e-8 {
+                    continue;
+                }
                 // Exact HCT desolvation (handles all overlap cases, no divergence).
                 psi[i] += Self::desolv(d, self.radii[i], self.radii[j]);
                 psi[j] += Self::desolv(d, self.radii[j], self.radii[i]);
@@ -194,20 +199,27 @@ impl<'a> ForceField for GBSA<'a> {
         for i in 0..n {
             let inv_ri = 1.0 / self.radii[i];
             let p = psi[i];
-            let born_inv = if self.obc2 {
+            let min_inv = inv_ri * 0.01; // safety floor: R_i ≤ 100·ρ_i
+            let (born_inv, d_born_inv_dpsi) = if self.obc2 {
                 let arg = OBC_ALPHA * p - OBC_BETA * p * p + OBC_GAMMA * p.powi(3);
-                (inv_ri * (1.0 - arg.tanh())).max(inv_ri * 0.01)
+                let unclamped = inv_ri * (1.0 - arg.tanh());
+                let deriv =
+                    -inv_ri * (1.0 - arg.tanh().powi(2)) * (OBC_ALPHA - 2.0 * OBC_BETA * p + 3.0 * OBC_GAMMA * p * p);
+                if unclamped < min_inv {
+                    (min_inv, 0.0) // clamp active: derivative is zero in this region
+                } else {
+                    (unclamped, deriv)
+                }
             } else {
-                (inv_ri - p).max(inv_ri * 0.01)
+                let unclamped = inv_ri - p;
+                if unclamped < min_inv {
+                    (min_inv, 0.0)
+                } else {
+                    (unclamped, -1.0)
+                }
             };
             born[i] = 1.0 / born_inv;
-            chain[i] = if self.obc2 {
-                let arg = OBC_ALPHA * p - OBC_BETA * p * p + OBC_GAMMA * p.powi(3);
-                let sech2 = 1.0 - arg.tanh().powi(2);
-                -inv_ri * sech2 * (OBC_ALPHA - 2.0 * OBC_BETA * p + 3.0 * OBC_GAMMA * p * p)
-            } else {
-                -1.0
-            };
+            chain[i] = d_born_inv_dpsi;
         }
 
         // --- Pass 2: GB energy + direct pair gradient + accumulate B_i ---
@@ -259,6 +271,9 @@ impl<'a> ForceField for GBSA<'a> {
                 let dy = coords[i][1] - coords[j][1];
                 let dz = coords[i][2] - coords[j][2];
                 let r = (dx * dx + dy * dy + dz * dz).sqrt();
+                if r < 1e-8 {
+                    continue; // coincident atoms: no desolvation gradient
+                }
                 let dpsi_ij = Self::desolv_d(r, self.radii[i], self.radii[j]); // dψ_i/dr
                 let dpsi_ji = Self::desolv_d(r, self.radii[j], self.radii[i]); // dψ_j/dr
                 let inv_r = 1.0 / r;
@@ -318,6 +333,12 @@ impl<'a> ForceField for GBSA<'a> {
                     let inv_d = 1.0 / d;
                     // Sij and its derivative
                     let (sij, dsij_dd) = if d + rj <= ri { (0.0, 0.0) } else {
+                        // NOTE: S_ij is identically 0 for full containment (d + rj <= ri)
+                        // while dS_ij/dd is nonzero just outside that boundary, so the
+                        // pairwise gradient has a small kink at d = ri - rj. This is
+                        // inherent to the LCPO pairwise overlap model (Weiser-Tsui-Case)
+                        // and is preserved for fidelity; atoms only cross it in
+                        // unphysical buried configurations.
                         let xi = (d * d + ri * ri - rj * rj) / (2.0 * d);
                         let s = std::f64::consts::PI * ri * (ri - xi).max(0.0);
                         let ds = -std::f64::consts::PI * ri * (d * d - ri * ri + rj * rj) / (2.0 * d * d);
@@ -403,7 +424,8 @@ mod tests {
                 max_err = max_err.max((grad[i][k] - fd).abs());
             }
         }
-        assert!(max_err < 0.1, "GB gradient max FD error {:.4}", max_err);
+        eprintln!("GB+SA gradient max FD error: {:.6}", max_err);
+        assert!(max_err < 1e-4, "GB gradient max FD error {:.6} > 1e-4", max_err);
     }
 
     #[test]
@@ -442,7 +464,6 @@ mod tests {
             max_drift = max_drift.max((e - e0).abs() / e0.abs().max(1.0));
         }
         eprintln!("GB NVE drift over 2000 steps: {:.2}%", max_drift * 100.0);
-        assert!(max_drift < 0.10, "GB NVE drift {:.1}% > 10%", max_drift * 100.0);
+        assert!(max_drift < 0.01, "GB NVE drift {:.2}% > 1%", max_drift * 100.0);
     }
 }
-

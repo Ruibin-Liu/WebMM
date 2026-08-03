@@ -7,14 +7,47 @@ WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force fi
 **MMFF94/MMFF94s energy validation COMPLETE: 230/230 molecules match RDKit to <0.01 kcal/mol.**
 
 Atom typing decoupled from aromaticity (carbonyl C → C_2, amide N-H → H_NAM regardless of
-aromaticity flag) — robust to future aromaticity-perception changes. 230/230, 195 tests, 0 clippy.
+aromaticity flag) — robust to future aromaticity-perception changes. 230/230, 199 tests, 0 clippy.
 
-**ETKDG embedding** at r=0.9762 (RMSD 11.62, ceiling ~0.997). Remaining outliers: P(=O) compounds
-(+15/+14.6, 4D-start local minima), xanthine (+13.2, angle/electrostatic strain — rings now planar
-via fused-ring torsions). The systematic torsion/hybridization/K₁₂ fixes (r 0.86→0.97) are landed;
-further gains need 4D-embedding quality work.
+**ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). The sp2 1-3 equal-distribution fix
+(all-single centers, RDKit set13Bounds-faithful) resolved the top documented outlier **xanthine
++13.2→+0.8** and fixed the flaky aniline geometry test (H-N-H now 116–119.5° across seeds, RDKit
+~117.5°); the small aggregate dip (r 0.9762→0.9749) is concentrated in already-WebMM-better
+molecules (guanine −54→−63). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local
+minima). The systematic torsion/hybridization/K₁₂ fixes (r 0.86→0.97) are landed; further gains
+need 4D-embedding quality work.
 
 ## Recently Completed
+- **Review-fix pass: flaky aniline ETKDG test root-caused + fixed, GBSA robustness, repo hygiene.**
+  - **Aniline NH2 root cause**: `build_distance_bounds` gave an all-single sp2 center (aniline N in
+    Kekulé form) pair angles 120°/114°/leftover, so the H-H 1-3 bound centered at **126°** and the
+    embedded H-N-H landed at 122–126° (RDKit ~117.5°) — right on the flaky test's 110–125°
+    assertion boundary. With the default random seed, `test_aniline_geometry` failed ~30% of seeds.
+    **Fix**: sp2 centers with NO double bond now distribute the remaining angle equally
+    (`remaining / remaining_pairs`, matching RDKit set13Bounds and the existing `rdkit_all()` path);
+    carbonyl-like centers (has_double) keep the 114°/123° split. `test_aniline_geometry` +
+    `test_aniline_hh_bounds` now pin `random_seed: 42` (deterministic).
+    **Result**: H-N-H 115.98–119.48° across all 40 seeds (0 failures); test suite 199/199 twice,
+    no flakes. **ETKDG harness**: xanthine +13.2→+0.8 (top documented outlier fixed), 15/20 changed
+    molecules improved (DMF, caffeine, urea, formamide, acetamidine, histidine_sidechain,
+    guanidinium, theophylline, benzamide, biguanide, aniline, purine, N_methylacetamide, acetamide,
+    adenine); aggregate r 0.9762→0.9749 / RMSD 11.62→11.83 — the dip is guanine (−54→−63, WebMM
+    already far better than the strained RDKit conformer) + small deltas, within the harness's
+    documented WebMM-better bias. `scripts/etkdg_val/webmm_ref.json` refreshed to match.
+  - **GBSA robustness** (`src/solvation/mod.rs`): (1) `d ≈ 0` guard in the ψ and Born-radius
+    gradient pair loops — coincident atoms can no longer produce NaN; (2) the `born_inv` floor
+    clamp (R ≤ 100·ρ) is now reflected in `chain` (piecewise zero derivative in the clamped
+    region), so the gradient is consistent with the energy everywhere; (3) FD gradient guard
+    tightened 0.1 → 1e-4 (measured max err 2e-6) and NVE drift guard tightened 10% → 1% (measured
+    0.07%); (4) the LCPO S_ij force kink at the full-containment boundary (d = ri−rj) is
+    documented in-code and in Known Risks/Issues (inherent to the Weiser-Tsui-Case model, not
+    smoothed).
+  - **Repo hygiene**: `AGENTS.md` aligned with the actual Rust/WASM stack (was FastAPI/React/uv —
+    did not match the repository); `PLAN.md` overwritten for this pass; `Cargo.lock` 0.5.0→0.6.0
+    version bump committed (was the only uncommitted change).
+  - Verified: `cargo test` 199/199 ×2, `cargo clippy --all-targets` 0 warnings,
+    `python3 scripts/benchmark_mmff.py --no-speed` 230/230 PASS (MMFF untouched).
+
 - **GBSA: exact HCT spherical-cap overlap integral + LCPO SA term.** Upgraded `src/solvation/mod.rs`:
   - **Spherical-cap overlap integral**: replaced the divergent non-overlap-only desolvation formula with the exact HCT integral over V_j outside V_i, valid for ALL overlap cases (non-overlap, partial, full containment). Derived analytically via the full-shell and spherical-cap antiderivatives F_full(s) and F_cap(s). The Leibniz boundary terms cancel at the transition points, giving a smooth, finite force everywhere. **Result: NVE drift went from 536% (divergent formula) to 0.07%** (2000 steps, dt=0.25 fs).
   - **SA (surface area) nonpolar term**: LCPO analytical SASA (Weiser-Tsui-Case coefficients) with gradient. E_SA = γ·Σ_i [a1·Si + a2·Σ Sij + a3·Σ Sij²], Sij = π·Ri·(Ri-xi) spherical-cap area. Enabled via `sa_surface_tension` config (0.00542 kcal/mol/Å² for water).
@@ -668,6 +701,11 @@ Phase 7 (Fill All Remaining Gaps) completed:
 ## Constraints & Assumptions
 
 ## Known Risks / Issues
+- **GBSA LCPO SA pairwise force kink** at the full-containment boundary (d = ri − rj):
+  S_ij is identically 0 inside the boundary while dS_ij/dd is nonzero just outside, so the
+  pairwise SA gradient is discontinuous there. Inherent to the Weiser-Tsui-Case LCPO model
+  (preserved for fidelity; atoms cross it only in unphysical buried configurations). Documented
+  in `src/solvation/mod.rs`. The GB electrostatic part is smooth everywhere (exact overlap integral).
 - RDKit distinguishes subtypes of O_3, C_AR that our simplified typing does not
 - V3000 charge parsing not implemented; halide ions beyond F⁻/Cl⁻/Br⁻ (no I⁻ in MMFF94)
 - CO2 linear molecule test is flaky (ETKDG embedding occasionally produces degenerate geometry)
