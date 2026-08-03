@@ -21,6 +21,30 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **README refreshed to match the 0.6.0 codebase (docs-only pass).** README.md had not been touched
+  since the GitHub Pages commit and predated MD/metadynamics/GBSA; it also had a broken rustup
+  URL and recommended `cargo install wasm-pack` (forbidden by AGENTS.md — the project pins
+  wasm-pack as a devDependency).
+  - **Structure section** now reflects the real tree: `src/forces.rs` (ForceField trait),
+    `src/md/`, `src/metad/`, `src/solvation/`, full `src/mmff/` module list (incl.
+    `stretch_bend.rs`, `charges.rs`, `atom_types.rs`, `estimation.rs`, `params.rs`,
+    `mmff_tables.rs`), `site/index.html` (committed demo) vs `pkg/` (gitignored build output),
+    `scripts/` (RDKit validation/benchmark tooling), `examples/`, `docs/`.
+  - **Progress** updated: stretch-bend term, 230/230 MMFF validation gate vs RDKit, MD
+    (velocity-Verlet/BAOAB Langevin), metadynamics (well-tempered + FES), GBSA (OBC2 + LCPO
+    SA), test count 86 → 199.
+  - **Build instructions**: fixed `shustart` → `sh.rustup.rs`; recommended path is now the
+    pinned devDependency (`npm install` + `npm run build`); manual wasm-bindgen option kept
+    with a version-match note; `wasm32-simd128` (`.cargo/config.toml`, wasm-target-scoped)
+    documented with the browser floor.
+  - **Demo + API sections** now cover the ⚙ Optimize / 🔥 MD / 🔬 Metadynamics / 🌐 Embed 3D
+    buttons, trajectory playback, and the full WASM surface (`generate_initial_coordinates_wasm`,
+    `optimize_from_sdf` semantics: SDF-3D-or-ETKDG, `_direct`: as-is, `run_md_from_sdf`,
+    `run_metadynamics_from_sdf`) with options/results tables.
+  - **New Validation section** pointing at `scripts/benchmark_mmff.py` (230/230 gate) and the
+    ETKDG multi-seed harness; Resources links to `docs/` notes.
+  - Verified: every path/command in the README exists in the repo; `cargo test` 199/199,
+    clippy 0 warnings (no code changed).
 - **Review-fix pass 2: removed production debug prints in `minimize_etkdg`; `test_aniline_hh_bounds` is now a real regression guard.**
   - **Debug prints removed** (`src/etkdg/mod.rs`): the unconditional `eprintln!("MIN n=…")` fired on
     every embedding in the public/WASM-exposed default path, and `eprintln!("DBGLS stall …")` fired
