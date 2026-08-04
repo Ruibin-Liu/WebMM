@@ -553,7 +553,7 @@ mod tests {
         let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
         let gbsa = GBSA::new(&ff, &mol, &ff.charges, &GBSAConfig::default());
         let mut runner = MDRunner::from_molecule(
-            &gbsa,
+            std::rc::Rc::new(gbsa),
             &mol,
             MDConfig {
                 dt_fs: 0.25,

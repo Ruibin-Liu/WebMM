@@ -77,8 +77,8 @@ webmm/
 - **MMFF validation vs RDKit**: **230/230 molecules match RDKit to <0.01 kcal/mol** (atom types, charges, energies — `scripts/benchmark_mmff.py`, a regression gate)
 - **L-BFGS optimizer**: Correct two-loop recursion, H0 scaling, Armijo line search, energy change convergence
 - **ETKDG v3**: Distance bounds (bond + angle 1-3 + torsion 1-4 + ring closure), triangle smoothing, 4D stochastic embedding, eigenvector 4D-to-3D projection, FF-based refinement with L-BFGS, multi-conformer selection; multi-seed validated vs RDKit (`scripts/validate_etkdg.py`)
-- **Molecular dynamics**: Allocation-free force evaluation, velocity-Verlet (NVE) + BAOAB Langevin (NVT) integrators, Maxwell–Boltzmann initialization, deterministic seeded PRNG
-- **Metadynamics**: Well-tempered Gaussian bias on dihedral/distance collective variables, free-energy surface reconstruction
+- **Molecular dynamics**: Allocation-free force evaluation, velocity-Verlet (NVE) + BAOAB Langevin (NVT) integrators, Maxwell–Boltzmann initialization, deterministic seeded PRNG; live-steppable `MDLive` WASM handle for in-browser trajectory animation
+- **Metadynamics**: Well-tempered Gaussian bias on dihedral/distance collective variables, free-energy surface reconstruction; live-steppable `MetaDLive` WASM handle (CV/hills/FES queried between animation frames)
 - **GBSA implicit solvation**: Onufriev–Bashford–Case (OBC2) Born radii via exact HCT desolvation integrals, analytical gradient, LCPO surface-area (SA) nonpolar term
 - **WASM API**: Full JavaScript interface — optimization, embedding, MD, and metadynamics with trajectory/FES results
 - **Parameter loading**: MMFF parameters embedded from JSON at compile time with fallback lookup
@@ -241,6 +241,17 @@ Runs gas-phase MMFF molecular dynamics and returns a sampled trajectory
 
 Runs well-tempered metadynamics and returns the trajectory, CV trace, hill
 centers, and a reconstructed free-energy surface.
+
+#### Live handles: `MDLive` / `MetaDLive` (stateful stepping)
+
+For live trajectory animation (the demo's MD / metadynamics buttons), construct
+`new MDLive(sdf, options)` / `new MetaDLive(sdf, options)`, then advance the
+simulation in small chunks — `step(nSteps)` — and read
+`coords()`, `potential_energy()`, `temperature()`, `time_fs()` between
+animation frames. `MetaDLive` additionally exposes `last_cv()`, `hill_count()`,
+`hill_centers()`, and `fes_s(gridPoints)` / `fes_f(gridPoints)` for the
+free-energy surface. Stepping is deterministic and identical to the
+corresponding batch API.
 
 #### `OptimizationResult`
 

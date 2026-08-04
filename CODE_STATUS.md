@@ -21,6 +21,30 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **Live trajectory animation — MD and metadynamics now animate while the simulation runs.**
+  The demo previously ran the whole simulation synchronously and only then played back the
+  recorded trajectory. Now the viewer, chart, readouts, and status update **live**, synced with
+  the simulation steps:
+  - **Engine ownership refactor (minimal)**: `MDRunner` now stores `Rc<dyn ForceField + 'a>`
+    (was `&'a dyn ForceField`) and `MetaDynamics` owns `Box<dyn ForceField>` — required so the
+    live handles can own their force-field chain (MMFF → MetaDynamics → MDRunner). Call sites
+    updated (lib.rs ×2, md/metad/solvation tests); behavior unchanged (201/201 tests).
+  - **New WASM exports** (additive; batch APIs unchanged): `MDLive(sdf, MDOptions)` with
+    `step(n)`, `coords()`, `potential_energy()`, `temperature()`, `time_fs()`, `steps_done()`;
+    `MetaDLive(sdf, MetaDOptions)` adding `last_cv()`, `hill_count()`, `hill_centers()`,
+    `fes_s(grid)`/`fes_f(grid)`. Native tests: deterministic stepping + FES grid shape.
+  - **Site**: MD/metad buttons now drive the handle in chunks per animation frame
+    (requestAnimationFrame, ~24–300 frames per run), rendering the 3Dmol viewer each frame;
+    metad draws the FES after the loop. `runId` token cancels stale loops when a preset loads
+    mid-run. CV readout is unit-aware (dihedral ° / distance Å).
+  - **Determinism verified**: live chunked stepping is byte-identical to the batch API (MD
+    E=−101.2340/T=383.57 both; MetaD E=−98.8452, 40 hills, identical FES).
+  - **Verified in headless Chrome (CDP)**: MD live — 6 mid-run status samples showing frames
+    advancing, final "25–26 frames", playback enabled; MetaD live — 8 live samples, FES drawn
+    with 40 hill dots; preset click mid-run stops cleanly; zero console errors. (Found and
+    fixed an off-by-one in the site loop that skipped the final chunk — 1920/2000 steps —
+    caught by comparing final energy against the batch API.)
+  - 201/201 tests, clippy 0; README API section documents the live handles.
 - **Playback race fixed — `traj.nFrames` on null when Optimize/Embed/loadMol clears traj mid-play.**
   User report: `Uncaught TypeError: Cannot read properties of null (reading 'nFrames')` at
   togglePlay's interval callback (line 494). Sequence: ▶ Play starts the interval; then

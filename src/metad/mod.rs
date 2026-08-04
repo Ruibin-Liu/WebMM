@@ -235,8 +235,8 @@ impl Default for MetaDConfig {
 /// Metadynamics bias potential. Wraps an underlying [`ForceField`] and adds
 /// Gaussian bias hills along a [`CollectiveVariable`]. Implements `ForceField`
 /// so it can be passed directly to [`crate::md::MDRunner`].
-pub struct MetaDynamics<'a> {
-    ff: &'a dyn ForceField,
+pub struct MetaDynamics {
+    ff: Box<dyn ForceField>,
     cv: Box<dyn CollectiveVariable>,
     hills: RefCell<Vec<Hill>>,
     config: MetaDConfig,
@@ -244,9 +244,9 @@ pub struct MetaDynamics<'a> {
     last_cv: RefCell<f64>,
 }
 
-impl<'a> MetaDynamics<'a> {
+impl MetaDynamics {
     pub fn new(
-        ff: &'a dyn ForceField,
+        ff: Box<dyn ForceField>,
         cv: Box<dyn CollectiveVariable>,
         config: MetaDConfig,
     ) -> Self {
@@ -308,7 +308,7 @@ impl<'a> MetaDynamics<'a> {
     }
 }
 
-impl<'a> ForceField for MetaDynamics<'a> {
+impl ForceField for MetaDynamics {
     fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
         // 1. underlying force field (writes MMFF gradient into grad)
         let mut energy = self.ff.energy_and_gradient(coords, grad);
@@ -367,6 +367,7 @@ mod tests {
     use super::*;
     use crate::forces::ForceField;
     use crate::md::{MDConfig, MDRunner};
+    use std::rc::Rc;
 
     /// Test: dihedral angle for known geometries.
     #[test]
@@ -445,8 +446,8 @@ mod tests {
     fn metad_runs_and_produces_fes() {
         let ho = HO { k: 1.0 };
         let cv = Box::new(DistanceCV::new(0, 1));
-        let metad = MetaDynamics::new(
-            &ho,
+        let metad = Rc::new(MetaDynamics::new(
+            Box::new(ho),
             cv,
             MetaDConfig {
                 hill_height: 0.2,
@@ -455,11 +456,11 @@ mod tests {
                 bias_factor: 0.0, // standard
                 temperature_k: 300.0,
             },
-        );
+        ));
         let coords = vec![[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]];
         let masses = vec![1.0, 1.0];
         let mut runner = MDRunner::new(
-            &metad,
+            metad.clone(),
             masses,
             coords,
             MDConfig {
@@ -499,8 +500,8 @@ mod tests {
         let ff = crate::mmff::MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
         // CV: H(O)–O–C–C dihedral (atoms 8, 2, 1, 0 in 0-indexed)
         let cv = Box::new(DihedralCV::new(8, 2, 1, 0));
-        let metad = MetaDynamics::new(
-            &ff,
+        let metad = Rc::new(MetaDynamics::new(
+            Box::new(ff),
             cv,
             MetaDConfig {
                 hill_height: 0.3,
@@ -509,9 +510,9 @@ mod tests {
                 bias_factor: 8.0,
                 temperature_k: 300.0,
             },
-        );
+        ));
         let mut runner = MDRunner::from_molecule(
-            &metad,
+            metad.clone(),
             &mol,
             MDConfig {
                 dt_fs: 1.0,

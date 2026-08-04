@@ -527,7 +527,7 @@ pub fn run_md_from_sdf(sdf_content: &str, options: MDOptions) -> MDResult {
         friction_per_ps: options.friction_per_ps,
         seed: options.seed,
     };
-    let mut runner = crate::md::MDRunner::from_molecule(&ff, &mol, config);
+    let mut runner = crate::md::MDRunner::from_molecule(std::rc::Rc::new(ff), &mol, config);
     let n_atoms = mol.atoms.len();
     let mut coordinates = Vec::new();
     let mut energies = Vec::new();
@@ -819,8 +819,8 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
         }
     };
 
-    let metad = crate::metad::MetaDynamics::new(
-        &ff,
+    let metad = std::rc::Rc::new(crate::metad::MetaDynamics::new(
+        Box::new(ff),
         cv,
         crate::metad::MetaDConfig {
             hill_height: options.hill_height,
@@ -829,9 +829,9 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
             bias_factor: options.bias_factor,
             temperature_k: options.temperature_k,
         },
-    );
+    ));
     let mut runner = crate::md::MDRunner::from_molecule(
-        &metad,
+        metad.clone(),
         &mol,
         crate::md::MDConfig {
             dt_fs: options.dt_fs,
@@ -896,6 +896,241 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
     }
 }
 
+/// Live MD handle: holds a running simulation so JS can advance it in small
+/// chunks (one per animation frame) and render the trajectory as it evolves.
+#[wasm_bindgen]
+pub struct MDLive {
+    runner: Option<crate::md::MDRunner<'static>>,
+    n_atoms: usize,
+    error: String,
+}
+
+#[wasm_bindgen]
+impl MDLive {
+    #[wasm_bindgen(constructor)]
+    pub fn new(sdf_content: &str, options: MDOptions) -> MDLive {
+        console_error_panic_hook::set_once();
+        let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
+            Ok(m) => m,
+            Err(e) => {
+                return MDLive { runner: None, n_atoms: 0, error: format!("Parse error: {}", e) }
+            }
+        };
+        let variant = match options.mmff_variant.as_str() {
+            "MMFF94" => MMFFVariant::MMFF94,
+            _ => MMFFVariant::MMFF94s,
+        };
+        let ff = crate::mmff::MMFFForceField::new(&mol, variant);
+        let config = crate::md::MDConfig {
+            dt_fs: options.dt_fs,
+            temperature_k: options.temperature_k,
+            friction_per_ps: options.friction_per_ps,
+            seed: options.seed,
+        };
+        let n_atoms = mol.atoms.len();
+        let runner =
+            crate::md::MDRunner::from_molecule(std::rc::Rc::new(ff), &mol, config);
+        MDLive { runner: Some(runner), n_atoms, error: String::new() }
+    }
+
+    pub fn success(&self) -> bool {
+        self.runner.is_some()
+    }
+    pub fn error(&self) -> String {
+        self.error.clone()
+    }
+    pub fn n_atoms(&self) -> usize {
+        self.n_atoms
+    }
+
+    /// Advance the simulation by n steps (no-op if construction failed).
+    pub fn step(&mut self, n_steps: usize) {
+        if let Some(r) = self.runner.as_mut() {
+            for _ in 0..n_steps {
+                r.step();
+            }
+        }
+    }
+    /// Current coordinates as a flat [x0,y0,z0,x1,...] array.
+    pub fn coords(&self) -> Vec<f64> {
+        let mut v = Vec::new();
+        if let Some(r) = self.runner.as_ref() {
+            for c in r.coords() {
+                v.extend_from_slice(c);
+            }
+        }
+        v
+    }
+    pub fn potential_energy(&self) -> f64 {
+        self.runner.as_ref().map(|r| r.potential_energy()).unwrap_or(f64::NAN)
+    }
+    pub fn temperature(&self) -> f64 {
+        self.runner.as_ref().map(|r| r.temperature()).unwrap_or(f64::NAN)
+    }
+    pub fn time_fs(&self) -> f64 {
+        self.runner.as_ref().map(|r| r.time_fs()).unwrap_or(f64::NAN)
+    }
+    pub fn steps_done(&self) -> usize {
+        self.runner.as_ref().map(|r| r.step_count()).unwrap_or(0)
+    }
+}
+
+/// Live metadynamics handle: like [`MDLive`], plus CV/hill/FES accessors so
+/// the demo can show the bias building up while the simulation runs.
+#[wasm_bindgen]
+pub struct MetaDLive {
+    metad: Option<std::rc::Rc<crate::metad::MetaDynamics>>,
+    runner: Option<crate::md::MDRunner<'static>>,
+    n_atoms: usize,
+    error: String,
+}
+
+#[wasm_bindgen]
+impl MetaDLive {
+    #[wasm_bindgen(constructor)]
+    pub fn new(sdf_content: &str, options: MetaDOptions) -> MetaDLive {
+        console_error_panic_hook::set_once();
+        let err = |msg: String| MetaDLive {
+            metad: None,
+            runner: None,
+            n_atoms: 0,
+            error: msg,
+        };
+        let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
+            Ok(m) => m,
+            Err(e) => return err(format!("Parse error: {}", e)),
+        };
+        let variant = match options.mmff_variant.as_str() {
+            "MMFF94" => MMFFVariant::MMFF94,
+            _ => MMFFVariant::MMFF94s,
+        };
+        let ff = crate::mmff::MMFFForceField::new(&mol, variant);
+
+        let atoms: Vec<usize> = options
+            .cv_atoms
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        let cv: Box<dyn crate::metad::CollectiveVariable> = match options.cv_type.as_str() {
+            "distance" => {
+                if atoms.len() < 2 {
+                    return err("distance CV needs >=2 atoms".into());
+                }
+                Box::new(crate::metad::DistanceCV::new(atoms[0], atoms[1]))
+            }
+            _ => {
+                if atoms.len() < 4 {
+                    return err("dihedral CV needs >=4 atoms".into());
+                }
+                Box::new(crate::metad::DihedralCV::new(
+                    atoms[0], atoms[1], atoms[2], atoms[3],
+                ))
+            }
+        };
+
+        let metad = std::rc::Rc::new(crate::metad::MetaDynamics::new(
+            Box::new(ff),
+            cv,
+            crate::metad::MetaDConfig {
+                hill_height: options.hill_height,
+                hill_width: options.hill_width,
+                deposit_interval: options.deposit_interval,
+                bias_factor: options.bias_factor,
+                temperature_k: options.temperature_k,
+            },
+        ));
+        let n_atoms = mol.atoms.len();
+        let runner = crate::md::MDRunner::from_molecule(
+            metad.clone(),
+            &mol,
+            crate::md::MDConfig {
+                dt_fs: options.dt_fs,
+                temperature_k: options.temperature_k,
+                friction_per_ps: options.friction_per_ps,
+                seed: options.seed as u64,
+            },
+        );
+        MetaDLive {
+            metad: Some(metad),
+            runner: Some(runner),
+            n_atoms,
+            error: String::new(),
+        }
+    }
+
+    pub fn success(&self) -> bool {
+        self.runner.is_some()
+    }
+    pub fn error(&self) -> String {
+        self.error.clone()
+    }
+    pub fn n_atoms(&self) -> usize {
+        self.n_atoms
+    }
+
+    /// Advance the simulation by n steps (no-op if construction failed).
+    pub fn step(&mut self, n_steps: usize) {
+        if let Some(r) = self.runner.as_mut() {
+            for _ in 0..n_steps {
+                r.step();
+            }
+        }
+    }
+    pub fn coords(&self) -> Vec<f64> {
+        let mut v = Vec::new();
+        if let Some(r) = self.runner.as_ref() {
+            for c in r.coords() {
+                v.extend_from_slice(c);
+            }
+        }
+        v
+    }
+    pub fn potential_energy(&self) -> f64 {
+        self.runner.as_ref().map(|r| r.potential_energy()).unwrap_or(f64::NAN)
+    }
+    pub fn temperature(&self) -> f64 {
+        self.runner.as_ref().map(|r| r.temperature()).unwrap_or(f64::NAN)
+    }
+    pub fn time_fs(&self) -> f64 {
+        self.runner.as_ref().map(|r| r.time_fs()).unwrap_or(f64::NAN)
+    }
+    pub fn steps_done(&self) -> usize {
+        self.runner.as_ref().map(|r| r.step_count()).unwrap_or(0)
+    }
+
+    /// CV value of the last evaluated step.
+    pub fn last_cv(&self) -> f64 {
+        self.metad.as_ref().map(|m| m.last_cv()).unwrap_or(f64::NAN)
+    }
+    pub fn hill_count(&self) -> usize {
+        self.metad.as_ref().map(|m| m.hill_count()).unwrap_or(0)
+    }
+    pub fn hill_centers(&self) -> Vec<f64> {
+        self.metad.as_ref().map(|m| m.hill_centers()).unwrap_or_default()
+    }
+
+    /// FES grid points (CV values) and free energies for `grid_points` bins.
+    pub fn fes_s(&self, grid_points: usize) -> Vec<f64> {
+        match self.metad.as_ref() {
+            Some(m) => {
+                let (smin, smax) = m.cv_range();
+                let ng = grid_points.max(2);
+                (0..ng)
+                    .map(|i| smin + (smax - smin) * i as f64 / (ng - 1) as f64)
+                    .collect()
+            }
+            None => Vec::new(),
+        }
+    }
+    pub fn fes_f(&self, grid_points: usize) -> Vec<f64> {
+        let s = self.fes_s(grid_points);
+        match self.metad.as_ref() {
+            Some(m) => m.free_energy_surface(&s),
+            None => Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::acetic_debug::dihedral;
@@ -903,6 +1138,50 @@ mod tests {
     use crate::molecule::parse_sdf;
     use crate::ConvergenceOptions;
     use crate::MMFFVariant;
+
+    /// Live MD handle: stepping advances deterministically and stays finite.
+    #[test]
+    fn mdlive_steps_advance_deterministically() {
+        let sdf = std::fs::read_to_string("scripts/val_set/ethanol.sdf").unwrap();
+        let opts = crate::MDOptions::new();
+        let mut live = crate::MDLive::new(&sdf, opts);
+        assert!(live.success(), "MDLive error: {}", live.error());
+        assert_eq!(live.n_atoms(), 9);
+        assert_eq!(live.steps_done(), 0);
+        let c0 = live.coords();
+        assert_eq!(c0.len(), 27);
+        live.step(50);
+        assert_eq!(live.steps_done(), 50);
+        let c1 = live.coords();
+        assert!(c1 != c0, "coords must change after stepping");
+        assert!(live.potential_energy().is_finite());
+        assert!(live.temperature().is_finite());
+        assert!(live.time_fs() > 0.0);
+        // Determinism: same seed → same coords after the same step count.
+        let mut live2 = crate::MDLive::new(&sdf, crate::MDOptions::new());
+        live2.step(50);
+        assert_eq!(live2.coords(), c1);
+    }
+
+    /// Live metadynamics handle: hills deposit and the FES matches the grid.
+    #[test]
+    fn metadlive_steps_and_fes() {
+        let sdf = std::fs::read_to_string("scripts/val_set/ethanol.sdf").unwrap();
+        let opts = crate::MetaDOptions::new(); // dihedral 0,1,2,3; deposit every 50
+        let mut live = crate::MetaDLive::new(&sdf, opts);
+        assert!(live.success(), "MetaDLive error: {}", live.error());
+        assert_eq!(live.n_atoms(), 9);
+        live.step(100);
+        assert!(live.last_cv().is_finite());
+        assert!(live.hill_count() <= 3, "hills after 100 steps: {}", live.hill_count());
+        let s = live.fes_s(32);
+        let f = live.fes_f(32);
+        assert_eq!(s.len(), 32);
+        assert_eq!(f.len(), 32);
+        assert!(f.iter().all(|x| x.is_finite()));
+        assert!(live.coords().len() == 27);
+        assert!(live.potential_energy().is_finite());
+    }
 
     #[test]
     fn test_parse_real_sdf() {

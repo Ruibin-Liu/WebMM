@@ -204,6 +204,7 @@ let traj = null;       // {coords:Float64Array, energies:[], temps:[], times:[],
 let playing = false;
 let playTimer = null;
 let currentFrame = 0;
+let runId = 0;         // incremented when a run starts or a preset loads; stale loops stop
 
 // --- Preset molecules (curated subset; full set in repo) ---
 const MOLS = {
@@ -256,6 +257,7 @@ function buildPresets() {
 function loadMol(key) {
   const mol = MOLS[key];
   if (!mol) return;
+  runId++;  // stop any live MD/metad loop
   document.getElementById('sdf-input').value = mol.sdf;
   document.querySelectorAll('.presets button').forEach(b => b.classList.remove('active'));
   const btns = document.querySelectorAll('.presets button');
@@ -337,35 +339,55 @@ function runOptimize() {
 
 function runMD() {
   const sdf = getSdf(); if (!sdf) return;
-  setStatus('Running MD… (this takes a moment)', 'info');
+  setStatus('Running MD… (live)', 'info');
   disableActions(true);
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       const t0 = performance.now();
       const opts = new wasm.MDOptions();
-      opts.set_n_steps(parseInt(document.getElementById('md-steps').value) || 2000);
+      const nSteps = parseInt(document.getElementById('md-steps').value) || 2000;
+      opts.set_n_steps(nSteps);
       opts.set_dt_fs(parseFloat(document.getElementById('md-dt').value) || 1.0);
       opts.set_temperature_k(parseFloat(document.getElementById('md-temp').value) || 300);
       opts.set_friction_per_ps(parseFloat(document.getElementById('md-friction').value) || 1.0);
       opts.set_snapshot_interval(parseInt(document.getElementById('md-snap').value) || 20);
       opts.set_seed(BigInt(document.getElementById('md-seed').value || 42));
-      const res = wasm.run_md_from_sdf(sdf, opts);
-      const dt = ((performance.now() - t0) / 1000).toFixed(2);
-      if (!res.success()) throw new Error(res.error());
-      const coords = res.coordinates();
-      const nA = res.n_atoms();
-      traj = {
-        coords: coords, nAtoms: nA, nFrames: res.n_frames(),
-        energies: res.energies(), temps: res.temperatures(), times: res.times_fs(),
+      const state = new wasm.MDLive(sdf, opts);
+      if (!state.success()) throw new Error(state.error());
+      const nA = state.n_atoms();
+      const myRun = ++runId;
+      disablePlayback(); traj = null;
+      // ~24–300 displayed frames over the whole run; step that many sim steps per frame.
+      const targetFrames = Math.min(300, Math.max(24, Math.round(nSteps / 80)));
+      const chunk = Math.max(1, Math.ceil(nSteps / targetFrames));
+      const coordsArr = [], energies = [], temps = [], times = [];
+      const pushFrame = () => {
+        if (myRun !== runId) return false;
+        coordsArr.push(...state.coords());
+        energies.push(state.potential_energy());
+        temps.push(state.temperature());
+        times.push(state.time_fs());
+        traj = { coords: new Float64Array(coordsArr), nAtoms: nA, nFrames: energies.length,
+                 energies, temps, times };
+        traj.eMin = Math.min(...energies); traj.eMax = Math.max(...energies);
+        traj.tMin = Math.min(...temps); traj.tMax = Math.max(...temps);
+        currentFrame = traj.nFrames - 1;
+        updateViewerFrame(currentFrame);
+        drawChart();
+        updateReadouts(currentFrame);
+        setStatus(`MD live: frame ${traj.nFrames}/${Math.ceil(nSteps / chunk)} · E=${energies[energies.length-1].toFixed(1)} kcal/mol · T=${temps[temps.length-1].toFixed(0)}K`, 'info');
+        return true;
       };
-      traj.eMin = Math.min(...traj.energies); traj.eMax = Math.max(...traj.energies);
-      traj.tMin = Math.min(...traj.temps); traj.tMax = Math.max(...traj.temps);
-      currentFrame = traj.nFrames - 1;  // show final frame
+      pushFrame(); // initial state
+      for (let s = 0; s < nSteps && myRun === runId; s += chunk) {
+        state.step(Math.min(chunk, nSteps - s));
+        pushFrame();
+        await new Promise(r => (document.hidden ? setTimeout(r, 16) : requestAnimationFrame(r)));
+      }
+      if (myRun !== runId) return;
       enablePlayback();
-      updateViewerFrame(currentFrame);
-      drawChart();
-      updateReadouts(currentFrame);
-      setStatus(`MD: ${res.n_frames()} frames, ${dt}s. Final T = ${res.final_temperature().toFixed(0)}K, E = ${res.final_energy().toFixed(1)}`, 'success');
+      const dt = ((performance.now() - t0) / 1000).toFixed(2);
+      setStatus(`MD: ${traj.nFrames} frames in ${dt}s. Final T = ${temps[temps.length-1].toFixed(0)}K, E = ${energies[energies.length-1].toFixed(1)}`, 'success');
     } catch (e) { setStatus('MD error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
   }, 20);
@@ -390,46 +412,65 @@ function runEmbed() {
 // --- Metadynamics ---
 function runMetad() {
   const sdf = getSdf(); if (!sdf) return;
-  setStatus('Running metadynamics…', 'info');
+  setStatus('Running metadynamics… (live)', 'info');
   disableActions(true);
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       const t0 = performance.now();
       const opts = new wasm.MetaDOptions();
+      const nSteps = parseInt(document.getElementById('md-steps').value) || 5000;
+      const cvType = document.getElementById('metad-cv-type').value;
       opts.set_dt_fs(parseFloat(document.getElementById('md-dt').value) || 1.0);
-      opts.set_n_steps(parseInt(document.getElementById('md-steps').value) || 5000);
+      opts.set_n_steps(nSteps);
       opts.set_temperature_k(parseFloat(document.getElementById('md-temp').value) || 300);
       opts.set_friction_per_ps(parseFloat(document.getElementById('md-friction').value) || 5.0);
       opts.set_seed(parseInt(document.getElementById('md-seed').value) || 42);
       opts.set_snapshot_interval(parseInt(document.getElementById('md-snap').value) || 50);
-      opts.set_cv_type(document.getElementById('metad-cv-type').value);
+      opts.set_cv_type(cvType);
       opts.set_cv_atoms(document.getElementById('metad-cv-atoms').value);
       opts.set_hill_height(parseFloat(document.getElementById('metad-hill-h').value) || 0.3);
       opts.set_hill_width(parseFloat(document.getElementById('metad-hill-w').value) || 0.2);
       opts.set_deposit_interval(parseInt(document.getElementById('metad-deposit').value) || 50);
       opts.set_bias_factor(parseFloat(document.getElementById('metad-bias').value) || 10.0);
-      const res = wasm.run_metadynamics_from_sdf(sdf, opts);
-      const dt = ((performance.now() - t0) / 1000).toFixed(2);
-      if (!res.success()) throw new Error(res.error());
-      const coords = res.coordinates();
-      traj = {
-        coords: coords, nAtoms: res.n_atoms(), nFrames: res.n_frames(),
-        energies: res.energies(), temps: [], times: res.times_fs(),
-        cvValues: res.cv_values(),
+      const state = new wasm.MetaDLive(sdf, opts);
+      if (!state.success()) throw new Error(state.error());
+      const nA = state.n_atoms();
+      const myRun = ++runId;
+      disablePlayback(); traj = null;
+      const targetFrames = Math.min(300, Math.max(24, Math.round(nSteps / 80)));
+      const chunk = Math.max(1, Math.ceil(nSteps / targetFrames));
+      const coordsArr = [], energies = [], times = [], cvValues = [];
+      const fmtCv = v => cvType === 'distance' ? v.toFixed(2) + ' Å' : (v * 180 / Math.PI).toFixed(0) + '°';
+      const pushFrame = () => {
+        if (myRun !== runId) return false;
+        coordsArr.push(...state.coords());
+        energies.push(state.potential_energy());
+        times.push(state.time_fs());
+        cvValues.push(state.last_cv());
+        traj = { coords: new Float64Array(coordsArr), nAtoms: nA, nFrames: energies.length,
+                 energies, temps: [], times, cvValues, cvType };
+        traj.eMin = Math.min(...energies); traj.eMax = Math.max(...energies);
+        traj.tMin = 0; traj.tMax = 1;
+        currentFrame = traj.nFrames - 1;
+        updateViewerFrame(currentFrame);
+        drawChart();
+        updateReadouts(currentFrame);
+        setStatus(`MetaD live: frame ${traj.nFrames}/${Math.ceil(nSteps / chunk)} · CV=${fmtCv(cvValues[cvValues.length-1])} · E=${energies[energies.length-1].toFixed(1)} kcal/mol`, 'info');
+        return true;
       };
-      traj.eMin = Math.min(...traj.energies); traj.eMax = Math.max(...traj.energies);
-      traj.tMin = 0; traj.tMax = 1; // no temperature trace for metad (temps: [])
-      currentFrame = traj.nFrames - 1;
+      pushFrame(); // initial state
+      for (let s = 0; s < nSteps && myRun === runId; s += chunk) {
+        state.step(Math.min(chunk, nSteps - s));
+        pushFrame();
+        await new Promise(r => (document.hidden ? setTimeout(r, 16) : requestAnimationFrame(r)));
+      }
+      if (myRun !== runId) return;
+      drawFES(state.fes_s(72), state.fes_f(72), state.hill_centers());
+      const fesF = state.fes_f(72);
+      const fesSpan = fesF.length > 0 ? (Math.max(...fesF) - Math.min(...fesF)).toFixed(1) : '—';
       enablePlayback();
-      updateViewerFrame(currentFrame);
-      drawChart();
-      updateReadouts(currentFrame);
-      drawFES(res.fes_s(), res.fes_f(), res.hill_centers());
-      const fesF = res.fes_f();
-      const fesSpan = fesF.length > 0
-        ? (Math.max(...fesF) - Math.min(...fesF)).toFixed(1)
-        : '—';
-      setStatus(`MetaD: ${res.n_hills()} hills in ${dt}s. FES span: ${fesSpan} kcal/mol`, 'success');
+      const dt = ((performance.now() - t0) / 1000).toFixed(2);
+      setStatus(`MetaD: ${state.hill_count()} hills in ${dt}s. FES span: ${fesSpan} kcal/mol`, 'success');
     } catch (e) { setStatus('MetaD error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
   }, 20);
@@ -524,8 +565,9 @@ function updateReadouts(frame) {
   const time = ((traj.times && traj.times[frame] != null ? traj.times[frame] : 0) / 1000).toFixed(2);  // fs → ps
   let html = `Frame <span>${frame+1}/${traj.nFrames}</span> · ${time}ps · E=<span>${e}</span>`;
   if (traj.cvValues && traj.cvValues.length > 0 && traj.cvValues[frame] != null) {
-    const cvDeg = (traj.cvValues[frame] * 180 / Math.PI).toFixed(0);
-    html += ` · CV=<span>${cvDeg}°</span>`;
+    const cv = traj.cvValues[frame];
+    const cvStr = traj.cvType === 'distance' ? cv.toFixed(2) + ' Å' : (cv * 180 / Math.PI).toFixed(0) + '°';
+    html += ` · CV=<span>${cvStr}</span>`;
   } else if (traj.temps && traj.temps.length > 0) {
     html += ` · T=<span>${traj.temps[frame].toFixed(0)}K</span>`;
   }

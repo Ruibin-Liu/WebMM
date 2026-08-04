@@ -13,6 +13,7 @@
 //! temperature follows with kB in kcal/(mol·K).
 
 use crate::forces::ForceField;
+use std::rc::Rc;
 
 /// fs per internal time unit τ (τ = sqrt(amu·Å²·mol/kcal)).
 const TIMEUNIT_FS: f64 = 48.885;
@@ -118,7 +119,7 @@ impl Default for MDConfig {
 /// A molecular dynamics runner. Owns positions, velocities, and the reusable
 /// gradient buffer; advances with one force evaluation per step.
 pub struct MDRunner<'a> {
-    ff: &'a dyn ForceField,
+    ff: Rc<dyn ForceField + 'a>,
     n: usize,
     masses: Vec<f64>,
     coords: Vec<[f64; 3]>,
@@ -138,7 +139,7 @@ pub struct MDRunner<'a> {
 impl<'a> MDRunner<'a> {
     /// Build a runner from explicit masses + starting coordinates.
     pub fn new(
-        ff: &'a dyn ForceField,
+        ff: Rc<dyn ForceField + 'a>,
         masses: Vec<f64>,
         coords: Vec<[f64; 3]>,
         config: MDConfig,
@@ -196,7 +197,7 @@ impl<'a> MDRunner<'a> {
 
     /// Build a runner from a molecule (masses + coordinates taken from atoms).
     pub fn from_molecule(
-        ff: &'a dyn ForceField,
+        ff: Rc<dyn ForceField + 'a>,
         mol: &crate::molecule::Molecule,
         config: MDConfig,
     ) -> Self {
@@ -343,6 +344,7 @@ fn remove_com_velocity(vel: &mut [[f64; 3]], masses: &[f64]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
 
     /// Test force field: N independent 3-D harmonic oscillators, E = 0.5·k·|x|².
     /// Exact, so it validates the integrator + units without depending on MMFF.
@@ -376,7 +378,7 @@ mod tests {
             .collect::<Vec<_>>();
         // temperature_k>0 initializes velocities; friction=0 → NVE dynamics.
         let mut md = MDRunner::new(
-            &ho,
+            Rc::new(ho),
             masses,
             coords,
             MDConfig {
@@ -407,7 +409,7 @@ mod tests {
         let masses = vec![1.0; 10];
         let coords = vec![[0.0; 3]; 10];
         let mut md = MDRunner::new(
-            &ho,
+            Rc::new(ho),
             masses,
             coords,
             MDConfig {
@@ -440,7 +442,7 @@ mod tests {
         let mol = crate::molecule::parser::parse_sdf(sdf).expect("parse");
         let ff = crate::mmff::MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
         let mut md = MDRunner::from_molecule(
-            &ff,
+            Rc::new(ff),
             &mol,
             MDConfig {
                 dt_fs: 0.5,
