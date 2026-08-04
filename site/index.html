@@ -478,6 +478,11 @@ function enablePlayback() {
   ['btn-play','btn-prev','btn-next'].forEach(id => document.getElementById(id).disabled = false);
 }
 function disablePlayback() {
+  // A running play interval must be stopped here too — otherwise the next
+  // tick reads traj.nFrames after traj has been cleared (Uncaught TypeError).
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  playing = false;
+  document.getElementById('btn-play').innerHTML = '&#9658;'; // back to play icon
   ['btn-play','btn-prev','btn-next'].forEach(id => document.getElementById(id).disabled = true);
   const sl = document.getElementById('frame-slider');
   sl.disabled = true; sl.max = 1; sl.value = 0;
@@ -491,6 +496,7 @@ function togglePlay() {
     document.getElementById('btn-play').innerHTML = '&#10074;&#10074;';
     const fps = parseInt(document.getElementById('speed').value);
     playTimer = setInterval(() => {
+      if (!traj || traj.nFrames < 1) { disablePlayback(); return; }
       currentFrame = (currentFrame + 1) % traj.nFrames;
       sl(); render(); drawChart(); readouts();
     }, 1000 / fps);

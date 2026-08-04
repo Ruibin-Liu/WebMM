@@ -21,6 +21,16 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **Playback race fixed — `traj.nFrames` on null when Optimize/Embed/loadMol clears traj mid-play.**
+  User report: `Uncaught TypeError: Cannot read properties of null (reading 'nFrames')` at
+  togglePlay's interval callback (line 494). Sequence: ▶ Play starts the interval; then
+  Optimize/Embed/loadMol runs `traj = null; disablePlayback()` — but `disablePlayback()` never
+  stopped the interval or reset `playing`, so the next tick crashed on `traj.nFrames` (Uncaught
+  because interval callbacks aren't in a try/catch). **Fix**: `disablePlayback()` now
+  clears the interval and resets `playing` + the ▶ icon; the interval body also guards
+  `!traj || traj.nFrames < 1` (defense in depth). **Verified in headless Chrome**: MD → ▶ →
+  Optimize while playing → zero console errors, optimize completes; MD → ▶ → loadMol → zero
+  errors, button disabled with ▶ icon restored.
 - **Viewer dots after ETKDG embed fixed — V2000 column-shift bug in `renderCoords`.** User report:
   after Embed 3D the viewer showed small dots instead of ball-stick. Root-caused via the
   CDP/headless-Chrome harness: the rebuilt SDF atom line was `4 spaces + x(10) + y(10) +
