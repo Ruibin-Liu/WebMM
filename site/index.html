@@ -170,7 +170,7 @@
 
     <label style="margin-top:12px">MD Options</label>
     <div class="opts-grid">
-      <div><label>Steps</label><input type="number" id="md-steps" value="2000" min="100" step="100"></div>
+      <div><label>Steps</label><input type="number" id="md-steps" value="100000" min="100" step="100"></div>
       <div><label>dt (fs)</label><input type="number" id="md-dt" value="1.0" min="0.1" step="0.1"></div>
       <div><label>Temp (K)</label><input type="number" id="md-temp" value="300" min="0" step="10"></div>
       <div><label>Friction (1/ps)</label><input type="number" id="md-friction" value="1.0" min="0" step="0.5"></div>
@@ -286,7 +286,13 @@ function renderSdf(sdf) {
 }
 
 function renderCoords(coords, sdf) {
-  // Build SDF with updated coordinates from a flat array
+  renderSdf(buildSdfFromCoords(coords, sdf));
+}
+
+// Rebuild an SDF string with new coordinates from a flat [x0,y0,z0,...] array.
+// V2000 fixed columns: x[0,10) y[10,20) z[20,30) element[30,33); the rest of
+// each atom record (charge/mass/stereo) is preserved from the original line.
+function buildSdfFromCoords(coords, sdf) {
   const nAtoms = coords.length / 3;
   const lines = sdf.trim().split('\n');
   const counts = lines[3];
@@ -298,15 +304,10 @@ function renderCoords(coords, sdf) {
     const x = coords[i*3].toFixed(4).padStart(10);
     const y = coords[i*3+1].toFixed(4).padStart(10);
     const z = coords[i*3+2].toFixed(4).padStart(10);
-    // V2000 fixed columns: x[0,10) y[10,20) z[20,30) element[30,33). The old
-    // 4-space prefix + substring(31) shifted every field +4, so 3Dmol's
-    // fixed-width parser read garbage elements/coords (rendered as dots).
-    const rest = lines[4+i].substring(30);
-    atomLines.push(`${x}${y}${z}${rest}`);
+    atomLines.push(`${x}${y}${z}${lines[4+i].substring(30)}`);
   }
   const bondLines = lines.slice(4+na, 4+na+nb);
-  const newSdf = [...header, ...atomLines, ...bondLines, 'M  END'].join('\n');
-  renderSdf(newSdf);
+  return [...header, ...atomLines, ...bondLines, 'M  END'].join('\n');
 }
 
 // --- Actions ---
@@ -357,16 +358,28 @@ function runMD() {
       const nA = state.n_atoms();
       const myRun = ++runId;
       disablePlayback(); traj = null;
-      // ~120 displayed frames over the whole run (≥10 fs per frame so motion
-      // stays visible); paced by the speed selector so the animation lasts
-      // ~4 s at the default 30 fps instead of flashing past at 60 fps.
+      // ~120 displayed frames; >=20 fs per frame so the motion is clearly
+      // visible. Short runs (<~20 ps) only vibrate in place at 300 K — the
+      // 100 ps default shows methyl rotations / conformational motion.
       const fps = parseInt(document.getElementById('speed').value) || 30;
-      const chunk = Math.max(10, Math.ceil(nSteps / 120));
+      const chunk = Math.max(20, Math.ceil(nSteps / 120));
       const targetFrames = Math.ceil(nSteps / chunk);
       const coordsArr = [], energies = [], temps = [], times = [];
+      const masses = state.masses();
+      // Vacuum runs drift (weakly damped COM diffusion) — display every frame
+      // centered on the center of mass so the molecule stays in view.
       const pushFrame = () => {
         if (myRun !== runId) return false;
-        coordsArr.push(...state.coords());
+        const raw = state.coords();
+        let cx = 0, cy = 0, cz = 0, tot = 0;
+        for (let a = 0; a < nA; a++) {
+          const m = masses[a];
+          cx += raw[a*3] * m; cy += raw[a*3+1] * m; cz += raw[a*3+2] * m; tot += m;
+        }
+        cx /= tot; cy /= tot; cz /= tot;
+        for (let a = 0; a < nA; a++) {
+          coordsArr.push(raw[a*3] - cx, raw[a*3+1] - cy, raw[a*3+2] - cz);
+        }
         energies.push(state.potential_energy());
         temps.push(state.temperature());
         times.push(state.time_fs());
@@ -441,13 +454,25 @@ function runMetad() {
       const myRun = ++runId;
       disablePlayback(); traj = null;
       const fps = parseInt(document.getElementById('speed').value) || 30;
-      const chunk = Math.max(10, Math.ceil(nSteps / 120));
+      const chunk = Math.max(20, Math.ceil(nSteps / 120));
       const targetFrames = Math.ceil(nSteps / chunk);
       const coordsArr = [], energies = [], times = [], cvValues = [];
+      const masses = state.masses();
+      // Vacuum runs drift (weakly damped COM diffusion) — display every frame
+      // centered on the center of mass so the molecule stays in view.
       const fmtCv = v => cvType === 'distance' ? v.toFixed(2) + ' Å' : (v * 180 / Math.PI).toFixed(0) + '°';
       const pushFrame = () => {
         if (myRun !== runId) return false;
-        coordsArr.push(...state.coords());
+        const raw = state.coords();
+        let cx = 0, cy = 0, cz = 0, tot = 0;
+        for (let a = 0; a < nA; a++) {
+          const m = masses[a];
+          cx += raw[a*3] * m; cy += raw[a*3+1] * m; cz += raw[a*3+2] * m; tot += m;
+        }
+        cx /= tot; cy /= tot; cz /= tot;
+        for (let a = 0; a < nA; a++) {
+          coordsArr.push(raw[a*3] - cx, raw[a*3+1] - cy, raw[a*3+2] - cz);
+        }
         energies.push(state.potential_energy());
         times.push(state.time_fs());
         cvValues.push(state.last_cv());
@@ -552,15 +577,18 @@ function render() { updateViewerFrame(currentFrame); }
 function readouts() { updateReadouts(currentFrame); }
 
 function updateViewerFrame(frame) {
-  if (!viewer || !traj) return;
-  const atoms = viewer.getModel(0).atoms;
-  if (!atoms) return;
-  const base = frame * traj.nAtoms * 3;
-  for (let i = 0; i < traj.nAtoms; i++) {
-    atoms[i].x = traj.coords[base + i*3];
-    atoms[i].y = traj.coords[base + i*3 + 1];
-    atoms[i].z = traj.coords[base + i*3 + 2];
-  }
+  if (!viewer || !traj || !currentSdf) return;
+  // 3Dmol 2.4 caches geometry: mutating atom positions + viewer.render()
+  // does NOT update the canvas (verified: 0 px change after a 5 A shift).
+  // Rebuild the model from THIS frame's coords instead — the camera is a
+  // viewer property and is untouched (no zoomTo).
+  const nA = traj.nAtoms;
+  const base = frame * nA * 3;
+  const frameCoords = traj.coords.subarray(base, base + nA * 3);
+  const s = buildSdfFromCoords(frameCoords, currentSdf);
+  viewer.removeAllModels();
+  viewer.addModel(s, 'sdf');
+  viewer.setStyle({}, {stick: {radius: 0.15}, sphere: {scale: 0.25}});
   viewer.render();
 }
 function updateReadouts(frame) {

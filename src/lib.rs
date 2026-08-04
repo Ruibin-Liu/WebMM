@@ -968,6 +968,13 @@ impl MDLive {
         }
         v
     }
+    /// Per-atom masses (amu) — for center-of-mass tracking in the demo.
+    pub fn masses(&self) -> Vec<f64> {
+        self.runner
+            .as_ref()
+            .map(|r| r.masses().to_vec())
+            .unwrap_or_default()
+    }
     pub fn potential_energy(&self) -> f64 {
         self.runner
             .as_ref()
@@ -1100,6 +1107,13 @@ impl MetaDLive {
             }
         }
         v
+    }
+    /// Per-atom masses (amu) — for center-of-mass tracking in the demo.
+    pub fn masses(&self) -> Vec<f64> {
+        self.runner
+            .as_ref()
+            .map(|r| r.masses().to_vec())
+            .unwrap_or_default()
     }
     pub fn potential_energy(&self) -> f64 {
         self.runner

@@ -294,6 +294,11 @@ impl<'a> MDRunner<'a> {
     pub fn coords(&self) -> &[[f64; 3]] {
         &self.coords
     }
+
+    /// Atomic masses (amu).
+    pub fn masses(&self) -> &[f64] {
+        &self.masses
+    }
     pub fn velocities(&self) -> &[[f64; 3]] {
         &self.vel
     }

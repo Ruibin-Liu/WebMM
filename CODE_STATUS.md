@@ -21,6 +21,26 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **"Nothing moves" root-caused and fixed — 3Dmol 2.4 caches geometry; frame indexing bug.**
+  Despite the live loop updating atom data (measured: 1.5–4.5 Å per-frame displacement!), the
+  canvas never changed. Pixel-level CDP tests proved two things: (1) **3Dmol 2.4 ignores
+  `atoms[i].x = …; viewer.render()`** — mutating atom positions and re-rendering changes 0.00%
+  of canvas pixels (verified with a 5 Å shift); the geometry is cached and only a full model
+  rebuild (removeAllModels + addModel) updates it. (2) My rebuild rewrite had a second bug:
+  `buildSdfFromCoords(traj.coords, …)` read the *first* frame of the flattened trajectory
+  (frame indexing was lost in the refactor) — every render showed frame 0. Both fixed:
+  `updateViewerFrame` now slices `traj.coords.subarray(frame*nA*3, …)` and rebuilds the model
+  from that frame's coords (camera untouched — no zoomTo).
+  - **Result (canvas pixel diffs per frame)**: 0.00% → **8.6–11%** — the molecule is now
+    unmistakably tumbling/vibrating during the run and in playback.
+  - Supporting changes: `MDLive::masses()`/`MetaDLive::masses()` (per-atom amu) so the demo
+    centers every displayed frame on the center of mass (vacuum runs drift — COM diffusion
+    carried the molecule out of frame); default run lengthened 2000 → 100000 steps (100 ps,
+    so methyl rotations/tumbling are visible, not just sub-pixel vibration).
+  - Verified end-to-end in headless Chrome: Embed, Optimize, MD live (121 frames, playback
+    prev/play/pause working), MetaD live (2000 hills, FES span 22.4) — zero console errors.
+    Wall time in headless is SwiftShader-bound (~100 ms/frame render); on GPU hardware the
+    animation runs at the speed-selector pace (~4–7 s).
 - **Live animation pacing fixed — motion was real but the run flashed past.** User: "I don't see
   the compound move at all". CDP measurement: the viewer DID move (atom 0 displaced ~3.5 Å over
   the run; 0.63 Å max per frame) but the whole animation completed in ~1.15 s headless (~0.45 s
