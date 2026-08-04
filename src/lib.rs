@@ -913,7 +913,11 @@ impl MDLive {
         let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
             Ok(m) => m,
             Err(e) => {
-                return MDLive { runner: None, n_atoms: 0, error: format!("Parse error: {}", e) }
+                return MDLive {
+                    runner: None,
+                    n_atoms: 0,
+                    error: format!("Parse error: {}", e),
+                }
             }
         };
         let variant = match options.mmff_variant.as_str() {
@@ -928,9 +932,12 @@ impl MDLive {
             seed: options.seed,
         };
         let n_atoms = mol.atoms.len();
-        let runner =
-            crate::md::MDRunner::from_molecule(std::rc::Rc::new(ff), &mol, config);
-        MDLive { runner: Some(runner), n_atoms, error: String::new() }
+        let runner = crate::md::MDRunner::from_molecule(std::rc::Rc::new(ff), &mol, config);
+        MDLive {
+            runner: Some(runner),
+            n_atoms,
+            error: String::new(),
+        }
     }
 
     pub fn success(&self) -> bool {
@@ -962,13 +969,22 @@ impl MDLive {
         v
     }
     pub fn potential_energy(&self) -> f64 {
-        self.runner.as_ref().map(|r| r.potential_energy()).unwrap_or(f64::NAN)
+        self.runner
+            .as_ref()
+            .map(|r| r.potential_energy())
+            .unwrap_or(f64::NAN)
     }
     pub fn temperature(&self) -> f64 {
-        self.runner.as_ref().map(|r| r.temperature()).unwrap_or(f64::NAN)
+        self.runner
+            .as_ref()
+            .map(|r| r.temperature())
+            .unwrap_or(f64::NAN)
     }
     pub fn time_fs(&self) -> f64 {
-        self.runner.as_ref().map(|r| r.time_fs()).unwrap_or(f64::NAN)
+        self.runner
+            .as_ref()
+            .map(|r| r.time_fs())
+            .unwrap_or(f64::NAN)
     }
     pub fn steps_done(&self) -> usize {
         self.runner.as_ref().map(|r| r.step_count()).unwrap_or(0)
@@ -1086,13 +1102,22 @@ impl MetaDLive {
         v
     }
     pub fn potential_energy(&self) -> f64 {
-        self.runner.as_ref().map(|r| r.potential_energy()).unwrap_or(f64::NAN)
+        self.runner
+            .as_ref()
+            .map(|r| r.potential_energy())
+            .unwrap_or(f64::NAN)
     }
     pub fn temperature(&self) -> f64 {
-        self.runner.as_ref().map(|r| r.temperature()).unwrap_or(f64::NAN)
+        self.runner
+            .as_ref()
+            .map(|r| r.temperature())
+            .unwrap_or(f64::NAN)
     }
     pub fn time_fs(&self) -> f64 {
-        self.runner.as_ref().map(|r| r.time_fs()).unwrap_or(f64::NAN)
+        self.runner
+            .as_ref()
+            .map(|r| r.time_fs())
+            .unwrap_or(f64::NAN)
     }
     pub fn steps_done(&self) -> usize {
         self.runner.as_ref().map(|r| r.step_count()).unwrap_or(0)
@@ -1106,7 +1131,10 @@ impl MetaDLive {
         self.metad.as_ref().map(|m| m.hill_count()).unwrap_or(0)
     }
     pub fn hill_centers(&self) -> Vec<f64> {
-        self.metad.as_ref().map(|m| m.hill_centers()).unwrap_or_default()
+        self.metad
+            .as_ref()
+            .map(|m| m.hill_centers())
+            .unwrap_or_default()
     }
 
     /// FES grid points (CV values) and free energies for `grid_points` bins.
@@ -1173,7 +1201,11 @@ mod tests {
         assert_eq!(live.n_atoms(), 9);
         live.step(100);
         assert!(live.last_cv().is_finite());
-        assert!(live.hill_count() <= 3, "hills after 100 steps: {}", live.hill_count());
+        assert!(
+            live.hill_count() <= 3,
+            "hills after 100 steps: {}",
+            live.hill_count()
+        );
         let s = live.fes_s(32);
         let f = live.fes_f(32);
         assert_eq!(s.len(), 32);
