@@ -21,6 +21,16 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **Live animation pacing fixed — motion was real but the run flashed past.** User: "I don't see
+  the compound move at all". CDP measurement: the viewer DID move (atom 0 displaced ~3.5 Å over
+  the run; 0.63 Å max per frame) but the whole animation completed in ~1.15 s headless (~0.45 s
+  at 60 fps rAF) — over before the eye registered it. **Fix** (site/index.html): ~120 frames per
+  run instead of ~25 (`chunk = max(10, ceil(nSteps/120))`, ≥10 fs/frame so motion stays
+  visible) and `setTimeout(1000/fps)` pacing from the existing speed selector (default 30 fps)
+  instead of rAF. Default MD run: ~119 frames ≈ 4 s on a GPU browser (headless SwiftShader
+  renders ~40–70 ms/frame, so ~8.7 s there). Verified: 119 frames, max per-frame displacement
+  ~0.17 Å, final E=−101.2/T=384K and MetaD 40 hills/FES 4.4 (both match the batch API),
+  playback enabled, zero console errors.
 - **Live trajectory animation — MD and metadynamics now animate while the simulation runs.**
   The demo previously ran the whole simulation synchronously and only then played back the
   recorded trajectory. Now the viewer, chart, readouts, and status update **live**, synced with

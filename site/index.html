@@ -357,9 +357,12 @@ function runMD() {
       const nA = state.n_atoms();
       const myRun = ++runId;
       disablePlayback(); traj = null;
-      // ~24–300 displayed frames over the whole run; step that many sim steps per frame.
-      const targetFrames = Math.min(300, Math.max(24, Math.round(nSteps / 80)));
-      const chunk = Math.max(1, Math.ceil(nSteps / targetFrames));
+      // ~120 displayed frames over the whole run (≥10 fs per frame so motion
+      // stays visible); paced by the speed selector so the animation lasts
+      // ~4 s at the default 30 fps instead of flashing past at 60 fps.
+      const fps = parseInt(document.getElementById('speed').value) || 30;
+      const chunk = Math.max(10, Math.ceil(nSteps / 120));
+      const targetFrames = Math.ceil(nSteps / chunk);
       const coordsArr = [], energies = [], temps = [], times = [];
       const pushFrame = () => {
         if (myRun !== runId) return false;
@@ -382,7 +385,7 @@ function runMD() {
       for (let s = 0; s < nSteps && myRun === runId; s += chunk) {
         state.step(Math.min(chunk, nSteps - s));
         pushFrame();
-        await new Promise(r => (document.hidden ? setTimeout(r, 16) : requestAnimationFrame(r)));
+        await new Promise(r => setTimeout(r, 1000 / fps));
       }
       if (myRun !== runId) return;
       enablePlayback();
@@ -437,8 +440,9 @@ function runMetad() {
       const nA = state.n_atoms();
       const myRun = ++runId;
       disablePlayback(); traj = null;
-      const targetFrames = Math.min(300, Math.max(24, Math.round(nSteps / 80)));
-      const chunk = Math.max(1, Math.ceil(nSteps / targetFrames));
+      const fps = parseInt(document.getElementById('speed').value) || 30;
+      const chunk = Math.max(10, Math.ceil(nSteps / 120));
+      const targetFrames = Math.ceil(nSteps / chunk);
       const coordsArr = [], energies = [], times = [], cvValues = [];
       const fmtCv = v => cvType === 'distance' ? v.toFixed(2) + ' Å' : (v * 180 / Math.PI).toFixed(0) + '°';
       const pushFrame = () => {
@@ -462,7 +466,7 @@ function runMetad() {
       for (let s = 0; s < nSteps && myRun === runId; s += chunk) {
         state.step(Math.min(chunk, nSteps - s));
         pushFrame();
-        await new Promise(r => (document.hidden ? setTimeout(r, 16) : requestAnimationFrame(r)));
+        await new Promise(r => setTimeout(r, 1000 / fps));
       }
       if (myRun !== runId) return;
       drawFES(state.fes_s(72), state.fes_f(72), state.hill_centers());
