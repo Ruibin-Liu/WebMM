@@ -296,8 +296,11 @@ function renderCoords(coords, sdf) {
     const x = coords[i*3].toFixed(4).padStart(10);
     const y = coords[i*3+1].toFixed(4).padStart(10);
     const z = coords[i*3+2].toFixed(4).padStart(10);
-    const rest = lines[4+i].substring(31);
-    atomLines.push(`    ${x}${y}${z}${rest}`);
+    // V2000 fixed columns: x[0,10) y[10,20) z[20,30) element[30,33). The old
+    // 4-space prefix + substring(31) shifted every field +4, so 3Dmol's
+    // fixed-width parser read garbage elements/coords (rendered as dots).
+    const rest = lines[4+i].substring(30);
+    atomLines.push(`${x}${y}${z}${rest}`);
   }
   const bondLines = lines.slice(4+na, 4+na+nb);
   const newSdf = [...header, ...atomLines, ...bondLines, 'M  END'].join('\n');

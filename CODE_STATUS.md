@@ -21,6 +21,18 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **Viewer dots after ETKDG embed fixed — V2000 column-shift bug in `renderCoords`.** User report:
+  after Embed 3D the viewer showed small dots instead of ball-stick. Root-caused via the
+  CDP/headless-Chrome harness: the rebuilt SDF atom line was `4 spaces + x(10) + y(10) +
+  z(10) + original.substring(31)`, shifting every fixed-width V2000 field +4 columns. 3Dmol
+  parses by fixed columns → garbage elements ("215"/"081"/"753") and coordinates
+  (x=2, y=9660, z=5058) → tiny default-colored dots, mostly off-screen. Affected all flows
+  using `renderCoords` (Embed, Optimize, MD). **Fix**: no leading spaces, splice at index 30
+  (element column): `${x}${y}${z}${lines[4+i].substring(30)}`. **Verified in headless
+  Chrome**: after embed/optimize/MD the viewer model is `{C:8, N:4, O:2, H:10}` (caffeine)
+  with correct coordinates; zero console errors. (Local debugging setup that caught this:
+  `python3 -m http.server` over `pkg/` + Playwright-cached Chrome headless with SwiftShader
+  WebGL, driven by a node CDP client — no npm installs.)
 - **Metadynamics button real-browser bug fixed — reproduced & verified via CDP-driven headless Chrome.**
   After the API fixes, the metad button still crashed with `Cannot read properties of undefined
   (reading 'toFixed')` in the browser even though the node repro passed. Set up local debugging:
