@@ -415,6 +415,7 @@ function runMetad() {
         cvValues: res.cv_values(),
       };
       traj.eMin = Math.min(...traj.energies); traj.eMax = Math.max(...traj.energies);
+      traj.tMin = 0; traj.tMax = 1; // no temperature trace for metad (temps: [])
       currentFrame = traj.nFrames - 1;
       enablePlayback();
       updateViewerFrame(currentFrame);
@@ -540,7 +541,9 @@ function drawChart() {
     ctx.stroke();
   };
   drawLine(traj.energies, traj.eMin, traj.eMax, '#58a6ff');
-  drawLine(traj.temps, traj.tMin, traj.tMax, '#f85149');
+  if (traj.temps && traj.temps.length > 0) {
+    drawLine(traj.temps, traj.tMin, traj.tMax, '#f85149');
+  }
   // cursor
   ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
   const cx = pad + (currentFrame / (traj.nFrames-1)) * (W - 2*pad);
@@ -548,7 +551,9 @@ function drawChart() {
   ctx.setLineDash([]);
   // legend values
   document.getElementById('legend-pe').textContent = `PE: ${traj.eMin.toFixed(0)}–${traj.eMax.toFixed(0)} kcal/mol`;
-  document.getElementById('legend-temp').textContent = `T: ${traj.tMin.toFixed(0)}–${traj.tMax.toFixed(0)} K`;
+  document.getElementById('legend-temp').textContent = (traj.temps && traj.temps.length > 0)
+    ? `T: ${traj.tMin.toFixed(0)}–${traj.tMax.toFixed(0)} K`
+    : 'Temperature (K)';
 }
 function clearChart() {
   const cv = document.getElementById('chart');

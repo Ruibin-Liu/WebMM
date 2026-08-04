@@ -21,6 +21,20 @@ debug output in `minimize_etkdg` (no behavior change; embedding numbers identica
 the old 126° split fails by 6°).
 
 ## Recently Completed
+- **Metadynamics button real-browser bug fixed — reproduced & verified via CDP-driven headless Chrome.**
+  After the API fixes, the metad button still crashed with `Cannot read properties of undefined
+  (reading 'toFixed')` in the browser even though the node repro passed. Set up local debugging:
+  `python3 -m http.server` over `pkg/` + Playwright-cached Chrome 143 headless with SwiftShader
+  WebGL, driven by a small CDP client (node built-in WebSocket; no npm installs). CDP captured
+  the stack: **`drawChart` line 551 — `runMetad` never set `traj.tMin`/`traj.tMax`** (only
+  `eMin`/`eMax`), and `drawChart` unconditionally formatted them (`temps: []` for metad).
+  Fix: set `tMin/tMax` in `runMetad` and guard the temperature trace/legend in `drawChart`.
+  **Full end-to-end verification in headless Chrome**: Embed (24 atoms), Optimize
+  (E=−123.49, 475 iters), MD (101 frames) + prev/play/pause playback, Metad (40 hills,
+  FES span 4.4, 101 frames, overlay + legend) — all pass with **zero console errors**.
+  The CDP driver also caught an environment-only artifact: headless Chrome without GPU gives
+  `canvas.getContext('webgl') == null` → SwiftShader (`--enable-unsafe-swiftshader
+  --use-angle=swiftshader`) is required for the 3Dmol viewer.
 - **Release v0.6.1 (patch).** Everything since v0.6.0 (922cfcb) is patch-level: demo page WASM
   API fixes (embed/optimize/metad buttons), Rust CI green (cargo fmt, clippy 1.97
   `collapsible_match`, wasm-pack v0.13.1 pin), README refresh, production debug-print cleanup.
