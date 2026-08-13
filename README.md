@@ -143,11 +143,18 @@ build the WASM, stage the landing page into `pkg/`, then serve `pkg/`:
 ```bash
 npm run build                              # wasm-pack build --target web --out-dir pkg
 cp site/index.html pkg/index.html          # stage the landing page
+cp site/playground.html pkg/playground.html  # stage the playground page
 python3 -m http.server 8000 --directory pkg   # serve on http://localhost:8000
 ```
 
 Then open **http://localhost:8000** in your browser. (This mirrors what the
 GitHub Pages workflow does — see `.github/workflows/pages.yml`.)
+
+The **playground** (`/playground.html`) is an interactive physics toy on top of
+the live MD engine: drag atoms with the pointer (the force field fights back),
+crank the temperature, watch per-atom force glow, and run metadynamics with a
+live free-energy surface. It uses the `MDLive` perturbation exports
+(`set_atom_position` / `rescale_temperature` / `force_magnitudes`).
 
 > **Note:** the demo loads `3Dmol.js` (the 3D viewer) from a CDN, so you need
 > internet access for the viewer. The MMFF/ETKDG/MD/metadynamics engines run
@@ -252,6 +259,14 @@ animation frames. `MetaDLive` additionally exposes `last_cv()`, `hill_count()`,
 `hill_centers()`, and `fes_s(gridPoints)` / `fes_f(gridPoints)` for the
 free-energy surface. Stepping is deterministic and identical to the
 corresponding batch API.
+
+`MDLive` also exposes interactive-perturbation methods (for the playground
+page): `set_atom_position(i, x, y, z)` (kinematic dragging — sets the
+position, zeroes the atom's velocity, and refreshes the cached energy/forces),
+`rescale_temperature(t)` (exact instantaneous velocity rescale + thermostat
+retarget; re-initializes from Maxwell–Boltzmann at ~0 K; `t <= 0` freezes),
+and `force_magnitudes()` (per-atom |F| in kcal/mol/Å from the last force
+evaluation).
 
 #### `OptimizationResult`
 

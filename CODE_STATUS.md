@@ -4,23 +4,35 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**MMFF94/MMFF94s energy validation COMPLETE: 230/230 molecules match RDKit to <0.01 kcal/mol.**
+**WebMM Playground v1 (site/playground.html) COMPLETE — all three phases landed: engine perturbation exports, 3Dmol drag spike, page build + 19/19 CDP verification.**
 
-Atom typing decoupled from aromaticity (carbonyl C → C_2, amide N-H → H_NAM regardless of
-aromaticity flag) — robust to future aromaticity-perception changes. 230/230, 199 tests, 0 clippy.
+Playground = fun/cool teaching sandbox over the existing WASM engine (decision:
+separate page sharing `pkg/webmm.js`, not a molecule-clipboard extension — that
+project stays 2D). v1.5 candidates: beat-the-optimizer game, manual dihedral
+twisting, MetaDLive perturbation exports, spring-based dragging (engine
+restraint wrapper) if the kinematic clamp feels too rigid.
 
-**ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). The sp2 1-3 equal-distribution fix
-(all-single centers, RDKit set13Bounds-faithful) resolved the top documented outlier **xanthine
-+13.2→+0.8** and fixed the flaky aniline geometry test (H-N-H now 116–119.5° across seeds, RDKit
-~117.5°); the small aggregate dip (r 0.9762→0.9749) is concentrated in already-WebMM-better
-molecules (guanine −54→−63). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local
-minima). The systematic torsion/hybridization/K₁₂ fixes (r 0.86→0.97) are landed; further gains
-need 4D-embedding quality work. Repo-hygiene pass 2 removed the leftover production `eprintln!`
-debug output in `minimize_etkdg` (no behavior change; embedding numbers identical) and turned
-`test_aniline_hh_bounds` into a real regression guard (H-H 1-3 bound center must imply ≈120°;
-the old 126° split fails by 6°).
+MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit to <0.01 kcal/mol (unchanged).
+
+**ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
 
 ## Recently Completed
+- **Playground Phase 3 (page build): `site/playground.html` v1 COMPLETE — 19/19 CDP headless checks, zero console errors.** Dark-theme interactive physics toy over the live engine: continuous MD (run/pause, 30 fps `setTimeout` pacing, calm/normal/wild = 20/100/500 steps-per-frame), grab & pull, temperature slider, force glow, metadynamics with live FES, shareable URLs. Verified via the CDP harness (vendored 3Dmol — headless Chrome can't reach jsDelivr): caffeine live MD advances; slider rescales T to 900.0 K **exactly** when paused; drag spikes PE (−106→−6); orbit suppressed during grab; glow colors change under strain; pause/resume freeze/advance sim time; metad 2000-step run draws FES (40 hills) then auto-resumes MD at the final geometry; preset switch (menthol 31 atoms) + `?mol=menthol&T=100` URL state; paste-SDF path (ethanol 9 atoms); `?mol=vanillin&T=600` boots correctly.
+  - **Two physics findings from testing, fixed in-page:** (1) **velocity-rescale transient** — an instantaneous rescale to α·T relaxes toward T·(1+α²)/(2α²) as KE↔PE equilibrates (measured 900→~600 K dip, matches harmonic theory 585 K); the thermostat recovers the target over ~ps. The verification asserts the exact instant rescale while paused, thermostat recovery while running. (2) **drag-explosion**: kinematic dragging can store arbitrary PE in stretched bonds; releasing >~200 kcal/mol blew the 1 fs integrator to NaN (observed). Fixed with a per-tick 2.5 Å displacement clamp on the drag target + a +100 kcal/mol strain-limit auto-release ("💥 slipped out of your grip" — T still spikes hundreds of K, fun preserved) + a non-finite PE/T guard that resets the sim instead of wedging the page.
+  - **Design choices:** presets + paste-SDF only (no SMILES parser); 9 pre-verified RDKit-generated presets (caffeine, capsaicin, adrenaline, serotonin, dopamine, sucrose, vanillin, menthol, ethanol) baked as static SDFs (instant load, no runtime-embedding risk), each with a curated metad CV dihedral; grabbing uses the Phase-2 projection picking (3Dmol clickables unusable with stick style); COM-centered display with COM-offset-corrected drag targets; auto-recenter (re-heat at target T) beyond 12 Å COM drift; `pages.yml` now also stages `playground.html`; README demo section documents the page.
+- **Playground Phase 2 (spike): 3Dmol 2.4 atom picking + screen→world drag VERIFIED headless — 15/15 CDP checks; found a 3Dmol clickable+stick crash bug.** Harness: `python3 -m http.server` over `pkg/` + Playwright-cached `chrome-headless-shell` (SwiftShader flags `--enable-unsafe-swiftshader --use-angle=swiftshader`), node built-in WebSocket CDP driver (/tmp/spike_drive.mjs), spike page `pkg/spike.html` (gitignored). Headless Chrome cannot reach the jsDelivr CDN → 3Dmol must be vendored locally for testing (production CDN use is fine).
+  - **Camera model confirmed from source + runtime** (`getView()` public API only): scene → rotationGroup(quaternion q, position.z=zoom) → modelGroup(position=−center); camera fixed at (0,0,150), fov 20°, looking at origin. `worldToScreen` = translate→rotate→perspective→canvas rect (CSS px).
+  - **Projection cross-validated against 3Dmol's own raycaster** (T1): clicking each atom's projected screen position via synthetic CDP mouse events triggers 3Dmol's click callback for that atom — 9/9 identity view, 9/9 rotated 25°y, with an occlusion-aware assertion (a pick of a *different* atom is legitimate iff our math says its projected disc contains the click point and it is in front of the target — caught a real near-tie: clicking H-atom 6 hits carbon 1 whose disc covers the point).
+  - **Drag mapping exact** (T3): pixel deltas → world displacement on the screen-parallel plane at grab depth (perPx = 2·depth·tan(fov/2)/canvasH, then inverse-rotate by q) reprojects to start+delta with **0.000 px error** across identity/rotated/zoomed/translated views.
+  - **Self-picking + grab semantics** (T2/T5/T6): nearest-projected-atom within 25 px picks correctly 9/9; capture-phase mousedown + `stopPropagation()` when an atom is grabbed suppresses 3Dmol's orbit (view quaternion unchanged after a 60 px drag); orbit still works when pressing empty space.
+  - **3Dmol 2.4 BUG found (affects design)**: atoms with `clickable=true` + **stick style** crash in `drawBondSticks` (3Dmol.js:3391) — the per-atom `intersectionShape` init (line 3606) runs in the same render loop that draws bonds, so atom 0's bond touches its not-yet-initialized neighbor. Sphere-only clickable styles are safe. **Consequence: the playground uses our own projection-based picking (validated here); 3Dmol clickables are off the table with stick rendering.** This also means the fallback in PLAN.md becomes the primary mechanism.
+- **Playground Phase 1 (engine): `MDLive` is now perturbable — 3 additive exports for interactive dragging, temperature control, and force visualization.** `src/md/mod.rs` + `src/lib.rs`:
+  - **`MDRunner::set_atom_position(i, pos)`** — kinematic drag: sets `coords[i]`, zeroes `vel[i]`, then refreshes `pe`/`grad` with one `energy_and_gradient` call (the cached gradient corresponds to the old position — the next integrator step would otherwise consume a stale force). Out-of-range indices are ignored (no panic in the interactive path).
+  - **`MDRunner::rescale_temperature(t)`** — exact instantaneous velocity rescale to target T (re-initializes from Maxwell–Boltzmann when starting from ~0 K); updates `temperature_k` (Langevin target) and recomputes `use_thermostat` (`friction>0 && t>0`, mirroring construction); `t <= 0` freezes all velocities. The MB-init + COM-removal + exact-rescale block of `new()` was factored into a private `init_velocities(t)` helper shared by both paths — construction numerics unchanged (same RNG draw order).
+  - **`MDRunner::force_magnitudes()`** — per-atom `|-grad|` (kcal/mol/Å) from the cached gradient.
+  - **WASM wrappers on `MDLive` only**: `set_atom_position(i, x, y, z)`, `rescale_temperature(t)`, `force_magnitudes()`. No changes to existing exports; batch APIs and `MetaDLive` untouched (metad perturbation deferred to playground v1.5).
+  - **Tests (+4, 205 total)**: harmonic-oscillator exactness — post-drag pe matches 0.5·k·Σ|x|² at current coords, dragged-atom velocity zeroed, out-of-range no-op; rescale hits 600 K to <1e-9 rel; cold-start 0→300 K via MB re-init; freeze zeroes velocities (post-freeze force-driven re-acceleration documented as correct physics, not asserted against); `force_magnitudes` matches a fresh MMFF gradient eval bitwise (<1e-12) both at construction and post-drag geometry; `mdlive_perturbation_exports` exercises the WASM wrappers end-to-end (gentle 0.5 Å drag — a 5 Å yank legitimately blows up the integrator, test-authoring bug fixed).
+  - Verified: `cargo test` 205/205, `cargo clippy --all-targets` 0 warnings, `python3 scripts/benchmark_mmff.py --no-speed` 230/230 PASS (MMFF untouched), wasm-pack build clean + `pkg/webmm.d.ts` exposes the three methods; README API section documents them.
 - **"Nothing moves" root-caused and fixed — 3Dmol 2.4 caches geometry; frame indexing bug.**
   Despite the live loop updating atom data (measured: 1.5–4.5 Å per-frame displacement!), the
   canvas never changed. Pixel-level CDP tests proved two things: (1) **3Dmol 2.4 ignores

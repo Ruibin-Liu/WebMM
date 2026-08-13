@@ -148,40 +148,12 @@ impl<'a> MDRunner<'a> {
         let mut grad = vec![[0.0; 3]; n];
         let pe = ff.energy_and_gradient(&coords, &mut grad);
         let dof = if n > 1 { 3 * n - 3 } else { 3 }; // remove COM translation
-        let mut rng = Rng::new(config.seed);
-        let mut vel = vec![[0.0; 3]; n];
-        if config.temperature_k > 0.0 {
-            // Maxwell–Boltzmann initialization
-            let s = (KB * config.temperature_k).sqrt();
-            for i in 0..n {
-                let a = s / masses[i].sqrt();
-                vel[i] = [
-                    a * rng.next_gaussian(),
-                    a * rng.next_gaussian(),
-                    a * rng.next_gaussian(),
-                ];
-            }
-            if n > 1 {
-                remove_com_velocity(&mut vel, &masses);
-            }
-            // rescale to exactly the target temperature
-            let ke = kinetic_energy(&masses, &vel);
-            let t = 2.0 * ke / (dof as f64 * KB);
-            if t > 1e-12 {
-                let sc = (config.temperature_k / t).sqrt();
-                for v in vel.iter_mut() {
-                    v[0] *= sc;
-                    v[1] *= sc;
-                    v[2] *= sc;
-                }
-            }
-        }
-        MDRunner {
+        let mut runner = MDRunner {
             ff,
             n,
             masses,
             coords,
-            vel,
+            vel: vec![[0.0; 3]; n],
             grad,
             pe,
             dt_tau: config.dt_fs / TIMEUNIT_FS,
@@ -189,10 +161,14 @@ impl<'a> MDRunner<'a> {
             friction_tau: config.friction_per_ps * TIMEUNIT_FS / 1000.0,
             use_thermostat: config.friction_per_ps > 0.0 && config.temperature_k > 0.0,
             dof,
-            rng,
+            rng: Rng::new(config.seed),
             step: 0,
             time_fs: 0.0,
+        };
+        if config.temperature_k > 0.0 {
+            runner.init_velocities(config.temperature_k);
         }
+        runner
     }
 
     /// Build a runner from a molecule (masses + coordinates taken from atoms).
@@ -208,6 +184,82 @@ impl<'a> MDRunner<'a> {
             .collect();
         let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
         Self::new(ff, masses, coords, config)
+    }
+
+    /// Maxwell–Boltzmann velocity initialization at `temperature_k`, with COM
+    /// translation removed and an exact rescale to the target temperature.
+    fn init_velocities(&mut self, temperature_k: f64) {
+        let s = (KB * temperature_k).sqrt();
+        for i in 0..self.n {
+            let a = s / self.masses[i].sqrt();
+            self.vel[i] = [
+                a * self.rng.next_gaussian(),
+                a * self.rng.next_gaussian(),
+                a * self.rng.next_gaussian(),
+            ];
+        }
+        if self.n > 1 {
+            remove_com_velocity(&mut self.vel, &self.masses);
+        }
+        // rescale to exactly the target temperature
+        let ke = kinetic_energy(&self.masses, &self.vel);
+        let t = 2.0 * ke / (self.dof as f64 * KB);
+        if t > 1e-12 {
+            let sc = (temperature_k / t).sqrt();
+            for v in self.vel.iter_mut() {
+                v[0] *= sc;
+                v[1] *= sc;
+                v[2] *= sc;
+            }
+        }
+    }
+
+    /// Kinematically move one atom (interactive dragging): set its position and
+    /// zero its velocity, then refresh the cached energy/gradient so the next
+    /// step uses forces consistent with the new geometry. Costs one force
+    /// evaluation. Out-of-range indices are ignored.
+    pub fn set_atom_position(&mut self, i: usize, pos: [f64; 3]) {
+        if i >= self.n {
+            return;
+        }
+        self.coords[i] = pos;
+        self.vel[i] = [0.0; 3];
+        self.pe = self.ff.energy_and_gradient(&self.coords, &mut self.grad);
+    }
+
+    /// Retarget the simulation temperature: rescale velocities so the
+    /// instantaneous temperature equals `temperature_k` exactly (re-initializes
+    /// from Maxwell–Boltzmann when starting from ~0 K) and update the Langevin
+    /// thermostat target. `temperature_k <= 0` freezes all velocities.
+    pub fn rescale_temperature(&mut self, temperature_k: f64) {
+        self.temperature_k = temperature_k;
+        self.use_thermostat = self.friction_tau > 0.0 && temperature_k > 0.0;
+        if temperature_k <= 0.0 {
+            for v in self.vel.iter_mut() {
+                *v = [0.0; 3];
+            }
+            return;
+        }
+        let t_cur = self.temperature();
+        if t_cur > 1e-12 {
+            let sc = (temperature_k / t_cur).sqrt();
+            for v in self.vel.iter_mut() {
+                v[0] *= sc;
+                v[1] *= sc;
+                v[2] *= sc;
+            }
+        } else {
+            self.init_velocities(temperature_k);
+        }
+    }
+
+    /// Per-atom force magnitudes (kcal/mol/Å) from the last force evaluation
+    /// (forces are `-grad`; magnitudes are unaffected by the sign).
+    pub fn force_magnitudes(&self) -> Vec<f64> {
+        self.grad
+            .iter()
+            .map(|g| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt())
+            .collect()
     }
 
     /// Advance one step (NVE velocity-Verlet or NVT BAOAB Langevin).
@@ -472,6 +524,126 @@ mod tests {
     }
 
     const METHANE_SDF: &str = "Methane\n     RDKit          3D\n\n  5  4  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0\n    0.6294    0.6294    0.6294 H   0  0  0  0  0  0  0  0  0\n   -0.6294   -0.6294    0.6294 H   0  0  0  0  0  0  0  0  0\n   -0.6294    0.6294   -0.6294 H   0  0  0  0  0  0  0  0  0\n    0.6294   -0.6294   -0.6294 H   0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  1  3  1  0\n  1  4  1  0\n  1  5  1  0\nM  END\n";
+
+    #[test]
+    fn set_atom_position_refreshes_energy_and_zeroes_velocity() {
+        // Harmonic oscillator: E = 0.5·k·Σ|x_i|² is exact, so the refreshed
+        // energy after a kinematic drag is checkable to machine precision.
+        let k = 2.0;
+        let ho = HarmonicOscillator { n: 4, k };
+        let masses = vec![1.0; 4];
+        let coords = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 1.0]];
+        let mut md = MDRunner::new(
+            Rc::new(ho),
+            masses,
+            coords,
+            MDConfig {
+                dt_fs: 0.5,
+                temperature_k: 300.0,
+                friction_per_ps: 0.0,
+                seed: 5,
+            },
+        );
+        md.step();
+        md.set_atom_position(1, [3.0, -4.0, 0.5]);
+        // Exact check against the definition E = 0.5·k·Σ|x_i|² at the
+        // post-drag coordinates (other atoms moved during the step above).
+        let expect = 0.5
+            * k
+            * md.coords()
+                .iter()
+                .map(|c| c[0] * c[0] + c[1] * c[1] + c[2] * c[2])
+                .sum::<f64>();
+        assert!(
+            (md.potential_energy() - expect).abs() < 1e-9,
+            "pe {} vs exact {}",
+            md.potential_energy(),
+            expect
+        );
+        assert_eq!(md.velocities()[1], [0.0; 3], "dragged atom velocity");
+        assert_eq!(md.coords()[1], [3.0, -4.0, 0.5]);
+        // Out-of-range index is a no-op.
+        let pe = md.potential_energy();
+        md.set_atom_position(99, [0.0; 3]);
+        assert_eq!(md.potential_energy(), pe);
+        // The next step must integrate from the refreshed state without panic.
+        assert!(md.step().is_finite());
+    }
+
+    #[test]
+    fn rescale_temperature_hits_target() {
+        let ho = HarmonicOscillator { n: 8, k: 1.0 };
+        let masses = vec![1.0; 8];
+        let coords = (0..8).map(|i| [i as f64, 0.1 * i as f64, 0.0]).collect::<Vec<_>>();
+        let cfg = |t| MDConfig {
+            dt_fs: 0.5,
+            temperature_k: t,
+            friction_per_ps: 2.0,
+            seed: 11,
+        };
+        // Warm start at 300 K → rescale to 600 K (exact, instantaneous).
+        let mut md = MDRunner::new(Rc::new(ho), masses.clone(), coords.clone(), cfg(300.0));
+        for _ in 0..100 {
+            md.step();
+        }
+        md.rescale_temperature(600.0);
+        assert!(
+            (md.temperature() - 600.0).abs() / 600.0 < 1e-9,
+            "T after rescale = {}",
+            md.temperature()
+        );
+        // Cold start (0 K → zero velocities) → MB re-initialization.
+        let mut cold = MDRunner::new(Rc::new(HarmonicOscillator { n: 8, k: 1.0 }), masses.clone(), coords.clone(), cfg(0.0));
+        assert_eq!(cold.temperature(), 0.0);
+        cold.rescale_temperature(300.0);
+        assert!(
+            (cold.temperature() - 300.0).abs() / 300.0 < 1e-9,
+            "T after cold re-init = {}",
+            cold.temperature()
+        );
+        // Freeze: velocities zeroed (the force field may re-accelerate atoms
+        // on subsequent NVE steps — that is correct physics, not reheating).
+        cold.rescale_temperature(0.0);
+        assert_eq!(cold.temperature(), 0.0);
+        assert!(cold.step().is_finite());
+    }
+
+    #[test]
+    fn force_magnitudes_match_mmff_gradient() {
+        let mol = crate::molecule::parser::parse_sdf(METHANE_SDF).expect("parse");
+        let ff = Rc::new(crate::mmff::MMFFForceField::new(
+            &mol,
+            crate::MMFFVariant::MMFF94s,
+        ));
+        let mut md = MDRunner::from_molecule(
+            ff.clone(),
+            &mol,
+            MDConfig {
+                dt_fs: 0.5,
+                temperature_k: 0.0,
+                friction_per_ps: 0.0,
+                seed: 3,
+            },
+        );
+        let check = |md: &MDRunner| {
+            let mags = md.force_magnitudes();
+            let mut grad = vec![[0.0; 3]; mol.atoms.len()];
+            ff.energy_and_gradient(md.coords(), &mut grad);
+            for (i, g) in grad.iter().enumerate() {
+                let expect = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
+                assert!(
+                    (mags[i] - expect).abs() < 1e-12,
+                    "atom {}: |F| {} vs fresh {}",
+                    i,
+                    mags[i],
+                    expect
+                );
+            }
+        };
+        check(&md); // at construction geometry
+        md.set_atom_position(1, [1.2, 0.0, 0.0]); // strained geometry
+        check(&md);
+    }
 
     #[test]
     fn wasm_run_md_from_sdf_returns_trajectory() {

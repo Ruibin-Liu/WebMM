@@ -54,7 +54,9 @@ jobs:
     # landing page is the committed site/index.html (pkg/ is gitignored).
     # Copy it in so the deployed Pages root has an entry point.
     - name: Stage landing page
-      run: cp site/index.html pkg/index.html
+      run: |
+        cp site/index.html pkg/index.html
+        cp site/playground.html pkg/playground.html
 
     - name: Setup Pages
       uses: actions/configure-pages@v5

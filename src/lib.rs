@@ -996,6 +996,28 @@ impl MDLive {
     pub fn steps_done(&self) -> usize {
         self.runner.as_ref().map(|r| r.step_count()).unwrap_or(0)
     }
+    /// Kinematically drag one atom: set its position, zero its velocity, and
+    /// refresh the cached energy/forces so the next step is consistent.
+    pub fn set_atom_position(&mut self, i: usize, x: f64, y: f64, z: f64) {
+        if let Some(r) = self.runner.as_mut() {
+            r.set_atom_position(i, [x, y, z]);
+        }
+    }
+    /// Rescale velocities to a new target temperature (K) and retarget the
+    /// thermostat; re-initializes from Maxwell–Boltzmann if currently ~0 K;
+    /// `temperature_k <= 0` freezes the molecule.
+    pub fn rescale_temperature(&mut self, temperature_k: f64) {
+        if let Some(r) = self.runner.as_mut() {
+            r.rescale_temperature(temperature_k);
+        }
+    }
+    /// Per-atom force magnitudes (kcal/mol/Å) from the last force evaluation.
+    pub fn force_magnitudes(&self) -> Vec<f64> {
+        self.runner
+            .as_ref()
+            .map(|r| r.force_magnitudes())
+            .unwrap_or_default()
+    }
 }
 
 /// Live metadynamics handle: like [`MDLive`], plus CV/hill/FES accessors so
@@ -1203,6 +1225,37 @@ mod tests {
         let mut live2 = crate::MDLive::new(&sdf, crate::MDOptions::new());
         live2.step(50);
         assert_eq!(live2.coords(), c1);
+    }
+
+    /// Live MD handle: the interactive-perturbation exports (drag, temperature
+    /// retarget, force readout) work through the WASM wrappers.
+    #[test]
+    fn mdlive_perturbation_exports() {
+        let sdf = std::fs::read_to_string("scripts/val_set/ethanol.sdf").unwrap();
+        let opts = crate::MDOptions::new();
+        let mut live = crate::MDLive::new(&sdf, opts);
+        assert!(live.success(), "MDLive error: {}", live.error());
+        live.step(20);
+        // Force magnitudes: one per atom, finite, non-negative.
+        let mags = live.force_magnitudes();
+        assert_eq!(mags.len(), live.n_atoms());
+        assert!(mags.iter().all(|m| m.is_finite() && *m >= 0.0));
+        // Drag atom 0 by 0.5 Å: energy refreshes and stays finite; sim continues.
+        let c0 = live.coords();
+        let e_before = live.potential_energy();
+        live.set_atom_position(0, c0[0] + 0.5, c0[1], c0[2]);
+        let e_after = live.potential_energy();
+        assert!(e_after.is_finite());
+        assert!(e_after != e_before, "drag must refresh the energy");
+        live.step(10);
+        assert!(live.potential_energy().is_finite());
+        // Temperature retarget: exact instantaneous rescale.
+        live.rescale_temperature(600.0);
+        assert!(
+            (live.temperature() - 600.0).abs() / 600.0 < 1e-9,
+            "T after rescale = {}",
+            live.temperature()
+        );
     }
 
     /// Live metadynamics handle: hills deposit and the FES matches the grid.
