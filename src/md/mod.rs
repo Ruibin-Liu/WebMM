@@ -532,7 +532,12 @@ mod tests {
         let k = 2.0;
         let ho = HarmonicOscillator { n: 4, k };
         let masses = vec![1.0; 4];
-        let coords = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 1.0]];
+        let coords = vec![
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ];
         let mut md = MDRunner::new(
             Rc::new(ho),
             masses,
@@ -574,7 +579,9 @@ mod tests {
     fn rescale_temperature_hits_target() {
         let ho = HarmonicOscillator { n: 8, k: 1.0 };
         let masses = vec![1.0; 8];
-        let coords = (0..8).map(|i| [i as f64, 0.1 * i as f64, 0.0]).collect::<Vec<_>>();
+        let coords = (0..8)
+            .map(|i| [i as f64, 0.1 * i as f64, 0.0])
+            .collect::<Vec<_>>();
         let cfg = |t| MDConfig {
             dt_fs: 0.5,
             temperature_k: t,
@@ -593,7 +600,12 @@ mod tests {
             md.temperature()
         );
         // Cold start (0 K → zero velocities) → MB re-initialization.
-        let mut cold = MDRunner::new(Rc::new(HarmonicOscillator { n: 8, k: 1.0 }), masses.clone(), coords.clone(), cfg(0.0));
+        let mut cold = MDRunner::new(
+            Rc::new(HarmonicOscillator { n: 8, k: 1.0 }),
+            masses.clone(),
+            coords.clone(),
+            cfg(0.0),
+        );
         assert_eq!(cold.temperature(), 0.0);
         cold.rescale_temperature(300.0);
         assert!(
