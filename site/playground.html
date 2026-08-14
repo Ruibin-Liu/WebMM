@@ -145,7 +145,7 @@
   <div class="panel">
     <div id="viewer">
       <div class="overlay" id="overlay">loading…</div>
-      <div class="hint" id="hint">🖱 drag an atom · crank the temperature · release = slingshot</div>
+      <div class="hint" id="hint">🖱 drag an atom · twist a bond · crank the heat</div>
       <div class="loading" id="loading">Initializing WebAssembly…</div>
     </div>
     <canvas id="chart" width="900" height="90"></canvas>
@@ -789,7 +789,10 @@ let currentSdf = null, currentKey = null;
 let nAtoms = 0, masses = [];
 let lastDisplayed = null;     // COM-centered coords shown on screen (picking space)
 let lastCOM = [0, 0, 0];
-let grabbed = null;           // {index, depth, grabDisplay:[x,y,z], grabMouse:{x,y}}
+let grabbed = null;           // {type:'atom'|'bond', ...} — see grab handlers
+let bonds = [];               // {i, j, ring} from the SDF bond block
+let adjacency = [];           // number[][]
+let highlightSet = null;      // atom indices tinted while a bond is grabbed
 let mouse = { x: 0, y: 0 };
 let targetT = 300;
 let peBuf = [], tBuf = [];    // scrolling chart buffers
@@ -835,13 +838,76 @@ function pixelDeltaToWorld(dx, dy, depth) {
 // are unusable: 3Dmol 2.4 crashes on clickable+stick, see CODE_STATUS.md)
 function pickAtom(x, y) {
   if (!lastDisplayed || liveKind !== 'md') return null;
-  let best = null, bestD = 28;
+  let best = null, bestD = 18;
   for (let i = 0; i < nAtoms; i++) {
     const p = worldToScreen([lastDisplayed[i*3], lastDisplayed[i*3+1], lastDisplayed[i*3+2]]);
     const d = Math.hypot(p.sx - x, p.sy - y);
     if (d < bestD) { bestD = d; best = { index: i, depth: p.depth }; }
   }
   return best;
+}
+
+function pointSegDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const l2 = dx * dx + dy * dy;
+  if (l2 < 1e-9) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+// nearest twistable (non-ring) bond to a screen point — atoms win first
+function pickBond(x, y) {
+  if (!lastDisplayed || liveKind !== 'md' || bonds.length === 0) return null;
+  let best = null, bestD = 14;
+  for (const b of bonds) {
+    if (b.ring) continue;
+    const A = worldToScreen([lastDisplayed[b.i*3], lastDisplayed[b.i*3+1], lastDisplayed[b.i*3+2]]);
+    const B = worldToScreen([lastDisplayed[b.j*3], lastDisplayed[b.j*3+1], lastDisplayed[b.j*3+2]]);
+    const d = pointSegDist(x, y, A.sx, A.sy, B.sx, B.sy);
+    if (d < bestD) { bestD = d; best = { b, depth: (A.depth + B.depth) / 2 }; }
+  }
+  if (!best) return null;
+  // the smaller side rotates around the axis anchor->to
+  const sideJ = bfsSide(best.b.j, best.b), sideI = bfsSide(best.b.i, best.b);
+  let side, anchor, to;
+  if (sideJ.size <= sideI.size) { side = [...sideJ].filter(a => a !== best.b.j); anchor = best.b.i; to = best.b.j; }
+  else { side = [...sideI].filter(a => a !== best.b.i); anchor = best.b.j; to = best.b.i; }
+  return { type: 'bond', i: best.b.i, j: best.b.j, side, anchor, to, depth: best.depth };
+}
+
+// twist the grabbed bond: signed perpendicular mouse delta (relative to the
+// bond's projected 2D direction) -> incremental rotation of the side atoms
+// around the bond axis (Rodrigues). Incremental (perp - lastPerp) so the
+// rotation tracks the cursor without compounding; clamped per application.
+function twistBond() {
+  const g = grabbed;
+  const raw = live.coords();
+  const a = [raw[g.anchor*3], raw[g.anchor*3+1], raw[g.anchor*3+2]];
+  const b = [raw[g.to*3], raw[g.to*3+1], raw[g.to*3+2]];
+  const A = worldToScreen([a[0] - lastCOM[0], a[1] - lastCOM[1], a[2] - lastCOM[2]]);
+  const B = worldToScreen([b[0] - lastCOM[0], b[1] - lastCOM[1], b[2] - lastCOM[2]]);
+  let bx = B.sx - A.sx, by = B.sy - A.sy;
+  const bl = Math.hypot(bx, by);
+  if (bl < 1e-3) return; // bond pointing at the camera — no twist reference
+  bx /= bl; by /= bl;
+  const dragX = mouse.x - g.grabMouse.x, dragY = mouse.y - g.grabMouse.y;
+  const perp = dragX * -by + dragY * bx;
+  let dTheta = (perp - g.lastPerp) * 0.01;
+  g.lastPerp = perp;
+  dTheta = Math.max(-0.26, Math.min(0.26, dTheta));
+  if (Math.abs(dTheta) < 1e-7) return;
+  const ax = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const al = Math.hypot(ax[0], ax[1], ax[2]);
+  ax[0] /= al; ax[1] /= al; ax[2] /= al;
+  const c = Math.cos(dTheta), s = Math.sin(dTheta);
+  for (const idx of g.side) {
+    const p = [raw[idx*3] - a[0], raw[idx*3+1] - a[1], raw[idx*3+2] - a[2]];
+    const dot = p[0] * ax[0] + p[1] * ax[1] + p[2] * ax[2];
+    const cross = [ax[1] * p[2] - ax[2] * p[1], ax[2] * p[0] - ax[0] * p[2], ax[0] * p[1] - ax[1] * p[0]];
+    const q = [0, 1, 2].map(k => a[k] + p[k] * c + cross[k] * s + ax[k] * dot * (1 - c));
+    live.set_atom_position(idx, q[0], q[1], q[2]);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -858,6 +924,7 @@ function atomColors(forces) {
   for (let i = 0; i < nAtoms; i++) {
     const el = live ? elemOf(i) : 'C';
     const base = ELEM_COLORS[el] || [180, 180, 190];
+    if (highlightSet && highlightSet.has(i)) { colors.push(0x4cc2ff); continue; }
     let t = 0;
     if (glowOn && forces) t = Math.min(1, forces[i] / (0.35 * fMax + 1e-9)) * 0.9;
     const hot = [255, 45, 45];
@@ -873,6 +940,38 @@ function cacheElements(sdf) {
   const na = parseInt(lines[3].substring(0, 3));
   elemCache = [];
   for (let i = 0; i < na; i++) elemCache.push(lines[4 + i].substring(31, 34).trim());
+}
+
+// Parse the SDF bond block into bonds[] + adjacency[], and mark ring bonds:
+// a bond is in a ring iff its ends stay connected when the bond is removed
+// (ring bonds can't twist — that would tear the ring).
+function parseBonds(sdf) {
+  const lines = sdf.trim().split('\n');
+  const na = parseInt(lines[3].substring(0, 3));
+  const nb = parseInt(lines[3].substring(3, 6));
+  adjacency = Array.from({ length: na }, () => []);
+  bonds = [];
+  for (let k = 0; k < nb; k++) {
+    const l = lines[4 + na + k];
+    const i = parseInt(l.substring(0, 3)) - 1;
+    const j = parseInt(l.substring(3, 6)) - 1;
+    bonds.push({ i, j, ring: false });
+    adjacency[i].push(j); adjacency[j].push(i);
+  }
+  for (const b of bonds) b.ring = bfsSide(b.i, b).has(b.j);
+}
+// Atoms reachable from `start` without crossing edge {i,j}.
+function bfsSide(start, edge) {
+  const seen = new Set([start]);
+  const stack = [start];
+  while (stack.length) {
+    const u = stack.pop();
+    for (const v of adjacency[u]) {
+      if ((u === edge.i && v === edge.j) || (u === edge.j && v === edge.i)) continue;
+      if (!seen.has(v)) { seen.add(v); stack.push(v); }
+    }
+  }
+  return seen;
 }
 
 // Rebuild an SDF string with new coordinates (fixed-width V2000 columns).
@@ -954,8 +1053,12 @@ function strainCheck() {
 function tick() {
   if (!live) return;
   if (grabbed && liveKind === 'md') {
-    const target = dragTarget();
-    live.set_atom_position(grabbed.index, target[0], target[1], target[2]);
+    if (grabbed.type === 'bond') {
+      twistBond();
+    } else {
+      const target = dragTarget();
+      live.set_atom_position(grabbed.index, target[0], target[1], target[2]);
+    }
   }
   const chunk = parseInt(document.getElementById('speed').value) || 100;
   live.step(chunk);
@@ -1062,13 +1165,21 @@ function initGrabbing() {
   const el = document.getElementById('viewer');
   el.addEventListener('pointerdown', (ev) => {
     const pick = pickAtom(ev.clientX, ev.clientY);
-    if (!pick || !lastDisplayed) return;
-    const i = pick.index;
-    grabbed = {
-      index: i, depth: pick.depth, grabMouse: { x: ev.clientX, y: ev.clientY },
-      grabDisplay: [lastDisplayed[i*3], lastDisplayed[i*3+1], lastDisplayed[i*3+2]],
-      peAtGrab: live.potential_energy(),
-    };
+    if (pick && lastDisplayed) {
+      const i = pick.index;
+      grabbed = {
+        type: 'atom', index: i, depth: pick.depth, grabMouse: { x: ev.clientX, y: ev.clientY },
+        grabDisplay: [lastDisplayed[i*3], lastDisplayed[i*3+1], lastDisplayed[i*3+2]],
+        peAtGrab: live.potential_energy(),
+      };
+    } else {
+      const b = pickBond(ev.clientX, ev.clientY);
+      if (!b) return;
+      grabbed = { ...b, grabMouse: { x: ev.clientX, y: ev.clientY },
+                  lastPerp: 0, peAtGrab: live.potential_energy() };
+      highlightSet = new Set(b.side);
+      setStatus(`Twisting bond ${b.i + 1}\u2013${b.j + 1} — drag sideways`, 'info');
+    }
     mouse = { x: ev.clientX, y: ev.clientY };
     ev.stopPropagation();
     ev.preventDefault();
@@ -1079,13 +1190,17 @@ function initGrabbing() {
     mouse = { x: ev.clientX, y: ev.clientY };
     // while paused, dragging still moves the atom so the energy spike is visible
     if (grabbed && !running && liveKind === 'md') {
-      const target = dragTarget();
-      live.set_atom_position(grabbed.index, target[0], target[1], target[2]);
+      if (grabbed.type === 'bond') {
+        twistBond();
+      } else {
+        const target = dragTarget();
+        live.set_atom_position(grabbed.index, target[0], target[1], target[2]);
+      }
       strainCheck();
       renderLiveFrame();
     }
   });
-  const release = () => { grabbed = null; };
+  const release = () => { grabbed = null; highlightSet = null; };
   el.addEventListener('pointerup', release);
   el.addEventListener('pointercancel', release);
 }
@@ -1111,6 +1226,7 @@ function loadMol(key, tK) {
   currentKey = key;
   currentSdf = mol.sdf;
   cacheElements(currentSdf);
+  parseBonds(currentSdf);
   document.querySelectorAll('.presets button').forEach(b => b.classList.remove('active'));
   const b = document.getElementById('preset-' + key);
   if (b) b.classList.add('active');
@@ -1134,6 +1250,7 @@ function loadCustomSdf() {
     currentKey = null;
     currentSdf = s;
     cacheElements(currentSdf);
+    parseBonds(currentSdf);
     hideFES();
     startLiveMD(s, targetT);
     renderLiveFrame();
@@ -1323,11 +1440,34 @@ async function init() {
       ? worldToScreen([lastDisplayed[i*3], lastDisplayed[i*3+1], lastDisplayed[i*3+2]])
       : null;
     window.pgState = () => JSON.stringify({
-      kind: liveKind, running, nAtoms, grabbed: grabbed ? grabbed.index : null,
+      kind: liveKind, running, nAtoms,
+      grabbed: grabbed ? (grabbed.type === 'bond' ? `bond:${grabbed.i}-${grabbed.j}` : `atom:${grabbed.index}`) : null,
       t: live ? live.temperature() : NaN,
       pe: live ? live.potential_energy() : NaN,
       time_fs: live ? live.time_fs() : NaN,
     });
+    window.pgBonds = () => JSON.stringify(bonds);
+    window.pgGrabSide = () => JSON.stringify(grabbed && grabbed.type === 'bond' ? grabbed.side : null);
+    window.pgBondMidScreen = (i, j) => {
+      if (!lastDisplayed) return null;
+      const A = worldToScreen([lastDisplayed[i*3], lastDisplayed[i*3+1], lastDisplayed[i*3+2]]);
+      const B = worldToScreen([lastDisplayed[j*3], lastDisplayed[j*3+1], lastDisplayed[j*3+2]]);
+      return { sx: (A.sx + B.sx) / 2, sy: (A.sy + B.sy) / 2 };
+    };
+    window.pgAtomPos = (i) => lastDisplayed
+      ? [lastDisplayed[i*3], lastDisplayed[i*3+1], lastDisplayed[i*3+2]] : null;
+    window.pgDihedral = (a, b, c, d) => {
+      if (!lastDisplayed) return NaN;
+      const P = (k) => [lastDisplayed[k*3], lastDisplayed[k*3+1], lastDisplayed[k*3+2]];
+      const p0 = P(a), p1 = P(b), p2 = P(c), p3 = P(d);
+      const sub = (u, v) => [u[0]-v[0], u[1]-v[1], u[2]-v[2]];
+      const cross = (u, v) => [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
+      const dot = (u, v) => u[0]*v[0] + u[1]*v[1] + u[2]*v[2];
+      const b0 = sub(p0, p1), b1 = sub(p2, p1), b2 = sub(p3, p2);
+      const v = sub(b0, b1.map(x => x * dot(b0, b1) / dot(b1, b1)));
+      const w = sub(b2, b1.map(x => x * dot(b2, b1) / dot(b1, b1)));
+      return Math.atan2(dot(cross(b1, v), w) / Math.sqrt(dot(b1, b1)), dot(v, w)) * 180 / Math.PI;
+    };
   } catch (e) {
     document.getElementById('loading').textContent = 'Load failed: ' + e.message;
     setStatus('Init failed: ' + e.message, 'error');

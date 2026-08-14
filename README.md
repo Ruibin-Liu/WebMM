@@ -152,9 +152,10 @@ GitHub Pages workflow does — see `.github/workflows/pages.yml`.)
 
 The **playground** (`/playground.html`) is an interactive physics toy on top of
 the live MD engine: drag atoms with the pointer (the force field fights back),
-crank the temperature, watch per-atom force glow, and run metadynamics with a
-live free-energy surface. It uses the `MDLive` perturbation exports
-(`set_atom_position` / `rescale_temperature` / `force_magnitudes`).
+twist bonds to rotate dihedrals, crank the temperature, watch per-atom force
+glow, and run metadynamics with a live free-energy surface. It uses the
+`MDLive` perturbation exports (`set_atom_position` / `rescale_temperature` /
+`force_magnitudes`).
 
 > **Note:** the demo loads `3Dmol.js` (the 3D viewer) from a CDN, so you need
 > internet access for the viewer. The MMFF/ETKDG/MD/metadynamics engines run
