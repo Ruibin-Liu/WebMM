@@ -16,6 +16,7 @@ pub mod mmff;
 
 /// Force-source abstraction (energy + gradient) shared by optimizer and MD
 pub mod forces;
+pub mod gfnff;
 
 /// Molecular dynamics engine (velocity-Verlet + Langevin)
 pub mod md;
