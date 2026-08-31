@@ -73,7 +73,7 @@ pub struct Params {
     pub zeta_zeff: Vec<i32>, pub zeta_c: Vec<f64>,
     // generator constants
     pub cnmax: f64, srb1: f64, srb2: f64, srb3: f64,
-    pub qrepscal: f64, pub nrepscal: f64, hhfac: f64, hh13rep: f64, hh14rep: f64,
+    pub qrepscal: f64, pub nrepscal: f64, pub hhfac: f64, pub hh13rep: f64, pub hh14rep: f64,
     pub bstren: Vec<f64>, pub qfacben: f64, pub rabshift: f64, pub rabshifth: f64,
     pub rfgoed1: f64, pub qfacbm0: f64, pub fringbo: f64, bsmat: [[f64; 4]; 4],
     pub atcuta: f64, pub repscaln: f64,
@@ -207,6 +207,10 @@ pub struct Topology {
     pub piadr: Vec<bool>,      // atom is a pi atom
     /// pi bond order per bond (parallel to `bonds`), HMO density matrix elements
     pub pibo: Vec<f64>,
+    /// bond-path matrix: 0=unreached, 1=bonded, 2=1-3, 3=1-4, 5=far
+    pub bpair: Vec<Vec<usize>>,
+    /// smallest ring size containing the atom (0 = none); up to 20 rings each
+    pub ring_size: Vec<usize>,
 }
 
 pub struct EnergyComponents {
@@ -389,10 +393,12 @@ impl Gfnff {
         }
         nb13.sort(); nb13.dedup();
 
-        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag: 1, piadr: vec![false; n], pibo: vec![0.0; 0] };
+        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag: 1, piadr: vec![false; n], pibo: vec![0.0; 0], bpair: Vec::new(), ring_size: vec![0; n] };
 
         let mut g = Gfnff { p, at: at.to_vec(), charge, topo, bonds: Vec::new(), angles: Vec::new(), torsions: Vec::new(), xyz0: xyz.clone() };
         g.setup_bonds(&xyz, &rabd, &cn);
+        // bond-path matrix (nbondmat_pbc, non-periodic) + smallest rings
+        g.setup_bpair_rings();
         // pi system: HMO bond orders (gfnff_ini.f90 975-1121)
         g.setup_hmo(&xyz);
         g.setup_bonds(&xyz, &rabd, &cn);   // re-run with pibo active
@@ -434,6 +440,12 @@ impl Gfnff {
             let fqq = 1.0 + p.qfacbm0 / (1.0 + (15.0 * qafac).exp());
             let en_diff = p.en[ia-1] - p.en[ja-1];
             // pi corrections (pibo > 0)
+            // ring prefactor (ringsbond): smallest ring containing the bond
+            let ringf = {
+                let ri = self.topo.ring_size[bi]; let rj = self.topo.ring_size[bj];
+                let rings = if ri > 0 && ri == rj { ri } else { 0 };
+                if rings > 0 { 1.0 + self.p.fringbo * (6.0 - rings as f64).powi(2) } else { 1.0 }
+            };
             let pibo = self.topo.pibo.get(bi2).copied().unwrap_or(0.0);
             if pibo > 0.0 {
                 shift = shift + p.hueckelp * (p.bzref - pibo);
@@ -443,7 +455,7 @@ impl Gfnff {
             if pibo > 0.0 { fpi = 1.0 - p.hueckelp2 * (p.bzref2 - pibo); }
             let vb1 = p.rabshift + shift;
             let vb2 = p.srb1 * (1.0 + p.srb2 * en_diff * en_diff + p.srb3 * bstrength);
-            let vb3 = -p.bond[ia-1] * p.bond[ja-1] * bstrength * fqq * fpi * fxh;
+            let vb3 = -p.bond[ia-1] * p.bond[ja-1] * ringf * bstrength * fqq * fpi * fxh;
             bonds.push(BondParam { i: bi, j: bj, alp: vb2, kb: vb3, r0: vb1 });
             bi2 += 1;
         }
@@ -498,6 +510,54 @@ impl Gfnff {
             }
         }
         self.angles = angles;
+    }
+
+    /// bond-path matrix (1=bond, 2=1-3, 3=1-4, 5=far) and smallest ring sizes
+    fn setup_bpair_rings(&mut self) {
+        let n = self.at.len();
+        let mut bpair = vec![vec![0usize; n]; n];
+        for i in 0..n { for &j in &self.topo.nb[i] { bpair[i][j] = 1; } }
+        // BFS up to depth 3 (shortest path only)
+        for i in 0..n {
+            for depth in 1..=2 {
+                // atoms at path length `depth` from i
+                let frontier: Vec<usize> = (0..n).filter(|&j| bpair[i][j] == depth).collect();
+                for &f in &frontier {
+                    for &j in &self.topo.nb[f] {
+                        if j != i && bpair[i][j] == 0 { bpair[i][j] = depth + 1; }
+                    }
+                }
+            }
+        }
+        for i in 0..n { for j in 0..n { if i != j && bpair[i][j] == 0 { bpair[i][j] = 5; } } }
+        self.topo.bpair = bpair;
+        // smallest ring per atom via cycle search (ringsatom, depth <= 6)
+        let mut ring = vec![0usize; n];
+        for a0 in 0..n {
+            let mut best = 0usize;
+            for &a1 in &self.topo.nb[a0] {
+                for &a2 in &self.topo.nb[a1] {
+                    if a2 == a0 || a2 == a1 { continue; }
+                    for &a3 in &self.topo.nb[a2] {
+                        if a3 == a0 { if 3 < best || best == 0 { best = 3; } continue; }
+                        if a3 == a1 || a3 == a2 { continue; }
+                        for &a4 in &self.topo.nb[a3] {
+                            if a4 == a0 { if 4 < best || best == 0 { best = 4; } continue; }
+                            if a4 == a1 || a4 == a2 || a4 == a3 { continue; }
+                            for &a5 in &self.topo.nb[a4] {
+                                if a5 == a0 { if 5 < best || best == 0 { best = 5; } continue; }
+                                if a5 == a1 || a5 == a2 || a5 == a3 || a5 == a4 { continue; }
+                                for &a6 in &self.topo.nb[a5] {
+                                    if a6 == a0 { if 6 < best || best == 0 { best = 6; } continue; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ring[a0] = best;
+        }
+        self.topo.ring_size = ring;
     }
 
     /// pi system detection + iterative HMO (gfnff_ini.f90 357-390, 975-1121)
@@ -667,6 +727,34 @@ impl Gfnff {
                 }
             }
         }
+        // ---- out-of-plane impropers (gfnff_ini.f90 2048-2150) ----
+        for i in 0..self.at.len() {
+            if self.topo.nb[i].len() != 3 { continue; }
+            let pi_center = self.topo.piadr[i];
+            if !pi_center && self.at[i] != 7 { continue; }
+            let (jj, kk, ll) = (self.topo.nb[i][0], self.topo.nb[i][1], self.topo.nb[i][2]);
+            // FC rules
+            let fqq = 1.0 + self.topo.qa[i] * 5.0;
+            let fc;
+            let (phi0, nrot);
+            if !pi_center && self.at[i] == 7 {
+                // saturated N: pyramidalization, double-min at +/- phi0
+                let ff = 0.60f64;
+                let mut v2 = 0.0f64;
+                for &m in &self.topo.nb[i] { v2 += ff * self.p.repz[self.at[m]-1].sqrt(); }
+                fc = v2; phi0 = 80.0 * std::f64::consts::PI / 180.0; nrot = -1;
+            } else {
+                // pi center: phi0 = 0, (1+cos)-type with nrot=0
+                let pibo_sum: f64 = self.bonds.iter().enumerate()
+                    .filter(|(_, b)| b.i == i || b.j == i)
+                    .map(|(bi_, _)| self.topo.pibo.get(bi_).copied().unwrap_or(0.0))
+                    .sum();
+                let f2 = 1.0 - pibo_sum * 0.50;  // torsf(5)
+                fc = 1.05 * f2 * fqq;             // torsf(3)
+                phi0 = 0.0; nrot = 0;
+            }
+            out.push(TorsionParam { l: i, i: jj, j: kk, k: ll, nrot, phi0, fc });
+        }
         self.torsions = out;
     }
 
@@ -739,8 +827,9 @@ impl Gfnff {
             let mut ff = 1.0;
             if zi == 1 && zj == 1 {
                 ff = self.p.hhfac;
-                let key = if i < j { (i, j) } else { (j, i) };
-                if self.topo.nb13.contains(&key) { ff *= self.p.hh13rep; }
+                let bp = self.topo.bpair.get(i).and_then(|r| r.get(j)).copied().unwrap_or(5);
+                if bp == 2 { ff *= self.p.hh13rep; }
+                if bp == 3 { ff *= self.p.hh14rep; }
             }
             if (zi == 1 && self.p.metal_is(zj)) || (zj == 1 && self.p.metal_is(zi)) { ff = 0.85; }
             if (zi == 1 && zj == 6) || (zj == 1 && zi == 6) { ff = 0.91; }
@@ -792,6 +881,20 @@ impl Gfnff {
         // NOTE: damping uses the two flanking 1-3 distances and the central bond
         let mut etors = 0.0;
         for t in &self.torsions {
+            // out-of-plane: improper angle omega (asin of normal dot vec)
+            let mut e_t = 0.0f64;
+            if t.nrot <= 0 {
+                let omega = improper_angle(&xyz, t.l, t.i, t.j, t.k);
+                if t.nrot == -1 {
+                    // saturated N: double-min at +/- phi0
+                    e_t = t.fc * (omega - t.phi0).powi(2) + t.fc * (omega + t.phi0).powi(2);
+                    // approximated as single-well sum; damped lightly
+                } else {
+                    e_t = t.fc * omega.cos().powi(2);
+                }
+                etors += e_t;
+                continue;
+            }
             let phi = dihedral(&xyz, t.l, t.i, t.j, t.k);
             let c1 = t.nrot as f64 * (phi - t.phi0) + std::f64::consts::PI;
             let et = (1.0 + c1.cos()) * t.fc;
@@ -898,8 +1001,9 @@ impl Gfnff {
             let mut ff = 1.0;
             if zi == 1 && zj == 1 {
                 ff = self.p.hhfac;
-                let key = if i < j { (i, j) } else { (j, i) };
-                if self.topo.nb13.contains(&key) { ff *= self.p.hh13rep; }
+                let bp = self.topo.bpair.get(i).and_then(|r| r.get(j)).copied().unwrap_or(5);
+                if bp == 2 { ff *= self.p.hh13rep; }
+                if bp == 3 { ff *= self.p.hh14rep; }
             }
             if (zi == 1 && zj == 6) || (zj == 1 && zi == 6) { ff = 0.91; }
             if (zi == 1 && zj == 8) || (zj == 1 && zi == 8) { ff = 1.04; }
@@ -982,6 +1086,20 @@ impl Gfnff {
         // ---------------- torsions ----------------
         let mut etors = 0.0;
         for t in &self.torsions {
+            // out-of-plane: improper angle omega (asin of normal dot vec)
+            let mut e_t = 0.0f64;
+            if t.nrot <= 0 {
+                let omega = improper_angle(&xyz, t.l, t.i, t.j, t.k);
+                if t.nrot == -1 {
+                    // saturated N: double-min at +/- phi0
+                    e_t = t.fc * (omega - t.phi0).powi(2) + t.fc * (omega + t.phi0).powi(2);
+                    // approximated as single-well sum; damped lightly
+                } else {
+                    e_t = t.fc * omega.cos().powi(2);
+                }
+                etors += e_t;
+                continue;
+            }
             let phi = dihedral(&xyz, t.l, t.i, t.j, t.k);
             let c1 = t.nrot as f64 * (phi - t.phi0) + std::f64::consts::PI;
             let et = (1.0 + c1.cos()) * t.fc;
@@ -1389,6 +1507,18 @@ fn hmo_solve(api: &Vec<Vec<f64>>, nel: usize) -> (Vec<Vec<f64>>, f64, Vec<f64>) 
         p[i][j] = s;
     }}
     (p, eel, eps)
+}
+
+/// inversion angle omega (asin(n.r/|n||r|)), constr.f90 omegaPBC
+fn improper_angle(xyz: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
+    let sub = |a: usize, b: usize| [xyz[a][0]-xyz[b][0], xyz[a][1]-xyz[b][1], xyz[a][2]-xyz[b][2]];
+    let re = sub(i, j);                    // center -> 1st nb
+    let rd = [xyz[k][0]-xyz[j][0], xyz[k][1]-xyz[j][1], xyz[k][2]-xyz[j][2]]; // 1st -> 2nd
+    let rv = sub(l, i);                    // center -> 3rd
+    let rn = cross3(re, rd);
+    let rnn = norm3(rn) + 1e-14;
+    let rvn = norm3(rv) + 1e-14;
+    (dot3(rn, rv) / (rnn * rvn)).clamp(-1.0, 1.0).asin()
 }
 
 fn dist2(xyz: &[[f64; 3]], i: usize, j: usize) -> f64 {
