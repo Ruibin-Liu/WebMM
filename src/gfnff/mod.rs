@@ -84,8 +84,9 @@ pub struct Params {
     pub hiter: f64, pub hueckelp3: f64, pub pilpf: f64, pub htriple: f64,
     pub hueckelp: f64, pub bzref: f64, pub hueckelp2: f64, pub bzref2: f64,
     pub hbacut: f64, pub hbscut: f64, pub hblongcut: f64, pub hbalp: f64,
+    pub hblongcut_xb: f64, pub xbacut: f64, pub xbscut: f64, pub xbst: f64, pub xbsf: f64,
     pub hbsf: f64, pub hbst: f64,
-    pub xhbas: Vec<f64>, pub xhaci: Vec<f64>,
+    pub xhbas: Vec<f64>, pub xhaci: Vec<f64>, pub xbaci: Vec<f64>,
     // D4 reference data (element-indexed)
     d4_refn: Vec<i32>, d4_refsys: Vec<Vec<i32>>, d4_refcn: Vec<Vec<f64>>,
     d4_ascale: Vec<Vec<f64>>, d4_hcount: Vec<Vec<f64>>,
@@ -179,8 +180,10 @@ impl Params {
             htriple: gf("htriple"), hueckelp: gf("hueckelp"), bzref: gf("bzref"),
             hueckelp2: gf("hueckelp2"), bzref2: gf("bzref2"),
             hbacut: mf("hbacut"), hbscut: mf("hbscut"), hblongcut: mf("hblongcut"),
+            hblongcut_xb: mf("hblongcut_xb"), xbacut: mf("xbacut"), xbscut: mf("xbscut"),
+            xbst: mf("xbst"), xbsf: mf("xbsf"),
             hbalp: mf("hbalp"), hbsf: mf("hbsf"), hbst: mf("hbst"),
-            xhbas: raw.xhbas.clone(), xhaci: raw.xhaci.clone(),
+            xhbas: raw.xhbas.clone(), xhaci: raw.xhaci.clone(), xbaci: raw.xbaci.clone(),
             d4_refn: refn, d4_refsys: refsys, d4_refcn: refcn, d4_ascale: ascale,
             d4_hcount: hcount, d4_alphaiw: alphaiw, d4_sscale: sscale, d4_secaiw: secaiw,
         }
@@ -217,6 +220,10 @@ pub struct Topology {
     pub bpair: Vec<Vec<usize>>,
     /// smallest ring size containing the atom (0 = none); up to 20 rings each
     pub ring_size: Vec<usize>,
+    /// fragment id per atom (0-based)
+    pub fraglist: Vec<usize>,
+    /// charge per fragment
+    pub qfrag: Vec<f64>,
 }
 
 pub struct EnergyComponents {
@@ -359,7 +366,8 @@ impl Gfnff {
             }
             // topology-distance EEQ charges (geometry independent)
             rabd = floyd_rabd(&p, at, &nb);
-            topo_q = solve_eeq(&p, at, &rabd, &nb, charge, true, &hyb, &dxi);
+            let (fl0, qf0): (Vec<usize>, Vec<f64>) = (vec![0; n], vec![charge]);
+            topo_q = solve_eeq(&p, at, &rabd, &nb, charge, true, &hyb, &dxi, &fl0, &qf0);
         }
 
         // --- EEQ parameters (second pass, gfnff_ini.f90 lines 670-719) ---
@@ -399,7 +407,24 @@ impl Gfnff {
         }
         nb13.sort(); nb13.dedup();
 
-        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag: 1, piadr: vec![false; n], pibo: vec![0.0; 0], bpair: Vec::new(), ring_size: vec![0; n] };
+        // fragment detection: connected components on bond graph
+        let mut fraglist = vec![0usize; n];
+        let mut nfrag = 0usize;
+        for s in 0..n {
+            if fraglist[s] != 0 { continue; }
+            nfrag += 1;
+            let mut stack = vec![s];
+            fraglist[s] = nfrag;
+            while let Some(a) = stack.pop() {
+                for &b in &nb[a] {
+                    if fraglist[b] == 0 { fraglist[b] = nfrag; stack.push(b); }
+                }
+            }
+        }
+        let fraglist0: Vec<usize> = fraglist.iter().map(|x| x - 1).collect();
+        let mut qfrag = vec![0.0f64; nfrag];
+        qfrag[0] = charge;  // total charge on first fragment by default
+        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag };
 
         let mut g = Gfnff { p, at: at.to_vec(), charge, topo, bonds: Vec::new(), angles: Vec::new(), torsions: Vec::new(), xyz0: xyz.clone() };
         g.setup_bonds(&xyz, &rabd, &cn);
@@ -804,9 +829,24 @@ impl Gfnff {
                 let v = erf(g * r) / r;
                 a[i][j] = v; a[j][i] = v;
             }}
-            for j in 0..n { a[n][j] = 1.0; a[j][n] = 1.0; }
-            x[n] = self.charge;
-            q = solve_sym(&a, &x);
+            let nfrag = self.topo.nfrag;
+            let m2 = n + nfrag;
+            let mut a2 = vec![vec![0.0f64; m2]; m2];
+            let mut x2 = vec![0.0f64; m2];
+            for i2 in 0..n {
+                x2[i2] = x[i2];
+                a2[i2][i2] = a[i2][i2];
+            }
+            for i2 in 0..n { for j2 in 0..i2 { a2[i2][j2] = a[i2][j2]; a2[j2][i2] = a[i2][j2]; } }
+            for (fi, &qf) in self.topo.qfrag.iter().enumerate() {
+                x2[n + fi] = qf;
+                for j2 in 0..n {
+                    if self.topo.fraglist[j2] == fi {
+                        a2[n + fi][j2] = 1.0; a2[j2][n + fi] = 1.0;
+                    }
+                }
+            }
+            q = solve_sym(&a2, &x2);
             for i in 0..n { for j in 0..i {
                 let g = 1.0 / (self.topo.alpeeq[i] + self.topo.alpeeq[j]).sqrt();
                 let r = dist(i, j);
@@ -920,10 +960,146 @@ impl Gfnff {
         // ---- hydrogen bonds (abhgfnff_eg1, unbound-H only) ----
         let ehb = self.hb_energy(&xyz, &q, &dist);
 
+        // ---- halogen bonds (rbxgfnff_eg): A···B···X ----
+        let exb = self.xb_energy(&xyz, &q, &dist);
+
         EnergyComponents {
             bond: ebond, angle: eangl, torsion: etors,
-            rep, es, disp, hb: ehb, xb: 0.0, batm: 0.0,
+            rep, es, disp, hb: ehb, xb: exb, batm: 0.0,
         }
+    }
+
+    /// hydrogen bond analytic gradient (abhgfnff_eg1, geometric part only)
+    fn hb_gradient(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64,
+                   g: &mut Vec<[f64; 3]>) {
+        let n = self.at.len();
+        let p = &self.p;
+        let is_hb_atom: Vec<bool> = (0..n).map(|i| {
+            p.xhbas[self.at[i]-1] > 0.0 || p.xhaci[self.at[i]-1] > 0.0
+        }).collect();
+        let hb_h: Vec<usize> = (0..n).filter(|&i| {
+            self.at[i] == 1 && self.topo.qa[i] > 0.01
+        }).collect();
+        if hb_h.is_empty() { return; }
+        for ia in 0..n {
+            if !is_hb_atom[ia] || self.at[ia] == 1 { continue; }
+            for ib in (ia+1)..n {
+                if !is_hb_atom[ib] || self.at[ib] == 1 { continue; }
+                let bp = self.topo.bpair.get(ia).and_then(|r| r.get(ib)).copied().unwrap_or(5);
+                if bp == 1 { continue; }
+                for &ih in &hb_h {
+                    let (rab, rah, rbh) = (dist(ia, ib), dist(ia, ih), dist(ib, ih));
+                    if rab > 6.0 { continue; }
+                    let radab = p.rad[self.at[ia]-1] + p.rad[self.at[ib]-1];
+                    let expo = (p.hbacut / radab) * ((rah + rbh) / rab - 1.0);
+                    if expo > 15.0 { continue; }
+                    let outl = 2.0 / (1.0 + expo.exp());
+                    let dampl = 1.0 / (1.0 + (rab*rab / p.hblongcut).powf(p.hbalp));
+                    let shortcut = p.hbscut * radab;
+                    let damps = 1.0 / (1.0 + (shortcut / (rab*rab)).powf(p.hbalp));
+                    let damp = damps * dampl;
+                    let rdamp = damp / (rab*rab*rab);
+                    let qh = { let ex = (p.hbst * q[ih]).exp(); ex / (ex + p.hbsf) };
+                    let qa = { let ex = (-p.hbst * q[ia]).exp(); ex / (ex + p.hbsf) };
+                    let qb = { let ex = (-p.hbst * q[ib]).exp(); ex / (ex + p.xhbas[0].max(1.0)*0.0 + p.hbsf) };
+                    let (ca, cb) = (p.xhbas[self.at[ia]-1], p.xhbas[self.at[ib]-1]);
+                    let (aa, ab) = (p.xhaci[self.at[ia]-1], p.xhaci[self.at[ib]-1]);
+                    let rah4 = rah.powi(4);
+                    let rbh4 = rbh.powi(4);
+                    let denom = 1.0 / (rah4 + rbh4);
+                    let bas = (qa*ca*rah4 + qb*cb*rbh4) * denom;
+                    let aci = (ab*rah4 + aa*rbh4) * denom;
+                    let energy = -bas * aci * rdamp * qh * outl;
+                    if energy.abs() < 1e-12 { continue; }
+                    // distance vectors
+                    let drah = [xyz[ia][0]-xyz[ih][0], xyz[ia][1]-xyz[ih][1], xyz[ia][2]-xyz[ih][2]];
+                    let drbh = [xyz[ib][0]-xyz[ih][0], xyz[ib][1]-xyz[ih][1], xyz[ib][2]-xyz[ih][2]];
+                    let drab = [xyz[ia][0]-xyz[ib][0], xyz[ia][1]-xyz[ib][1], xyz[ia][2]-xyz[ib][2]];
+                    // d(bas)/dR: derivative of r^4 weighted terms
+                    let dbas_drah = 4.0*rah*rah*rah*(qa*ca - qb*cb) * denom * denom * aci * rdamp * qh * outl;
+                    let dbas_drbh = 4.0*rbh*rbh*rbh*(qb*cb - qa*ca) * denom * denom * aci * rdamp * qh * outl;
+                    // d(aci)/dR
+                    let daci_drah = 4.0*rah*rah*rah*(ab - aa) * denom * denom * bas * rdamp * qh * outl;
+                    let daci_drbh = 4.0*rbh*rbh*rbh*(aa - ab) * denom * denom * bas * rdamp * qh * outl;
+                    // d(damp)/drab
+                    let ddamp_drab = -damp * (2.0 * p.hbalp * (rab*rab/p.hblongcut).powf(p.hbalp)
+                        / (rab * (1.0 + (rab*rab/p.hblongcut).powf(p.hbalp)))
+                        - 2.0 * p.hbalp * (shortcut/(rab*rab)).powf(p.hbalp)
+                        / (rab * (1.0 + (shortcut/(rab*rab)).powf(p.hbalp))))
+                        - 3.0 * damp / rab;
+                    // d(outl)/d(rab, rah, rbh)
+                    let doutl_val = 2.0 * expo.exp() / (1.0 + expo.exp()).powi(2);
+                    let doutl_drab = doutl_val * (-(p.hbacut/radab) * (rah + rbh) / (rab*rab));
+                    let doutl_drah = doutl_val * (p.hbacut/radab) / rab;
+                    let doutl_drbh = doutl_val * (p.hbacut/radab) / rab;
+                    // total energy gradient via chain rule
+                    // E = -bas * aci * damp/(rab^3) * qh * outl
+                    let pre = -qh;  // common factor
+                    for t in 0..3 {
+                        // gradient on A (ia)
+                        let dE_drah = pre * (dbas_drah * aci + bas * daci_drah) * rdamp * outl
+                            + pre * bas * aci * rdamp * doutl_drah;
+                        let dE_drab = pre * bas * aci * ddamp_drab / (rab*rab) * outl
+                            + pre * bas * aci * rdamp * doutl_drab;
+                        g[ia][t] += dE_drah * drah[t]/rah + dE_drab * drab[t]/rab;
+                        // gradient on B (ib)
+                        let dE_drbh = pre * (dbas_drbh * aci + bas * daci_drbh) * rdamp * outl
+                            + pre * bas * aci * rdamp * doutl_drbh;
+                        g[ib][t] += dE_drbh * drbh[t]/rbh - dE_drab * drab[t]/rab;
+                        // gradient on H (ih)
+                        g[ih][t] -= dE_drah * drah[t]/rah + dE_drbh * drbh[t]/rbh;
+                    }
+                }
+            }
+        }
+    }
+
+    /// halogen bond energy: A···B···X (rbxgfnff_eg)
+    /// A = electron donor (O, N, S...), B = electron acceptor near X, X = halogen
+    fn xb_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
+        let n = self.at.len();
+        let p = &self.p;
+        let mut e = 0.0f64;
+        // halogen atoms with xbaci > 0: Cl, Br, I (and As, Se, Te, Sb)
+        let is_halogen: Vec<bool> = (0..n).map(|i| p.xbaci[self.at[i]-1] > 0.0).collect();
+        // electron donors: atoms with xhbas > 0 (O, N, S, P...)
+        let is_donor: Vec<bool> = (0..n).map(|i| p.xhbas[self.at[i]-1] > 0.0).collect();
+        for ia in 0..n {
+            if !is_donor[ia] { continue; }
+            for ib in 0..n {
+                if ib == ia || !is_donor[ib] { continue; }
+                let bp_ab = self.topo.bpair.get(ia).and_then(|r| r.get(ib)).copied().unwrap_or(5);
+                for ix in 0..n {
+                    if !is_halogen[ix] || ix == ia || ix == ib { continue; }
+                    // X should be bonded to B or A (the "halogen donor")
+                    let bp_xb = self.topo.bpair.get(ix).and_then(|r| r.get(ib)).copied().unwrap_or(5);
+                    let bp_xa = self.topo.bpair.get(ix).and_then(|r| r.get(ia)).copied().unwrap_or(5);
+                    if bp_xb != 1 && bp_xa != 1 { continue; }
+                    let (rab, rax, rbx) = (dist(ia, ib), dist(ia, ix), dist(ib, ix));
+                    if rbx > 7.0 || rab > 7.0 { continue; }
+                    let radab = p.rad[self.at[ia]-1] + p.rad[self.at[ib]-1];
+                    // out-of-line damping
+                    let expo = p.xbacut * ((rax + rbx) / rab - 1.0);
+                    if expo > 15.0 { continue; }
+                    let outl = 2.0 / (1.0 + expo.exp());
+                    // long-range damping (on B···X distance)
+                    let dampl = 1.0 / (1.0 + (rbx*rbx / p.hblongcut_xb).powf(p.hbalp));
+                    // short-range damping
+                    let shortcut = p.xbscut * radab;
+                    let damps = 1.0 / (1.0 + (shortcut / (rbx*rbx)).powf(p.hbalp));
+                    let damp = damps * dampl;
+                    let rdamp = damp / (rbx*rbx*rbx);
+                    // charge-scaled terms
+                    let qx = { let ex = (p.xbst * q[ix]).exp(); ex / (ex + p.xbsf) };
+                    let qb = { let ex = (-p.xbst * q[ib]).exp(); ex / (ex + p.xbsf) };
+                    let cx = p.xbaci[self.at[ix]-1];
+                    let cb = p.xhbas[self.at[ib]-1];  // basicity of B (electron acceptor)
+                    let const_val = cb * qb * cx * qx;
+                    e += -rdamp * outl * const_val;
+                }
+            }
+        }
+        e
     }
 
     /// hydrogen bond energy: A···H···B three-body (abhgfnff_eg1)
@@ -1055,9 +1231,24 @@ impl Gfnff {
                 let v = erf(gam * r) / r;
                 a[i][j] = v; a[j][i] = v;
             }}
-            for j in 0..n { a[n][j] = 1.0; a[j][n] = 1.0; }
-            x[n] = self.charge;
-            q = solve_sym(&a, &x);
+            let nfrag = self.topo.nfrag;
+            let m2 = n + nfrag;
+            let mut a2 = vec![vec![0.0f64; m2]; m2];
+            let mut x2 = vec![0.0f64; m2];
+            for i2 in 0..n {
+                x2[i2] = x[i2];
+                a2[i2][i2] = a[i2][i2];
+            }
+            for i2 in 0..n { for j2 in 0..i2 { a2[i2][j2] = a[i2][j2]; a2[j2][i2] = a[i2][j2]; } }
+            for (fi, &qf) in self.topo.qfrag.iter().enumerate() {
+                x2[n + fi] = qf;
+                for j2 in 0..n {
+                    if self.topo.fraglist[j2] == fi {
+                        a2[n + fi][j2] = 1.0; a2[j2][n + fi] = 1.0;
+                    }
+                }
+            }
+            q = solve_sym(&a2, &x2);
         }
 
         // ---------------- repulsion (nb + bonded) ----------------
@@ -1228,6 +1419,13 @@ impl Gfnff {
         // ---------------- D3 dispersion (+ cn chain) ----------------
         let disp = self.d4_dispersion_grad(&xyz, &dist, &cn, &q, &mut g_disp, &mut d_ed_cn);
 
+        // ---- HB gradient (geometric part) ----
+        let mut g_hb = vec![[0.0f64; 3]; n];
+        {
+            let dist2fn = |i: usize, j: usize| dist2(&xyz, i, j).sqrt();
+            self.hb_gradient(&xyz, &q, &dist2fn, &mut g_hb);
+        }
+
         // ---------------- CN chain (bond r0 + EEQ RHS + D3) ----------------
         // dcndr[atom a][cn owner b] = d cn_b / d R_a
         let mut dcndr = vec![[0.0f64; 3]; n * n];
@@ -1258,7 +1456,7 @@ impl Gfnff {
         // sum per-term + shared cn chain
         for a in 0..n { for t in 0..3 {
             g[a][t] += g_rep[a][t] + g_bond[a][t] + g_angle[a][t] + g_tors[a][t]
-                     + g_es[a][t] + g_disp[a][t];
+                     + g_es[a][t] + g_disp[a][t] + g_hb[a][t];
         }}
         // convert to kcal/mol / Angstrom
         const EH_KCAL: f64 = 627.5094740631;
@@ -1839,10 +2037,13 @@ fn solve_sym(a: &Vec<Vec<f64>>, b: &Vec<f64>) -> Vec<f64> {
 
 /// EEQ solve: topology mode uses rabd distances, RHS with cnf*sqrt(min(nb,cnmax));
 /// returns charges q (goedeckera / goed_gfnff, gfnff_eg.f90 1758-1914)
+#[allow(clippy::too_many_arguments)]
 fn solve_eeq(p: &Params, at: &[usize], rabd: &Vec<Vec<f64>>, nb: &Vec<Vec<usize>>,
-             charge: f64, topology_mode: bool, _hyb: &Vec<i32>, dxi: &Vec<f64>) -> Vec<f64> {
+             charge: f64, topology_mode: bool, _hyb: &Vec<i32>, dxi: &Vec<f64>,
+             fraglist: &Vec<usize>, qfrag: &Vec<f64>) -> Vec<f64> {
     let n = at.len();
-    let m = n + 1;
+    let nfrag = qfrag.len();
+    let m = n + nfrag;
     let mut a = vec![vec![0.0f64; m]; m];
     let mut x = vec![0.0f64; m];
     for i in 0..n {
@@ -1858,8 +2059,16 @@ fn solve_eeq(p: &Params, at: &[usize], rabd: &Vec<Vec<f64>>, nb: &Vec<Vec<usize>
         let v = erf(g * r) / r;
         a[i][j] = v; a[j][i] = v;
     }}
-    for j in 0..n { a[n][j] = 1.0; a[j][n] = 1.0; }
-    x[n] = charge;
+    // fragment charge constraints
+    for (fi, &qf) in qfrag.iter().enumerate() {
+        x[n + fi] = qf;
+        for j in 0..n {
+            if fraglist[j] == fi {
+                a[n + fi][j] = 1.0;
+                a[j][n + fi] = 1.0;
+            }
+        }
+    }
     let q = solve_sym(&a, &x);
     q[..n].to_vec()
 }

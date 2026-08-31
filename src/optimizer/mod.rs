@@ -1,6 +1,6 @@
 //! L-BFGS optimization algorithm
 
-use crate::mmff::MMFFForceField;
+use crate::forces::ForceField;
 use crate::ConvergenceOptions;
 
 /// Optimization result
@@ -13,7 +13,7 @@ pub struct OptimizationResult {
 
 /// L-BFGS optimizer
 pub fn optimize(
-    ff: &MMFFForceField,
+    ff: &dyn ForceField,
     initial_coords: &[[f64; 3]],
     convergence: &ConvergenceOptions,
 ) -> OptimizationResult {
@@ -41,7 +41,8 @@ pub fn optimize(
     for iter in 0..convergence.max_iterations {
         // Calculate energy and gradient
         let coords_2d = flatten_to_2d(&x, n_atoms);
-        let (energy, g_2d) = ff.calculate_energy_and_gradient(&coords_2d);
+        let mut g_2d = vec![[0.0f64; 3]; n_atoms];
+        let energy = ff.energy_and_gradient(&coords_2d, &mut g_2d);
 
         // Flatten gradient to 1D
         let mut g = Vec::with_capacity(n_coords);
@@ -124,7 +125,8 @@ pub fn optimize(
 
         // Update history
         let x_new_2d = flatten_to_2d(&x, n_atoms);
-        let (_, g_new_2d) = ff.calculate_energy_and_gradient(&x_new_2d);
+        let mut g_new_2d = vec![[0.0f64; 3]; n_atoms];
+        let _ = ff.energy_and_gradient(&x_new_2d, &mut g_new_2d);
 
         let mut g_new = Vec::with_capacity(n_coords);
         for grad in g_new_2d.iter() {
@@ -236,7 +238,7 @@ fn compute_lbfgs_direction(
 /// Armijo line search
 #[allow(clippy::too_many_arguments)]
 fn armijo_line_search(
-    ff: &MMFFForceField,
+    ff: &dyn ForceField,
     x: &[f64],
     d: &[f64],
     n_atoms: usize,
@@ -259,7 +261,8 @@ fn armijo_line_search(
 
         // Calculate new energy
         let coords_2d = flatten_to_2d(&x_new, n_atoms);
-        let f_new = ff.calculate_energy(&coords_2d);
+        let mut g_dummy = vec![[0.0f64; 3]; n_atoms];
+        let f_new = ff.energy_and_gradient(&coords_2d, &mut g_dummy);
 
         // Compute g^T * d
         let g_dot_d = g0.iter().zip(d.iter()).map(|(gi, di)| gi * di).sum::<f64>();
