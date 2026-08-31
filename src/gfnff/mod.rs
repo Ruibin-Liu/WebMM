@@ -85,6 +85,7 @@ pub struct Params {
     pub hueckelp: f64, pub bzref: f64, pub hueckelp2: f64, pub bzref2: f64,
     pub hbacut: f64, pub hbscut: f64, pub hblongcut: f64, pub hbalp: f64,
     pub hblongcut_xb: f64, pub xbacut: f64, pub xbscut: f64, pub xbst: f64, pub xbsf: f64,
+    pub batmscal: f64, pub zb3atm: Vec<f64>, pub hbabmix: f64,
     pub hbsf: f64, pub hbst: f64,
     pub xhbas: Vec<f64>, pub xhaci: Vec<f64>, pub xbaci: Vec<f64>,
     // D4 reference data (element-indexed)
@@ -182,6 +183,14 @@ impl Params {
             hbacut: mf("hbacut"), hbscut: mf("hbscut"), hblongcut: mf("hblongcut"),
             hblongcut_xb: mf("hblongcut_xb"), xbacut: mf("xbacut"), xbscut: mf("xbscut"),
             xbst: mf("xbst"), xbsf: mf("xbsf"),
+            batmscal: gf("batmscal"), hbabmix: mf("hbabmix"),
+            zb3atm: { let mut v = vec![0.0f64; 104];
+                for (i, val) in v.iter_mut().enumerate() {
+                    let z = i as f64;
+                    *val = if i == 0 { -0.25 * gf("batmscal").powf(1.0/3.0) }
+                           else { -z * gf("batmscal").powf(1.0/3.0) };
+                }
+                v },
             hbalp: mf("hbalp"), hbsf: mf("hbsf"), hbst: mf("hbst"),
             xhbas: raw.xhbas.clone(), xhaci: raw.xhaci.clone(), xbaci: raw.xbaci.clone(),
             d4_refn: refn, d4_refsys: refsys, d4_refcn: refcn, d4_ascale: ascale,
@@ -349,6 +358,21 @@ impl Gfnff {
         let mut hyb = vec![0i32; n];
         let mut dxi = vec![0.0f64; n];
         let mut rabd = vec![vec![0.0f64; n]; n];
+        // early pi detection (needed for amide/ff_gam before full HMO)
+        let mut piadr_temp = vec![false; n];
+        {
+            nb = detect_bonds(&p, at, &xyz, &cn, &topo_q);
+            hyb = assign_hyb(at, &nb, &xyz, &topo_q);
+            for i in 0..n {
+                let z = at[i];
+                let h = hyb[i];
+                if matches!(z, 6|7|8|9|16) && (h == 1 || h == 2) { piadr_temp[i] = true; }
+                if matches!(z, 7|8|9) {
+                    let attached = nb[i].iter().any(|&j| hyb[j] == 1 || hyb[j] == 2);
+                    if attached && h != 3 { piadr_temp[i] = true; }
+                }
+            }
+        }
         for _iter in 0..2 {
             nb = detect_bonds(&p, at, &xyz, &cn, &topo_q);
             hyb = assign_hyb(at, &nb, &xyz, &topo_q);
@@ -359,6 +383,16 @@ impl Gfnff {
                 let nh = nb[i].iter().filter(|&&j| at[j] == 1).count();
                 if nn == 0 { continue; }
                 if z == 5 { dxi[i] += nh as f64 * 0.015; }
+                // carbene C: nn=2, linear (itag=1 approximated by checking angle later)
+                if z == 6 && nn == 2 { dxi[i] = -0.15; }
+                // free CO: C with nn=1, bonded to O with nn=1
+                if z == 6 && nn == 1 && nb[i].len() == 1 && at[nb[i][0]] == 8 && nb[nb[i][0]].len() == 1 {
+                    dxi[i] = 0.15;
+                }
+                // nitro O: nn=1, bonded to N which is pi
+                if z == 8 && nn == 1 && nb[i].len() == 1 && at[nb[i][0]] == 7 && hyb[nb[i][0]] == 2 {
+                    dxi[i] = 0.05;
+                }
                 if z == 8 && nn == 2 && nh == 2 { dxi[i] = -0.02; }
                 if p.group[z-1] == 6 && nn > 2 { dxi[i] += nn as f64 * 0.005; }
                 if z == 8 || z == 16 { dxi[i] -= nh as f64 * 0.005; }
@@ -380,7 +414,12 @@ impl Gfnff {
             let ff_gam = match z {
                 1 => -0.08, 5 => -0.05,
                 6 => if hyb[i] < 3 { -0.45 } else { -0.27 },
-                7 => -0.13, 8 => if hyb[i] < 3 { -0.08 } else { -0.15 },
+                7 => {
+                    if is_amide_n(&at, &hyb, &nb, &piadr_temp, i) { -0.16 }
+                    else if piadr_temp[i] { -0.14 }
+                    else { -0.13 }
+                },
+                8 => if hyb[i] < 3 { -0.08 } else { -0.15 },
                 9 => 0.10, 17 => -0.02, 35 => -0.11, 53 => -0.07,
                 z if z > 10 => -0.02,
                 _ => 0.0,
@@ -423,7 +462,25 @@ impl Gfnff {
         }
         let fraglist0: Vec<usize> = fraglist.iter().map(|x| x - 1).collect();
         let mut qfrag = vec![0.0f64; nfrag];
-        qfrag[0] = charge;  // total charge on first fragment by default
+        // fragment charge assignment: for neutral total, all neutral;
+        // for charged systems with 2 fragments, assign by electronegativity difference
+        if nfrag > 1 && charge != 0.0 {
+            // compute average EN per fragment
+            let mut frag_en = vec![0.0f64; nfrag];
+            let mut frag_cnt = vec![0.0f64; nfrag];
+            for i in 0..n {
+                frag_en[fraglist0[i]] += p.en[at[i]-1];
+                frag_cnt[fraglist0[i]] += 1.0;
+            }
+            for fi in 0..nfrag {
+                if frag_cnt[fi] > 0.0 { frag_en[fi] /= frag_cnt[fi]; }
+            }
+            // assign charge to the most electropositive fragment
+            let most_electropos = (0..nfrag).enumerate()
+                .min_by(|a, b| frag_en[a.1].partial_cmp(&frag_en[b.1]).unwrap())
+                .map(|(_, f)| f).unwrap_or(0);
+            qfrag[most_electropos] = charge;
+        }
         let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag };
 
         let mut g = Gfnff { p, at: at.to_vec(), charge, topo, bonds: Vec::new(), angles: Vec::new(), torsions: Vec::new(), xyz0: xyz.clone() };
@@ -957,15 +1014,18 @@ impl Gfnff {
         // ---- D4(BJ) dispersion with EEQ-charge scaling (gdisp0.f90) ----
         let disp = self.d4_dispersion(&xyz, &dist, &cn);
 
-        // ---- hydrogen bonds (abhgfnff_eg1, unbound-H only) ----
-        let ehb = self.hb_energy(&xyz, &q, &dist);
+        // ---- bonded ATM (batmgfnff_eg): 1-4 triples ----
+        let ebatm = self.bonded_atm_energy(&xyz, &q, &dist);
+
+        // ---- hydrogen bonds (unbound-H eg1 + bound-H eg3) ----
+        let ehb = self.hb_energy(&xyz, &q, &dist) + self.hb_bound_energy(&xyz, &q, &dist);
 
         // ---- halogen bonds (rbxgfnff_eg): A···B···X ----
         let exb = self.xb_energy(&xyz, &q, &dist);
 
         EnergyComponents {
             bond: ebond, angle: eangl, torsion: etors,
-            rep, es, disp, hb: ehb, xb: exb, batm: 0.0,
+            rep, es, disp, hb: ehb, xb: exb, batm: ebatm,
         }
     }
 
@@ -1054,6 +1114,58 @@ impl Gfnff {
         }
     }
 
+    /// bound-H hydrogen bond energy (abhgfnff_eg3, simplified)
+    /// H is bonded to A; HB is H...B with angular + torsional terms around B
+    fn hb_bound_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
+        let n = self.at.len();
+        let p = &self.p;
+        let mut e = 0.0f64;
+        let is_hb_atom: Vec<bool> = (0..n).map(|i| {
+            p.xhbas[self.at[i]-1] > 0.0 || p.xhaci[self.at[i]-1] > 0.0
+        }).collect();
+        // H atoms with qa > 0.01 that ARE bonded to an HB atom
+        for ih in 0..n {
+            if self.at[ih] != 1 || self.topo.qa[ih] <= 0.01 { continue; }
+            if self.topo.nb[ih].len() != 1 { continue; }
+            let ia = self.topo.nb[ih][0];  // A (the atom H is bonded to)
+            if !is_hb_atom[ia] || self.at[ia] == 1 { continue; }
+            for ib in 0..n {
+                if !is_hb_atom[ib] || self.at[ib] == 1 || ib == ia { continue; }
+                let bp_ab = self.topo.bpair.get(ia).and_then(|r| r.get(ib)).copied().unwrap_or(5);
+                if bp_ab == 1 { continue; }  // A-B directly bonded
+                let bp_bh = self.topo.bpair.get(ib).and_then(|r| r.get(ih)).copied().unwrap_or(5);
+                if bp_bh == 1 { continue; }  // H bonded to B too
+                let (rab, rah, rbh) = (dist(ia, ib), dist(ia, ih), dist(ib, ih));
+                if rab > 6.0 || rbh > 4.0 { continue; }
+                let radab = p.rad[self.at[ia]-1] + p.rad[self.at[ib]-1];
+                // out-of-line damp: A-H...B
+                let expo = (p.hbacut / radab) * ((rah + rbh) / rab - 1.0);
+                if expo > 15.0 { continue; }
+                let outl = 2.0 / (1.0 + expo.exp());
+                // long + short damping
+                let dampl = 1.0 / (1.0 + (rab*rab / p.hblongcut).powf(p.hbalp));
+                let shortcut = p.hbscut * radab;
+                let damps = 1.0 / (1.0 + (shortcut / (rab*rab)).powf(p.hbalp));
+                let damp = damps * dampl;
+                // mixed r^-3: p_bh * rBH^-3 + p_ab * rAB^-3
+                let p_bh = 1.0 + p.hbabmix;
+                let p_ab = -p.hbabmix;
+                let rdamp = damp * (p_bh / (rbh*rbh*rbh) + p_ab / (rab*rab*rab));
+                // charge terms
+                let qh = { let ex = (p.hbst * q[ih]).exp(); ex / (ex + p.hbsf) };
+                let qa = { let ex = (-p.hbst * q[ia]).exp(); ex / (ex + p.hbsf) };
+                let qb = { let ex = (-p.hbst * q[ib]).exp(); ex / (ex + p.hbsf) };
+                let ca_aci = adjusted_hbaci(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ia);
+                let cb_bas = adjusted_hbbas(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ib);
+                let const_val = ca_aci * qa * cb_bas * qb * p.xhaci_coh();
+                // torsional factor (simplified: assume near-optimal for now)
+                let tors_factor = 1.0;  // full version uses egtors_nci_mul product
+                e += -rdamp * qh * outl * tors_factor * const_val;
+            }
+        }
+        e
+    }
+
     /// halogen bond energy: A···B···X (rbxgfnff_eg)
     /// A = electron donor (O, N, S...), B = electron acceptor near X, X = halogen
     fn xb_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
@@ -1102,6 +1214,40 @@ impl Gfnff {
         e
     }
 
+    /// bonded ATM: three-body Axilrod-Teller-Muto for 1-4 triples (batmgfnff_eg)
+    fn bonded_atm_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
+        let n = self.at.len();
+        let p = &self.p;
+        let mut e = 0.0f64;
+        // find all 1-4 triples (i, j, k) where bpair(i,j)=3 and j is bonded to k
+        for i in 0..n {
+            for j in 0..n {
+                if i == j { continue; }
+                let bp = self.topo.bpair.get(i).and_then(|r| r.get(j)).copied().unwrap_or(5);
+                if bp != 3 { continue; }  // only 1-4 pairs
+                for &k in &self.topo.nb[j] {
+                    if k == i { continue; }
+                    // compute ATM
+                    let (rij, rik, rjk) = (dist(i, j), dist(i, k), dist(j, k));
+                    let r2ij = rij*rij; let r2ik = rik*rik; let r2jk = rjk*rjk;
+                    let fi = (1.0 - 3.0 * q[i]).clamp(-4.0, 4.0);
+                    let fj = (1.0 - 3.0 * q[j]).clamp(-4.0, 4.0);
+                    let fk = (1.0 - 3.0 * q[k]).clamp(-4.0, 4.0);
+                    let ff = fi * fj * fk;
+                    let c9 = ff * p.zb3atm[self.at[i]-1] * p.zb3atm[self.at[j]-1] * p.zb3atm[self.at[k]-1];
+                    let mijk = -r2ij + r2jk + r2ik;
+                    let imjk = r2ij - r2jk + r2ik;
+                    let ijmk = r2ij + r2jk - r2ik;
+                    let rijk3 = r2ij * r2jk * r2ik;
+                    let rav3 = rijk3 * rij * rjk * rik;
+                    let ang = 0.375 * ijmk * imjk * mijk / rijk3;
+                    e += c9 * (ang + 1.0) / rav3;
+                }
+            }
+        }
+        e  // each triple counted once per (i,j,k) with j bonded to k
+    }
+
     /// hydrogen bond energy: A···H···B three-body (abhgfnff_eg1)
     fn hb_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
         let n = self.at.len();
@@ -1147,9 +1293,13 @@ impl Gfnff {
                     let qh = { let ex = (p.hbst * q[ih]).exp(); ex / (ex + p.hbsf) };
                     let qa = { let ex = (-p.hbst * q[ia]).exp(); ex / (ex + p.hbsf) };
                     let qb = { let ex = (-p.hbst * q[ib]).exp(); ex / (ex + p.hbsf) };
-                    // basicity/acidity
-                    let (ca, cb) = (p.xhbas[self.at[ia]-1], p.xhbas[self.at[ib]-1]);
-                    let (aa, ab) = (p.xhaci[self.at[ia]-1], p.xhaci[self.at[ib]-1]);
+                    // basicity/acidity (with amide/carbonyl/nitro adjustments)
+                    let (ca, cb) = (
+                        adjusted_hbbas(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ia),
+                        adjusted_hbbas(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ib));
+                    let (aa, ab) = (
+                        adjusted_hbaci(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ia),
+                        adjusted_hbaci(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ib));
                     let rah4 = (rah*rah)*(rah*rah);
                     let rbh4 = (rbh*rbh)*(rbh*rbh);
                     let denom = 1.0 / (rah4 + rbh4);
@@ -1785,6 +1935,51 @@ fn improper_angle(xyz: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f
     (dot3(rn, rv) / (rnn * rvn)).clamp(-1.0, 1.0).asin()
 }
 
+/// amide N detection: N is pi, sp3, bonded to a pi C which has a pi O with nn=1
+fn is_amide_n(at: &[usize], hyb: &[i32], nb: &Vec<Vec<usize>>, piadr: &[bool], a: usize) -> bool {
+    if !piadr[a] || hyb[a] != 3 || at[a] != 7 { return false; }
+    let mut ic = None;
+    for &j in &nb[a] {
+        if at[j] == 6 && piadr[j] { ic = Some(j); break; }
+    }
+    let ic = match ic { Some(x) => x, None => return false };
+    // check for pi O with nn=1 on the carbonyl C
+    nb[ic].iter().any(|&j| at[j] == 8 && piadr[j] && nb[j].len() == 1)
+}
+
+/// amide H detection: H bonded to an amide N which has an sp3 C
+fn is_amide_h(at: &[usize], hyb: &[i32], nb: &Vec<Vec<usize>>, piadr: &[bool], h: usize) -> bool {
+    if at[h] != 1 || nb[h].len() != 1 { return false; }
+    let n_atom = nb[h][0];
+    if !is_amide_n(at, hyb, nb, piadr, n_atom) { return false; }
+    // check N has an sp3 C neighbor
+    nb[n_atom].iter().any(|&j| at[j] == 6 && hyb[j] == 3)
+}
+
+/// hbbas/hbaci atom-specific adjustments (gfnff_ini.f90 855-885)
+fn adjusted_hbbas(p: &Params, at: &[usize], hyb: &[i32], nb: &Vec<Vec<usize>>,
+                   piadr: &[bool], i: usize) -> f64 {
+    let mut bas = p.xhbas[at[i]-1];
+    let nn = nb[i].len();
+    // Carbene
+    if at[i] == 6 && nn == 2 && hyb[i] == 2 { bas = 1.46; }
+    // Carbonyl O: nn=1, bonded to C
+    if at[i] == 8 && nn == 1 {
+        if let Some(&j) = nb[i].first() {
+            if at[j] == 6 { bas = 0.68; }
+            if at[j] == 7 { bas = 0.47; }  // nitro
+        }
+    }
+    bas
+}
+
+fn adjusted_hbaci(p: &Params, at: &[usize], hyb: &[i32], nb: &Vec<Vec<usize>>,
+                   piadr: &[bool], i: usize) -> f64 {
+    let mut aci = p.xhaci[at[i]-1];
+    if is_amide_h(at, hyb, nb, piadr, i) { aci *= 0.80; }
+    aci
+}
+
 fn dist2(xyz: &[[f64; 3]], i: usize, j: usize) -> f64 {
     let dx = xyz[i][0]-xyz[j][0]; let dy = xyz[i][1]-xyz[j][1]; let dz = xyz[i][2]-xyz[j][2];
     dx*dx + dy*dy + dz*dz
@@ -1827,7 +2022,8 @@ fn dampa(p: &Params, ati: usize, atj: usize, r2: f64) -> f64 {
 
 impl Params {
     fn metal_is(&self, _z: usize) -> bool { false } // organic subset: no metals
-    fn repscalb(&self) -> f64 { 1.7583 } // gfnff_set_param
+    fn repscalb(&self) -> f64 { 1.7583 }
+    fn xhaci_coh(&self) -> f64 { 0.350 }  // xhaci_coh for A-H...O=C // gfnff_set_param
 
     /// gfnffrab pair reference bond length (Bohr), gfnff_rab.f
     /// rab = (r0_A + cnfak_A*cn_A + r0_B + cnfak_B*cn_B + shift) * ff * scaleF
