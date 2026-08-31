@@ -121,10 +121,10 @@ out["misc"] = dict(
 )
 # HB basicity / acidity per element (xhbas, xhaci, xbaci)
 xhbas = [0.0]*104; xhaci = [0.0]*104; xbaci = [0.0]*104
-for z,v in {6:0.80,7:1.68,8:0.67,9:0.52,14:4.0,15:3.5,16:2.0,17:1.5,35:1.5,53:1.9,33:3.5,34:2.0,51:3.5,52:2.0}.items(): xhbas[z]=v
+for z,v in {6:0.80,7:1.68,8:0.67,9:0.52,14:4.0,15:3.5,16:2.0,17:1.5,35:1.5,53:1.9,33:3.5,34:2.0,51:3.5,52:2.0}.items(): xhbas[z-1]=v
 glob = out["misc"]["xhaci_glob"]
-for z,v in {6:0.75,7:glob+0.1,8:glob,9:glob,15:glob,16:glob,17:glob+1.0,35:glob+1.0,53:glob+1.0}.items(): xhaci[z]=v
-for z,v in {15:1.0,16:1.0,17:0.5,33:1.2,34:1.2,35:0.9,51:1.2,52:1.2,53:1.2}.items(): xbaci[z]=v
+for z,v in {6:0.75,7:glob+0.1,8:glob,9:glob,15:glob,16:glob,17:glob+1.0,35:glob+1.0,53:glob+1.0}.items(): xhaci[z-1]=v
+for z,v in {15:1.0,16:1.0,17:0.5,33:1.2,34:1.2,35:0.9,51:1.2,52:1.2,53:1.2}.items(): xbaci[z-1]=v
 out["xhbas"]=xhbas; out["xhaci"]=xhaci; out["xbaci"]=xbaci
 
 # ---- D4 reference data from include/param_ref.fh ----

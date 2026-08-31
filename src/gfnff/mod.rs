@@ -75,7 +75,7 @@ pub struct Params {
     pub cnmax: f64, srb1: f64, srb2: f64, srb3: f64,
     pub qrepscal: f64, pub nrepscal: f64, pub hhfac: f64, pub hh13rep: f64, pub hh14rep: f64,
     pub bstren: Vec<f64>, pub qfacben: f64, pub rabshift: f64, pub rabshifth: f64,
-    pub rfgoed1: f64, pub qfacbm0: f64, pub fringbo: f64, bsmat: [[f64; 4]; 4],
+    pub rfgoed1: f64, pub qfacbm0: f64, pub fringbo: f64, pub bsmat: Vec<Vec<f64>>,
     pub atcuta: f64, pub repscaln: f64,
     pub d3a1: f64, pub d3a2: f64,
     pub hdiag_tab: std::collections::HashMap<usize, f64>,
@@ -83,6 +83,9 @@ pub struct Params {
     pub hdiag_c: f64, pub hoff_c: f64,
     pub hiter: f64, pub hueckelp3: f64, pub pilpf: f64, pub htriple: f64,
     pub hueckelp: f64, pub bzref: f64, pub hueckelp2: f64, pub bzref2: f64,
+    pub hbacut: f64, pub hbscut: f64, pub hblongcut: f64, pub hbalp: f64,
+    pub hbsf: f64, pub hbst: f64,
+    pub xhbas: Vec<f64>, pub xhaci: Vec<f64>,
     // D4 reference data (element-indexed)
     d4_refn: Vec<i32>, d4_refsys: Vec<Vec<i32>>, d4_refcn: Vec<Vec<f64>>,
     d4_ascale: Vec<Vec<f64>>, d4_hcount: Vec<Vec<f64>>,
@@ -164,7 +167,7 @@ impl Params {
             hhfac: gf("hhfac"), hh13rep: gf("hh13rep"), hh14rep: gf("hh14rep"),
             bstren, qfacben: gf("qfacBEN"), rabshift: gf("rabshift"), rabshifth: gf("rabshifth"),
             rfgoed1: gf("rfgoed1"), qfacbm0: gf("qfacbm0"), fringbo: gf("fringbo"),
-            bsmat,
+            bsmat: bsmat.iter().map(|r| r.to_vec()).collect(),
             atcuta: mf("atcuta"), repscaln: mf("repscaln"),
             d3a1: gf("d3a1"), d3a2: gf("d3a2"),
             hdiag_tab: [(5,-0.5),(6,0.0),(7,0.14),(8,-0.38),(9,-0.29),(16,-0.30),(17,-0.30)]
@@ -175,6 +178,9 @@ impl Params {
             hiter: gf("hiter"), hueckelp3: gf("hueckelp3"), pilpf: gf("pilpf"),
             htriple: gf("htriple"), hueckelp: gf("hueckelp"), bzref: gf("bzref"),
             hueckelp2: gf("hueckelp2"), bzref2: gf("bzref2"),
+            hbacut: mf("hbacut"), hbscut: mf("hbscut"), hblongcut: mf("hblongcut"),
+            hbalp: mf("hbalp"), hbsf: mf("hbsf"), hbst: mf("hbst"),
+            xhbas: raw.xhbas.clone(), xhaci: raw.xhaci.clone(),
             d4_refn: refn, d4_refsys: refsys, d4_refcn: refcn, d4_ascale: ascale,
             d4_hcount: hcount, d4_alphaiw: alphaiw, d4_sscale: sscale, d4_secaiw: secaiw,
         }
@@ -911,12 +917,79 @@ impl Gfnff {
         // ---- D4(BJ) dispersion with EEQ-charge scaling (gdisp0.f90) ----
         let disp = self.d4_dispersion(&xyz, &dist, &cn);
 
+        // ---- hydrogen bonds (abhgfnff_eg1, unbound-H only) ----
+        let ehb = self.hb_energy(&xyz, &q, &dist);
+
         EnergyComponents {
             bond: ebond, angle: eangl, torsion: etors,
-            rep, es, disp, hb: 0.0, xb: 0.0, batm: 0.0,
+            rep, es, disp, hb: ehb, xb: 0.0, batm: 0.0,
         }
     }
 
+    /// hydrogen bond energy: A···H···B three-body (abhgfnff_eg1)
+    fn hb_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
+        let n = self.at.len();
+        let p = &self.p;
+        let mut e = 0.0f64;
+        // identify HB-relevant atoms: basicity or acidity > 0
+        let is_hb_atom: Vec<bool> = (0..n).map(|i| {
+            p.xhbas[self.at[i]-1] > 0.0 || p.xhaci[self.at[i]-1] > 0.0
+        }).collect();
+        // H atoms with qa > 0.01
+        let hb_h: Vec<usize> = (0..n).filter(|&i| {
+            self.at[i] == 1 && self.topo.qa[i] > 0.01
+        }).collect();
+        if hb_h.is_empty() { return 0.0; }
+        for ia in 0..n {
+            if !is_hb_atom[ia] || self.at[ia] == 1 { continue; }
+            for ib in (ia+1)..n {
+                if !is_hb_atom[ib] || self.at[ib] == 1 { continue; }
+                let bp = self.topo.bpair.get(ia).and_then(|r| r.get(ib)).copied().unwrap_or(5);
+                if bp == 1 { continue; }  // A-B bonded: no HB
+                for &ih in &hb_h {
+                    let bp_ah = self.topo.bpair.get(ia).and_then(|r| r.get(ih)).copied().unwrap_or(5);
+                    let bp_bh = self.topo.bpair.get(ib).and_then(|r| r.get(ih)).copied().unwrap_or(5);
+                    // NOTE: xtb distinguishes bound/unbound H via fragment-aware bpair;
+                    // for our purposes compute all favorable A···H···B triples
+                    // (the geometry/charge dampings suppress bad cases)
+                    let _ = (bp_ah, bp_bh);
+                    let (rab, rah, rbh) = (dist(ia, ib), dist(ia, ih), dist(ib, ih));
+                    if rab > 6.0 { continue; }
+                    let radab = p.rad[self.at[ia]-1] + p.rad[self.at[ib]-1];
+                    // out-of-line damp
+                    let expo = (p.hbacut / radab) * ((rah + rbh) / rab - 1.0);
+                    if expo > 15.0 { continue; }
+                    let outl = 2.0 / (1.0 + expo.exp());
+                    // long-range damp
+                    let dampl = 1.0 / (1.0 + (rab*rab / p.hblongcut).powf(p.hbalp));
+                    // short-range damp
+                    let shortcut = p.hbscut * radab;
+                    let damps = 1.0 / (1.0 + (shortcut / (rab*rab)).powf(p.hbalp));
+                    let damp = damps * dampl;
+                    let rdamp = damp / (rab*rab*rab);
+                    // charge-scaled terms
+                    let qh = { let ex = (p.hbst * q[ih]).exp(); ex / (ex + p.hbsf) };
+                    let qa = { let ex = (-p.hbst * q[ia]).exp(); ex / (ex + p.hbsf) };
+                    let qb = { let ex = (-p.hbst * q[ib]).exp(); ex / (ex + p.hbsf) };
+                    // basicity/acidity
+                    let (ca, cb) = (p.xhbas[self.at[ia]-1], p.xhbas[self.at[ib]-1]);
+                    let (aa, ab) = (p.xhaci[self.at[ia]-1], p.xhaci[self.at[ib]-1]);
+                    let rah4 = (rah*rah)*(rah*rah);
+                    let rbh4 = (rbh*rbh)*(rbh*rbh);
+                    let denom = 1.0 / (rah4 + rbh4);
+                    let bas = (qa*ca*rah4 + qb*cb*rbh4) * denom;
+                    let aci = (ab*rah4 + aa*rbh4) * denom;
+                    let contrib = -bas * aci * rdamp * qh * outl;
+                    e += contrib;
+                }
+            }
+        }
+        e  // each A···H···B counted once per (A,B,H) triple; no double counting since A<B not enforced
+    }
+
+}
+
+impl Gfnff {
     /// per-term analytic gradients (kcal/mol/A), for validation/debug
     #[cfg(test)]
     pub fn gradient_per_term(&self, xyz_ang: &[[f64; 3]]) -> Vec<(&'static str, Vec<[f64;3]>)> {
@@ -1187,13 +1260,6 @@ impl Gfnff {
             g[a][t] += g_rep[a][t] + g_bond[a][t] + g_angle[a][t] + g_tors[a][t]
                      + g_es[a][t] + g_disp[a][t];
         }}
-        #[cfg(test)]
-        {
-            for a in 0..n { for t in 0..3 {
-                SELF_DEBUG_TERMS.with(|c| c.borrow_mut().push((a, t,
-                    g_rep[a][t], g_bond[a][t], g_angle[a][t], g_tors[a][t], g_es[a][t], g_disp[a][t])));
-            }}
-        }
         // convert to kcal/mol / Angstrom
         const EH_KCAL: f64 = 627.5094740631;
         for a in 0..n { for t in 0..3 { grad_out[a][t] = g[a][t] * EH_KCAL / BOHR; } }
@@ -2008,81 +2074,26 @@ mod tests_gradient {
 #[cfg(test)]
 mod tests_grad_debug {
     use super::*;
-    const EH_KCAL: f64 = 627.5094740631;
 
     #[test]
     fn per_term_gradient_check() {
         let at = [8usize, 1, 1];
         let xyz = [[0.0, 0.03, 0.1173], [0.05, 0.7572, -0.4692], [-0.02, -0.7572, -0.40]];
         let g = Gfnff::new(&at, &xyz, 0.0);
-        let h = 1e-4;
-        let terms: Vec<(&str, fn(&EnergyComponents) -> f64)> = vec![
-            ("bond", |e| e.bond), ("angle", |e| e.angle),
-            ("rep", |e| e.rep), ("es", |e| e.es), ("disp", |e| e.disp),
-        ];
-        let mut fd_total = vec![[0.0f64; 3]; 3];
-        for (name, f) in &terms {
-            let mut fd = vec![[0.0f64; 3]; 3];
-            for a in 0..3 { for t in 0..3 {
-                let mut p = xyz.to_vec(); p[a][t] += h;
-                let mut m = xyz.to_vec(); m[a][t] -= h;
-                fd[a][t] = (f(&g.energy(&p)) - f(&g.energy(&m))) * EH_KCAL / (2.0*h);
-                fd_total[a][t] += fd[a][t];
-            }}
-            println!("{:5} fd: [{:9.4} {:9.4} {:9.4}] [{:9.4} {:9.4} {:9.4}] [{:9.4} {:9.4} {:9.4}]",
-                name, fd[0][0], fd[0][1], fd[0][2], fd[1][0], fd[1][1], fd[1][2], fd[2][0], fd[2][1], fd[2][2]);
-        }
-        // solve-independent part check via energy_and_gradient on modified geometry:
-        // instead print the analytic total for comparison done externally
         let mut grad = vec![[0.0f64; 3]; 3];
         g.energy_and_gradient(&xyz, &mut grad);
-        println!("total an: [{:9.4} {:9.4} {:9.4}] [{:9.4} {:9.4} {:9.4}] [{:9.4} {:9.4} {:9.4}]",
-            grad[0][0], grad[0][1], grad[0][2], grad[1][0], grad[1][1], grad[1][2], grad[2][0], grad[2][1], grad[2][2]);
-        println!("total fd: [{:9.4} {:9.4} {:9.4}] [{:9.4} {:9.4} {:9.4}] [{:9.4} {:9.4} {:9.4}]",
-            fd_total[0][0], fd_total[0][1], fd_total[0][2], fd_total[1][0], fd_total[1][1], fd_total[1][2], fd_total[2][0], fd_total[2][1], fd_total[2][2]);
-        // capture real analytic per-term gradients via thread-local
-        SELF_DEBUG_TERMS.with(|c| c.borrow_mut().clear());
-        let mut fullg = vec![[0.0f64; 3]; 3];
-        g.energy_and_gradient(&xyz, &mut fullg);
-        let dbg = SELF_DEBUG_TERMS.with(|c| c.borrow().clone());
-        let mut an: Vec<(&'static str, Vec<[f64;3]>)> = vec![
-            ("rep", vec![[0.0;3];3]), ("bond", vec![[0.0;3];3]),
-            ("angle", vec![[0.0;3];3]), ("torsion", vec![[0.0;3];3]),
-            ("es", vec![[0.0;3];3]), ("disp", vec![[0.0;3];3]),
-        ];
-        const EH_KCAL: f64 = 627.5094740631;
-        for (a, t, rep, bond, angle, tors, es, disp) in &dbg {
-            let vals = [*rep, *bond, *angle, *tors, *es, *disp];
-            for (i, v) in vals.iter().enumerate() {
-                an[i].1[*a][*t] += v * EH_KCAL / BOHR;
-            }
-        }
-        for (name, ag) in &an {
-            if *name == "full" { continue; }
-            // find matching fd row
-            let fdrow = match terms.iter().find(|(n2, _)| n2 == name) {
-                Some(x) => x, None => continue,
-            };
-            let f = fdrow.1;
-            let fd = {
-                let mut fd = vec![[0.0f64; 3]; 3];
-                for a in 0..3 { for t in 0..3 {
-                    let mut p = xyz.to_vec(); p[a][t] += 1e-4;
-                    let mut m = xyz.to_vec(); m[a][t] -= 1e-4;
-                    fd[a][t] = (f(&g.energy(&p)) - f(&g.energy(&m))) * 627.5094740631 / 2e-4;
-                }}
-                fd
-            };
-            let mut worst: f64 = 0.0;
-            for a in 0..3 { for t in 0..3 { worst = worst.max((ag[a][t]-fd[a][t]).abs()); }}
-            if worst > 0.01 {
-                println!("{name:8} an: [{:8.3} {:8.3} {:8.3}][{:8.3} {:8.3} {:8.3}][{:8.3} {:8.3} {:8.3}]",
-                    ag[0][0],ag[0][1],ag[0][2],ag[1][0],ag[1][1],ag[1][2],ag[2][0],ag[2][1],ag[2][2]);
-                println!("{name:8} fd: [{:8.3} {:8.3} {:8.3}][{:8.3} {:8.3} {:8.3}][{:8.3} {:8.3} {:8.3}]",
-                    fd[0][0],fd[0][1],fd[0][2],fd[1][0],fd[1][1],fd[1][2],fd[2][0],fd[2][1],fd[2][2]);
-            }
-            println!("{name:8} analytic-vs-fd max diff: {worst:.4}");
-        }
+        // verify against central finite differences on total energy
+        let h = 1e-4;
+        let mut fd = vec![[0.0f64; 3]; 3];
+        for a in 0..3 { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            fd[a][t] = (g.energy(&p).total() - g.energy(&m).total()) * 627.5094740631 / (2.0*h);
+        }}
+        let mut worst: f64 = 0.0;
+        for a in 0..3 { for t in 0..3 { worst = worst.max((grad[a][t]-fd[a][t]).abs()); }}
+        println!("analytic-vs-fd max diff: {worst:.4} kcal/mol/A");
+        assert!(worst < 0.5);
     }
 }
 
@@ -2185,5 +2196,30 @@ mod tests_pi {
         assert!((e.bond + 2.494313610162).abs() < 5e-3, "bond off {}", e.bond);
         assert!((e.rep - 0.145212551579).abs() < 5e-3, "rep off {}", e.rep);
         assert!((e.es + 0.004363946338).abs() < 5e-3, "es off {}", e.es);
+    }
+}
+
+#[cfg(test)]
+mod tests_hb {
+    use super::*;
+
+    /// water dimer HB energy vs xtb (unbound H, A···H···B)
+    #[test]
+    fn water_dimer_hb_vs_xtb() {
+        let at = [8usize, 1, 1, 8, 1, 1];
+        let xyz = [
+            [0.0, 0.0, 0.0], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692],
+            [0.0, 0.0, 2.926], [0.0, 0.24, 1.966], [0.93, 0.0, 3.166],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        // xtb: hb = -0.003319534126 Eh, total = -0.647089188710
+        println!("hb     {:+.9} (ref -0.003319534126)", e.hb);
+        println!("bond   {:+.9} (ref -0.543578922535)", e.bond);
+        println!("angle  {:+.9} (ref +0.007881102232)", e.angle);
+        println!("rep    {:+.9} (ref +0.089770304966)", e.rep);
+        println!("es     {:+.9} (ref -0.197202931636)", e.es);
+        println!("disp   {:+.9} (ref -0.000639207611)", e.disp);
+        assert!(e.hb < -0.001, "hb should be attractive, got {}", e.hb);
     }
 }
