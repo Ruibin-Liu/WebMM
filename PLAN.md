@@ -1,47 +1,42 @@
-# Plan: Playground v1.1 — bond grabbing & dihedral twisting
+# Plan: GFN-FF review fixes round 4 — 3-ring angle branch + ring torsions
 
-## Context
-User feedback on the live page: atoms drag fine, but bonds can't be dragged or
-even selected. The natural bond interaction for a physics toy is a **dihedral
-twist**: grab a bond, drag perpendicular to it, and the smaller side of the
-molecule rotates around the bond axis (methyl spins, conformations change, PE
-chart responds). Ring bonds must be excluded — twisting them tears the ring.
-Pure site-side feature, NO engine changes: rotation is applied through the
-existing `MDLive::set_atom_position` export; strain safety reuses the existing
-+100 kcal/mol auto-release valve.
+## Context (DONE)
 
-## Phase 1 — site/playground.html: bond pick + twist
-- Parse the SDF bond block on load → `bonds[]` + adjacency; mark ring bonds
-  via BFS: removing bond (i,j) still leaves i connected to j ⇒ ring bond.
-- Picking: pointerdown with no atom within 28 px → nearest NON-RING bond by
-  2D point-to-segment distance, threshold 14 px (atoms always win).
-- Twist: signed perpendicular pixel delta (relative to the bond's projected
-  2D direction) → incremental Δθ = 0.01 rad/px, clamped ±15°/tick; rotate the
-  smaller BFS side around the current bond axis (Rodrigues) via one
-  `set_atom_position` per side atom; same path while paused (pointermove).
-  Incremental rotation tracks the cursor without drift/runaway.
-- Visual: while a bond is grabbed, the rotating side's atoms render in the
-  accent color (per-frame colorfunc rebuild already in place).
-- Strain safety: capture `peAtGrab` at grab; shared strainCheck auto-release
-  applies to bond grabs too. Grabbing stays disabled during metad runs.
-- `grabbed` becomes a tagged union {type:'atom'|'bond'}; pgState reports it;
-  add test hooks pgBonds() / pgBondMidScreen(i,j) / pgDihedral(a,b,c,d).
-- Hint/status copy updated ("drag an atom · twist a bond").
+Code review of the working tree flagged the spiro angle condition
+(`ringsj+ringsk.eq.102`) as a typo — but diffing against the upstream xtb
+source (grimme-lab/xtb gfnff_ini/ini2/eg, fetched fresh) proved the `102` is
+genuine: xtb's `ringsatom` returns the SENTINEL 99 for atoms in no ring, so
+102 = 99 + 3 means "3-ring center, one 3-ring neighbor, one acyclic neighbor".
+Our `ring_size` uses 0 for acyclic, so the ported branch was dead. Same review
+session exposed (via a new methylcyclopropane vs-xtb test) that the torsion
+setup had only xtb's acyclic branch — the whole `lring` ring-torsion rule set
+(fr3/fr4/fr5/fr6, cis minima, terminal-flank case, CB7 fix, .not.lring guard
+on the extra gauche torsion, sp3-specials ordering) was missing.
 
-## Verification (CDP headless, extend /tmp/pg_drive.mjs)
-- Press at a non-ring bond midpoint (ethanol C–C / caffeine N–CH3): grabs the
-  bond; drag twists — endpoint atoms stay <0.05 Å, side atoms move >0.3 Å,
-  the bond's dihedral changes, PE stays finite.
-- Ring-bond midpoint press (caffeine ring): grabs nothing.
-- Hard yank on a bond: strain auto-release fires.
-- Orbit still works on empty space; zero console errors.
-- Gates: cargo test 205/205, clippy 0 (no Rust change expected).
+## Fixes
 
-## Docs per workflow
-- This file overwrites PLAN.md. After completion: CODE_STATUS.md entry +
-  Current Focus update; README playground blurb mentions bond twisting.
+- mod.rs: map acyclic ring_size 0 → xtb sentinel 99 at the angle-spiro check.
+- mod.rs: full ring-torsion branch; helpers ringsbond() / ring_common()
+  (ringstors + ringstorl semantics) over the existing rings_all data; sp3
+  specials moved after both branches (xtb order); .not.lring guard added.
+- detect_bonds hypercoordination filter: review FALSE ALARM — matches xtb
+  icase-2 getnb literally (per-PAIR skip, no distance trimming); comment now
+  documents that xtb's final topology list is the full nbf and the two
+  coincide for normal organic valences.
+- Test fixture: pyr_h2o.xyz moved from /tmp into src/gfnff/ (include_str!).
+- Cleanups: dead rabd0 decl, duplicated nh/no lets, needless hb_ab clone,
+  ipis Floyd-Warshall hoisted out of the per-pi-system loop, stale eg2_rnr
+  comment.
+
+## Verification (DONE)
+
+- New tests_ring3::methylcyclopropane_vs_xtb: all seven terms exact
+  (torsion +0.007939443 vs xtb +0.007939436401; was +0.0335 — 4x too large;
+  angle +0.045553381 vs +0.045553364714) + FD 3.7e-6 kcal/mol/Å.
+- cargo test 231/231, clippy 0, wasm32-unknown-unknown check clean.
 
 ## Out of scope
-- Bond stretching, hover pre-highlight, beat-the-optimizer scoring.
-- Spring-based dragging (engine restraint wrapper) — separate v1.5 item.
-- Engine/WASM changes; MetaDLive perturbation.
+
+- Metals/eta, PBC (excluded by request); non-zero-eg1 xtb single point.
+- Overcoordinated (>4/6 candidate) topologies: single-list approximation
+  documented; xtb's transient icase-2 list not replicated.

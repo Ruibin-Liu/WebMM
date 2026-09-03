@@ -10,11 +10,28 @@
 //!   [x] bond stretching (exp(-alp*(r-r0)^2) with full prefactor chain)
 //!   [x] angle bending (cos potential with gfnffdampa damping)
 //!   [x] D4(BJ) dispersion (charge-scaled C6 from reference systems)
-//!   [ ] torsions, improper, HB/XB, bonded ATM, pi (Hückel) bond orders,
-//!       rings, metals, PBC  -> see docs/gfnff-porting-notes.md
+//!   [x] torsions + out-of-plane impropers (fc*(1-cos phi) / cos double well)
+//!   [x] pi (Hückel) bond orders (Fermi smearing, biradical, Nel-1 retry)
+//!   [x] HB: eg1 unbound-H, eg2new bound-H, eg2_rnr aromatic-N lone pair,
+//!       eg3 carbonyl/nitro (all with exact gradients)
+//!   [x] XB halogen bonds + bonded ATM three-body (incl. gradients)
+//!   [x] rings (smallest-ring prefactors), fragments (per-fragment EEQ charges)
+//!   [x] bond detection via gfnffrab radii (normcn CN, qa/rqshrink, fat);
+//!       H-bonded X-H exponent softening (egbond_hb, vbond_scale)
+//!   [x] full angle phi0 rules (ring 3/4/5, amide-N, heavy atoms, halogens,
+//!       carbene, Ph-O-Ph, CO2) + N-sp2/N-O/O-O torsion specials + amide/alphaCO
+//!   [x] charged systems: per-fragment EEQ (try-both placement), pi-system
+//!       charge ipis (Cp- / nitromethane validated)
+//!   [ ] metals/eta, PBC -> see docs/gfnff-porting-notes.md
 //!
 //! Reference implementation validated term-by-term against
 //! `xtb --gfnff --verbose` (see tests below).
+//!
+//! Clippy: dense matrix/neighbor loops intentionally index by (i, j) to mirror
+//! the Fortran reference (gfnff_eg.f90/gfnff_ini.f90); allowed module-wide like
+//! the etkdg distance-geometry code.
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::type_complexity)]
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -37,7 +54,7 @@ struct RawParams {
     chi: Vec<f64>, gam: Vec<f64>, cnf: Vec<f64>, alp: Vec<f64>, bond: Vec<f64>,
     repa: Vec<f64>, repan: Vec<f64>, angl: Vec<f64>, angl2: Vec<f64>,
     tors: Vec<f64>, tors2: Vec<f64>, en: Vec<f64>, rad: Vec<f64>, repz: Vec<f64>,
-    metal: Vec<i32>, group: Vec<i32>, normcn: Vec<i32>,
+    #[allow(dead_code)] metal: Vec<i32>, group: Vec<i32>, normcn: Vec<i32>,
     rcov: Vec<f64>, sqrt_zr4r2: Vec<f64>, rab_en: Vec<f64>, rab_r0: Vec<f64>, rab_cnfak: Vec<f64>,
     zeta_zeff: Vec<i32>, zeta_c: Vec<f64>,
     xhbas: Vec<f64>, xhaci: Vec<f64>, xbaci: Vec<f64>,
@@ -87,6 +104,18 @@ pub struct Params {
     pub hblongcut_xb: f64, pub xbacut: f64, pub xbscut: f64, pub xbst: f64, pub xbsf: f64,
     pub batmscal: f64, pub zb3atm: Vec<f64>, pub hbabmix: f64,
     pub hbsf: f64, pub hbst: f64,
+    // HB/XB ancillary constants (gfnff_param.f90 449-453 + gfnff_hbset thresholds,
+    // accuracy=0.1 as used by the GFN-FF calculator: hbthr = 200/400 - log10(0.1)*50)
+    pub tors_hb: f64, pub bend_hb: f64, pub hbnbcut: f64,
+    pub xhaci_coh: f64, pub xhaci_globabh: f64,
+    pub hqabthr: f64, pub qabthr: f64, pub hbthr1: f64, pub hbthr2: f64,
+    /// normal valences (bond-detection CN guess) + bond thresholds (gfnff_param.f90 730-733)
+    pub normcn: Vec<i32>, pub rthr: f64, pub rqshrink: f64,
+    /// X-H bond softening for H-bonded N/O donors (gfnff_param.f90 451)
+    pub vbond_scale: f64,
+    /// angle-setup constants (gfnff_param.f90 720-731): heavy-atom sp3 phi0,
+    /// small-angle damp, linearity threshold
+    pub aheavy3: f64, pub aheavy4: f64, pub fbs1: f64, pub linthr: f64,
     pub xhbas: Vec<f64>, pub xhaci: Vec<f64>, pub xbaci: Vec<f64>,
     // D4 reference data (element-indexed)
     d4_refn: Vec<i32>, d4_refsys: Vec<Vec<i32>>, d4_refcn: Vec<Vec<f64>>,
@@ -118,7 +147,7 @@ impl Params {
         let mut sscale = vec![0f64; 18]; let mut secaiw = vec![vec![0f64; 18]; 23];
         // all indices below are stored 1-based in JSON, converted to 0-based here
         // (param_ref.fh covers 118 elements; keep only Z <= 104)
-        let ok = |p: &[usize]| p.iter().all(|&x| x >= 1 && x <= 104);
+        let ok = |p: &[usize]| p.iter().all(|&x| (1..=104).contains(&x));
         for (k, v) in &raw.d4.refn {
             let z: usize = k.parse().unwrap();
             if z <= 104 { refn[z-1] = *v; }
@@ -186,12 +215,20 @@ impl Params {
             batmscal: gf("batmscal"), hbabmix: mf("hbabmix"),
             zb3atm: { let mut v = vec![0.0f64; 104];
                 for (i, val) in v.iter_mut().enumerate() {
-                    let z = i as f64;
+                    let z = (i + 1) as f64;   // index i == Z-1 (gfnff_param.f90 495-502)
                     *val = if i == 0 { -0.25 * gf("batmscal").powf(1.0/3.0) }
                            else { -z * gf("batmscal").powf(1.0/3.0) };
                 }
                 v },
             hbalp: mf("hbalp"), hbsf: mf("hbsf"), hbst: mf("hbst"),
+            tors_hb: mf("tors_hb"), bend_hb: mf("bend_hb"), hbnbcut: mf("hbnbcut"),
+            xhaci_coh: mf("xhaci_coh"), xhaci_globabh: mf("xhaci_globabh"),
+            hqabthr: gf("hqabthr"), qabthr: gf("qabthr"),
+            hbthr1: 250.0, hbthr2: 450.0,   // Bohr^2 (gfnff_thresholds, accuracy 0.1)
+            normcn: raw.normcn.clone(), rthr: gf("rthr"), rqshrink: gf("rqshrink"),
+            vbond_scale: mf("vbond_scale"),
+            aheavy3: gf("aheavy3"), aheavy4: gf("aheavy4"),
+            fbs1: gf("fbs1"), linthr: gf("linthr"),
             xhbas: raw.xhbas.clone(), xhaci: raw.xhaci.clone(), xbaci: raw.xbaci.clone(),
             d4_refn: refn, d4_refsys: refsys, d4_refcn: refcn, d4_ascale: ascale,
             d4_hcount: hcount, d4_alphaiw: alphaiw, d4_sscale: sscale, d4_secaiw: secaiw,
@@ -233,6 +270,28 @@ pub struct Topology {
     pub fraglist: Vec<usize>,
     /// charge per fragment
     pub qfrag: Vec<f64>,
+    // ---- HB/XB/bATM ancillary (gfnff_ini.f90 885-1000 + 735-800) ----
+    /// per-atom HB basicity (xhbas w/ carbene/carbonyl/nitro rules)
+    pub hbbas: Vec<f64>,
+    /// per-atom HB acidity (xhaci w/ amide-H x0.80)
+    pub hbaci: Vec<f64>,
+    /// itag=1 flags: bent 2-coordinate group-14 (carbene) and nitro N
+    pub carbene: Vec<bool>,
+    /// nitro N flag (3-coord N with terminal O; xtb itag=1, hyb 2)
+    pub nitro_n: Vec<bool>,
+    /// HB-relevant H atoms (qa > hqabthr, non-bridging)
+    pub hb_h: Vec<usize>,
+    /// HB-relevant (A,B) pairs (i > j, charge/type filtered)
+    pub hb_ab: Vec<(usize, usize)>,
+    /// XB triples (A, B, X): X bonded to A, B the donor base
+    pub xb_triples: Vec<(usize, usize, usize)>,
+    /// bonded-ATM triples (i, j, k) from 1-4 pairs (xtb b3list)
+    pub b3: Vec<(usize, usize, usize)>,
+    /// per-bond HB acceptor list (N/O only): X-H bonds whose donor A and an
+    /// hb_ab partner B are both N/O get a softened exponent (egbond_hb)
+    pub bond_hb_b: Vec<Vec<usize>>,
+    /// all rings (up to size 6) per atom, as sorted member lists
+    pub rings_all: Vec<Vec<Vec<usize>>>,
 }
 
 pub struct EnergyComponents {
@@ -354,54 +413,87 @@ impl Gfnff {
         // --- bond detection (gfnffrab criterion, simplified qa shift) ---
         // first topology charges need bonds -> iterate twice like xtb's qloop
         let mut topo_q = vec![0.0f64; n];
-        let mut nb: Vec<Vec<usize>> = Vec::new();
-        let mut hyb = vec![0i32; n];
-        let mut dxi = vec![0.0f64; n];
+        let mut nb: Vec<Vec<usize>>;
+        let mut hyb: Vec<i32>;
         let mut rabd = vec![vec![0.0f64; n]; n];
         // early pi detection (needed for amide/ff_gam before full HMO)
         let mut piadr_temp = vec![false; n];
         {
-            nb = detect_bonds(&p, at, &xyz, &cn, &topo_q);
-            hyb = assign_hyb(at, &nb, &xyz, &topo_q);
+            nb = detect_bonds(&p, at, &xyz, &topo_q);
+            (hyb, _) = assign_hyb(at, &nb, &xyz, &topo_q);
             for i in 0..n {
                 let z = at[i];
                 let h = hyb[i];
                 if matches!(z, 6|7|8|9|16) && (h == 1 || h == 2) { piadr_temp[i] = true; }
-                if matches!(z, 7|8|9) {
+                if matches!(z, 7..=9) {
                     let attached = nb[i].iter().any(|&j| hyb[j] == 1 || hyb[j] == 2);
                     if attached && h != 3 { piadr_temp[i] = true; }
                 }
             }
         }
-        for _iter in 0..2 {
-            nb = detect_bonds(&p, at, &xyz, &cn, &topo_q);
-            hyb = assign_hyb(at, &nb, &xyz, &topo_q);
-            // dxi: topology-dependent electronegativity corrections (ini 391-441)
-            for i in 0..n {
-                let z = at[i];
-                let nn = nb[i].len();
-                let nh = nb[i].iter().filter(|&&j| at[j] == 1).count();
-                if nn == 0 { continue; }
-                if z == 5 { dxi[i] += nh as f64 * 0.015; }
-                // carbene C: nn=2, linear (itag=1 approximated by checking angle later)
-                if z == 6 && nn == 2 { dxi[i] = -0.15; }
-                // free CO: C with nn=1, bonded to O with nn=1
-                if z == 6 && nn == 1 && nb[i].len() == 1 && at[nb[i][0]] == 8 && nb[nb[i][0]].len() == 1 {
-                    dxi[i] = 0.15;
+        // fragment detection: connected components on the bond graph
+        // (computed once here; xtb detects fragments BEFORE the topology EEQ
+        // and constrains EACH fragment charge separately - a total-charge-only
+        // constraint lets charge leak between fragments and skews qa)
+        let mut fraglist = vec![0usize; n];
+        let mut nfrag = 0usize;
+        {
+            nb = detect_bonds(&p, at, &xyz, &topo_q);
+            hyb = assign_hyb(at, &nb, &xyz, &topo_q).0;
+            for s in 0..n {
+                if fraglist[s] != 0 { continue; }
+                nfrag += 1;
+                let mut stack = vec![s];
+                fraglist[s] = nfrag;
+                while let Some(a) = stack.pop() {
+                    for &b in &nb[a] {
+                        if fraglist[b] == 0 { fraglist[b] = nfrag; stack.push(b); }
+                    }
                 }
-                // nitro O: nn=1, bonded to N which is pi
-                if z == 8 && nn == 1 && nb[i].len() == 1 && at[nb[i][0]] == 7 && hyb[nb[i][0]] == 2 {
-                    dxi[i] = 0.05;
-                }
-                if z == 8 && nn == 2 && nh == 2 { dxi[i] = -0.02; }
-                if p.group[z-1] == 6 && nn > 2 { dxi[i] += nn as f64 * 0.005; }
-                if z == 8 || z == 16 { dxi[i] -= nh as f64 * 0.005; }
-                if p.group[z-1] == 7 && z > 9 && nn > 1 { dxi[i] -= nn as f64 * 0.021; }
             }
+        }
+        let fraglist0: Vec<usize> = fraglist.iter().map(|x| x - 1).collect();
+        let mut qfrag = vec![0.0f64; nfrag];
+        if nfrag == 1 { qfrag[0] = charge; }
+        // charged 2-fragment systems: try BOTH charge placements and keep the
+        // one with the lower topology-EEQ energy (gfnff_ini.f90 570-588);
+        // more fragments: charge on the most electropositive (approximation)
+        if nfrag == 2 && charge != 0.0 {
+            // dxi (topology electronegativity corrections, ini 391-447) for a
+            // consistent es comparison; the qloop below recomputes it per pass
+            let dxi_try = compute_dxi(&p, at, &nb, &hyb, &piadr_temp);
+            let rabd0 = floyd_rabd(&p, at, &nb);   // topology distances for the try-both EEQ
+            qfrag = vec![0.0, charge];
+            let (_, es1) = solve_eeq(&p, at, &rabd0, &nb, charge, true, &hyb, &dxi_try, &fraglist0, &qfrag);
+            qfrag = vec![charge, 0.0];
+            let (_, es2) = solve_eeq(&p, at, &rabd0, &nb, charge, true, &hyb, &dxi_try, &fraglist0, &qfrag);
+            qfrag = if es1 < es2 { vec![0.0, charge] } else { vec![charge, 0.0] };
+        } else if nfrag > 1 && charge != 0.0 {
+            let mut frag_en = vec![0.0f64; nfrag];
+            let mut frag_cnt = vec![0.0f64; nfrag];
+            for i in 0..n {
+                frag_en[fraglist0[i]] += p.en[at[i]-1];
+                frag_cnt[fraglist0[i]] += 1.0;
+            }
+            for fi in 0..nfrag {
+                if frag_cnt[fi] > 0.0 { frag_en[fi] /= frag_cnt[fi]; }
+            }
+            let most_electropos = (0..nfrag)
+                .min_by(|a, b| frag_en[*a].partial_cmp(&frag_en[*b]).unwrap())
+                .unwrap_or(0);
+            qfrag[most_electropos] = charge;
+        }
+
+        let mut dxi = vec![0.0f64; n];
+        let mut nitro = vec![false; n];
+        for _iter in 0..2 {
+            nb = detect_bonds(&p, at, &xyz, &topo_q);
+            (hyb, nitro) = assign_hyb(at, &nb, &xyz, &topo_q);
+            dxi = compute_dxi(&p, at, &nb, &hyb, &piadr_temp);
             // topology-distance EEQ charges (geometry independent)
             rabd = floyd_rabd(&p, at, &nb);
-            let (fl0, qf0): (Vec<usize>, Vec<f64>) = (vec![0; n], vec![charge]);
-            topo_q = solve_eeq(&p, at, &rabd, &nb, charge, true, &hyb, &dxi, &fl0, &qf0);
+            let (q_new, _) = solve_eeq(&p, at, &rabd, &nb, charge, true, &hyb, &dxi, &fraglist0, &qfrag);
+            topo_q = q_new;
         }
 
         // --- EEQ parameters (second pass, gfnff_ini.f90 lines 670-719) ---
@@ -415,7 +507,7 @@ impl Gfnff {
                 1 => -0.08, 5 => -0.05,
                 6 => if hyb[i] < 3 { -0.45 } else { -0.27 },
                 7 => {
-                    if is_amide_n(&at, &hyb, &nb, &piadr_temp, i) { -0.16 }
+                    if is_amide_n(at, &hyb, &nb, &piadr_temp, i) { -0.16 }
                     else if piadr_temp[i] { -0.14 }
                     else { -0.13 }
                 },
@@ -446,42 +538,15 @@ impl Gfnff {
         }
         nb13.sort(); nb13.dedup();
 
-        // fragment detection: connected components on bond graph
-        let mut fraglist = vec![0usize; n];
-        let mut nfrag = 0usize;
-        for s in 0..n {
-            if fraglist[s] != 0 { continue; }
-            nfrag += 1;
-            let mut stack = vec![s];
-            fraglist[s] = nfrag;
-            while let Some(a) = stack.pop() {
-                for &b in &nb[a] {
-                    if fraglist[b] == 0 { fraglist[b] = nfrag; stack.push(b); }
-                }
-            }
-        }
-        let fraglist0: Vec<usize> = fraglist.iter().map(|x| x - 1).collect();
-        let mut qfrag = vec![0.0f64; nfrag];
-        // fragment charge assignment: for neutral total, all neutral;
-        // for charged systems with 2 fragments, assign by electronegativity difference
-        if nfrag > 1 && charge != 0.0 {
-            // compute average EN per fragment
-            let mut frag_en = vec![0.0f64; nfrag];
-            let mut frag_cnt = vec![0.0f64; nfrag];
-            for i in 0..n {
-                frag_en[fraglist0[i]] += p.en[at[i]-1];
-                frag_cnt[fraglist0[i]] += 1.0;
-            }
-            for fi in 0..nfrag {
-                if frag_cnt[fi] > 0.0 { frag_en[fi] /= frag_cnt[fi]; }
-            }
-            // assign charge to the most electropositive fragment
-            let most_electropos = (0..nfrag).enumerate()
-                .min_by(|a, b| frag_en[a.1].partial_cmp(&frag_en[b.1]).unwrap())
-                .map(|(_, f)| f).unwrap_or(0);
-            qfrag[most_electropos] = charge;
-        }
-        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag };
+        // carbene flags (xtb itag=1): bent 2-coordinate group-14, unless strongly anionic
+        let carbene: Vec<bool> = (0..n).map(|i| {
+            let z = at[i];
+            let group14 = matches!(z, 6 | 14 | 32 | 50 | 82);
+            group14 && nb[i].len() == 2 && hyb[i] == 2 && topo_q[i] >= -0.4
+        }).collect();
+
+        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag, hbbas: vec![0.0; n], hbaci: vec![0.0; n], carbene, nitro_n: nitro, hb_h: Vec::new(), hb_ab: Vec::new(), xb_triples: Vec::new(), b3: Vec::new(), bond_hb_b: Vec::new(),
+            rings_all: Vec::new() };
 
         let mut g = Gfnff { p, at: at.to_vec(), charge, topo, bonds: Vec::new(), angles: Vec::new(), torsions: Vec::new(), xyz0: xyz.clone() };
         g.setup_bonds(&xyz, &rabd, &cn);
@@ -492,22 +557,41 @@ impl Gfnff {
         g.setup_bonds(&xyz, &rabd, &cn);   // re-run with pibo active
         g.setup_angles(&xyz, &cn);
         g.setup_torsions();
+        // HB/XB/bATM lists + per-atom bas/aci (gfnff_ini.f90 735-1000)
+        g.setup_hb_xb_batm();
         g
     }
 
-    fn setup_bonds(&mut self, xyz: &[[f64; 3]], rabd: &Vec<Vec<f64>>, _cn: &Vec<f64>) {
+    fn setup_bonds(&mut self, xyz: &[[f64; 3]], rabd: &[Vec<f64>], _cn: &[f64]) {
         let p = &self.p;
         let mut bonds = Vec::new();
-        let mut bi2 = 0usize;
-        for (bi, bj) in self.topo.nb.iter().enumerate().flat_map(|(i, nbs)| nbs.iter().map(move |&j| (i, j))).filter(|&(i, j)| i < j) {
-            let _ = bi; let _ = bj;
+        for (bi2, (bi, bj)) in self.topo.nb.iter().enumerate()
+            .flat_map(|(i, nbs)| nbs.iter().map(move |&j| (i, j)))
+            .filter(|&(i, j)| i < j).enumerate() {
             let (ia, ja) = (self.at[bi], self.at[bj]);
             let hybi = self.topo.hyb[bi].max(self.topo.hyb[bj]);
             let hybj = self.topo.hyb[bi].min(self.topo.hyb[bj]);
-            let bstrength = if hybi == 5 || hybj == 5 { p.bstren[3] } else { p.bsmat[hybi as usize][hybj as usize] };
+            // bond type (gfnff_ini.f90 1229-1244, organic subset)
+            let mut btyp = 1u8;
+            if self.topo.hyb[bi] == 2 && self.topo.hyb[bj] == 2 { btyp = 2; }   // sp2-sp2 = pi
+            if (self.topo.hyb[bi] == 3 && self.topo.hyb[bj] == 2 && ia == 7)
+            || (self.topo.hyb[bj] == 3 && self.topo.hyb[bi] == 2 && ja == 7) { btyp = 2; }  // N-sp2
+            if self.topo.hyb[bi] == 1 || self.topo.hyb[bj] == 1 { btyp = 3; }   // sp-X
+            let mut bstrength = if hybi == 5 || hybj == 5 { p.bstren[3] }
+                else { p.bsmat[hybi as usize][hybj as usize] };
+            // N-sp2 bonds use the pi-type strength (ini 1258-1259)
+            if hybi == 3 && hybj == 2 && (ia == 7 || ja == 7) {
+                bstrength = p.bstren[1] * 1.04;
+            }
+            // CO (sp C-O) slightly weaker (ini 1295-1296)
+            if btyp == 3 && ((ia == 6 && ja == 8) || (ia == 8 && ja == 6)) {
+                bstrength = p.bstren[2] * 0.90;
+            }
             let mut shift = 0.0;
             let mut fxh = 1.0;
+            let mut fcn = 1.0f64;
             if ia == 1 || ja == 1 { shift = p.rabshifth; }
+            if ia == 9 && ja == 9 { shift = 0.22; }   // F2
             // X-sp3 correction (both directions)
             if (self.topo.hyb[bi] == 3 && self.topo.hyb[bj] == 0)
             || (self.topo.hyb[bj] == 3 && self.topo.hyb[bi] == 0) { shift -= 0.022; }
@@ -515,7 +599,12 @@ impl Gfnff {
             if (self.topo.hyb[bi] == 1 && self.topo.hyb[bj] == 0)
             || (self.topo.hyb[bj] == 1 && self.topo.hyb[bi] == 0) { shift += 0.14; }
             if (ia == 1 && ja == 8) || (ja == 1 && ia == 8) { fxh = 0.93; }
-            if (ia == 1 && ja == 6) || (ja == 1 && ia == 6) { fxh = 1.0; } // ring/aldehyde cases not yet
+            if (ia == 1 && ja == 6) || (ja == 1 && ia == 6) {
+                fxh = 1.0;
+                let c = if ia == 6 { bi } else { bj };
+                if self.topo.ring_size[c] == 3 { fxh = 1.05; }          // 3-ring CH
+                if is_aldehyde_c(&self.at, &self.topo.nb, &self.topo.piadr, c) { fxh = 0.95; }  // aldehyde CH
+            }
             if (ia == 1 && ja == 5) || (ja == 1 && ia == 5) { fxh = 1.10; }
             if (ia == 1 && ja == 7) || (ja == 1 && ia == 7) { fxh = 1.06; }
             if (ia == 1 && ja == 9) || (ja == 1 && ia == 9) { fxh = 1.0; }
@@ -523,6 +612,8 @@ impl Gfnff {
                 shift += -0.11; // hshift3
                 if ia > 18 { shift += -0.11; }
                 if ja > 18 { shift += -0.11; }
+                fcn /= 1.0 + 0.007 * (self.topo.nb[bi].len() as f64).powi(2);
+                fcn /= 1.0 + 0.007 * (self.topo.nb[bj].len() as f64).powi(2);
             }
             let qafac = self.topo.qa[bi] * self.topo.qa[bj] * 70.0;
             let fqq = 1.0 + p.qfacbm0 / (1.0 + (15.0 * qafac).exp());
@@ -536,21 +627,20 @@ impl Gfnff {
             };
             let pibo = self.topo.pibo.get(bi2).copied().unwrap_or(0.0);
             if pibo > 0.0 {
-                shift = shift + p.hueckelp * (p.bzref - pibo);
+                shift += p.hueckelp * (p.bzref - pibo);
                 if hybi != 1 && hybj != 1 && pibo > 0.1 { /* btyp=2 handled by bstren below */ }
             }
             let mut fpi = 1.0f64;
             if pibo > 0.0 { fpi = 1.0 - p.hueckelp2 * (p.bzref2 - pibo); }
             let vb1 = p.rabshift + shift;
             let vb2 = p.srb1 * (1.0 + p.srb2 * en_diff * en_diff + p.srb3 * bstrength);
-            let vb3 = -p.bond[ia-1] * p.bond[ja-1] * ringf * bstrength * fqq * fpi * fxh;
+            let vb3 = -p.bond[ia-1] * p.bond[ja-1] * ringf * bstrength * fqq * fpi * fxh * fcn;
             bonds.push(BondParam { i: bi, j: bj, alp: vb2, kb: vb3, r0: vb1 });
-            bi2 += 1;
         }
         self.bonds = bonds;
     }
 
-    fn setup_angles(&mut self, _xyz: &[[f64; 3]], _cn: &Vec<f64>) {
+    fn setup_angles(&mut self, _xyz: &[[f64; 3]], _cn: &[f64]) {
         let p = &self.p;
         let mut angles = Vec::new();
         for i in 0..self.at.len() {
@@ -565,27 +655,94 @@ impl Gfnff {
                     if fijk < 1e-3 { continue; }
                     let nh = [atj, atk].iter().filter(|&&z| z == 1).count();
                     let no = [atj, atk].iter().filter(|&&z| z == 8).count();
-                    // ---- phi0 rules (organic subset; gfnff_ini.f90 1610-1790) ----
-                    let mut r0 = 100.0f64;
+                    let nc = [atj, atk].iter().filter(|&&z| z == 6).count();
+                    let nsi = [atj, atk].iter().filter(|&&z| z == 14).count();
+                    let npi = [jj, kk].iter().filter(|&&a| self.topo.piadr[a]).count();
+                    let rings = ringsbend(&self.topo.rings_all, i, jj, kk);
+                    let triple = self.topo.hyb[i] == 1 || self.topo.hyb[jj] == 1 || self.topo.hyb[kk] == 1;
+                    let phi_deg = self.angle_deg(jj, i, kk);
+                    let ati = self.at[i];
+                    // ---- phi0/f2 rules (gfnff_ini.f90 1610-1790, organic subset) ----
+                    let mut r0;
                     let mut f2 = 1.0f64;
                     match self.topo.hyb[i] { 1 => r0 = 180.0, 2 => r0 = 120.0, 3 => r0 = 109.5, _ => r0 = 100.0 }
-                    let ati = self.at[i];
+                    if self.topo.hyb[i] == 3 && ati > 10 {
+                        if nn <= 3 { r0 = self.p.aheavy3; }   // heavy main-group 3-coord
+                        if nn >= 4 { r0 = self.p.aheavy4; }
+                        if nn == 4 && self.p.group[ati - 1] == 5 { r0 = 109.5; }
+                        if nn == 4 && self.p.group[ati - 1] == 4 && ati > 49 { r0 = 109.5; }
+                        if (4..=6).contains(&self.p.group[ati - 1]) { r0 -= nh as f64 * 5.0; }
+                    }
+                    if ati == 5 && matches!(self.topo.hyb[i], 2 | 3) { r0 = 115.0; }
                     if ati == 6 {
                         if self.topo.hyb[i] == 3 && nh == 2 { r0 = 108.6; }
                         if self.topo.hyb[i] == 3 && no == 1 { r0 = 108.5; }
                         if self.topo.hyb[i] == 2 && no == 2 { r0 = 122.0; }
                         if self.topo.hyb[i] == 2 && no == 1 { f2 = 0.7; }
+                        if self.topo.hyb[i] == 1 && no == 2 { f2 = 2.0; }   // CO2
+                        if self.topo.hyb[i] == 3 && nn > 4 && phi_deg > self.p.linthr { r0 = 180.0; }
                     }
                     if ati == 8 && nn == 2 {
                         r0 = 104.5;
                         if nh == 2 { r0 = 100.0; f2 = 1.20; }
+                        r0 += 7.0 * nsi as f64;
+                        if npi == 2 { r0 = 109.0; }   // e.g. Ph-O-Ph
                     }
-                    if ati == 7 && nn == 2 { f2 = 1.4; r0 = 115.0; }
+                    if ati == 7 && nn == 2 {
+                        f2 = 1.4; r0 = 115.0;
+                        if rings != 0 { r0 = 105.0; }
+                        if atj == 8 || atk == 8 { r0 = 103.0; }
+                        if atj == 9 || atk == 9 { r0 = 102.0; }
+                        if self.topo.hyb[i] == 1 { r0 = 180.0; }
+                    }
                     if ati == 7 && self.topo.hyb[i] == 3 {
-                        if nh > 0 {
+                        if npi > 0 {
+                            if is_amide_n(&self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, i) {
+                                r0 = 115.0; f2 = 1.2;
+                            } else {
+                                let sumppi: f64 = self.bonds.iter().enumerate()
+                                    .filter(|(_, b)| (b.i == i && (b.j == jj || b.j == kk))
+                                                 || (b.j == i && (b.i == jj || b.i == kk)))
+                                    .map(|(bi_, _)| self.topo.pibo.get(bi_).copied().unwrap_or(0.0))
+                                    .sum();
+                                r0 = 113.0;
+                                f2 = 1.0 - sumppi * 0.7;
+                            }
+                        } else {
                             r0 = 104.0;
-                            f2 = 0.40 + nh as f64 * 0.19 + no as f64 * 0.25;
-                        } else { r0 = 104.0; f2 = 0.40; }
+                            f2 = 0.40 + nh as f64 * 0.19 + no as f64 * 0.25 + nc as f64 * 0.01;
+                        }
+                    }
+                    if rings == 3 { r0 = 82.0; }
+                    if rings == 4 { r0 = 96.0; }
+                    if rings == 5 && ati == 6 { r0 = 109.0; }
+                    if rings == 0 {
+                        // 3-ring center with ONE neighbor in a 3-ring and one
+                        // acyclic neighbor (xtb ringsatom returns the sentinel
+                        // 99 for atoms in no ring, so its literal
+                        // ringsj+ringsk.eq.102 means 99+3; our ring_size uses 0
+                        // for acyclic atoms, hence the mapping below)
+                        if self.topo.ring_size[i] == 3 {
+                            let rj = if self.topo.ring_size[jj] == 0 { 99 } else { self.topo.ring_size[jj] };
+                            let rk = if self.topo.ring_size[kk] == 0 { 99 } else { self.topo.ring_size[kk] };
+                            if rj + rk == 102 { r0 += 4.0; }
+                        }
+                    }
+                    if triple { f2 = 0.60; if atj == 7 || atk == 7 { f2 = 1.00; } }
+                    if self.p.group[ati - 1] == 4 && nn == 2 && self.topo.carbene[i] {
+                        if ati == 6 { r0 = 145.0; } else { r0 = 90.0; }
+                    }
+                    if self.p.group[ati - 1] == 6 && nn == 4 && no >= 1 { r0 = 115.0; }
+                    if self.p.group[ati - 1] == 7 && self.topo.hyb[i] == 1 {
+                        if matches!(ati, 9 | 17 | 35 | 53) { r0 = 90.0; }
+                        if ati > 9 && phi_deg > self.p.linthr { r0 = 180.0; }
+                        f2 = 0.6 / (ati as f64).powf(0.15);
+                    }
+                    if self.topo.hyb[i] == 3 && self.p.group[ati - 1] == 4 && ati > 32
+                        && self.topo.qa[i] > 0.4 {
+                        if phi_deg > 140.0 { r0 = 180.0; }
+                        if phi_deg < 100.0 { r0 = 90.0; }
+                        f2 = 1.0;
                     }
                     // ---- force constant ----
                     let fqq = 1.0 - (self.topo.qa[i]*self.topo.qa[jj] + self.topo.qa[i]*self.topo.qa[kk]) * p.qfacben;
@@ -619,33 +776,76 @@ impl Gfnff {
         }
         for i in 0..n { for j in 0..n { if i != j && bpair[i][j] == 0 { bpair[i][j] = 5; } } }
         self.topo.bpair = bpair;
-        // smallest ring per atom via cycle search (ringsatom, depth <= 6)
+        // all rings up to size 6 via cycle search (getring36): keep sorted
+        // member lists per atom (for ringsbend) + smallest size per atom
+        let mut rings_all: Vec<Vec<Vec<usize>>> = vec![Vec::new(); n];
         let mut ring = vec![0usize; n];
+        let mut seen: std::collections::HashSet<Vec<usize>> = Default::default();
         for a0 in 0..n {
-            let mut best = 0usize;
             for &a1 in &self.topo.nb[a0] {
                 for &a2 in &self.topo.nb[a1] {
                     if a2 == a0 || a2 == a1 { continue; }
                     for &a3 in &self.topo.nb[a2] {
-                        if a3 == a0 { if 3 < best || best == 0 { best = 3; } continue; }
+                        if a3 == a0 {
+                            let members = sorted3(a0, a1, a2);
+                            if seen.insert(members.clone()) { add_ring(&mut rings_all, &members); }
+                            continue;
+                        }
                         if a3 == a1 || a3 == a2 { continue; }
                         for &a4 in &self.topo.nb[a3] {
-                            if a4 == a0 { if 4 < best || best == 0 { best = 4; } continue; }
+                            if a4 == a0 {
+                                let members = sorted4(a0, a1, a2, a3);
+                                if seen.insert(members.clone()) { add_ring(&mut rings_all, &members); }
+                                continue;
+                            }
                             if a4 == a1 || a4 == a2 || a4 == a3 { continue; }
                             for &a5 in &self.topo.nb[a4] {
-                                if a5 == a0 { if 5 < best || best == 0 { best = 5; } continue; }
+                                if a5 == a0 {
+                                    let members = sorted5(a0, a1, a2, a3, a4);
+                                    if seen.insert(members.clone()) { add_ring(&mut rings_all, &members); }
+                                    continue;
+                                }
                                 if a5 == a1 || a5 == a2 || a5 == a3 || a5 == a4 { continue; }
                                 for &a6 in &self.topo.nb[a5] {
-                                    if a6 == a0 { if 6 < best || best == 0 { best = 6; } continue; }
+                                    if a6 == a0 {
+                                        let members = sorted6(a0, a1, a2, a3, a4, a5);
+                                        if seen.insert(members.clone()) { add_ring(&mut rings_all, &members); }
+                                        continue;
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-            ring[a0] = best;
+        }
+        for a0 in 0..n {
+            ring[a0] = rings_all[a0].iter().map(|r| r.len()).min().unwrap_or(0);
         }
         self.topo.ring_size = ring;
+        self.topo.rings_all = rings_all;
+    }
+
+    /// pi-system charge from a neutralized-fragment EEQ difference
+    /// (gfnff_ini.f90 610-660): dqa = qheavy(qa) - qheavy(qa_neutral) summed
+    /// over the pi atoms, x1.1, rounded to the nearest integer
+    fn pi_system_charge(&self, pi_atoms: &[usize], rabd: &[Vec<f64>]) -> i32 {
+        let ifrag = self.topo.fraglist[pi_atoms[0]];
+        if self.topo.qfrag[ifrag] == 0.0 { return 0; }
+        let p = &self.p;
+        let mut qah = self.topo.qa.clone();
+        qheavy(&self.at, &self.topo.nb, &mut qah);
+        let mut qfrag2 = self.topo.qfrag.clone();
+        qfrag2[ifrag] = 0.0;
+        let (qa0, _) = solve_eeq(p, &self.at, rabd, &self.topo.nb, self.charge, true,
+            &self.topo.hyb, &self.topo.dxi, &self.topo.fraglist, &qfrag2);
+        let mut qa0 = qa0;
+        qheavy(&self.at, &self.topo.nb, &mut qa0);
+        let mut dum = 0.0f64;
+        for &a in pi_atoms {
+            dum += qah[a] - qa0[a];
+        }
+        (dum * 1.1).round() as i32
     }
 
     /// pi system detection + iterative HMO (gfnff_ini.f90 357-390, 975-1121)
@@ -661,7 +861,7 @@ impl Gfnff {
             // sp3 N/O/F attached to sp2/sp -> pi (nofs rule)
             let attached_sp2 = self.topo.nb[i].iter()
                 .any(|&j| self.topo.hyb[j] == 1 || self.topo.hyb[j] == 2);
-            if matches!(z, 7 | 8 | 9) && attached_sp2 && hyb != 3 { piat = true; }
+            if matches!(z, 7..=9) && attached_sp2 && hyb != 3 { piat = true; }
             if !attached_sp2 && hyb == 3 { piat = false; }
             if z == 7 && self.topo.nb[i].len() > 3 { piat = false; } // NR4
             if piat { piadr[i] = true; }
@@ -683,6 +883,9 @@ impl Gfnff {
         // per-system electron count (piel rules) and atoms
         self.topo.pibo = vec![0.0; self.bonds.len()];
         let mut piadr_out = vec![false; n];
+        // topology distances for the ipis EEQ re-solve (shared by all systems;
+        // hoisted so multi-pi molecules do one Floyd pass instead of one each)
+        let rabd_ipis = floyd_rabd(&self.p, &self.at, &self.topo.nb);
         for pis in 1..=npis {
             let atoms: Vec<usize> = (0..n).filter(|&a| pimvec[a] == pis).collect();
             let npi = atoms.len();
@@ -691,28 +894,39 @@ impl Gfnff {
             let mut piel = vec![0i32; n];
             for &a in &atoms {
                 let (z, hyb) = (self.at[a], self.topo.hyb[a]);
+                // piel electron-count rules (gfnff_ini.f90 1006-1028);
+                // carbene C (itag=1) contributes 0; the N-hyb2-itag nitro rule
+                // never fires in our subset (carbene tags only set for group 14)
+                let carbene = self.topo.carbene[a];
                 let nelpi = match (z, hyb) {
-                    (5, 1) => 1,                                    // B sp
-                    (6, _) => 1,                                    // C (carbene handled by itag; not modeled)
-                    (7, 2) => 1, (7, _) if hyb <= 2 => 1, (7, 3) => 2,
+                    (5, 1) => 1,                                    // B in borine
+                    (6, _) if !carbene => 1,                        // skip carbene
+                    (7, 2) if self.topo.nitro_n[a] => 2,            // nitro N (itag=1): no own el
+                    (7, _) if hyb <= 2 => 1,
+                    (7, 3) => 2,
                     (8, 1) => 1, (8, 2) => 1, (8, 3) => 2,
-                    (9, 1) => 3, (9, _) => 2,
-                    (16, 1) => 1, (16, 2) => 1, (16, 3) => 2,
+                    (9, 1) => 3, (9, _) => 2,                        // F
+                    (16, 1) => 1, (16, 2) => 1, (16, 3) => 2,       // S
+                    (17, 0) => 2, (17, 1) => 3,                     // Cl
                     _ => 0,
                 };
                 piel[a] = nelpi.min(2);
-                nel += nelpi as i32;
+                nel += nelpi;
             }
-            // ipis (pi system charge) - neutral molecules only in our subset
-            // nelpi -= ipis -> for neutral full-molecule pi systems ipis = 0
+            // pi-system charge ipis (gfnff_ini.f90 610-660): neutralize the
+            // fragment holding this pi system, re-solve the topology EEQ, and
+            // take the rounded (x1.1) charge difference on the pi atoms
+            nel -= self.pi_system_charge(&atoms, &rabd_ipis);
             if nel < 1 { continue; }
             let nel = nel as usize;
-            // iterative HMO
+            // iterative HMO (gfnff_ini.f90 1031-1066)
             let idx: Vec<usize> = atoms.clone();
             let pos = |a: usize| idx.iter().position(|&x| x == a).unwrap();
             let mut pold = vec![vec![2.0/3.0; npi]; npi];
             let mut dens = pold.clone();
             let mut eold = 0.0f64;
+            let mut eps_homo = 0.0f64;
+            let mut api_last = vec![vec![0.0f64; npi]; npi];
             for _iter in 0..5 {
                 let mut api = vec![vec![0.0f64; npi]; npi];
                 for (ia, &a) in atoms.iter().enumerate() {
@@ -730,11 +944,21 @@ impl Gfnff {
                     let v = -ho * (1.0 - dum2 * (2.0/3.0 - pold[ja][ia]));
                     api[ja][ia] = v; api[ia][ja] = v;
                 }
-                let (p, eel, _eps) = hmo_solve(&api, nel);
+                api_last = api.clone();
+                let (p, eel, eps, focc) = hmo_solve(&api, nel);
+                // eps(HOMO) = last eigenvalue with occupation > 0.5
+                eps_homo = eps.iter().zip(focc.iter())
+                    .filter(|(_, &f)| f > 0.5).map(|(e, _)| *e).next_back().unwrap_or(0.0);
                 dens = p;
                 if (eel - eold).abs() < 1e-4 { break; }
                 pold = dens.clone();
                 eold = eel;
+            }
+            // wrong pi occupation: HOMO > 0.40 eV -> one retry with Nel-1
+            // (gfnff_ini.f90 1075-1102; fixes nitro/radical occupations)
+            if eps_homo > 0.40 && nel > 1 {
+                let (p, _eel, _eps, _focc) = hmo_solve(&api_last, nel - 1);
+                dens = p;
             }
             // store pibo on bonds
             for (bi_, b) in self.bonds.iter().enumerate() {
@@ -764,10 +988,19 @@ impl Gfnff {
                 if hybi == 5 || hybj == 5 { continue; }       // hypervalent
                 if p.tors[zi-1] < 0.0 || p.tors[zj-1] < 0.0 { continue; }
                 if p.tors[zi-1] * p.tors[zj-1] < 1e-3 { continue; }
-                let btyp = if hybi == 2 && hybj == 2 { 2 } else { 1 };
+                // N-sp2 bonds count as pi-type for torsions too (ini 1231-1234)
+                let btyp = if (hybi == 2 && hybj == 2)
+                    || (hybi == 3 && hybj == 2 && self.at[bi] == 7)
+                    || (hybi == 3 && hybj == 2 && self.at[bj] == 7) { 2 } else { 1 };
                 let nhi = 1 + self.topo.nb[bi].iter().filter(|&&x| self.at[x] == 1).count();
                 let nhj = 1 + self.topo.nb[bj].iter().filter(|&&x| self.at[x] == 1).count();
-                let fij = p.tors[zi-1] * p.tors[zj-1] * ((nhi as f64) * (nhj as f64)).powf(0.07);
+                let mut fij = p.tors[zi-1] * p.tors[zj-1] * ((nhi as f64) * (nhj as f64)).powf(0.07);
+                if alpha_co(&self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, bi, bj) { fij *= 1.3; }
+                // amide C-N torsions are stiffer (ini 1881-1883)
+                if self.topo.hyb[bj] == 3 && self.at[bj] == 6
+                    && is_amide_n(&self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, bi) { fij *= 1.3; }
+                if self.topo.hyb[bi] == 3 && self.at[bi] == 6
+                    && is_amide_n(&self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, bj) { fij *= 1.3; }
                 let fqq = 1.0 + (self.topo.qa[bi] * self.topo.qa[bj]).abs() * 12.0;
                 for &kk in &self.topo.nb[bi].clone() {
                     if kk == bj { continue; }
@@ -780,16 +1013,83 @@ impl Gfnff {
                         let zl = self.at[ll];
                         let mut fkl = p.tors2[zk-1] * p.tors2[zl-1]
                             * (self.topo.nb[kk].len() as f64 * self.topo.nb[ll].len() as f64).powf(-0.14);
-                        if zk == 7 { fkl *= 0.5; }   // saturated N penalty (piadr=0)
-                        if zl == 7 { fkl *= 0.5; }
+                        if zk == 7 && !self.topo.piadr[kk] { fkl *= 0.5; }   // saturated N penalty
+                        if zl == 7 && !self.topo.piadr[ll] { fkl *= 0.5; }
                         if fkl < 1e-3 { continue; }
-                        // non-ring branch (rings not yet implemented)
-                        let (mut nrot, phi0) = if hybi == 3 && hybj == 3 { (3i32, std::f64::consts::PI) }
-                            else if btyp == 2 { (2, std::f64::consts::PI) }
-                            else { (1, std::f64::consts::PI) };
+                        // ring vs acyclic torsion definition (gfnff_ini.f90 1897-1943)
+                        let (mut nrot, mut phi0);
                         let mut f1 = torsf[0];
-                        let pibo = self.topo.pibo[self.bonds.iter().position(|b| (b.i==bi&&b.j==bj)||(b.i==bj&&b.j==bi)).map(|x| x).unwrap_or(usize::MAX)];
-                        let pibo = if pibo == f64::MAX || self.topo.pibo.is_empty() { 0.0 } else { self.topo.pibo.get(self.bonds.iter().position(|b| (b.i==bi&&b.j==bj)||(b.i==bj&&b.j==bi)).unwrap_or(self.topo.pibo.len())).copied().unwrap_or(0.0) };
+                        // lring: central bond in a ring (ringsbond, 0 = none)
+                        let ringb = ringsbond(&self.topo.rings_all, bi, bj);
+                        if ringb > 0 {
+                            // RING CASE: cis minima (phi0 = 0); a central bond in
+                            // a 3-ring forces rings4 = 3 ("the 3-ring is special")
+                            let rings4 = if ringb > 3 {
+                                ring_common(&self.topo.rings_all, [bi, bj, kk, ll], false)
+                            } else {
+                                3
+                            };
+                            nrot = if btyp == 2 { 2 } else { 1 };
+                            phi0 = 0.0;
+                            if btyp == 1 && rings4 > 0 {
+                                let ringl = ring_common(&self.topo.rings_all, [bi, bj, kk, ll], true);
+                                let notpicon = !self.topo.piadr[kk] && !self.topo.piadr[ll];
+                                if rings4 == 3 && notpicon { nrot = 1; phi0 = 0.0; f1 = 0.3; }   // gen%fr3
+                                if rings4 == 4 && ringl == 4 && notpicon {
+                                    nrot = 6; phi0 = 30.0 * std::f64::consts::PI / 180.0; f1 = 1.0; } // fr4
+                                if rings4 == 5 && ringl == 5 && notpicon {
+                                    nrot = 6; phi0 = 30.0 * std::f64::consts::PI / 180.0; f1 = 1.5; } // fr5
+                                if rings4 == 6 && ringl == 6 && notpicon {
+                                    nrot = 3; phi0 = 60.0 * std::f64::consts::PI / 180.0; f1 = 5.7; } // fr6
+                            }
+                            // ring bond but no common 4-atom ring: terminal flanks
+                            if rings4 == 0 && btyp == 1
+                                && self.topo.nb[kk].len() == 1 && self.topo.nb[ll].len() == 1 {
+                                nrot = 6; phi0 = 30.0 * std::f64::consts::PI / 180.0; f1 = 0.30;
+                            }
+                            // 5-ring C-N pi bonds adjacent to an amide (CB7 fix)
+                            if btyp == 2 && ringb == 5 && self.at[bi] * self.at[bj] == 42
+                                && (is_amide_n(&self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, bi)
+                                    || is_amide_n(&self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, bj)) {
+                                f1 = 5.0;
+                            }
+                        } else {
+                            // ACYCLIC CASE (ini 1922-1943)
+                            if hybi == 3 && hybj == 3 {
+                                (nrot, phi0) = (3, std::f64::consts::PI);
+                            } else if btyp == 2 {
+                                (nrot, phi0) = (2, std::f64::consts::PI);
+                            } else {
+                                (nrot, phi0) = (1, std::f64::consts::PI);
+                            }
+                            // pi-sp3 central bond: soft torsion (N-pi especially)
+                            if self.topo.piadr[bi] && !self.topo.piadr[bj] && self.topo.hyb[bj] == 3 {
+                                f1 = 0.5;
+                                if self.at[bi] == 7 { f1 = 0.2; }
+                                nrot = 3;
+                            }
+                            if self.topo.piadr[bj] && !self.topo.piadr[bi] && self.topo.hyb[bi] == 3 {
+                                f1 = 0.5;
+                                if self.at[bj] == 7 { f1 = 0.2; }
+                                nrot = 3;
+                            }
+                        }
+                        // SP3 specials apply AFTER both cases (ini 1945-1963)
+                        if hybi == 3 && hybj == 3 {
+                            let (gi, gj) = (p.group[zi - 1], p.group[zj - 1]);
+                            if gi == 5 && gj == 5 { nrot = 3; phi0 = 60.0 * std::f64::consts::PI / 180.0; f1 = 3.0; }
+                            if (gi == 5 && gj == 6) || (gi == 6 && gj == 5) {
+                                nrot = 2; phi0 = std::f64::consts::PI / 2.0; f1 = 1.0;
+                                if zi >= 15 && zj >= 15 { f1 = 20.0; }
+                            }
+                            if gi == 6 && gj == 6 {
+                                nrot = 2; phi0 = std::f64::consts::PI / 2.0; f1 = 5.0;
+                                if zi >= 16 && zj >= 16 { f1 = 25.0; }
+                            }
+                        }
+                        // pibo for the central bond (bonds list is ordered i<j; linear search ok, few bonds)
+                        let pibo = self.bonds.iter().position(|b| (b.i==bi && b.j==bj) || (b.i==bj && b.j==bi))
+                            .and_then(|bi_| self.topo.pibo.get(bi_).copied()).unwrap_or(0.0);
                         let mut f2 = 0.0f64;
                         if pibo > 0.0 {
                             f2 = pibo * (-2.5 * (1.24 - pibo).powi(14)).exp();
@@ -801,8 +1101,9 @@ impl Gfnff {
                         if fctot > 1e-3 {
                             out.push(TorsionParam { l: ll, i: bi, j: bj, k: kk, nrot, phi0, fc: fctot });
                         }
-                        // extra sp3-sp3-sp3-sp3 torsion (torsf 6/7/8)
-                        if self.topo.hyb[kk] == 3 && self.topo.hyb[ll] == 3
+                        // extra rot=1 torsion for sp3-sp3 to get gauche conf
+                        // energies well — acyclic only (xtb: .not.lring)
+                        if ringb == 0 && self.topo.hyb[kk] == 3 && self.topo.hyb[ll] == 3
                             && hybi == 3 && hybj == 3 {
                             let ff = if zi == 7 || zj == 7 { torsf[6] }
                                 else if zi == 8 || zj == 8 { torsf[7] }
@@ -815,33 +1116,39 @@ impl Gfnff {
                 }
             }
         }
-        // ---- out-of-plane impropers (gfnff_ini.f90 2048-2150) ----
+        // ---- out-of-plane impropers (gfnff_ini.f90 2040-2150) ----
+        // tlist order: (center, 1st, 2nd, 3rd nb sorted by distance to center)
         for i in 0..self.at.len() {
             if self.topo.nb[i].len() != 3 { continue; }
             let pi_center = self.topo.piadr[i];
             if !pi_center && self.at[i] != 7 { continue; }
-            let (jj, kk, ll) = (self.topo.nb[i][0], self.topo.nb[i][1], self.topo.nb[i][2]);
-            // FC rules
-            let fqq = 1.0 + self.topo.qa[i] * 5.0;
-            let fc;
-            let (phi0, nrot);
+            let mut nbs = self.topo.nb[i].clone();
+            nbs.sort_by(|&a, &b| dist2(&self.xyz0, a, i)
+                .partial_cmp(&dist2(&self.xyz0, b, i)).unwrap());
+            let (jj, kk, ll) = (nbs[0], nbs[1], nbs[2]);
             if !pi_center && self.at[i] == 7 {
-                // saturated N: pyramidalization, double-min at +/- phi0
-                let ff = 0.60f64;
-                let mut v2 = 0.0f64;
-                for &m in &self.topo.nb[i] { v2 += ff * self.p.repz[self.at[m]-1].sqrt(); }
-                fc = v2; phi0 = 80.0 * std::f64::consts::PI / 180.0; nrot = -1;
+                // saturated N: cos-based double well at +/- phi0
+                let mut fc = 0.0f64;
+                for &m in &nbs { fc += 0.60 * self.p.repz[self.at[m] - 1].sqrt(); }
+                out.push(TorsionParam { l: i, i: jj, j: kk, k: ll, nrot: -1,
+                    phi0: 80.0 * std::f64::consts::PI / 180.0, fc });
             } else {
-                // pi center: phi0 = 0, (1+cos)-type with nrot=0
+                // pi center: fc = torsf(3) * (1 - sum pibo * torsf(5)) * (1 + 5 qa)
+                // with carbonyl/halogen/nitro corrections (ini 2123-2127)
+                let ncarbo = nbs.iter().filter(|&&m| self.at[m] == 8 || self.at[m] == 16).count();
+                let nf = nbs.iter().filter(|&&m| self.p.group[self.at[m] - 1] == 7).count();
+                let fqq = 1.0 + self.topo.qa[i] * 5.0;
                 let pibo_sum: f64 = self.bonds.iter().enumerate()
                     .filter(|(_, b)| b.i == i || b.j == i)
                     .map(|(bi_, _)| self.topo.pibo.get(bi_).copied().unwrap_or(0.0))
                     .sum();
                 let f2 = 1.0 - pibo_sum * 0.50;  // torsf(5)
-                fc = 1.05 * f2 * fqq;             // torsf(3)
-                phi0 = 0.0; nrot = 0;
+                let mut fc = 1.05 * f2 * fqq;     // torsf(3)
+                if (self.at[i] == 5 || self.at[i] == 6) && ncarbo > 0 { fc *= 38.0; }
+                if self.at[i] == 6 && nf > 0 && ncarbo == 0 { fc *= 10.0; }
+                if self.at[i] == 7 && ncarbo > 0 { fc *= 10.0 / f2; }  // no pi dep
+                out.push(TorsionParam { l: i, i: jj, j: kk, k: ll, nrot: 0, phi0: 0.0, fc });
             }
-            out.push(TorsionParam { l: i, i: jj, j: kk, k: ll, nrot, phi0, fc });
         }
         self.torsions = out;
     }
@@ -853,6 +1160,123 @@ impl Gfnff {
             / ((v1[0]*v1[0]+v1[1]*v1[1]+v1[2]*v1[2]).sqrt()
              * (v2[0]*v2[0]+v2[1]*v2[1]+v2[2]*v2[2]).sqrt());
         cos.clamp(-1.0, 1.0).acos() * 180.0 / std::f64::consts::PI
+    }
+
+    /// HB/XB/bATM list setup + per-atom HB basicity/acidity
+    /// (gfnff_ini.f90 735-1000: b3list, hbbas, hbaci, hbatHl, hbatABl, xbatABl)
+    fn setup_hb_xb_batm(&mut self) {
+        let n = self.at.len();
+        // ---- hbbas: xhbas w/ carbene / carbonyl / nitro rules (ini 848-872) ----
+        for i in 0..n {
+            let mut bas = self.p.xhbas[self.at[i] - 1];
+            let nn = self.topo.nb[i].len();
+            if self.at[i] == 6 && nn == 2 && self.topo.carbene[i] { bas = 1.46; }
+            if self.at[i] == 8 && nn == 1 {
+                if let Some(&j) = self.topo.nb[i].first() {
+                    if self.at[j] == 6 { bas = 0.68; }   // carbonyl R-C=O
+                    if self.at[j] == 7 { bas = 0.47; }   // nitro R-N=O
+                }
+            }
+            self.topo.hbbas[i] = bas;
+        }
+        // ---- hbaci: xhaci, amide N x0.80 via its terminal H (ini 874-891) ----
+        // NOTE: xtb scales the acidity of the N (the donor heavy atom), not the H
+        for i in 0..n { self.topo.hbaci[i] = self.p.xhaci[self.at[i] - 1]; }
+        for i in 0..n {
+            if self.topo.nb[i].len() != 1 { continue; }
+            let nn = self.topo.nb[i][0];
+            if !is_amide_n(&self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, nn) { continue; }
+            let nc = self.topo.nb[nn].iter()
+                .filter(|&&j| self.at[j] == 6 && self.topo.hyb[j] == 3).count();
+            if nc == 1 { self.topo.hbaci[nn] *= 0.80; }
+        }
+        // ---- HB-relevant H atoms (ini 886-902): qa > hqabthr w/ adjustments ----
+        let mut hb_h = Vec::new();
+        for i in 0..n {
+            if self.at[i] != 1 || self.topo.hyb[i] == 1 { continue; }  // skip bridging H
+            let Some(&j) = self.topo.nb[i].first() else { continue };
+            let mut ff = self.p.hqabthr;
+            if self.at[j] > 10 { ff -= 0.20; }                     // H on heavy atom
+            if self.at[j] == 6 && self.topo.hyb[j] == 3 { ff += 0.05; }  // H on sp3 C
+            if self.topo.qa[i] > ff { hb_h.push(i); }
+        }
+        // ---- HB-relevant (A,B) pairs (ini 904-922) ----
+        let mut hb_ab = Vec::new();
+        for i in 0..n {
+            if self.at[i] == 6 && !self.topo.piadr[i] { continue; }  // only pi C
+            let mut ffi = self.p.qabthr;
+            if self.at[i] > 10 { ffi += 0.2; }
+            if self.topo.qa[i] > ffi { continue; }
+            for j in 0..i {
+                if self.at[j] == 6 && !self.topo.piadr[j] { continue; }
+                let mut ffj = self.p.qabthr;
+                if self.at[j] > 10 { ffj += 0.2; }
+                if self.topo.qa[j] > ffj { continue; }
+                let (cai, cci) = (self.topo.hbbas[i], self.topo.hbaci[i]);
+                let (caj, ccj) = (self.topo.hbbas[j], self.topo.hbaci[j]);
+                if cai * ccj < 1e-6 && cci * caj < 1e-6 { continue; }
+                hb_ab.push((i, j));
+            }
+        }
+        // ---- XB triples (ini 925-985): A-X bond, X halogen/chalcogen/P, B donor ----
+        let xatom = |z: usize| matches!(z, 15 | 16 | 17 | 33 | 34 | 35 | 51 | 52 | 53);
+        let mut xb = Vec::new();
+        for ia in 0..n {
+            for &ix in &self.topo.nb[ia] {
+                let zx = self.at[ix];
+                if !xatom(zx) { continue; }
+                if zx == 16 && self.topo.nb[ix].len() > 2 { continue; }  // no sulfoxide S
+                for ib in 0..n {
+                    if ib == ia || ib == ix { continue; }
+                    if self.topo.bpair[ix][ib] <= 3 { continue; }  // must be A-X...B
+                    if self.p.xhbas[self.at[ib] - 1] < 1e-6 { continue; }
+                    if self.p.group[self.at[ib] - 1] == 4
+                        && (!self.topo.piadr[ib] || self.topo.qa[ib] > 0.05) { continue; }
+                    xb.push((ia, ib, ix));
+                }
+            }
+        }
+        // ---- b3 triples (ini 753-785): 1-4 pair once, k in nb(i) ∪ nb(j) ----
+        let mut b3 = Vec::new();
+        for i in 0..n {
+            for j in 0..i {
+                if self.topo.bpair[i][j] != 3 { continue; }
+                for &k in self.topo.nb[i].iter().chain(self.topo.nb[j].iter()) {
+                    if k == i || k == j { continue; }
+                    b3.push((i, j, k));
+                }
+            }
+        }
+        // ---- per-bond HB acceptor map (bond_hbset + bond_hb_AHB_set, ini2 ----
+        // 1087-1274): for X-H bonds with N/O donor A and N/O hb_ab partner B
+        // (nonbonded, rAB^2 < hbthr1), the bond exponent is softened through
+        // the runtime HB coordination number of H (egbond_hb)
+        let mut bond_hb_b = vec![Vec::new(); self.bonds.len()];
+        let mut register = |a: usize, h: usize, b: usize| {
+            if let Some(bi) = self.bonds.iter().position(|bo| {
+                (bo.i == a && bo.j == h) || (bo.i == h && bo.j == a)
+            }) {
+                if !bond_hb_b[bi].contains(&b) { bond_hb_b[bi].push(b); }
+            }
+        };
+        for &(i, j) in &hb_ab {
+            if dist2(&self.xyz0, i, j) > self.p.hbthr1 { continue; }
+            let ijnonbond = self.topo.bpair[i][j] != 1;
+            if !ijnonbond { continue; }
+            for &h in &hb_h.clone() {
+                let ok_i = self.topo.bpair[i][h] == 1
+                    && matches!(self.at[i], 7 | 8) && matches!(self.at[j], 7 | 8);
+                let ok_j = self.topo.bpair[j][h] == 1
+                    && matches!(self.at[j], 7 | 8) && matches!(self.at[i], 7 | 8);
+                if ok_i { register(i, h, j); }
+                if ok_j { register(j, h, i); }
+            }
+        }
+        self.topo.bond_hb_b = bond_hb_b;
+        self.topo.hb_h = hb_h;
+        self.topo.hb_ab = hb_ab;
+        self.topo.xb_triples = xb;
+        self.topo.b3 = b3;
     }
 
     // -------------------------------------------------------------------------
@@ -943,17 +1367,22 @@ impl Gfnff {
             rep += e / r;
         }}
 
-        // ---- bonds (egbond + gfnffdrab, gfnff_eg.f90 555-600) ----
+        // ---- bonds (egbond/egbond_hb + gfnffdrab, gfnff_eg.f90 555-1230) ----
         let mut ebond = 0.0;
-        for b in &self.bonds {
+        for (bi, b) in self.bonds.iter().enumerate() {
             let r = dist(b.i, b.j);
             // reference length is CN-dependent (gfnffdrab): shift carried inside
             let rab0 = self.p.gfnffrab(self.at[b.i], self.at[b.j], cn[b.i], cn[b.j], b.r0);
-            ebond += b.kb * (-(b.alp) * (r - rab0).powi(2)).exp();
+            let dr = r - rab0;
+            // H-bonded X-H bonds use a softened exponent (egbond_hb)
+            let alp = if self.topo.bond_hb_b[bi].is_empty() { b.alp } else {
+                let h = if self.at[b.i] == 1 { b.i } else { b.j };
+                (1.0 - (1.0 - self.p.vbond_scale) * self.hb_cn_of(&xyz, bi, h)) * b.alp
+            };
+            ebond += b.kb * (-alp * dr * dr).exp();
         }
 
         // ---- bonded SE repulsion (gfnff_eg.f90 596-660) ----
-        let mut rep_bonded = 0.0;
         for b in &self.bonds {
             let r = dist(b.i, b.j);
             let (zi, zj) = (self.at[b.i], self.at[b.j]);
@@ -961,7 +1390,7 @@ impl Gfnff {
             let repab = self.p.repz[zi-1] * self.p.repz[zj-1] * self.p.repscalb();
             let t16 = r.powf(1.5);
             let e = (-alpha * t16).exp() * repab / r;
-            rep += e; rep_bonded += e;
+            rep += e;
         }
 
         // ---- angles (egbend, gfnff_eg.f90 1233) ----
@@ -983,19 +1412,11 @@ impl Gfnff {
         // ---- torsions (egtors, gfnff_eg.f90 1444) ----
         // NOTE: damping uses the two flanking 1-3 distances and the central bond
         let mut etors = 0.0;
+        let mut g_scratch = vec![[0.0f64; 3]; n];
         for t in &self.torsions {
-            // out-of-plane: improper angle omega (asin of normal dot vec)
-            let mut e_t = 0.0f64;
             if t.nrot <= 0 {
-                let omega = improper_angle(&xyz, t.l, t.i, t.j, t.k);
-                if t.nrot == -1 {
-                    // saturated N: double-min at +/- phi0
-                    e_t = t.fc * (omega - t.phi0).powi(2) + t.fc * (omega + t.phi0).powi(2);
-                    // approximated as single-well sum; damped lightly
-                } else {
-                    e_t = t.fc * omega.cos().powi(2);
-                }
-                etors += e_t;
+                // out-of-plane improper (energy; gradient into scratch)
+                etors += self.improper_term(&xyz, t, &mut g_scratch);
                 continue;
             }
             let phi = dihedral(&xyz, t.l, t.i, t.j, t.k);
@@ -1014,14 +1435,10 @@ impl Gfnff {
         // ---- D4(BJ) dispersion with EEQ-charge scaling (gdisp0.f90) ----
         let disp = self.d4_dispersion(&xyz, &dist, &cn);
 
-        // ---- bonded ATM (batmgfnff_eg): 1-4 triples ----
-        let ebatm = self.bonded_atm_energy(&xyz, &q, &dist);
-
-        // ---- hydrogen bonds (unbound-H eg1 + bound-H eg3) ----
-        let ehb = self.hb_energy(&xyz, &q, &dist) + self.hb_bound_energy(&xyz, &q, &dist);
-
-        // ---- halogen bonds (rbxgfnff_eg): A···B···X ----
-        let exb = self.xb_energy(&xyz, &q, &dist);
+        // ---- HB / XB / bonded ATM (gfnff_eg.f90 2088-3446) ----
+        let ebatm = self.batm_terms(&xyz, &mut g_scratch);
+        let ehb = self.hb_terms(&xyz, &mut g_scratch);
+        let exb = self.xb_terms(&xyz, &mut g_scratch);
 
         EnergyComponents {
             bond: ebond, angle: eangl, torsion: etors,
@@ -1029,291 +1446,717 @@ impl Gfnff {
         }
     }
 
-    /// hydrogen bond analytic gradient (abhgfnff_eg1, geometric part only)
-    fn hb_gradient(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64,
-                   g: &mut Vec<[f64; 3]>) {
-        let n = self.at.len();
+    // -----------------------------------------------------------------------
+    // HB / XB / bonded-ATM (gfnff_eg.f90 2088-3446) — faithful ports.
+    // Energy and gradient in ONE code path each, so energy() and
+    // energy_and_gradient() are consistent by construction. All terms use
+    // TOPOLOGY charges qa (xtb passes topo%qa), gradients in Eh/Bohr.
+    // -----------------------------------------------------------------------
+
+    /// charge smearing sigma(s·q) = e^{s q}/(e^{s q}+f)
+    fn csig(ex: f64, sf: f64) -> f64 { ex / (ex + sf) }
+
+    /// build hblist1 (unbound H) + hblist2 (bound H) at this geometry and
+    /// evaluate all HB terms (gfnff_hbset, gfnff_ini2.F90 764-948, non-PBC)
+    fn hb_terms(&self, xyz: &[[f64; 3]], g: &mut [[f64; 3]]) -> f64 {
         let p = &self.p;
-        let is_hb_atom: Vec<bool> = (0..n).map(|i| {
-            p.xhbas[self.at[i]-1] > 0.0 || p.xhaci[self.at[i]-1] > 0.0
-        }).collect();
-        let hb_h: Vec<usize> = (0..n).filter(|&i| {
-            self.at[i] == 1 && self.topo.qa[i] > 0.01
-        }).collect();
-        if hb_h.is_empty() { return; }
-        for ia in 0..n {
-            if !is_hb_atom[ia] || self.at[ia] == 1 { continue; }
-            for ib in (ia+1)..n {
-                if !is_hb_atom[ib] || self.at[ib] == 1 { continue; }
-                let bp = self.topo.bpair.get(ia).and_then(|r| r.get(ib)).copied().unwrap_or(5);
-                if bp == 1 { continue; }
-                for &ih in &hb_h {
-                    let (rab, rah, rbh) = (dist(ia, ib), dist(ia, ih), dist(ib, ih));
-                    if rab > 6.0 { continue; }
-                    let radab = p.rad[self.at[ia]-1] + p.rad[self.at[ib]-1];
-                    let expo = (p.hbacut / radab) * ((rah + rbh) / rab - 1.0);
-                    if expo > 15.0 { continue; }
-                    let outl = 2.0 / (1.0 + expo.exp());
-                    let dampl = 1.0 / (1.0 + (rab*rab / p.hblongcut).powf(p.hbalp));
-                    let shortcut = p.hbscut * radab;
-                    let damps = 1.0 / (1.0 + (shortcut / (rab*rab)).powf(p.hbalp));
-                    let damp = damps * dampl;
-                    let rdamp = damp / (rab*rab*rab);
-                    let qh = { let ex = (p.hbst * q[ih]).exp(); ex / (ex + p.hbsf) };
-                    let qa = { let ex = (-p.hbst * q[ia]).exp(); ex / (ex + p.hbsf) };
-                    let qb = { let ex = (-p.hbst * q[ib]).exp(); ex / (ex + p.xhbas[0].max(1.0)*0.0 + p.hbsf) };
-                    let (ca, cb) = (p.xhbas[self.at[ia]-1], p.xhbas[self.at[ib]-1]);
-                    let (aa, ab) = (p.xhaci[self.at[ia]-1], p.xhaci[self.at[ib]-1]);
-                    let rah4 = rah.powi(4);
-                    let rbh4 = rbh.powi(4);
-                    let denom = 1.0 / (rah4 + rbh4);
-                    let bas = (qa*ca*rah4 + qb*cb*rbh4) * denom;
-                    let aci = (ab*rah4 + aa*rbh4) * denom;
-                    let energy = -bas * aci * rdamp * qh * outl;
-                    if energy.abs() < 1e-12 { continue; }
-                    // distance vectors
-                    let drah = [xyz[ia][0]-xyz[ih][0], xyz[ia][1]-xyz[ih][1], xyz[ia][2]-xyz[ih][2]];
-                    let drbh = [xyz[ib][0]-xyz[ih][0], xyz[ib][1]-xyz[ih][1], xyz[ib][2]-xyz[ih][2]];
-                    let drab = [xyz[ia][0]-xyz[ib][0], xyz[ia][1]-xyz[ib][1], xyz[ia][2]-xyz[ib][2]];
-                    // d(bas)/dR: derivative of r^4 weighted terms
-                    let dbas_drah = 4.0*rah*rah*rah*(qa*ca - qb*cb) * denom * denom * aci * rdamp * qh * outl;
-                    let dbas_drbh = 4.0*rbh*rbh*rbh*(qb*cb - qa*ca) * denom * denom * aci * rdamp * qh * outl;
-                    // d(aci)/dR
-                    let daci_drah = 4.0*rah*rah*rah*(ab - aa) * denom * denom * bas * rdamp * qh * outl;
-                    let daci_drbh = 4.0*rbh*rbh*rbh*(aa - ab) * denom * denom * bas * rdamp * qh * outl;
-                    // d(damp)/drab
-                    let ddamp_drab = -damp * (2.0 * p.hbalp * (rab*rab/p.hblongcut).powf(p.hbalp)
-                        / (rab * (1.0 + (rab*rab/p.hblongcut).powf(p.hbalp)))
-                        - 2.0 * p.hbalp * (shortcut/(rab*rab)).powf(p.hbalp)
-                        / (rab * (1.0 + (shortcut/(rab*rab)).powf(p.hbalp))))
-                        - 3.0 * damp / rab;
-                    // d(outl)/d(rab, rah, rbh)
-                    let doutl_val = 2.0 * expo.exp() / (1.0 + expo.exp()).powi(2);
-                    let doutl_drab = doutl_val * (-(p.hbacut/radab) * (rah + rbh) / (rab*rab));
-                    let doutl_drah = doutl_val * (p.hbacut/radab) / rab;
-                    let doutl_drbh = doutl_val * (p.hbacut/radab) / rab;
-                    // total energy gradient via chain rule
-                    // E = -bas * aci * damp/(rab^3) * qh * outl
-                    let pre = -qh;  // common factor
-                    for t in 0..3 {
-                        // gradient on A (ia)
-                        let dE_drah = pre * (dbas_drah * aci + bas * daci_drah) * rdamp * outl
-                            + pre * bas * aci * rdamp * doutl_drah;
-                        let dE_drab = pre * bas * aci * ddamp_drab / (rab*rab) * outl
-                            + pre * bas * aci * rdamp * doutl_drab;
-                        g[ia][t] += dE_drah * drah[t]/rah + dE_drab * drab[t]/rab;
-                        // gradient on B (ib)
-                        let dE_drbh = pre * (dbas_drbh * aci + bas * daci_drbh) * rdamp * outl
-                            + pre * bas * aci * rdamp * doutl_drbh;
-                        g[ib][t] += dE_drbh * drbh[t]/rbh - dE_drab * drab[t]/rab;
-                        // gradient on H (ih)
-                        g[ih][t] -= dE_drah * drah[t]/rah + dE_drbh * drbh[t]/rbh;
-                    }
+        let mut e = 0.0f64;
+        for &(i, j) in &self.topo.hb_ab {
+            let rab2 = dist2(xyz, i, j);
+            if rab2 > p.hbthr1 { continue; }
+            let ijnonbond = self.topo.bpair[i][j] != 1;
+            for &h in &self.topo.hb_h {
+                // bound-H: H covalently bound to one end of a nonbonded A-B pair
+                if ijnonbond && self.topo.bpair[i][h] == 1 {
+                    e += self.hb_bound(xyz, i, j, h, g);
+                    continue;
                 }
-            }
-        }
-    }
-
-    /// bound-H hydrogen bond energy (abhgfnff_eg3, simplified)
-    /// H is bonded to A; HB is H...B with angular + torsional terms around B
-    fn hb_bound_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
-        let n = self.at.len();
-        let p = &self.p;
-        let mut e = 0.0f64;
-        let is_hb_atom: Vec<bool> = (0..n).map(|i| {
-            p.xhbas[self.at[i]-1] > 0.0 || p.xhaci[self.at[i]-1] > 0.0
-        }).collect();
-        // H atoms with qa > 0.01 that ARE bonded to an HB atom
-        for ih in 0..n {
-            if self.at[ih] != 1 || self.topo.qa[ih] <= 0.01 { continue; }
-            if self.topo.nb[ih].len() != 1 { continue; }
-            let ia = self.topo.nb[ih][0];  // A (the atom H is bonded to)
-            if !is_hb_atom[ia] || self.at[ia] == 1 { continue; }
-            for ib in 0..n {
-                if !is_hb_atom[ib] || self.at[ib] == 1 || ib == ia { continue; }
-                let bp_ab = self.topo.bpair.get(ia).and_then(|r| r.get(ib)).copied().unwrap_or(5);
-                if bp_ab == 1 { continue; }  // A-B directly bonded
-                let bp_bh = self.topo.bpair.get(ib).and_then(|r| r.get(ih)).copied().unwrap_or(5);
-                if bp_bh == 1 { continue; }  // H bonded to B too
-                let (rab, rah, rbh) = (dist(ia, ib), dist(ia, ih), dist(ib, ih));
-                if rab > 6.0 || rbh > 4.0 { continue; }
-                let radab = p.rad[self.at[ia]-1] + p.rad[self.at[ib]-1];
-                // out-of-line damp: A-H...B
-                let expo = (p.hbacut / radab) * ((rah + rbh) / rab - 1.0);
-                if expo > 15.0 { continue; }
-                let outl = 2.0 / (1.0 + expo.exp());
-                // long + short damping
-                let dampl = 1.0 / (1.0 + (rab*rab / p.hblongcut).powf(p.hbalp));
-                let shortcut = p.hbscut * radab;
-                let damps = 1.0 / (1.0 + (shortcut / (rab*rab)).powf(p.hbalp));
-                let damp = damps * dampl;
-                // mixed r^-3: p_bh * rBH^-3 + p_ab * rAB^-3
-                let p_bh = 1.0 + p.hbabmix;
-                let p_ab = -p.hbabmix;
-                let rdamp = damp * (p_bh / (rbh*rbh*rbh) + p_ab / (rab*rab*rab));
-                // charge terms
-                let qh = { let ex = (p.hbst * q[ih]).exp(); ex / (ex + p.hbsf) };
-                let qa = { let ex = (-p.hbst * q[ia]).exp(); ex / (ex + p.hbsf) };
-                let qb = { let ex = (-p.hbst * q[ib]).exp(); ex / (ex + p.hbsf) };
-                let ca_aci = adjusted_hbaci(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ia);
-                let cb_bas = adjusted_hbbas(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ib);
-                let const_val = ca_aci * qa * cb_bas * qb * p.xhaci_coh();
-                // torsional factor (simplified: assume near-optimal for now)
-                let tors_factor = 1.0;  // full version uses egtors_nci_mul product
-                e += -rdamp * qh * outl * tors_factor * const_val;
-            }
-        }
-        e
-    }
-
-    /// halogen bond energy: A···B···X (rbxgfnff_eg)
-    /// A = electron donor (O, N, S...), B = electron acceptor near X, X = halogen
-    fn xb_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
-        let n = self.at.len();
-        let p = &self.p;
-        let mut e = 0.0f64;
-        // halogen atoms with xbaci > 0: Cl, Br, I (and As, Se, Te, Sb)
-        let is_halogen: Vec<bool> = (0..n).map(|i| p.xbaci[self.at[i]-1] > 0.0).collect();
-        // electron donors: atoms with xhbas > 0 (O, N, S, P...)
-        let is_donor: Vec<bool> = (0..n).map(|i| p.xhbas[self.at[i]-1] > 0.0).collect();
-        for ia in 0..n {
-            if !is_donor[ia] { continue; }
-            for ib in 0..n {
-                if ib == ia || !is_donor[ib] { continue; }
-                let bp_ab = self.topo.bpair.get(ia).and_then(|r| r.get(ib)).copied().unwrap_or(5);
-                for ix in 0..n {
-                    if !is_halogen[ix] || ix == ia || ix == ib { continue; }
-                    // X should be bonded to B or A (the "halogen donor")
-                    let bp_xb = self.topo.bpair.get(ix).and_then(|r| r.get(ib)).copied().unwrap_or(5);
-                    let bp_xa = self.topo.bpair.get(ix).and_then(|r| r.get(ia)).copied().unwrap_or(5);
-                    if bp_xb != 1 && bp_xa != 1 { continue; }
-                    let (rab, rax, rbx) = (dist(ia, ib), dist(ia, ix), dist(ib, ix));
-                    if rbx > 7.0 || rab > 7.0 { continue; }
-                    let radab = p.rad[self.at[ia]-1] + p.rad[self.at[ib]-1];
-                    // out-of-line damping
-                    let expo = p.xbacut * ((rax + rbx) / rab - 1.0);
-                    if expo > 15.0 { continue; }
-                    let outl = 2.0 / (1.0 + expo.exp());
-                    // long-range damping (on B···X distance)
-                    let dampl = 1.0 / (1.0 + (rbx*rbx / p.hblongcut_xb).powf(p.hbalp));
-                    // short-range damping
-                    let shortcut = p.xbscut * radab;
-                    let damps = 1.0 / (1.0 + (shortcut / (rbx*rbx)).powf(p.hbalp));
-                    let damp = damps * dampl;
-                    let rdamp = damp / (rbx*rbx*rbx);
-                    // charge-scaled terms
-                    let qx = { let ex = (p.xbst * q[ix]).exp(); ex / (ex + p.xbsf) };
-                    let qb = { let ex = (-p.xbst * q[ib]).exp(); ex / (ex + p.xbsf) };
-                    let cx = p.xbaci[self.at[ix]-1];
-                    let cb = p.xhbas[self.at[ib]-1];  // basicity of B (electron acceptor)
-                    let const_val = cb * qb * cx * qx;
-                    e += -rdamp * outl * const_val;
+                if ijnonbond && self.topo.bpair[j][h] == 1 {
+                    e += self.hb_bound(xyz, j, i, h, g);
+                    continue;
+                }
+                // unbound-H: sum of squared distances cutoff
+                if rab2 + dist2(xyz, i, h) + dist2(xyz, j, h) < p.hbthr2 {
+                    e += self.hb_eg1(xyz, i, j, h, g);
                 }
             }
         }
         e
     }
 
-    /// bonded ATM: three-body Axilrod-Teller-Muto for 1-4 triples (batmgfnff_eg)
-    fn bonded_atm_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
-        let n = self.at.len();
-        let p = &self.p;
-        let mut e = 0.0f64;
-        // find all 1-4 triples (i, j, k) where bpair(i,j)=3 and j is bonded to k
-        for i in 0..n {
-            for j in 0..n {
-                if i == j { continue; }
-                let bp = self.topo.bpair.get(i).and_then(|r| r.get(j)).copied().unwrap_or(5);
-                if bp != 3 { continue; }  // only 1-4 pairs
-                for &k in &self.topo.nb[j] {
-                    if k == i { continue; }
-                    // compute ATM
-                    let (rij, rik, rjk) = (dist(i, j), dist(i, k), dist(j, k));
-                    let r2ij = rij*rij; let r2ik = rik*rik; let r2jk = rjk*rjk;
-                    let fi = (1.0 - 3.0 * q[i]).clamp(-4.0, 4.0);
-                    let fj = (1.0 - 3.0 * q[j]).clamp(-4.0, 4.0);
-                    let fk = (1.0 - 3.0 * q[k]).clamp(-4.0, 4.0);
-                    let ff = fi * fj * fk;
-                    let c9 = ff * p.zb3atm[self.at[i]-1] * p.zb3atm[self.at[j]-1] * p.zb3atm[self.at[k]-1];
-                    let mijk = -r2ij + r2jk + r2ik;
-                    let imjk = r2ij - r2jk + r2ik;
-                    let ijmk = r2ij + r2jk - r2ik;
-                    let rijk3 = r2ij * r2jk * r2ik;
-                    let rav3 = rijk3 * rij * rjk * rik;
-                    let ang = 0.375 * ijmk * imjk * mijk / rijk3;
-                    e += c9 * (ang + 1.0) / rav3;
-                }
+    /// dispatch one bound-H HB (A donor, B acceptor, H on A):
+    /// eg3 for carbonyl/nitro O acceptors, eg2_rnr for 2-coordinate aromatic N
+    /// (explicit lone-pair acceptor), eg2new otherwise
+    fn hb_bound(&self, xyz: &[[f64; 3]], a: usize, b: usize, h: usize, g: &mut [[f64; 3]]) -> f64 {
+        if self.at[b] == 8 && self.topo.nb[b].len() == 1 {
+            let c = self.topo.nb[b][0];
+            if (self.at[c] == 6 || self.at[c] == 7) && self.topo.nb[c].len() > 1 {
+                return self.hb_eg3(xyz, a, b, h, c, g);
             }
         }
-        e  // each triple counted once per (i,j,k) with j bonded to k
+        if self.at[b] == 7 && self.topo.nb[b].len() == 2 {
+            // N heteroaromatic acceptor: lone-pair term (abhgfnff_eg2_rnr)
+            return self.hb_eg2_rnr(xyz, a, b, h, g);
+        }
+        self.hb_eg2new(xyz, a, b, h, g)
     }
 
-    /// hydrogen bond energy: A···H···B three-body (abhgfnff_eg1)
-    fn hb_energy(&self, xyz: &[[f64; 3]], q: &Vec<f64>, dist: &dyn Fn(usize, usize) -> f64) -> f64 {
-        let n = self.at.len();
+    /// unbound-H HB A···H···B (abhgfnff_eg1, gfnff_eg.f90 2088-2252)
+    fn hb_eg1(&self, xyz: &[[f64; 3]], a: usize, b: usize, h: usize, g: &mut [[f64; 3]]) -> f64 {
         let p = &self.p;
-        let mut e = 0.0f64;
-        // identify HB-relevant atoms: basicity or acidity > 0
-        let is_hb_atom: Vec<bool> = (0..n).map(|i| {
-            p.xhbas[self.at[i]-1] > 0.0 || p.xhaci[self.at[i]-1] > 0.0
-        }).collect();
-        // H atoms with qa > 0.01
-        let hb_h: Vec<usize> = (0..n).filter(|&i| {
-            self.at[i] == 1 && self.topo.qa[i] > 0.01
-        }).collect();
-        if hb_h.is_empty() { return 0.0; }
-        for ia in 0..n {
-            if !is_hb_atom[ia] || self.at[ia] == 1 { continue; }
-            for ib in (ia+1)..n {
-                if !is_hb_atom[ib] || self.at[ib] == 1 { continue; }
-                let bp = self.topo.bpair.get(ia).and_then(|r| r.get(ib)).copied().unwrap_or(5);
-                if bp == 1 { continue; }  // A-B bonded: no HB
-                for &ih in &hb_h {
-                    let bp_ah = self.topo.bpair.get(ia).and_then(|r| r.get(ih)).copied().unwrap_or(5);
-                    let bp_bh = self.topo.bpair.get(ib).and_then(|r| r.get(ih)).copied().unwrap_or(5);
-                    // NOTE: xtb distinguishes bound/unbound H via fragment-aware bpair;
-                    // for our purposes compute all favorable A···H···B triples
-                    // (the geometry/charge dampings suppress bad cases)
-                    let _ = (bp_ah, bp_bh);
-                    let (rab, rah, rbh) = (dist(ia, ib), dist(ia, ih), dist(ib, ih));
-                    if rab > 6.0 { continue; }
-                    let radab = p.rad[self.at[ia]-1] + p.rad[self.at[ib]-1];
-                    // out-of-line damp
-                    let expo = (p.hbacut / radab) * ((rah + rbh) / rab - 1.0);
-                    if expo > 15.0 { continue; }
-                    let outl = 2.0 / (1.0 + expo.exp());
-                    // long-range damp
-                    let dampl = 1.0 / (1.0 + (rab*rab / p.hblongcut).powf(p.hbalp));
-                    // short-range damp
-                    let shortcut = p.hbscut * radab;
-                    let damps = 1.0 / (1.0 + (shortcut / (rab*rab)).powf(p.hbalp));
-                    let damp = damps * dampl;
-                    let rdamp = damp / (rab*rab*rab);
-                    // charge-scaled terms
-                    let qh = { let ex = (p.hbst * q[ih]).exp(); ex / (ex + p.hbsf) };
-                    let qa = { let ex = (-p.hbst * q[ia]).exp(); ex / (ex + p.hbsf) };
-                    let qb = { let ex = (-p.hbst * q[ib]).exp(); ex / (ex + p.hbsf) };
-                    // basicity/acidity (with amide/carbonyl/nitro adjustments)
-                    let (ca, cb) = (
-                        adjusted_hbbas(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ia),
-                        adjusted_hbbas(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ib));
-                    let (aa, ab) = (
-                        adjusted_hbaci(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ia),
-                        adjusted_hbaci(p, &self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, ib));
-                    let rah4 = (rah*rah)*(rah*rah);
-                    let rbh4 = (rbh*rbh)*(rbh*rbh);
-                    let denom = 1.0 / (rah4 + rbh4);
-                    let bas = (qa*ca*rah4 + qb*cb*rbh4) * denom;
-                    let aci = (ab*rah4 + aa*rbh4) * denom;
-                    let contrib = -bas * aci * rdamp * qh * outl;
-                    e += contrib;
+        let rab2 = dist2(xyz, a, b); let rab = rab2.sqrt();
+        let rah2 = dist2(xyz, a, h); let rah = rah2.sqrt();
+        let rbh2 = dist2(xyz, b, h); let rbh = rbh2.sqrt();
+        let rahprbh = rah + rbh + 1e-12;
+        let radab = p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1];
+        let expo = (p.hbacut / radab) * (rahprbh / rab - 1.0);
+        if expo > 15.0 { return 0.0; }
+        let ratio2 = expo.exp();
+        let outl = 2.0 / (1.0 + ratio2);
+        let ratio1 = (rab2 / p.hblongcut).powf(p.hbalp);
+        let dampl = 1.0 / (1.0 + ratio1);
+        let shortcut = p.hbscut * radab;
+        let ratio3 = (shortcut / rab2).powf(p.hbalp);
+        let damps = 1.0 / (1.0 + ratio3);
+        let damp = damps * dampl;
+        let rdamp = damp / rab2 / rab;
+        let qh = Self::csig((p.hbst * self.topo.qa[h]).exp(), p.hbsf);
+        let qa = Self::csig((-p.hbst * self.topo.qa[a]).exp(), p.hbsf);
+        let qb = Self::csig((-p.hbst * self.topo.qa[b]).exp(), p.hbsf);
+        let rah4 = rah2 * rah2;
+        let rbh4 = rbh2 * rbh2;
+        let denom = 1.0 / (rah4 + rbh4);
+        let caa = qa * self.topo.hbbas[a];
+        let cbb = qb * self.topo.hbbas[b];
+        let ca2 = self.topo.hbaci[a];
+        let cb2 = self.topo.hbaci[b];
+        let bas = (caa * rah4 + cbb * rbh4) * denom;
+        let aci = (cb2 * rah4 + ca2 * rbh4) * denom;
+        let qhoutl = qh * outl;
+        let rterm = -aci * rdamp * qhoutl;
+        let energy = bas * rterm;
+        // gradient
+        let drah = sub3(xyz, a, h);
+        let drbh = sub3(xyz, b, h);
+        let drab = sub3(xyz, a, b);
+        let aterm = -aci * bas * rdamp * qh;
+        let sterm = -rdamp * bas * qhoutl;
+        let dterm = -aci * bas * qhoutl;
+        let tmp = denom * denom * 4.0;
+        let dd24a = rah2 * rbh4 * tmp;
+        let dd24b = rbh2 * rah4 * tmp;
+        // donor-acceptor part: bas
+        let ga_bas = scale3(drah, (caa - cbb) * dd24a * rterm);
+        let gb_bas = scale3(drbh, (cbb - caa) * dd24b * rterm);
+        let mut ga = ga_bas;
+        let mut gb = gb_bas;
+        let mut gh = [-ga_bas[0] - gb_bas[0], -ga_bas[1] - gb_bas[1], -ga_bas[2] - gb_bas[2]];
+        // donor-acceptor part: aci
+        let dga = scale3(drah, (cb2 - ca2) * dd24a * sterm);
+        let dgb = scale3(drbh, (ca2 - cb2) * dd24b * sterm);
+        ga = add3(ga, dga);
+        gb = add3(gb, dgb);
+        gh = [gh[0] - dga[0] - dgb[0], gh[1] - dga[1] - dgb[1], gh[2] - dga[2] - dgb[2]];
+        // damping part: rab
+        let gi = rdamp * (-(2.0 * p.hbalp * ratio1 / (1.0 + ratio1))
+            + (2.0 * p.hbalp * ratio3 / (1.0 + ratio3)) - 3.0) / rab2;
+        let dg = scale3(drab, gi * dterm);
+        ga = add3(ga, dg);
+        gb = subv3(gb, dg);
+        // out-of-line term: rab
+        let gi = aterm * 2.0 * ratio2 * expo * rahprbh
+            / (1.0 + ratio2).powi(2) / (rahprbh - rab) / rab2;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg);
+        gb = subv3(gb, dg);
+        // out-of-line term: rah, rbh
+        let tmp1 = -2.0 * aterm * ratio2 * expo / (1.0 + ratio2).powi(2) / (rahprbh - rab);
+        let dga = scale3(drah, tmp1 / rah);
+        let dgb = scale3(drbh, tmp1 / rbh);
+        ga = add3(ga, dga);
+        gb = add3(gb, dgb);
+        gh = [gh[0] - dga[0] - dgb[0], gh[1] - dga[1] - dgb[1], gh[2] - dga[2] - dgb[2]];
+        for t in 0..3 {
+            g[a][t] += ga[t];
+            g[b][t] += gb[t];
+            g[h][t] += gh[t];
+        }
+        energy
+    }
+
+    /// bound-H HB A-H···B, default acceptors (abhgfnff_eg2new, gfnff_eg.f90 2255-2513)
+    fn hb_eg2new(&self, xyz: &[[f64; 3]], a: usize, b: usize, h: usize, g: &mut [[f64; 3]]) -> f64 {
+        let p = &self.p;
+        let p_bh = 1.0 + p.hbabmix;
+        let p_ab = -p.hbabmix;
+        let rab2 = dist2(xyz, a, b); let rab = rab2.sqrt();
+        let rah2 = dist2(xyz, a, h); let rah = rah2.sqrt();
+        let rbh2 = dist2(xyz, b, h); let rbh = rbh2.sqrt();
+        let rahprbh = rah + rbh + 1e-12;
+        let radab = p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1];
+        let expo = (p.hbacut / radab) * (rahprbh / rab - 1.0);
+        if expo > 15.0 { return 0.0; }
+        let ratio2 = expo.exp();
+        let outl = 2.0 / (1.0 + ratio2);
+        // out-of-line damp A...nb(B)-B over ALL covalent neighbors of B
+        let nbb = self.topo.nb[b].len();
+        let hbnbcut = if self.at[b] == 7 && nbb == 1 { 2.0 } else { p.hbnbcut };
+        let mut ranb = vec![0.0f64; nbb]; let mut rbnb = vec![0.0f64; nbb];
+        let mut expo_nb = vec![0.0f64; nbb]; let mut ratio2_nb = vec![0.0f64; nbb];
+        let mut outl_nb = vec![0.0f64; nbb];
+        let mut ranbprbnb = vec![0.0f64; nbb];
+        let mut dranb = vec![[0.0f64; 3]; nbb]; let mut drbnb = vec![[0.0f64; 3]; nbb];
+        for (i, &nbj) in self.topo.nb[b].iter().enumerate() {
+            dranb[i] = sub3(xyz, a, nbj);
+            drbnb[i] = sub3(xyz, b, nbj);
+            ranb[i] = norm3(dranb[i]);
+            rbnb[i] = norm3(drbnb[i]);
+            ranbprbnb[i] = ranb[i] + rbnb[i] + 1e-12;
+            expo_nb[i] = (hbnbcut / radab) * (ranbprbnb[i] / rab - 1.0);
+            ratio2_nb[i] = (-expo_nb[i]).exp();
+            outl_nb[i] = 2.0 / (1.0 + ratio2_nb[i]) - 1.0;
+        }
+        let outl_nb_tot: f64 = outl_nb.iter().product();
+        let ratio1 = (rab2 / p.hblongcut).powf(p.hbalp);
+        let dampl = 1.0 / (1.0 + ratio1);
+        let shortcut = p.hbscut * radab;
+        let ratio3 = (shortcut / rab2).powf(p.hbalp);
+        let damps = 1.0 / (1.0 + ratio3);
+        let damp = damps * dampl;
+        let ddamp = -(2.0 * p.hbalp * ratio1 / (1.0 + ratio1))
+            + (2.0 * p.hbalp * ratio3 / (1.0 + ratio3));
+        let rbhdamp = damp * (p_bh / rbh2 / rbh);
+        let rabdamp = damp * (p_ab / rab2 / rab);
+        let rdamp = rbhdamp + rabdamp;
+        let qh = Self::csig((p.hbst * self.topo.qa[h]).exp(), p.hbsf);
+        let qa = Self::csig((-p.hbst * self.topo.qa[a]).exp(), p.hbsf);
+        let qb = Self::csig((-p.hbst * self.topo.qa[b]).exp(), p.hbsf);
+        let qhoutl = qh * outl * outl_nb_tot;
+        let const_ = self.topo.hbaci[a] * qa * self.topo.hbbas[b] * qb * p.xhaci_globabh;
+        let energy = -rdamp * qhoutl * const_;
+        // gradient
+        let drah = sub3(xyz, a, h);
+        let drbh = sub3(xyz, b, h);
+        let drab = sub3(xyz, a, b);
+        let aterm = -rdamp * qh * outl_nb_tot * const_;
+        let nbterm = -rdamp * qh * outl * const_;
+        let dterm = -qhoutl * const_;
+        let mut ga = [0.0f64; 3]; let mut gb = [0.0f64; 3]; let mut gh = [0.0f64; 3];
+        // damping part: rab
+        let gi = ((rabdamp + rbhdamp) * ddamp - 3.0 * rabdamp) / rab2 * dterm;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg); gb = subv3(gb, dg);
+        // damping part: rbh
+        let gi = -3.0 * rbhdamp / rbh2 * dterm;
+        let dg = scale3(drbh, gi);
+        gb = add3(gb, dg); gh = subv3(gh, dg);
+        // angular A-H...B: rab
+        let tmp1 = -2.0 * aterm * ratio2 * expo / (1.0 + ratio2).powi(2) / (rahprbh - rab);
+        let gi = -tmp1 * rahprbh / rab2;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg); gb = subv3(gb, dg);
+        let dga = scale3(drah, tmp1 / rah);
+        let dgb = scale3(drbh, tmp1 / rbh);
+        ga = add3(ga, dga); gb = add3(gb, dgb);
+        gh = subv3(gh, add3(dga, dgb));
+        // angular A...nb(B)-B terms
+        for i in 0..nbb {
+            let prod_others: f64 = outl_nb.iter().enumerate()
+                .filter(|&(j, _)| j != i).map(|(_, v)| v).product();
+            let tmp2 = 2.0 * nbterm * prod_others * ratio2_nb[i] * expo_nb[i]
+                / (1.0 + ratio2_nb[i]).powi(2) / (ranbprbnb[i] - rab);
+            let gi = -tmp2 * ranbprbnb[i] / rab2;
+            let dg = scale3(drab, gi);
+            ga = add3(ga, dg); gb = subv3(gb, dg);
+            let dga = scale3(dranb[i], tmp2 / ranb[i]);
+            let dgb = scale3(drbnb[i], tmp2 / rbnb[i]);
+            ga = add3(ga, dga); gb = add3(gb, dgb);
+            let nbj = self.topo.nb[b][i];
+            for t in 0..3 { g[nbj][t] -= dga[t] + dgb[t]; }
+        }
+        for t in 0..3 {
+            g[a][t] += ga[t];
+            g[b][t] += gb[t];
+            g[h][t] += gh[t];
+        }
+        energy
+    }
+
+    /// bound-H HB onto 2-coordinate aromatic N acceptor with an explicit
+    /// lone-pair position (abhgfnff_eg2_rnr, gfnff_eg.f90 2516-2822);
+    /// lp = B - (0.50 - 0.018*repz(B)) * unit(sum of ring-neighbor vectors),
+    /// extra A-lp-B out-of-line damping with hblpcut = 56
+    fn hb_eg2_rnr(&self, xyz: &[[f64; 3]], a: usize, b: usize, h: usize, g: &mut [[f64; 3]]) -> f64 {
+        let p = &self.p;
+        let p_bh = 1.0 + p.hbabmix;
+        let p_ab = -p.hbabmix;
+        let lp_dist = 0.50 - 0.018 * p.repz[self.at[b] - 1];
+        const HBLCUT: f64 = 56.0;
+        let nbs = &self.topo.nb[b];
+        let nbb = nbs.len();
+        let mut dranb = vec![[0.0f64; 3]; nbb];
+        let mut drbnb = vec![[0.0f64; 3]; nbb];
+        let mut ranb = vec![0.0f64; nbb];
+        let mut rbnb = vec![0.0f64; nbb];
+        let mut vector = [0.0f64; 3];
+        for (i, &nbj) in nbs.iter().enumerate() {
+            dranb[i] = sub3(xyz, a, nbj);
+            drbnb[i] = sub3(xyz, b, nbj);
+            ranb[i] = norm3(dranb[i]);
+            rbnb[i] = norm3(drbnb[i]);
+            vector = add3(vector, sub3(xyz, nbj, b));
+        }
+        let vnorm = norm3(vector);
+        let lp = if vnorm > 1e-10 {
+            let n = [vector[0] / vnorm, vector[1] / vnorm, vector[2] / vnorm];
+            [xyz[b][0] - lp_dist * n[0], xyz[b][1] - lp_dist * n[1], xyz[b][2] - lp_dist * n[2]]
+        } else {
+            xyz[b]
+        };
+        let rab2 = dist2(xyz, a, b); let rab = rab2.sqrt();
+        let rah2 = dist2(xyz, a, h); let rah = rah2.sqrt();
+        let rbh2 = dist2(xyz, b, h); let rbh = rbh2.sqrt();
+        let rahprbh = rah + rbh + 1e-12;
+        let radab = p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1];
+        let expo = (p.hbacut / radab) * (rahprbh / rab - 1.0);
+        if expo > 15.0 { return 0.0; }
+        let ratio2 = expo.exp();
+        let outl = 2.0 / (1.0 + ratio2);
+        // lone-pair distances
+        let dralp = [xyz[a][0] - lp[0], xyz[a][1] - lp[1], xyz[a][2] - lp[2]];
+        let drblp = [xyz[b][0] - lp[0], xyz[b][1] - lp[1], xyz[b][2] - lp[2]];
+        let ralp = norm3(dralp);
+        let rblp = norm3(drblp);
+        let ralpprblp = ralp + rblp + 1e-12;
+        let expo_lp = (HBLCUT / radab) * (ralpprblp / rab - 1.0);
+        let ratio2_lp = expo_lp.exp();
+        let outl_lp = 2.0 / (1.0 + ratio2_lp);
+        let mut expo_nb = vec![0.0f64; nbb];
+        let mut ratio2_nb = vec![0.0f64; nbb];
+        let mut outl_nb = vec![0.0f64; nbb];
+        let mut ranbprbnb = vec![0.0f64; nbb];
+        for i in 0..nbb {
+            ranbprbnb[i] = ranb[i] + rbnb[i] + 1e-12;
+            expo_nb[i] = (p.hbnbcut / radab) * (ranbprbnb[i] / rab - 1.0);
+            ratio2_nb[i] = (-expo_nb[i]).exp();
+            outl_nb[i] = 2.0 / (1.0 + ratio2_nb[i]) - 1.0;
+        }
+        let outl_nb_tot: f64 = outl_nb.iter().product();
+        let ratio1 = (rab2 / p.hblongcut).powf(p.hbalp);
+        let dampl = 1.0 / (1.0 + ratio1);
+        let shortcut = p.hbscut * radab;
+        let ratio3 = (shortcut / rab2).powf(p.hbalp);
+        let damps = 1.0 / (1.0 + ratio3);
+        let damp = damps * dampl;
+        let ddamp = -(2.0 * p.hbalp * ratio1 / (1.0 + ratio1))
+            + (2.0 * p.hbalp * ratio3 / (1.0 + ratio3));
+        let rbhdamp = damp * (p_bh / rbh2 / rbh);
+        let rabdamp = damp * (p_ab / rab2 / rab);
+        let rdamp = rbhdamp + rabdamp;
+        let qh = Self::csig((p.hbst * self.topo.qa[h]).exp(), p.hbsf);
+        let qa = Self::csig((-p.hbst * self.topo.qa[a]).exp(), p.hbsf);
+        let qb = Self::csig((-p.hbst * self.topo.qa[b]).exp(), p.hbsf);
+        let qhoutl = qh * outl * outl_nb_tot * outl_lp;
+        let const_ = self.topo.hbaci[a] * qa * self.topo.hbbas[b] * qb * p.xhaci_globabh;
+        let energy = -rdamp * qhoutl * const_;
+        // gradient
+        let drah = sub3(xyz, a, h);
+        let drbh = sub3(xyz, b, h);
+        let drab = sub3(xyz, a, b);
+        let aterm = -rdamp * qh * outl_nb_tot * outl_lp * const_;
+        let nbterm = -rdamp * qh * outl * outl_lp * const_;
+        let lpterm = -rdamp * qh * outl * outl_nb_tot * const_;
+        let dterm = -qhoutl * const_;
+        let mut ga = [0.0f64; 3]; let mut gb = [0.0f64; 3]; let mut gh = [0.0f64; 3];
+        // damping part: rab
+        let gi = ((rabdamp + rbhdamp) * ddamp - 3.0 * rabdamp) / rab2 * dterm;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg); gb = subv3(gb, dg);
+        // damping part: rbh
+        let gi = -3.0 * rbhdamp / rbh2 * dterm;
+        let dg = scale3(drbh, gi);
+        gb = add3(gb, dg); gh = subv3(gh, dg);
+        // angular A-H...B: rab
+        let tmp1 = -2.0 * aterm * ratio2 * expo / (1.0 + ratio2).powi(2) / (rahprbh - rab);
+        let gi = -tmp1 * rahprbh / rab2;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg); gb = subv3(gb, dg);
+        let dga = scale3(drah, tmp1 / rah);
+        let dgb = scale3(drbh, tmp1 / rbh);
+        ga = add3(ga, dga); gb = add3(gb, dgb);
+        gh = subv3(gh, add3(dga, dgb));
+        // angular A-lp-B: rab, ralp, rblp (xtb's literal scatter: dgb unused,
+        // gb subtracts dga again, glp = -dga)
+        let tmp3 = -2.0 * lpterm * ratio2_lp * expo_lp
+            / (1.0 + ratio2_lp).powi(2) / (ralpprblp - rab);
+        let gi = -tmp3 * ralpprblp / rab2;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg); gb = subv3(gb, dg);
+        let dga_lp = scale3(dralp, tmp3 / ralp);
+        let _dgb_lp = scale3(drblp, tmp3 / (rblp + 1e-12));
+        ga = add3(ga, dga_lp);
+        gb = subv3(gb, dga_lp);
+        let glp = [-dga_lp[0], -dga_lp[1], -dga_lp[2]];
+        // angular A...nb(B)-B terms
+        let mut gnb = vec![[0.0f64; 3]; nbb];
+        for i in 0..nbb {
+            let prod_others: f64 = outl_nb.iter().enumerate()
+                .filter(|&(j, _)| j != i).map(|(_, v)| v).product();
+            let tmp2 = 2.0 * nbterm * prod_others * ratio2_nb[i] * expo_nb[i]
+                / (1.0 + ratio2_nb[i]).powi(2) / (ranbprbnb[i] - rab);
+            let gi = -tmp2 * ranbprbnb[i] / rab2;
+            let dg = scale3(drab, gi);
+            ga = add3(ga, dg); gb = subv3(gb, dg);
+            let dga = scale3(dranb[i], tmp2 / ranb[i]);
+            let dgb = scale3(drbnb[i], tmp2 / rbnb[i]);
+            ga = add3(ga, dga); gb = add3(gb, dgb);
+            gnb[i] = [-dga[0] - dgb[0], -dga[1] - dgb[1], -dga[2] - dgb[2]];
+        }
+        // lone-pair position chain: lp = B - lp_dist*n̂(vector), vector = sum(R_nb - B)
+        let mut gnb_lp = [0.0f64; 3];
+        if vnorm > 1e-10 {
+            let v2 = dot3(vector, vector);
+            for i in 0..3 {
+                let mut unit_vec = [0.0f64; 3];
+                unit_vec[i] = -1.0;
+                let mut gii = [0.0f64; 3];
+                for j in 0..3 {
+                    gii[j] = -lp_dist * nbb as f64
+                        * (unit_vec[j] / vnorm + vector[j] * vector[i] / (v2 * vnorm));
                 }
+                for j in 0..3 { gnb_lp[j] += gii[j] * glp[i]; }
             }
         }
-        e  // each A···H···B counted once per (A,B,H) triple; no double counting since A<B not enforced
+        for t in 0..3 {
+            g[a][t] += ga[t];
+            g[b][t] += gb[t] + gnb_lp[t];
+            g[h][t] += gh[t];
+        }
+        for (i, &nbj) in nbs.iter().enumerate() {
+            for t in 0..3 {
+                g[nbj][t] += gnb[i][t] - gnb_lp[t] / nbb as f64;
+            }
+        }
+        energy
+    }
+
+    /// bound-H HB onto carbonyl/nitro O acceptor (abhgfnff_eg3, gfnff_eg.f90 2827-3212)
+    /// B=O (single neighbor C), torsion H-B=C-R product + bend H-B=C
+    fn hb_eg3(&self, xyz: &[[f64; 3]], a: usize, b: usize, h: usize, c: usize, g: &mut [[f64; 3]]) -> f64 {
+        let p = &self.p;
+        let p_bh = 1.0 + p.hbabmix;
+        let p_ab = -p.hbabmix;
+        let rab2 = dist2(xyz, a, b); let rab = rab2.sqrt();
+        let rah2 = dist2(xyz, a, h); let rah = rah2.sqrt();
+        let rbh2 = dist2(xyz, b, h); let rbh = rbh2.sqrt();
+        let rahprbh = rah + rbh + 1e-12;
+        let radab = p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1];
+        let expo = (p.hbacut / radab) * (rahprbh / rab - 1.0);
+        if expo > 15.0 { return 0.0; }
+        let ratio2 = expo.exp();
+        let outl = 2.0 / (1.0 + ratio2);
+        // out-of-line damp A...C-B (single neighbor)
+        let dranb = sub3(xyz, a, c);
+        let drbnb = sub3(xyz, b, c);
+        let ranb = norm3(dranb);
+        let rbnb = norm3(drbnb);
+        let ranbprbnb = ranb + rbnb + 1e-12;
+        let expo_nb = (p.hbnbcut / radab) * (ranbprbnb / rab - 1.0);
+        let ratio2_nb = (-expo_nb).exp();
+        let outl_nb_tot = 2.0 / (1.0 + ratio2_nb) - 1.0;
+        let ratio1 = (rab2 / p.hblongcut).powf(p.hbalp);
+        let dampl = 1.0 / (1.0 + ratio1);
+        let shortcut = p.hbscut * radab;
+        let ratio3 = (shortcut / rab2).powi(6);   // xtb uses power 6 here (eg3 only)
+        let damps = 1.0 / (1.0 + ratio3);
+        let damp = damps * dampl;
+        let ddamp = -(2.0 * p.hbalp * ratio1 / (1.0 + ratio1))
+            + (2.0 * p.hbalp * ratio3 / (1.0 + ratio3));
+        let rbhdamp = damp * (p_bh / rbh2 / rbh);
+        let rabdamp = damp * (p_ab / rab2 / rab);
+        let rdamp = rbhdamp + rabdamp;
+        // torsion product H-B=C-R for each R in nb(C), R != B (egtors_nci_mul)
+        let rlist: Vec<usize> = self.topo.nb[c].iter().copied().filter(|&r| r != b).collect();
+        let mut etmp = vec![0.0f64; rlist.len()];
+        let mut g4 = vec![[[0.0f64; 3]; 4]; rlist.len()];
+        let phi0t = std::f64::consts::PI / 2.0;
+        for (i, &r) in rlist.iter().enumerate() {
+            etmp[i] = self.tors_nci_mul(xyz, r, b, c, h, 2.0, phi0t, p.tors_hb, &mut g4[i]);
+        }
+        let etors: f64 = etmp.iter().product();
+        // bend H-B=C (egbend_nci_mul), phi0 = 120 deg
+        let mut g3 = [[0.0f64; 3]; 3];
+        let eangl = bend_nci_mul(xyz, b, c, h, 120.0 * std::f64::consts::PI / 180.0,
+            1.0 - p.bend_hb, &mut g3);
+        let qh = Self::csig((p.hbst * self.topo.qa[h]).exp(), p.hbsf);
+        let qa = Self::csig((-p.hbst * self.topo.qa[a]).exp(), p.hbsf);
+        let qb = Self::csig((-p.hbst * self.topo.qa[b]).exp(), p.hbsf);
+        let qhoutl = qh * outl * outl_nb_tot;
+        let const_ = self.topo.hbaci[a] * qa * self.topo.hbbas[b] * qb * p.xhaci_coh;
+        let energy = -rdamp * qhoutl * eangl * etors * const_;
+        // gradient
+        let drah = sub3(xyz, a, h);
+        let drbh = sub3(xyz, b, h);
+        let drab = sub3(xyz, a, b);
+        let aterm = -rdamp * qh * outl_nb_tot * eangl * etors * const_;
+        let nbterm = -rdamp * qh * outl * eangl * etors * const_;
+        let dterm = -qhoutl * eangl * etors * const_;
+        let tterm = -rdamp * qhoutl * eangl * const_;
+        let bterm = -rdamp * qhoutl * etors * const_;
+        let mut ga = [0.0f64; 3]; let mut gb = [0.0f64; 3]; let mut gh = [0.0f64; 3];
+        // damping part: rab
+        let gi = ((rabdamp + rbhdamp) * ddamp - 3.0 * rabdamp) / rab2 * dterm;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg); gb = subv3(gb, dg);
+        // damping part: rbh
+        let gi = -3.0 * rbhdamp / rbh2 * dterm;
+        let dg = scale3(drbh, gi);
+        gb = add3(gb, dg); gh = subv3(gh, dg);
+        // angular A-H...B: rab
+        let tmp1 = -2.0 * aterm * ratio2 * expo / (1.0 + ratio2).powi(2) / (rahprbh - rab);
+        let gi = -tmp1 * rahprbh / rab2;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg); gb = subv3(gb, dg);
+        let dga = scale3(drah, tmp1 / rah);
+        let dgb = scale3(drbh, tmp1 / rbh);
+        ga = add3(ga, dga); gb = add3(gb, dgb);
+        gh = subv3(gh, add3(dga, dgb));
+        // angular A...C-B term
+        let tmp2 = 2.0 * nbterm * ratio2_nb * expo_nb
+            / (1.0 + ratio2_nb).powi(2) / (ranbprbnb - rab);
+        let gi = -tmp2 * ranbprbnb / rab2;
+        let dg = scale3(drab, gi);
+        ga = add3(ga, dg); gb = subv3(gb, dg);
+        let dga = scale3(dranb, tmp2 / ranb);
+        let dgb = scale3(drbnb, tmp2 / rbnb);
+        ga = add3(ga, dga); gb = add3(gb, dgb);
+        for t in 0..3 { g[c][t] -= dga[t] + dgb[t]; }
+        // torsion term H...B=C<R
+        for (i, &r) in rlist.iter().enumerate() {
+            let prod_others: f64 = etmp.iter().enumerate()
+                .filter(|&(j, _)| j != i).map(|(_, v)| v).product();
+            for t in 0..3 {
+                g[r][t] += g4[i][0][t] * tterm * prod_others;
+                g[b][t] += g4[i][1][t] * tterm * prod_others;
+                g[c][t] += g4[i][2][t] * tterm * prod_others;
+                g[h][t] += g4[i][3][t] * tterm * prod_others;
+            }
+        }
+        // angle term H...B=C
+        for t in 0..3 {
+            g[b][t] += g3[0][t] * bterm;
+            g[c][t] += g3[1][t] * bterm;
+            g[h][t] += g3[2][t] * bterm;
+        }
+        for t in 0..3 {
+            g[a][t] += ga[t];
+            g[b][t] += gb[t];
+            g[h][t] += gh[t];
+        }
+        energy
+    }
+
+    /// scaled torsion factor for eg3 (egtors_nci_mul, gfnff_eg.f90 1585-1627)
+    /// e = (1+cos(rn(phi-phi0)+pi))*fc + tshift, fc = (1-tshift)/2; no damping
+    #[allow(clippy::too_many_arguments)]
+    fn tors_nci_mul(&self, xyz: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize,
+                    rn: f64, phi0: f64, tshift: f64, g4: &mut [[f64; 3]; 4]) -> f64 {
+        let fc = (1.0 - tshift) / 2.0;
+        let phi = dihedral(xyz, i, j, k, l);
+        let (dda, ddb, ddc, ddd) = dphidr(xyz, i, j, k, l, phi);
+        let c1 = rn * (phi - phi0) + std::f64::consts::PI;
+        let et = (1.0 + c1.cos()) * fc + tshift;
+        let dij = -rn * c1.sin() * fc;
+        for t in 0..3 {
+            g4[0][t] = dij * dda[t];
+            g4[1][t] = dij * ddb[t];
+            g4[2][t] = dij * ddc[t];
+            g4[3][t] = dij * ddd[t];
+        }
+        et
+    }
+
+    /// XB list filter + rbxgfnff_eg evaluation (gfnff_eg.f90 3216-3345)
+    fn xb_terms(&self, xyz: &[[f64; 3]], g: &mut [[f64; 3]]) -> f64 {
+        let p = &self.p;
+        let mut e = 0.0f64;
+        for &(a, b, x) in &self.topo.xb_triples {
+            if dist2(xyz, a, b) > p.hbthr2 { continue; }
+            e += self.rbx_eg(xyz, a, b, x, g);
+        }
+        e
+    }
+
+    /// halogen bond A-X···B (rbxgfnff_eg); note cb = 1.0 hardcoded in xtb
+    fn rbx_eg(&self, xyz: &[[f64; 3]], a: usize, b: usize, x: usize, g: &mut [[f64; 3]]) -> f64 {
+        let p = &self.p;
+        let cb = 1.0;
+        let cx = p.xbaci[self.at[x] - 1];
+        let drax = sub3(xyz, a, x);
+        let drbx = sub3(xyz, b, x);
+        let drab = sub3(xyz, a, b);
+        let rab = norm3(drab);
+        let rab2 = rab * rab;
+        let rax = norm3(drax) + 1e-12;
+        let rax2 = rax * rax;
+        let rbx = norm3(drbx) + 1e-12;
+        let rbx2 = rbx * rbx;
+        let expo = p.xbacut * ((rax + rbx) / rab - 1.0);
+        if expo > 15.0 { return 0.0; }
+        let ratio2 = expo.exp();
+        let outl = 2.0 / (1.0 + ratio2);
+        let ratio1 = (rbx2 / p.hblongcut_xb).powf(p.hbalp);
+        let dampl = 1.0 / (1.0 + ratio1);
+        let shortcut = p.xbscut * (p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1]);
+        let ratio3 = (shortcut / rbx2).powf(p.hbalp);
+        let damps = 1.0 / (1.0 + ratio3);
+        let damp = damps * dampl;
+        let rdamp = damp / rbx2 / rbx;
+        let qx = Self::csig((p.xbst * self.topo.qa[x]).exp(), p.xbsf);
+        let qb = Self::csig((-p.xbst * self.topo.qa[b]).exp(), p.xbsf);
+        let const_ = cb * qb * cx * qx;
+        let aterm = -rdamp * const_;
+        let dterm = -outl * const_;
+        let energy = -rdamp * outl * const_;
+        // damping part: rbx
+        let gi = rdamp * (-(2.0 * p.hbalp * ratio1 / (1.0 + ratio1))
+            + (2.0 * p.hbalp * ratio3 / (1.0 + ratio3)) - 3.0) / rbx2 * dterm;
+        let dg = scale3(drbx, gi);
+        let mut gb = dg;
+        let mut gx = [-dg[0], -dg[1], -dg[2]];
+        // out-of-line term: rab
+        let gi = 2.0 * ratio2 * expo * (rax + rbx)
+            / (1.0 + ratio2).powi(2) / (rax + rbx - rab) / rab2 * aterm;
+        let dg = scale3(drab, gi);
+        let mut ga = dg;
+        gb = subv3(gb, dg);
+        // out-of-line term: rax, rbx
+        let gi = -2.0 * ratio2 * expo / (1.0 + ratio2).powi(2) / (rax + rbx - rab) / rax * aterm;
+        let dga = scale3(drax, gi);
+        ga = add3(ga, dga);
+        let gi = -2.0 * ratio2 * expo / (1.0 + ratio2).powi(2) / (rax + rbx - rab) / rbx * aterm;
+        let dgb = scale3(drbx, gi);
+        gb = add3(gb, dgb);
+        let dgx = [-dga[0] - dgb[0], -dga[1] - dgb[1], -dga[2] - dgb[2]];
+        gx = add3(gx, dgx);
+        for t in 0..3 {
+            g[a][t] += ga[t];
+            g[b][t] += gb[t];
+            g[x][t] += gx[t];
+        }
+        energy
+    }
+
+    /// bonded ATM over 1-4 triples (batmgfnff_eg, gfnff_eg.f90 3348-3446)
+    fn batm_terms(&self, xyz: &[[f64; 3]], g: &mut [[f64; 3]]) -> f64 {
+        let mut e = 0.0f64;
+        for &(i, j, k) in &self.topo.b3 {
+            e += self.batm_eg(xyz, i, j, k, g);
+        }
+        e
+    }
+
+    fn batm_eg(&self, xyz: &[[f64; 3]], iat: usize, jat: usize, kat: usize,
+               g: &mut [[f64; 3]]) -> f64 {
+        const FQQ: f64 = 3.0;
+        let fi = (1.0 - FQQ * self.topo.qa[iat]).clamp(-4.0, 4.0);
+        let fj = (1.0 - FQQ * self.topo.qa[jat]).clamp(-4.0, 4.0);
+        let fk = (1.0 - FQQ * self.topo.qa[kat]).clamp(-4.0, 4.0);
+        let ff = fi * fj * fk;
+        let p = &self.p;
+        let c9 = ff * p.zb3atm[self.at[iat] - 1] * p.zb3atm[self.at[jat] - 1] * p.zb3atm[self.at[kat] - 1];
+        let rij = sub3(xyz, jat, iat);
+        let rik = sub3(xyz, kat, iat);
+        let rjk = sub3(xyz, kat, jat);
+        let sr2ij = norm3(rij); let r2ij = sr2ij * sr2ij;
+        let sr2ik = norm3(rik); let r2ik = sr2ik * sr2ik;
+        let sr2jk = norm3(rjk); let r2jk = sr2jk * sr2jk;
+        let mijk = -r2ij + r2jk + r2ik;
+        let imjk = r2ij - r2jk + r2ik;
+        let ijmk = r2ij + r2jk - r2ik;
+        let rijk3 = r2ij * r2jk * r2ik;
+        let rav3 = rijk3 * sr2ij * sr2jk * sr2ik;   // R^9
+        let ang = 0.375 * ijmk * imjk * mijk / rijk3;
+        let energy = c9 * (ang + 1.0) / rav3;
+        // derivatives of the angular part w.r.t. each pair distance
+        let dang_ij = -0.375 * (r2ij.powi(3) + r2ij * r2ij * (r2jk + r2ik)
+            + r2ij * (3.0 * r2jk * r2jk + 2.0 * r2jk * r2ik + 3.0 * r2ik * r2ik)
+            - 5.0 * (r2jk - r2ik).powi(2) * (r2jk + r2ik)) / (sr2ij * rijk3 * rav3);
+        let drij = -dang_ij * c9;
+        let dang_jk = -0.375 * (r2jk.powi(3) + r2jk * r2jk * (r2ik + r2ij)
+            + r2jk * (3.0 * r2ik * r2ik + 2.0 * r2ik * r2ij + 3.0 * r2ij * r2ij)
+            - 5.0 * (r2ik - r2ij).powi(2) * (r2ik + r2ij)) / (sr2jk * rijk3 * rav3);
+        let drjk = -dang_jk * c9;
+        let dang_ik = -0.375 * (r2ik.powi(3) + r2ik * r2ik * (r2jk + r2ij)
+            + r2ik * (3.0 * r2jk * r2jk + 2.0 * r2jk * r2ij + 3.0 * r2ij * r2ij)
+            - 5.0 * (r2jk - r2ij).powi(2) * (r2jk + r2ij)) / (sr2ik * rijk3 * rav3);
+        let drik = -dang_ik * c9;
+        for t in 0..3 {
+            g[iat][t] += drij * rij[t] / sr2ij + drik * rik[t] / sr2ik;
+            g[jat][t] += drjk * rjk[t] / sr2jk - drij * rij[t] / sr2ij;
+            g[kat][t] += -drik * rik[t] / sr2ik - drjk * rjk[t] / sr2jk;
+        }
+        energy
+    }
+
+
+    /// runtime HB coordination count of H for a registered X-H bond
+    /// (dncoord_erf: kn = 27.5, rcov_scal = 1.78, cutoff 900 Bohr^2)
+    fn hb_cn_of(&self, xyz: &[[f64; 3]], bi: usize, h: usize) -> f64 {
+        let mut hb_cn = 0.0f64;
+        for &bb in &self.topo.bond_hb_b[bi] {
+            let rij = sub3(xyz, bb, h);
+            let r2 = dot3(rij, rij);
+            if r2 > 900.0 { continue; }
+            let r = r2.sqrt();
+            let rc = 1.78 * (self.p.rcov[self.at[h] - 1] + self.p.rcov[self.at[bb] - 1])
+                / BOHR * 4.0 / 3.0;
+            hb_cn += 0.5 * (1.0 + erf(-27.5 * (r - rc) / rc));
+        }
+        hb_cn
+    }
+
+    /// improper torsion energy+gradient (egtors, gfnff_eg.f90 1520-1579);
+    /// t = (l=center, i=1st, j=2nd, k=3rd), damping on (center,1st),(2nd,1st),(1st,3rd)
+    fn improper_term(&self, xyz: &[[f64; 3]], t: &TorsionParam, g: &mut [[f64; 3]]) -> f64 {
+        let (i, j, k, l) = (t.l, t.i, t.j, t.k);   // center, 1st, 2nd, 3rd
+        let vab = sub3(xyz, j, i);   // 1st - center
+        let vcb = sub3(xyz, j, k);   // 1st - 2nd
+        let vdc = sub3(xyz, j, l);   // 1st - 3rd
+        let rij = norm3(vab) * norm3(vab);
+        let rjk = norm3(vcb) * norm3(vcb);
+        let rjl = norm3(vdc) * norm3(vdc);
+        let (dampij, damp2ij) = dampt2(&self.p, self.at[i], self.at[j], rij);
+        let (dampjk, damp2jk) = dampt2(&self.p, self.at[k], self.at[j], rjk);
+        let (dampjl, damp2jl) = dampt2(&self.p, self.at[j], self.at[l], rjl);
+        let damp = dampjk * dampij * dampjl;
+        let phi = improper_angle(xyz, i, j, k, l);
+        let (dda, ddb, ddc, ddd) = domegadr(xyz, i, j, k, l, phi);
+        let (et, dij);
+        if t.nrot == 0 {
+            // sp2: E = fc*(1 - cos phi)
+            let c1 = phi - t.phi0 + std::f64::consts::PI;
+            et = (1.0 + c1.cos()) * t.fc;
+            dij = -c1.sin() * t.fc * damp;
+        } else {
+            // saturated N: double well E = fc*(cos phi - cos phi0)^2
+            et = t.fc * (phi.cos() - t.phi0.cos()).powi(2);
+            dij = 2.0 * t.fc * phi.sin() * (t.phi0.cos() - phi.cos()) * damp;
+        }
+        let term1 = scale3(vab, et * damp2ij * dampjk * dampjl);
+        let term2 = scale3(vcb, et * damp2jk * dampij * dampjl);
+        let term3 = scale3(vdc, et * damp2jl * dampij * dampjk);
+        for u in 0..3 {
+            g[i][u] += dij * dda[u] - term1[u];
+            g[j][u] += dij * ddb[u] + term1[u] + term2[u] + term3[u];
+            g[k][u] += dij * ddc[u] - term2[u];
+            g[l][u] += dij * ddd[u] - term3[u];
+        }
+        et * damp
     }
 
 }
+
 
 impl Gfnff {
     /// per-term analytic gradients (kcal/mol/A), for validation/debug
@@ -1430,7 +2273,7 @@ impl Gfnff {
             let d = [xyz[i][0]-xyz[j][0], xyz[i][1]-xyz[j][1], xyz[i][2]-xyz[j][2]];
             for k in 0..3 { g_rep[i][k] -= d[k] * t27; g_rep[j][k] += d[k] * t27; }
         }}
-        let mut rep_bonded = 0.0;
+        let mut rep_bonded_local = 0.0;
         for b in &self.bonds {
             let r = dist(b.i, b.j);
             let (zi, zj) = (self.at[b.i], self.at[b.j]);
@@ -1439,23 +2282,55 @@ impl Gfnff {
             let t16 = r.powf(1.5);
             let t19 = t16 * t16;
             let t26 = (-alpha * t16).exp() * repab;
-            rep_bonded += t26 / r;
+            rep_bonded_local += t26 / r;
             let t27 = t26 * (1.5 * alpha * t16 + 1.0) / t19;
             let d = [xyz[b.i][0]-xyz[b.j][0], xyz[b.i][1]-xyz[b.j][1], xyz[b.i][2]-xyz[b.j][2]];
             for k in 0..3 { g_rep[b.i][k] -= d[k] * t27; g_rep[b.j][k] += d[k] * t27; }
         }
-        rep += rep_bonded;
+        rep += rep_bonded_local;
 
-        // ---------------- bonds (+ r0 CN chain) ----------------
+        // ---------------- bonds (+ r0 CN chain, + HB exponent chain) --------
         let mut ebond = 0.0;
-        for b in &self.bonds {
+        for (bi, b) in self.bonds.iter().enumerate() {
             let r = dist(b.i, b.j);
             let rabdcn = self.p.gfnffrab_dcnd(self.at[b.i], self.at[b.j], b.r0);
             let rab0 = self.p.gfnffrab(self.at[b.i], self.at[b.j], cn[b.i], cn[b.j], b.r0);
             let dr = r - rab0;
-            let dum = b.kb * (-(b.alp) * dr * dr).exp();
+            // H-bonded X-H: softened exponent + dE/d(hb_cn) chain (egbond_hb)
+            let mut alp = b.alp;
+            if !self.topo.bond_hb_b[bi].is_empty() {
+                let h = if self.at[b.i] == 1 { b.i } else { b.j };
+                let t1 = 1.0 - self.p.vbond_scale;
+                let mut dcn_hh = [0.0f64; 3];
+                let mut b_terms: Vec<(usize, [f64; 3])> = Vec::new();
+                let mut hb_cn = 0.0f64;
+                for &bb in &self.topo.bond_hb_b[bi] {
+                    let rij = sub3(&xyz, bb, h);
+                    let r2 = dot3(rij, rij);
+                    if r2 > 900.0 { continue; }
+                    let rr = r2.sqrt();
+                    let rc = 1.78 * (self.p.rcov[self.at[h] - 1] + self.p.rcov[self.at[bb] - 1])
+                        / BOHR * 4.0 / 3.0;
+                    let arg = 27.5 * (rr - rc) / rc;
+                    hb_cn += 0.5 * (1.0 + erf(-arg));
+                    // dtmp = -1/(2 sqrt(pi)) * kn * exp(-kn^2 (r-rc)^2 / rc^2) / rc
+                    let dtmp = -0.28209479177387814 * 27.5
+                        * (-(27.5 * 27.5) * (rr - rc) * (rr - rc) / (rc * rc)).exp() / rc;
+                    let u = [rij[0] / rr, rij[1] / rr, rij[2] / rr];
+                    for t in 0..3 { dcn_hh[t] -= dtmp * u[t]; }   // d cn_H/dR_H
+                    b_terms.push((bb, [dtmp * u[0], dtmp * u[1], dtmp * u[2]])); // d cn_H/dR_B
+                }
+                alp = (1.0 - t1 * hb_cn) * b.alp;
+                let dum_hb = b.kb * (-alp * dr * dr).exp();
+                let zz = dum_hb * b.alp * dr * dr * t1;
+                for t in 0..3 { g_bond[h][t] += dcn_hh[t] * zz; }
+                for (bb, dcn_bh) in &b_terms {
+                    for t in 0..3 { g_bond[*bb][t] -= dcn_bh[t] * zz; }
+                }
+            }
+            let dum = b.kb * (-alp * dr * dr).exp();
             ebond += dum;
-            let yy = 2.0 * b.alp * dr * dum;
+            let yy = 2.0 * alp * dr * dum;
             let d = [xyz[b.i][0]-xyz[b.j][0], xyz[b.i][1]-xyz[b.j][1], xyz[b.i][2]-xyz[b.j][2]];
             for k in 0..3 {
                 g_bond[b.i][k] += -yy * d[k] / r;
@@ -1500,18 +2375,9 @@ impl Gfnff {
         // ---------------- torsions ----------------
         let mut etors = 0.0;
         for t in &self.torsions {
-            // out-of-plane: improper angle omega (asin of normal dot vec)
-            let mut e_t = 0.0f64;
             if t.nrot <= 0 {
-                let omega = improper_angle(&xyz, t.l, t.i, t.j, t.k);
-                if t.nrot == -1 {
-                    // saturated N: double-min at +/- phi0
-                    e_t = t.fc * (omega - t.phi0).powi(2) + t.fc * (omega + t.phi0).powi(2);
-                    // approximated as single-well sum; damped lightly
-                } else {
-                    e_t = t.fc * omega.cos().powi(2);
-                }
-                etors += e_t;
+                // out-of-plane improper (energy + gradient)
+                etors += self.improper_term(&xyz, t, &mut g_tors);
                 continue;
             }
             let phi = dihedral(&xyz, t.l, t.i, t.j, t.k);
@@ -1569,12 +2435,13 @@ impl Gfnff {
         // ---------------- D3 dispersion (+ cn chain) ----------------
         let disp = self.d4_dispersion_grad(&xyz, &dist, &cn, &q, &mut g_disp, &mut d_ed_cn);
 
-        // ---- HB gradient (geometric part) ----
+        // ---------------- HB / XB / bATM (energy + gradient, one path) ----------------
         let mut g_hb = vec![[0.0f64; 3]; n];
-        {
-            let dist2fn = |i: usize, j: usize| dist2(&xyz, i, j).sqrt();
-            self.hb_gradient(&xyz, &q, &dist2fn, &mut g_hb);
-        }
+        let mut g_xb = vec![[0.0f64; 3]; n];
+        let mut g_batm = vec![[0.0f64; 3]; n];
+        let ehb = self.hb_terms(&xyz, &mut g_hb);
+        let exb = self.xb_terms(&xyz, &mut g_xb);
+        let ebatm = self.batm_terms(&xyz, &mut g_batm);
 
         // ---------------- CN chain (bond r0 + EEQ RHS + D3) ----------------
         // dcndr[atom a][cn owner b] = d cn_b / d R_a
@@ -1606,20 +2473,20 @@ impl Gfnff {
         // sum per-term + shared cn chain
         for a in 0..n { for t in 0..3 {
             g[a][t] += g_rep[a][t] + g_bond[a][t] + g_angle[a][t] + g_tors[a][t]
-                     + g_es[a][t] + g_disp[a][t] + g_hb[a][t];
+                     + g_es[a][t] + g_disp[a][t] + g_hb[a][t] + g_xb[a][t] + g_batm[a][t];
         }}
         // convert to kcal/mol / Angstrom
         const EH_KCAL: f64 = 627.5094740631;
         for a in 0..n { for t in 0..3 { grad_out[a][t] = g[a][t] * EH_KCAL / BOHR; } }
 
         EnergyComponents { bond: ebond, angle: eangl, torsion: etors,
-            rep, es, disp, hb: 0.0, xb: 0.0, batm: 0.0 }
+            rep, es, disp, hb: ehb, xb: exb, batm: ebatm }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn d4_dispersion_grad(&self, xyz: &[[f64; 3]], dist: &dyn Fn(usize, usize) -> f64,
-                          cn: &Vec<f64>, q: &Vec<f64>,
-                          g: &mut Vec<[f64; 3]>, d_ed_cn: &mut Vec<f64>) -> f64 {
+                          cn: &[f64], q: &[f64],
+                          g: &mut [[f64; 3]], d_ed_cn: &mut [f64]) -> f64 {
         let n = self.at.len();
         let p = &self.p;
         let wf = 4.0f64;
@@ -1686,7 +2553,7 @@ impl Gfnff {
     }
 
     fn d4_dispersion(&self, xyz: &[[f64; 3]], dist: &dyn Fn(usize, usize) -> f64,
-                      cn: &Vec<f64>) -> f64 {
+                      cn: &[f64]) -> f64 {
         let n = self.at.len();
         let p = &self.p;
         // gw weights (wf = 4.0) over CN (logCN as passed to d3_gradient)
@@ -1760,6 +2627,11 @@ fn trapzd_weights() -> [f64; 23] {
 }
 
 fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 { a[0]*b[0] + a[1]*b[1] + a[2]*b[2] }
+fn sub3(xyz: &[[f64; 3]], i: usize, j: usize) -> [f64; 3] {
+    [xyz[i][0]-xyz[j][0], xyz[i][1]-xyz[j][1], xyz[i][2]-xyz[j][2]]
+}
+fn add3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] { [a[0]+b[0], a[1]+b[1], a[2]+b[2]] }
+fn subv3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] { [a[0]-b[0], a[1]-b[1], a[2]-b[2]] }
 fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
 }
@@ -1782,13 +2654,13 @@ fn dampt2(p: &Params, ati: usize, atj: usize, r2: f64) -> (f64, f64) {
     (1.0 / (1.0 + rr), -4.0 * rr / (r2 * (1.0 + rr).powi(2)))
 }
 
-/// d logCN / d raw CN (create_dlogCN)
-fn create_dlogcn(p: &Params, logcn: f64) -> f64 {
-    // invert create_logcn to raw cn, then e^cnmax/(e^cnmax + e^cn)
-    // logcn = ln(1+e^cm) - ln(1+e^(cm-cn))  =>  cn = cm - ln(e^(logcn)(1+e^cm) - 1)
+/// d logCN / d CN for the raw (erf) coordination number.
+/// logCN = ln(1+e^cm) - ln(1+e^(cm-cn))  =>  d/dcn = e^cm/(e^cm+e^cn)
+/// (caller passes the RAW cn; no inversion needed - the previous version
+/// inverted algebraically AND was fed cn_raw, off by 3-50x, which was the
+/// source of the ~0.1 kcal/mol/A gradient residual vs xtb)
+fn create_dlogcn(p: &Params, cn: f64) -> f64 {
     let cm = p.cnmax;
-    let inner = logcn.exp() * (1.0 + cm.exp()) - 1.0;
-    let cn = if inner > 0.0 { cm - inner.ln() } else { cm };
     cm.exp() / (cm.exp() + cn.exp())
 }
 
@@ -1838,9 +2710,9 @@ fn dphidr(xyz: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize, phi: f64)
 /// return (P = C diag(focc) C^T, sum focc*eps, eigenvalues in eV)
 /// symmetric Jacobi eigensolver: returns (eigenvalues sorted asc, eigenvectors
 /// as evecs[row][col] with col = eigenvector index)
-fn jacobi_eig(a0: &Vec<Vec<f64>>) -> (Vec<f64>, Vec<Vec<f64>>) {
+fn jacobi_eig(a0: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
     let n = a0.len();
-    let mut a = a0.clone();
+    let mut a = a0.to_vec();
     let mut v = vec![vec![0.0f64; n]; n];
     for i in 0..n { v[i][i] = 1.0; }
     for _sweep in 0..100 {
@@ -1880,47 +2752,53 @@ fn jacobi_eig(a0: &Vec<Vec<f64>>) -> (Vec<f64>, Vec<Vec<f64>>) {
     (vals, vecs)
 }
 
-fn hmo_solve(api: &Vec<Vec<f64>>, nel: usize) -> (Vec<Vec<f64>>, f64, Vec<f64>) {
+fn hmo_solve(api: &[Vec<f64>], nel: usize) -> (Vec<Vec<f64>>, f64, Vec<f64>, Vec<f64>) {
     let n = api.len();
     let (evals, evecs) = jacobi_eig(api);
     // energy scaling: eV
     let eps: Vec<f64> = evals.iter().map(|e| e * 0.1 * 27.2113957).collect();
-    // occupations: Fermi smearing (T = 4000 K), restricted (alpha=beta halves)
+    // Fermi smearing at 4000 K; restricted occupations split into
+    // na = ceil(nel/2) alpha + nb = floor(nel/2) beta electrons (occu,
+    // scc_core.f90) so that odd electron counts conserve nel exactly
     let bkt: f64 = 3.166815e-6 * 27.2113957 * 4000.0;   // eV
-    let nalpha = nel / 2 + nel % 2;                      // focca count
-    let mut focc_a = vec![0.0f64; n];
-    {
-        // fermismear with nel = nalpha
-        let e_fermi = if nalpha >= n { eps[n-1] } else { 0.5*(eps[nalpha-1] + eps[nalpha]) };
-        let mut ef = e_fermi;
+    let smear = |count: usize| -> Vec<f64> {
+        let mut focc = vec![0.0f64; n];
+        if count == 0 { return focc; }
+        let mut ef = if count >= n { eps[n - 1] } else { 0.5 * (eps[count - 1] + eps[count]) };
         for _ in 0..200 {
             let mut tot = 0.0; let mut dtot = 0.0;
             for i in 0..n {
-                let x = (eps[i]-ef)/bkt;
-                let f = if x < 50.0 { 1.0/(x.exp()+1.0) } else { 0.0 };
-                let df = if x < 50.0 { x.exp()/(bkt*(x.exp()+1.0).powi(2)) } else { 0.0 };
-                focc_a[i] = f; tot += f; dtot += df;
+                let x = (eps[i] - ef) / bkt;
+                let ex = x.exp();
+                let f = if x < 50.0 { 1.0 / (ex + 1.0) } else { 0.0 };
+                let df = if x < 50.0 { ex / (bkt * (ex + 1.0).powi(2)) } else { 0.0 };
+                focc[i] = f; tot += f; dtot += df;
             }
-            if dtot > 0.0 { ef += (nalpha as f64 - tot)/dtot; }
-            if (nalpha as f64 - tot).abs() <= 1e-9 { break; }
+            if dtot > 0.0 { ef += (count as f64 - tot) / dtot; }
+            if (count as f64 - tot).abs() <= 1e-9 { break; }
         }
-    }
-    let mut focc: Vec<f64> = focc_a.iter().map(|&f| 2.0*f).collect();
-    // biradical check: perfect degeneracy at HOMO -> plain filling
-    if nalpha+1 <= n && (focc[nalpha-1]-focc[nalpha]).abs() < 1e-4 {
+        focc
+    };
+    let na = nel.div_ceil(2);
+    let nb = nel / 2;
+    let fa = smear(na);
+    let fb = smear(nb);
+    let mut focc: Vec<f64> = (0..n).map(|i| fa[i] + fb[i]).collect();
+    // perfect biradical (anti-aromatic): closed-shell hard fill, breaking the
+    // symmetry (gfnffqmsolve; note xtb drops the odd electron here)
+    if na < n && (focc[na - 1] - focc[na]).abs() < 1e-4 {
         for f in focc.iter_mut() { *f = 0.0; }
-        for i in 0..nel/2 { focc[i] = 2.0; }
-        if nel % 2 == 1 { focc[nel/2] = 1.0; }
+        for i in 0..nel / 2 { focc[i] = 2.0; }
     }
-    let eel: f64 = (0..n).map(|i| focc[i]*eps[i]).sum();
+    let eel: f64 = (0..n).map(|i| focc[i] * eps[i]).sum();
     // P = C diag(focc) C^T   (evecs[k][m] = component k of eigenvector m)
     let mut p = vec![vec![0.0f64; n]; n];
     for i in 0..n { for j in 0..n {
         let mut s = 0.0;
-        for m in 0..n { s += evecs[i][m]*focc[m]*evecs[j][m]; }
+        for m in 0..n { s += evecs[i][m] * focc[m] * evecs[j][m]; }
         p[i][j] = s;
     }}
-    (p, eel, eps)
+    (p, eel, eps, focc)
 }
 
 /// inversion angle omega (asin(n.r/|n||r|)), constr.f90 omegaPBC
@@ -1935,49 +2813,81 @@ fn improper_angle(xyz: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f
     (dot3(rn, rv) / (rnn * rvn)).clamp(-1.0, 1.0).asin()
 }
 
-/// amide N detection: N is pi, sp3, bonded to a pi C which has a pi O with nn=1
-fn is_amide_n(at: &[usize], hyb: &[i32], nb: &Vec<Vec<usize>>, piadr: &[bool], a: usize) -> bool {
+/// inversion derivatives (constr.f90 domegadrPBC, non-periodic);
+/// atom order (i=center, j=1st, k=2nd, l=3rd) matching improper_angle
+fn domegadr(xyz: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize, omega: f64)
+    -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
+    let sub = |a: usize, b: usize| [xyz[a][0]-xyz[b][0], xyz[a][1]-xyz[b][1], xyz[a][2]-xyz[b][2]];
+    let sinomega = omega.sin();
+    let re = sub(i, j);      // center - 1st
+    let rd = sub(k, j);      // 2nd - 1st
+    let rv = sub(l, i);      // 3rd - center
+    let rdme = subv3(rd, re);
+    let rn = cross3(re, rd);
+    let rvn = norm3(rv);
+    let rnn = norm3(rn);
+    let rve = cross3(rv, re);
+    let rne = cross3(rn, re);
+    let rdv = cross3(rd, rv);
+    let rdn = cross3(rd, rn);
+    let rvdme = cross3(rv, rdme);
+    let rndme = cross3(rn, rdme);
+    let nenner = rnn * rvn * omega.cos();
+    if nenner.abs() <= 1e-14 {
+        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let onenner = 1.0 / nenner;
+    let mut di = [0.0f64; 3]; let mut dj = [0.0f64; 3];
+    let mut dk = [0.0f64; 3]; let mut dl = [0.0f64; 3];
+    for t in 0..3 {
+        di[t] = onenner * (rdv[t] - rn[t]
+            - sinomega * (rvn / rnn * rdn[t] - rnn / rvn * rv[t]));
+        dj[t] = onenner * (rvdme[t] - sinomega * rvn / rnn * rndme[t]);
+        dk[t] = onenner * (rve[t] - sinomega * rvn / rnn * rne[t]);
+        dl[t] = onenner * (rn[t] - sinomega * rnn / rvn * rv[t]);
+    }
+    (di, dj, dk, dl)
+}
+
+/// scaled bend factor for eg3: e = 1 - kijk*(cosa - cos(c0))^2 with
+/// kijk = fc/(cos(0)-cos(c0))^2 (egbend_nci_mul, gfnff_eg.f90 1317-1373);
+/// atoms (j=B, i=C, k=H): the H-B=C angle, gradient g3 = [B, C, H]
+fn bend_nci_mul(xyz: &[[f64; 3]], j: usize, i: usize, k: usize, c0: f64, fc: f64,
+                g3: &mut [[f64; 3]; 3]) -> f64 {
+    let kijk = fc / (1.0 - c0.cos()).powi(2);   // cos(0) = 1
+    let vab = sub3(xyz, i, j);   // B -> C
+    let vcb = sub3(xyz, k, j);   // B -> H
+    let rab2 = dot3(vab, vab);
+    let rcb2 = dot3(vcb, vcb);
+    let vp = cross3(vcb, vab);
+    let rp = norm3(vp) + 1e-14;
+    let cosa = (dot3(vab, vcb) / (rab2 * rcb2).sqrt()).clamp(-1.0, 1.0);
+    let theta = cosa.acos();
+    let ea = kijk * (cosa - c0.cos()).powi(2);
+    let deddt = 2.0 * kijk * theta.sin() * (c0.cos() - cosa);
+    let deda = scale3(cross3(vab, vp), -deddt / (rab2 * rp));
+    let dedc = scale3(cross3(vcb, vp), deddt / (rcb2 * rp));
+    let dedb = add3(deda, dedc);
+    for t in 0..3 {
+        g3[0][t] = dedb[t];   // B (center)
+        g3[1][t] = -deda[t]; // C
+        g3[2][t] = -dedc[t]; // H
+    }
+    1.0 - ea
+}
+
+/// amide N detection: N is pi, sp3, bonded to exactly ONE pi C which
+/// carries exactly ONE terminal pi O (gfnff_ini2.F90 amide(), 2275-2305)
+fn is_amide_n(at: &[usize], hyb: &[i32], nb: &[Vec<usize>], piadr: &[bool], a: usize) -> bool {
     if !piadr[a] || hyb[a] != 3 || at[a] != 7 { return false; }
-    let mut ic = None;
+    let mut nc = 0;
+    let mut ic = 0usize;
     for &j in &nb[a] {
-        if at[j] == 6 && piadr[j] { ic = Some(j); break; }
+        if at[j] == 6 && piadr[j] { nc += 1; ic = j; }
     }
-    let ic = match ic { Some(x) => x, None => return false };
-    // check for pi O with nn=1 on the carbonyl C
-    nb[ic].iter().any(|&j| at[j] == 8 && piadr[j] && nb[j].len() == 1)
-}
-
-/// amide H detection: H bonded to an amide N which has an sp3 C
-fn is_amide_h(at: &[usize], hyb: &[i32], nb: &Vec<Vec<usize>>, piadr: &[bool], h: usize) -> bool {
-    if at[h] != 1 || nb[h].len() != 1 { return false; }
-    let n_atom = nb[h][0];
-    if !is_amide_n(at, hyb, nb, piadr, n_atom) { return false; }
-    // check N has an sp3 C neighbor
-    nb[n_atom].iter().any(|&j| at[j] == 6 && hyb[j] == 3)
-}
-
-/// hbbas/hbaci atom-specific adjustments (gfnff_ini.f90 855-885)
-fn adjusted_hbbas(p: &Params, at: &[usize], hyb: &[i32], nb: &Vec<Vec<usize>>,
-                   piadr: &[bool], i: usize) -> f64 {
-    let mut bas = p.xhbas[at[i]-1];
-    let nn = nb[i].len();
-    // Carbene
-    if at[i] == 6 && nn == 2 && hyb[i] == 2 { bas = 1.46; }
-    // Carbonyl O: nn=1, bonded to C
-    if at[i] == 8 && nn == 1 {
-        if let Some(&j) = nb[i].first() {
-            if at[j] == 6 { bas = 0.68; }
-            if at[j] == 7 { bas = 0.47; }  // nitro
-        }
-    }
-    bas
-}
-
-fn adjusted_hbaci(p: &Params, at: &[usize], hyb: &[i32], nb: &Vec<Vec<usize>>,
-                   piadr: &[bool], i: usize) -> f64 {
-    let mut aci = p.xhaci[at[i]-1];
-    if is_amide_h(at, hyb, nb, piadr, i) { aci *= 0.80; }
-    aci
+    if nc != 1 { return false; }
+    let no = nb[ic].iter().filter(|&&j| at[j] == 8 && piadr[j] && nb[j].len() == 1).count();
+    no == 1
 }
 
 fn dist2(xyz: &[[f64; 3]], i: usize, j: usize) -> f64 {
@@ -2023,7 +2933,17 @@ fn dampa(p: &Params, ati: usize, atj: usize, r2: f64) -> f64 {
 impl Params {
     fn metal_is(&self, _z: usize) -> bool { false } // organic subset: no metals
     fn repscalb(&self) -> f64 { 1.7583 }
-    fn xhaci_coh(&self) -> f64 { 0.350 }  // xhaci_coh for A-H...O=C // gfnff_set_param
+
+    /// element-specific bond-radius factors (gfnff_ini2.F90 fat, lines 71-95)
+    fn fat(&self, z: usize) -> f64 {
+        match z {
+            1 => 1.02, 4 => 1.03, 5 => 1.02, 8 => 1.02, 9 => 1.05, 10 => 1.10,
+            11 => 1.01, 12 => 1.02, 15 => 0.97, 18 => 1.10, 19 => 1.02, 20 => 1.02,
+            34 => 0.99, 38 => 1.02, 50 => 1.01, 51 => 0.99, 52 => 0.95, 53 => 0.98,
+            56 => 1.02, 76 => 1.02, 82 => 1.06, 83 => 0.95,
+            _ => 1.0,
+        }
+    }
 
     /// gfnffrab pair reference bond length (Bohr), gfnff_rab.f
     /// rab = (r0_A + cnfak_A*cn_A + r0_B + cnfak_B*cn_B + shift) * ff * scaleF
@@ -2110,75 +3030,150 @@ fn create_logcn(p: &Params, cn: f64) -> f64 {
     (1.0 + e).ln() - (1.0 + (p.cnmax - cn).exp()).ln()
 }
 
-/// bond detection via gfnffrab pair radii (Å), criterion r < 1.25 * r0
-fn detect_bonds(p: &Params, at: &[usize], xyz: &[[f64; 3]], cn: &Vec<f64>, _qa: &Vec<f64>) -> Vec<Vec<usize>> {
-    // gfnffrab tables are not in the JSON yet -> use D3 covalent radii * rthr
-    // as a first-order equivalent (xtb: r < 1.25 * rab_estimate; Pyykko radii
-    // reproduce the same bonds for organic main-group molecules)
+/// bond detection (gfnff_ini2.F90 neigh 100-130 + neighbor.f90 getnb):
+/// pair radius from gfnffrab with a normcn CN guess, charge-corrected
+/// (rqshrink) and fat element-scaled; bond if r < rthr * rco. The
+/// hypercoordination filter (skip the pair if either atom's full candidate
+/// count exceeds 4 for group 1-2, else 6) mirrors xtb's icase-2 getnb
+/// semantics exactly ("if(nnfi.gt.hc_crit) cycle" per PAIR, no distance
+/// trimming). In xtb that filtered list is transient (hyb determination,
+/// cluster tagging) while the final topology list is the full nbf; the two
+/// coincide for normal organic valences where the caps never fire, which is
+/// the regime this single-list approximation covers. Unlike the old
+/// rcov*1.25 criterion this keeps stretched bonds (the radius grows as CN
+/// drops), matching xtb.
+fn detect_bonds(p: &Params, at: &[usize], xyz: &[[f64; 3]], qa: &[f64]) -> Vec<Vec<usize>> {
     let n = at.len();
-    let _ = cn;
+    let mut nbf = vec![Vec::new(); n];
+    for i in 0..n { for j in 0..i {
+        let r = dist2(xyz, i, j).sqrt();
+        let mut rco = p.gfnffrab(at[i], at[j],
+            p.normcn[at[i] - 1] as f64, p.normcn[at[j] - 1] as f64, 0.0);
+        rco -= (qa[i] + qa[j]) * p.rqshrink;
+        rco *= p.fat(at[i]) * p.fat(at[j]);
+        if r < p.rthr * rco { nbf[i].push(j); nbf[j].push(i); }
+    }}
     let mut nb = vec![Vec::new(); n];
     for i in 0..n { for j in 0..i {
-        let dx = xyz[i][0]-xyz[j][0]; let dy = xyz[i][1]-xyz[j][1]; let dz = xyz[i][2]-xyz[j][2];
-        let r = (dx*dx+dy*dy+dz*dz).sqrt() * BOHR; // -> Angstrom
-        let r0 = p.rcov[at[i]-1] + p.rcov[at[j]-1];
-        if r < 1.25 * r0 { nb[i].push(j); nb[j].push(i); }
+        if !nbf[i].contains(&j) { continue; }
+        let hc_i = if p.group[at[i] - 1] <= 2 { 4 } else { 6 };
+        let hc_j = if p.group[at[j] - 1] <= 2 { 4 } else { 6 };
+        if nbf[i].len() > hc_i || nbf[j].len() > hc_j { continue; }
+        nb[i].push(j); nb[j].push(i);
     }}
     nb
 }
 
-/// organic-subset hybridization (gfnff_ini2.F90 215-360)
-fn assign_hyb(at: &[usize], nb: &Vec<Vec<usize>>, _xyz: &[[f64; 3]], _qa: &Vec<f64>) -> Vec<i32> {
+fn sorted3(a: usize, b: usize, c: usize) -> Vec<usize> { let mut v = vec![a, b, c]; v.sort_unstable(); v }
+fn sorted4(a: usize, b: usize, c: usize, d: usize) -> Vec<usize> { let mut v = vec![a, b, c, d]; v.sort_unstable(); v }
+fn sorted5(a: usize, b: usize, c: usize, d: usize, e: usize) -> Vec<usize> { let mut v = vec![a, b, c, d, e]; v.sort_unstable(); v }
+fn sorted6(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> Vec<usize> { let mut v = vec![a, b, c, d, e, f]; v.sort_unstable(); v }
+fn add_ring(rings_all: &mut [Vec<Vec<usize>>], members: &[usize]) {
+    for &m in members {
+        if !rings_all[m].iter().any(|r| r == members) { rings_all[m].push(members.to_vec()); }
+    }
+}
+
+/// alpha-C=O torsion strengthening check (alphaCO, gfnff_ini2.F90):
+/// sp2 pi C (with one terminal pi O) bonded to an sp3 C
+fn alpha_co(at: &[usize], hyb: &[i32], nb: &[Vec<usize>], piadr: &[bool], a: usize, b: usize) -> bool {
+    let check = |x: usize, y: usize| -> bool {
+        if piadr[x] && hyb[y] == 3 && at[x] == 6 && at[y] == 6 {
+            let no = nb[x].iter()
+                .filter(|&&j| at[j] == 8 && piadr[j] && nb[j].len() == 1).count();
+            return no == 1;
+        }
+        false
+    };
+    check(a, b) || check(b, a)
+}
+
+/// aldehyde/carbonyl carbon check (ctype, gfnff_ini2.F90): pi C with one pi O
+fn is_aldehyde_c(at: &[usize], nb: &[Vec<usize>], piadr: &[bool], a: usize) -> bool {
+    if !piadr[a] || at[a] != 6 { return false; }
+    let no = nb[a].iter().filter(|&&j| at[j] == 8 && piadr[j]).count();
+    no == 1
+}
+
+/// smallest ring containing all three angle atoms (ringsbend, gfnff_ini2 557)
+fn ringsbend(topo_rings: &[Vec<Vec<usize>>], i: usize, j: usize, k: usize) -> usize {
+    let mut best = 99usize;
+    for rings in [topo_rings.get(i), topo_rings.get(j), topo_rings.get(k)] {
+        let Some(rings) = rings else { continue };
+        for r in rings {
+            if r.contains(&j) && r.contains(&k) && r.len() < best { best = r.len(); }
+        }
+    }
+    if best == 99 { 0 } else { best }
+}
+
+/// smallest ring containing the bond i-j (ringsbond, gfnff_ini2 531), 0 if none
+fn ringsbond(topo_rings: &[Vec<Vec<usize>>], i: usize, j: usize) -> usize {
+    let mut best = 99usize;
+    if let Some(rings) = topo_rings.get(i) {
+        for r in rings {
+            if r.contains(&j) && r.len() < best { best = r.len(); }
+        }
+    }
+    if best == 99 { 0 } else { best }
+}
+
+/// smallest (ringstors, gfnff_ini2 603) or largest (ringstorl, 667) ring
+/// containing ALL four torsion atoms, 0 if they share no ring
+fn ring_common(topo_rings: &[Vec<Vec<usize>>], atoms: [usize; 4], largest: bool) -> usize {
+    let mut best = if largest { 0usize } else { 99usize };
+    if let Some(rings) = topo_rings.get(atoms[0]) {
+        for r in rings {
+            if !atoms[1..].iter().all(|&a| r.contains(&a)) { continue; }
+            if largest { if r.len() > best { best = r.len(); } }
+            else if r.len() < best { best = r.len(); }
+        }
+    }
+    if !largest && best == 99 { 0 } else { best }
+}
+
+/// topology-dependent electronegativity corrections dxi (gfnff_ini.f90 391-447)
+fn compute_dxi(p: &Params, at: &[usize], nb: &[Vec<usize>], hyb: &[i32], piadr: &[bool]) -> Vec<f64> {
     let n = at.len();
-    let mut hyb = vec![0i32; n];
+    let mut dxi = vec![0.0f64; n];
     for i in 0..n {
         let z = at[i];
         let nn = nb[i].len();
-        let group = if z == 1 || z == 2 { z as i32 }
-            else if matches!(z, 5|6|7|8|9|14|15|16|17|33|34|35|51|52|53) {
-                // p-block: group = z - core
-                let core = if z <= 9 { 2 } else if z <= 18 { 10 } else if z <= 36 { 18 } else { 36 };
-                (z - core) as i32
-            } else if matches!(z, 13) { 3 } else { 0 };
-        match group {
-            1 => { if nn == 2 { hyb[i] = 1; } else if nn > 2 && nn <= 4 { hyb[i] = 3; } }
-            3 => { if nn >= 4 { hyb[i] = 3; } else if nn == 3 { hyb[i] = 2; } else if nn == 2 { hyb[i] = 1; } }
-            4 => {
-                if nn >= 4 { hyb[i] = 3; }
-                else if nn == 3 { hyb[i] = 2; }
-                else if nn == 2 {
-                    // geometry-dependent: angle < 150° -> carbene sp2 else sp
-                    let (a, b) = (nb[i][0], nb[i][1]);
-                    let va = [_xyz[a][0]-_xyz[i][0], _xyz[a][1]-_xyz[i][1], _xyz[a][2]-_xyz[i][2]];
-                    let vb = [_xyz[b][0]-_xyz[i][0], _xyz[b][1]-_xyz[i][1], _xyz[b][2]-_xyz[i][2]];
-                    let la = (va[0]*va[0]+va[1]*va[1]+va[2]*va[2]).sqrt();
-                    let lb = (vb[0]*vb[0]+vb[1]*vb[1]+vb[2]*vb[2]).sqrt();
-                    let cos = (va[0]*vb[0]+va[1]*vb[1]+va[2]*vb[2])/(la*lb);
-                    let phi = cos.clamp(-1.0,1.0).acos() * 180.0 / std::f64::consts::PI;
-                    hyb[i] = if phi < 150.0 { 2 } else { 1 };
-                }
-                else if nn == 1 { hyb[i] = 1; }
-            }
-            5 => {
-                if nn >= 4 { hyb[i] = 3; }
-                else if nn == 3 { hyb[i] = 3; }
-                else if nn == 2 { hyb[i] = 2; }
-                else { hyb[i] = 1; }
-            }
-            6 => {
-                if nn >= 3 { hyb[i] = 3; }
-                else if nn == 2 { hyb[i] = 3; }
-                else { hyb[i] = 2; }
-            }
-            7 => { hyb[i] = 1; }
-            _ => { hyb[i] = 0; }
+        let nh = nb[i].iter().filter(|&&j| at[j] == 1).count();
+        if nn == 0 { continue; }
+        if z == 5 { dxi[i] += nh as f64 * 0.015; }
+        // carbene C (xtb itag=1: bent 2-coordinate group 14)
+        if z == 6 && nn == 2 && hyb[i] == 2 { dxi[i] = -0.15; }
+        // free CO: C with nn=1 bonded to O with nn=1
+        if z == 6 && nn == 1 && at[nb[i][0]] == 8 && nb[nb[i][0]].len() == 1 {
+            dxi[i] = 0.15;
+        }
+        // nitro O: nn=1 bonded to pi N
+        if z == 8 && nn == 1 && at[nb[i][0]] == 7 && piadr[nb[i][0]] {
+            dxi[i] = 0.05;
+        }
+        if z == 8 && nn == 2 && nh == 2 { dxi[i] = -0.02; }
+        if p.group[z - 1] == 6 && nn > 2 { dxi[i] += nn as f64 * 0.005; }
+        if z == 8 || z == 16 { dxi[i] -= nh as f64 * 0.005; }
+        if p.group[z - 1] == 7 && z > 9 && nn > 1 { dxi[i] -= nn as f64 * 0.021; }
+    }
+    dxi
+}
+
+/// condense H charges onto their heavy neighbors (gfnff_ini2.F90 qheavy)
+fn qheavy(at: &[usize], nb: &[Vec<usize>], q: &mut [f64]) {
+    let qtmp = q.to_vec();
+    for (i, &z) in at.iter().enumerate() {
+        if z != 1 { continue; }
+        q[i] = 0.0;
+        for &k in &nb[i] {
+            q[k] += qtmp[i] / nb[i].len() as f64;
         }
     }
-    hyb
 }
 
 /// Floyd-Warshall topology distances via `rad` sums (gfnff_ini.f90 476-510)
-fn floyd_rabd(p: &Params, at: &[usize], nb: &Vec<Vec<usize>>) -> Vec<Vec<f64>> {
+fn floyd_rabd(p: &Params, at: &[usize], nb: &[Vec<usize>]) -> Vec<Vec<f64>> {
     let n = at.len();
     let cutoff = 13.0f64;
     let thr = 12.0f64;
@@ -2203,7 +3198,7 @@ fn floyd_rabd(p: &Params, at: &[usize], nb: &Vec<Vec<usize>>) -> Vec<Vec<f64>> {
 
 /// solve dense linear system by Gaussian elimination with partial pivoting
 /// (augmented-matrix form, no permutation bookkeeping)
-fn solve_sym(a: &Vec<Vec<f64>>, b: &Vec<f64>) -> Vec<f64> {
+fn solve_sym(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
     let n = b.len();
     let mut m: Vec<Vec<f64>> = a.iter().cloned().zip(b.iter()).map(|(r, &v)| {
         let mut row = r.clone(); row.push(v); row
@@ -2232,11 +3227,11 @@ fn solve_sym(a: &Vec<Vec<f64>>, b: &Vec<f64>) -> Vec<f64> {
 }
 
 /// EEQ solve: topology mode uses rabd distances, RHS with cnf*sqrt(min(nb,cnmax));
-/// returns charges q (goedeckera / goed_gfnff, gfnff_eg.f90 1758-1914)
+/// returns (charges q, ES energy) (goedeckera / goed_gfnff, gfnff_eg.f90 1758-1914)
 #[allow(clippy::too_many_arguments)]
-fn solve_eeq(p: &Params, at: &[usize], rabd: &Vec<Vec<f64>>, nb: &Vec<Vec<usize>>,
-             charge: f64, topology_mode: bool, _hyb: &Vec<i32>, dxi: &Vec<f64>,
-             fraglist: &Vec<usize>, qfrag: &Vec<f64>) -> Vec<f64> {
+fn solve_eeq(p: &Params, at: &[usize], rabd: &[Vec<f64>], nb: &[Vec<usize>],
+             charge: f64, topology_mode: bool, _hyb: &[i32], dxi: &[f64],
+             fraglist: &[usize], qfrag: &[f64]) -> (Vec<f64>, f64) {
     let n = at.len();
     let nfrag = qfrag.len();
     let m = n + nfrag;
@@ -2266,7 +3261,18 @@ fn solve_eeq(p: &Params, at: &[usize], rabd: &Vec<Vec<f64>>, nb: &Vec<Vec<usize>
         }
     }
     let q = solve_sym(&a, &x);
-    q[..n].to_vec()
+    // ES energy of the topology-charge distribution (goedeckera)
+    let mut es = 0.0f64;
+    for i in 0..n { for j in 0..i {
+        let r = p.rfgoed1 * rabd[i][j] / BOHR;
+        let g = 1.0 / (p.alp[at[i] - 1].powi(2) + p.alp[at[j] - 1].powi(2)).sqrt();
+        es += q[i] * q[j] * erf(g * r) / r;
+    }}
+    for i in 0..n {
+        es += -q[i] * x[i]
+            + q[i] * q[i] * 0.5 * (p.gam[at[i] - 1] + TSQRT2PI / p.alp[at[i] - 1]);
+    }
+    (q[..n].to_vec(), es)
 }
 
 // ---------------------------------------------------------------------------
@@ -2489,7 +3495,7 @@ mod tests_grad_debug {
         g.energy_and_gradient(&xyz, &mut grad);
         // verify against central finite differences on total energy
         let h = 1e-4;
-        let mut fd = vec![[0.0f64; 3]; 3];
+        let mut fd = [[0.0f64; 3]; 3];
         for a in 0..3 { for t in 0..3 {
             let mut p = xyz.to_vec(); p[a][t] += h;
             let mut m = xyz.to_vec(); m[a][t] -= h;
@@ -2555,10 +3561,10 @@ mod tests_optimize {
         let at = [8usize, 1, 1];
         let mut xyz = vec![[0.0, 0.0, 0.05], [0.0, 0.90, -0.55], [0.85, -0.35, -0.30]];
         let ff = GfnffForceField::new(&at, &xyz, 0.0);
-        let e0 = ff.energy_and_gradient(&xyz, &mut vec![[0.0; 3]; 3]);
+        let e0 = ff.energy_and_gradient(&xyz, &mut [[0.0; 3]; 3]);
         let mut grad = vec![[0.0f64; 3]; 3];
         let mut e = e0;
-        let mut step = 0.02f64;
+        let step = 0.02f64;
         for _ in 0..400 {
             e = ff.energy_and_gradient(&xyz, &mut grad);
             let gn: f64 = grad.iter().map(|v| v[0]*v[0]+v[1]*v[1]+v[2]*v[2]).sum::<f64>().sqrt();
@@ -2627,4 +3633,620 @@ mod tests_hb {
         println!("disp   {:+.9} (ref -0.000639207611)", e.disp);
         assert!(e.hb < -0.001, "hb should be attractive, got {}", e.hb);
     }
+}
+
+#[cfg(test)]
+mod tests_hbxb_review {
+    use super::*;
+
+    const EH_KCAL: f64 = 627.5094740631;
+
+    fn fd_total(g: &Gfnff, xyz: &[[f64; 3]], h: f64) -> Vec<[f64; 3]> {
+        let n = xyz.len();
+        let mut fd = vec![[0.0f64; 3]; n];
+        for a in 0..n { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            fd[a][t] = (g.energy(&p).total() - g.energy(&m).total()) * EH_KCAL / (2.0 * h);
+        }}
+        fd
+    }
+
+    fn check_consistency_and_fd(at: &[usize], xyz: &[[f64; 3]], name: &str) -> Gfnff {
+        let g = Gfnff::new(at, xyz, 0.0);
+        // energy() and energy_and_gradient() must agree exactly
+        let e1 = g.energy(xyz).total();
+        let mut grad = vec![[0.0f64; 3]; at.len()];
+        let ec = g.energy_and_gradient(xyz, &mut grad);
+        let e2 = ec.total();
+        assert!((e1 - e2).abs() < 1e-12, "{name}: energy()/gradient totals differ by {}", e1 - e2);
+        // analytic vs finite-difference gradient (kcal/mol/A)
+        let fd = fd_total(&g, xyz, 1e-4);
+        let mut worst = 0.0f64;
+        for a in 0..at.len() { for t in 0..3 {
+            worst = worst.max((grad[a][t] - fd[a][t]).abs());
+        }}
+        println!("{name}: E = {e1:.9} Eh, analytic-vs-FD max diff = {worst:.2e} kcal/mol/A");
+        assert!(worst < 5e-3, "{name}: gradient mismatch {worst}");
+        g
+    }
+
+    #[test]
+    fn improper_vs_xtb_formaldehyde() {
+        // planar-ish formaldehyde: xtb torsion = 0.000016144526 Eh (improper only)
+        let at = [6usize, 8, 1, 1];
+        let xyz = [[0.0,0.0,0.0],[1.25,0.0,0.0],[-0.6,0.93,0.05],[-0.6,-0.93,0.05]];
+        let g = check_consistency_and_fd(&at, &xyz, "formaldehyde planar");
+        let e = g.energy(&xyz);
+        println!("formaldehyde torsion {:+.9} (ref +0.000016144526)", e.torsion);
+        assert!((e.torsion - 1.6144526e-5).abs() < 2e-6, "tors off: {}", e.torsion);
+        // pyramidalized: xtb torsion = 0.000770759397 Eh
+        let xyz2 = [[0.0,0.0,-0.10],[1.25,0.0,-0.10],[-0.6,0.93,0.40],[-0.6,-0.93,0.40]];
+        let g2 = Gfnff::new(&at, &xyz2, 0.0);
+        let e2 = g2.energy(&xyz2);
+        println!("formaldehyde pyr  torsion {:+.9} (ref +0.000770759397)", e2.torsion);
+        assert!((e2.torsion - 7.70759397e-4).abs() < 2e-5, "tors off: {}", e2.torsion);
+        check_consistency_and_fd(&at, &xyz2, "formaldehyde pyr");
+    }
+
+    #[test]
+    fn water_dimer_vs_xtb() {
+        let at = [8usize, 1, 1, 8, 1, 1];
+        let xyz = [
+            [0.0, 0.0, 0.0], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692],
+            [0.0, 0.0, 2.926], [0.0, 0.24, 1.966], [0.93, 0.0, 3.166],
+        ];
+        let g = check_consistency_and_fd(&at, &xyz, "water dimer");
+        let e = g.energy(&xyz);
+        // xtb 6.7.1 --gfnff --verbose references (Eh)
+        println!("hb     {:+.9} (ref -0.003319534126)", e.hb);
+        println!("bond   {:+.9} (ref -0.543578922535)", e.bond);
+        println!("angle  {:+.9} (ref +0.007881102232)", e.angle);
+        println!("rep    {:+.9} (ref +0.089770304966)", e.rep);
+        println!("es     {:+.9} (ref -0.197202931636)", e.es);
+        println!("disp   {:+.9} (ref -0.000639207611)", e.disp);
+        assert!((e.hb - (-0.003319534126)).abs() < 2e-6, "hb off: {}", e.hb);
+        assert!((e.bond - (-0.543578922535)).abs() < 5e-8, "bond off: {}", e.bond);
+        assert!((e.angle - 0.007881102232).abs() < 1e-8, "angle off: {}", e.angle);
+        assert!((e.rep - 0.089770304966).abs() < 2e-7, "rep off: {}", e.rep);
+        assert!((e.es - (-0.197202931636)).abs() < 1e-7, "es off: {}", e.es);
+        assert!((e.disp - (-0.000639207611)).abs() < 1e-8, "disp off: {}", e.disp);
+        assert!(e.xb.abs() < 1e-10 && e.batm.abs() < 1e-10);
+    }
+
+    #[test]
+    fn butane_batm_vs_xtb() {
+        // RDKit-embedded anti-butane (physical H-H distances; xtb #BATM=90)
+        let at = [6usize,6,6,6, 1,1,1,1,1,1,1,1,1,1];
+        let xyz = [
+        [-1.577316, 0.462590, 0.022882],
+        [-0.552469, -0.313498, -0.789867],
+        [0.651782, -0.775632, 0.031048],
+        [1.501331, 0.370708, 0.557691],
+        [-1.170099, 1.413441, 0.378863],
+        [-1.912775, -0.116904, 0.888745],
+        [-2.453322, 0.687572, -0.593991],
+        [-0.215752, 0.300526, -1.633266],
+        [-1.042306, -1.196883, -1.216582],
+        [0.315587, -1.395398, 0.870447],
+        [1.280316, -1.413301, -0.601975],
+        [2.392587, -0.021542, 1.058030],
+        [0.952276, 0.975343, 1.285440],
+        [1.830160, 1.022979, -0.257466],
+        ];
+        let g = check_consistency_and_fd(&at, &xyz, "butane");
+        let e = g.energy(&xyz);
+        println!("batm   {:+.9} (ref -0.000468999264)", e.batm);
+        println!("tors   {:+.9} (ref -0.000226202544)", e.torsion);
+        println!("bond   {:+.9} (ref -2.057070881710)", e.bond);
+        println!("angle  {:+.9} (ref +0.001100976471)", e.angle);
+        println!("rep    {:+.9} (ref +0.108762095371)", e.rep);
+        println!("es     {:+.9} (ref -0.004146566502)", e.es);
+        println!("disp   {:+.9} (ref -0.005966004918)", e.disp);
+        assert!((e.batm - (-0.000468999264)).abs() < 3e-5, "batm off: {}", e.batm);
+        assert!((e.torsion - (-0.000226202544)).abs() < 2e-4, "tors off: {}", e.torsion);
+        assert!((e.rep - 0.108762095371).abs() < 2e-4, "rep off: {}", e.rep);
+        assert!(e.hb.abs() < 1e-10 && e.xb.abs() < 1e-10);
+    }
+
+    #[test]
+    fn xb_dimer_vs_xtb() {
+        // CH3-Cl ... NH3 halogen-bonded complex: xtb xb = -0.002670199865 Eh
+        let at = [6usize,1,1,1,17,7,1,1];
+        let xyz = [
+            [0.0,0.0,0.0],[-0.6,0.93,0.0],[-0.6,-0.93,0.0],[0.0,0.0,1.09],
+            [1.78,0.0,0.0],[4.60,0.0,0.0],[5.02,0.93,0.0],[5.02,-0.93,-0.75],
+        ];
+        let g = check_consistency_and_fd(&at, &xyz, "xb dimer");
+        let e = g.energy(&xyz);
+        println!("xb     {:+.9} (ref -0.002670199865)", e.xb);
+        assert!((e.xb - (-0.002670199865)).abs() < 2e-6, "xb off: {}", e.xb);
+    }
+
+    #[test]
+    fn benzene_hb_batm_vs_xtb() {
+        let at: Vec<usize> = [6usize; 6].into_iter().chain([1; 6]).collect();
+        let (r, rh) = (1.3970f64, 2.4810f64);
+        let mut xyz = Vec::new();
+        for k in 0..6 {
+            let a = k as f64 * std::f64::consts::PI / 3.0;
+            xyz.push([r*a.cos(), r*a.sin(), 0.0]);
+        }
+        for k in 0..6 {
+            let a = k as f64 * std::f64::consts::PI / 3.0;
+            xyz.push([rh*a.cos(), rh*a.sin(), 0.0]);
+        }
+        let g = check_consistency_and_fd(&at, &xyz, "benzene");
+        let e = g.energy(&xyz);
+        println!("hb     {:+.9} (ref 0.0)", e.hb);
+        println!("batm   {:+.9} (ref -0.003628901480)", e.batm);
+        println!("rep    {:+.9} (ref +0.145153049356)", e.rep);
+        assert!(e.hb.abs() < 1e-8, "benzene hb should vanish: {}", e.hb);
+        assert!((e.batm - (-0.003628901480)).abs() < 2e-5, "batm off: {}", e.batm);
+        assert!((e.rep - 0.145153049356).abs() < 2e-5, "rep off: {}", e.rep);
+    }
+}
+
+
+
+#[cfg(test)]
+mod tests_eg3 {
+    use super::*;
+
+    /// water donor H-bonded to formaldehyde C=O acceptor (eg3 carbonyl path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #[test]
+    fn water_stretch_bond_vs_xtb() {
+        // stretched O-H: the topology must KEEP the bond (gfnffrab detection
+        // radius grows as CN drops) and the runtime CN-dependent rab0 chain
+        // must match xtb exactly (regression for the old rcov*1.25 criterion
+        // which dropped the bond beyond ~1.15x stretch)
+        let at = [8usize, 1, 1];
+        let refs = [(1.0f64, -0.270029555436), (1.1, -0.260512049958),
+                    (1.15, -0.252677288024), (1.2, -0.242141045277),
+                    (1.25, -0.228673952893), (1.3, -0.211039977599)];
+        for (s, r) in refs {
+            let o = [0.0, 0.0, 0.1173];
+            let h1 = [0.0, 0.7572*s, o[2] + (-0.4692 - o[2])*s];
+            let xyz = [o, h1, [0.0, -0.7572, -0.4692]];
+            let g = Gfnff::new(&at, &xyz, 0.0);
+            let e = g.energy(&xyz);
+            println!("stretch {s}: bond {:+.9} (ref {r:+.9})", e.bond);
+            assert!((e.bond - r).abs() < 5e-7, "stretch {s} off: {}", e.bond - r);
+        }
+    }
+
+
+    #[test]
+    fn h2o_h2co_hb_vs_xtb() {
+        let at = [8usize, 6, 1, 1, 8, 1, 1, 1];
+        let xyz = [
+            [0.0, 0.0, 0.0], [1.23, 0.0, 0.0], [1.80, 0.93, 0.05], [1.80, -0.93, 0.05],
+            [-2.95, 0.18, 0.12], [-1.95, 0.05, 0.02], [-3.30, 0.85, 0.70], [-3.22, 0.30, -0.80],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        println!("hb     {:+.9} (ref -0.005787714291 for this perturbed geometry)", e.hb);
+        assert!((e.hb - (-0.005787714291)).abs() < 2e-6, "hb off: {}", e.hb);
+        // consistency + FD gradient
+        let e1 = g.energy(&xyz).total();
+        let mut grad = vec![[0.0f64; 3]; 8];
+        let e2 = g.energy_and_gradient(&xyz, &mut grad).total();
+        assert!((e1 - e2).abs() < 1e-12);
+        let h = 1e-4;
+        let mut worst = 0.0f64;
+        for a in 0..8 { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            let fd = (g.energy(&p).total() - g.energy(&m).total()) * 627.5094740631 / (2.0*h);
+            worst = worst.max((grad[a][t] - fd).abs());
+        }}
+        println!("h2o+h2co analytic-vs-FD max diff = {worst:.2e} kcal/mol/A");
+        assert!(worst < 5e-3, "gradient mismatch {worst}");
+    }
+}
+
+#[cfg(test)]
+mod tests_rnr {
+    use super::*;
+
+    /// water donor H-bonded to pyridine N (eg2_rnr lone-pair acceptor path)
+
+
+    #[test]
+    fn pyridine_water_hb_vs_xtb() {
+        // geometry committed as a fixture (RDKit pyridine + placed water;
+        // previously read from /tmp/gfnff_fix which broke fresh checkouts)
+        let xyz_str = include_str!("pyr_h2o.xyz");
+        let mut at = Vec::new();
+        let mut xyz = Vec::new();
+        for l in xyz_str.lines().skip(2) {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            if p.len() == 4 {
+                at.push(match p[0] { "N" => 7, "C" => 6, "H" => 1, "O" => 8, _ => panic!() });
+                xyz.push([p[1].parse().unwrap(), p[2].parse().unwrap(), p[3].parse().unwrap()]);
+            }
+        }
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        println!("hb     {:+.9} (ref -0.011372529656)", e.hb);
+        println!("bond   {:+.9} (ref -2.600581389665)", e.bond);
+        assert!((e.hb - (-0.011372529656)).abs() < 2e-6, "hb off: {}", e.hb);
+        // consistency + FD gradient
+        let e1 = g.energy(&xyz).total();
+        let mut grad = vec![[0.0f64; 3]; at.len()];
+        let e2 = g.energy_and_gradient(&xyz, &mut grad).total();
+        assert!((e1 - e2).abs() < 1e-12);
+        let h = 1e-4;
+        let mut worst = 0.0f64;
+        for a in 0..at.len() { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            let fd = (g.energy(&p).total() - g.energy(&m).total()) * 627.5094740631 / (2.0*h);
+            worst = worst.max((grad[a][t] - fd).abs());
+        }}
+        println!("pyr+h2o analytic-vs-FD max diff = {worst:.2e} kcal/mol/A");
+        assert!(worst < 5e-3, "gradient mismatch {worst}");
+    }
+}
+
+#[cfg(test)]
+mod tests_charged {
+    use super::*;
+
+    /// cyclopentadienyl anion: ipis must give the aromatic 6-electron pi
+    /// system (xtb: Hueckel ndim/Nel = 5/6) and the pibo-dependent bond
+    /// energies must match (gfnff_ini.f90 610-660, 1032)
+    #[test]
+    fn cp_anion_vs_xtb() {
+        let at: Vec<usize> = [6usize; 5].into_iter().chain([1; 5]).collect();
+        let (r, rh) = (1.4180f64, 2.5100f64);
+        let mut xyz = Vec::new();
+        for k in 0..5 { let a = 2.0*std::f64::consts::PI*k as f64/5.0; xyz.push([r*a.cos(), r*a.sin(), 0.0]); }
+        for k in 0..5 { let a = 2.0*std::f64::consts::PI*k as f64/5.0; xyz.push([rh*a.cos(), rh*a.sin(), 0.0]); }
+        let g = Gfnff::new(&at, &xyz, -1.0);
+        let e = g.energy(&xyz);
+        println!("piBO: {:?}", g.topo.pibo.iter().take(5).map(|v| (v*1000.0).round()/1000.0).collect::<Vec<_>>());
+        println!("bond {:+.9} (ref -1.740735892020)", e.bond);
+        println!("angle {:+.9} (ref +0.003442831114)", e.angle);
+        println!("rep   {:+.9} (ref +0.052093430260)", e.rep);
+        println!("es    {:+.9} (ref -1.093101347487)", e.es);
+        println!("disp  {:+.9} (ref -0.004866886660)", e.disp);
+        // aromatic: uniform pibo on all five C-C bonds (0.647 for the 6e/5c ring)
+        let cc_pibo: Vec<f64> = g.bonds.iter().enumerate()
+            .filter(|(_, b)| g.at[b.i] == 6 && g.at[b.j] == 6)
+            .map(|(bi_, _)| g.topo.pibo[bi_]).collect();
+        assert_eq!(cc_pibo.len(), 5);
+        for v in &cc_pibo {
+            assert!((v - cc_pibo[0]).abs() < 1e-6, "pibo not uniform: {cc_pibo:?}");
+        }
+        assert!((cc_pibo[0] - 0.6471).abs() < 0.005, "unexpected pibo: {}", cc_pibo[0]);
+        assert!((e.bond - (-1.740735892020)).abs() < 5e-6, "bond off: {}", e.bond);
+        assert!((e.angle - 0.003442831114).abs() < 5e-7, "angle off: {}", e.angle);
+        assert!((e.rep - 0.052093430260).abs() < 5e-7, "rep off: {}", e.rep);
+        assert!((e.es - (-1.093101347487)).abs() < 5e-6, "es off: {}", e.es);
+        assert!((e.disp - (-0.004866886660)).abs() < 5e-8, "disp off: {}", e.disp);
+        // consistency + FD
+        let e1 = g.energy(&xyz).total();
+        let mut grad = vec![[0.0f64; 3]; 10];
+        let e2 = g.energy_and_gradient(&xyz, &mut grad).total();
+        assert!((e1 - e2).abs() < 1e-12);
+        let h = 1e-4;
+        let mut worst = 0.0f64;
+        for a in 0..10 { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            let fd = (g.energy(&p).total() - g.energy(&m).total()) * 627.5094740631 / (2.0*h);
+            worst = worst.max((grad[a][t] - fd).abs());
+        }}
+        println!("Cp- analytic-vs-FD max diff = {worst:.2e} kcal/mol/A");
+        assert!(worst < 5e-3, "gradient mismatch {worst}");
+    }
+}
+
+#[cfg(test)]
+mod tests_more3 {
+    use super::*;
+
+    /// bond-detection drop point must match xtb bit-for-bit: the two-pass
+    /// qloop is self-consistent (pass 1 with qa=0 may drop a stretched bond;
+    /// the fragment-EEQ charges of the detached topology then make the O more
+    /// negative, and pass 2 re-adds the bond up to a slightly larger radius).
+    /// Both engines drop the O-H bond between s=1.360 and s=1.362, and the
+    /// C-H bond of methane between s=1.30 and s=1.33.
+    #[test]
+    fn bond_drop_point_vs_xtb() {
+        let at = [8usize, 1, 1];
+        let mk = |s: f64| {
+            let o = [0.0, 0.0, 0.1173];
+            let h1 = [0.0, 0.7572*s, o[2] + (-0.4692 - o[2])*s];
+            [o, h1, [0.0, -0.7572, -0.4692]]
+        };
+        assert_eq!(Gfnff::new(&at, &mk(1.360), 0.0).topo.nb[0].len(), 2, "1.360 should keep the bond");
+        assert_eq!(Gfnff::new(&at, &mk(1.362), 0.0).topo.nb[0].len(), 1, "1.362 should drop the bond");
+        // energy at the kept side (2-fragment-in-pass-1 -> re-added topology)
+        let xyz = mk(1.360);
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        assert!((e.bond - (-0.191709966972)).abs() < 5e-7, "bond off: {}", e.bond);
+        assert!((e.angle - 0.000242808539).abs() < 5e-8, "angle off: {}", e.angle);
+        assert!((e.rep - 0.015805484992).abs() < 5e-8, "rep off: {}", e.rep);
+        assert!((e.es - (-0.074017234818)).abs() < 5e-7, "es off: {}", e.es);
+        assert!((e.disp - (-0.000216335616)).abs() < 5e-8, "disp off: {}", e.disp);
+        // methane C-H drop window (xtb: kept at 1.30, dropped at 1.33)
+        let atc = [6usize, 1, 1, 1, 1];
+        let dirs = [[0.6287,0.6287,0.6287],[-0.6287,-0.6287,0.6287],
+                    [-0.6287,0.6287,-0.6287],[0.6287,-0.6287,-0.6287]];
+        let mkc = |s: f64| {
+            let mut v = vec![[0.0f64; 3]; 5];
+            for (k, d) in dirs.iter().enumerate() {
+                let f = if k == 0 { s } else { 1.0 };
+                v[k + 1] = [d[0]*f, d[1]*f, d[2]*f];
+            }
+            v
+        };
+        assert_eq!(Gfnff::new(&atc, &mkc(1.30), 0.0).topo.nb[0].len(), 4, "CH4 1.30 should keep");
+        assert_eq!(Gfnff::new(&atc, &mkc(1.33), 0.0).topo.nb[0].len(), 3, "CH4 1.33 should drop");
+    }
+
+
+    #[test]
+    fn dimer_detached_h_vs_xtb() {
+        let at = [8usize, 1, 1, 8, 1, 1];
+        let xyz = [
+            [0.0, 0.0, 0.0], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692],
+            [0.0, 0.0, 2.926], [0.0, 0.36, 1.486], [0.93, 0.0, 3.166],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        assert!((e.bond - (-0.448269805570)).abs() < 5e-7, "bond off: {}", e.bond);
+        assert!((e.angle - 0.007532830949).abs() < 5e-8, "angle off: {}", e.angle);
+        assert!(e.hb.abs() < 1e-10);
+        let mut grad = vec![[0.0f64; 3]; 6];
+        g.energy_and_gradient(&xyz, &mut grad);
+        let h = 1e-4;
+        let mut worst = 0.0f64;
+        for a in 0..6 { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            let fd = (g.energy(&p).total() - g.energy(&m).total()) * 627.5094740631 / (2.0*h);
+            worst = worst.max((grad[a][t] - fd).abs());
+        }}
+        assert!(worst < 5e-3);
+    }
+
+    /// nitromethane: nitro-N itag rules (hyb 2, no own pi electrons -> Nel=4),
+    /// N sp2 angle rules, batm — full breakdown vs xtb
+
+
+    #[test]
+    fn nitromethane_vs_xtb() {
+        let at = [6usize, 7, 8, 8, 1, 1, 1];
+        let xyz = [
+            [-0.650592, -0.038325, -0.049988], [0.830518, 0.048104, 0.056190],
+            [1.333901, 1.175720, -0.011249], [1.444713, -1.012128, 0.223923],
+            [-0.908120, -1.002198, -0.494252], [-0.998303, 0.778710, -0.685829],
+            [-1.052117, 0.050118, 0.961206],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        println!("hyb {:?} nitro {:?}", g.topo.hyb, g.topo.nitro_n);
+        println!("bond {:+.9} (ref -1.123587682615)", e.bond);
+        println!("angle {:+.9} (ref +0.001799964317)", e.angle);
+        println!("tors  {:+.9} (ref +0.000407238375)", e.torsion);
+        println!("rep   {:+.9} (ref +0.060515635197)", e.rep);
+        println!("es    {:+.9} (ref -0.074873994480)", e.es);
+        println!("disp  {:+.9} (ref -0.001929574796)", e.disp);
+        println!("batm  {:+.9} (ref -0.000180194341)", e.batm);
+        assert!(g.topo.nitro_n[1], "N not flagged as nitro");
+        assert!(matches!(g.topo.hyb[1], 2), "nitro N hyb should be 2");
+        assert!((e.bond - (-1.123587682615)).abs() < 5e-6, "bond off: {}", e.bond);
+        assert!((e.angle - 0.001799964317).abs() < 5e-7, "angle off: {}", e.angle);
+        assert!((e.torsion - 0.000407238375).abs() < 5e-7, "tors off: {}", e.torsion);
+        assert!((e.rep - 0.060515635197).abs() < 5e-7, "rep off: {}", e.rep);
+        assert!((e.es - (-0.074873994480)).abs() < 5e-7, "es off: {}", e.es);
+        assert!((e.disp - (-0.001929574796)).abs() < 5e-8, "disp off: {}", e.disp);
+        assert!((e.batm - (-0.000180194341)).abs() < 5e-7, "batm off: {}", e.batm);
+        // consistency + FD
+        let e1 = g.energy(&xyz).total();
+        let mut grad = vec![[0.0f64; 3]; 7];
+        let e2 = g.energy_and_gradient(&xyz, &mut grad).total();
+        assert!((e1 - e2).abs() < 1e-12);
+        let h = 1e-4;
+        let mut worst = 0.0f64;
+        for a in 0..7 { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            let fd = (g.energy(&p).total() - g.energy(&m).total()) * 627.5094740631 / (2.0*h);
+            worst = worst.max((grad[a][t] - fd).abs());
+        }}
+        println!("nitromethane FD max diff = {worst:.2e} kcal/mol/A");
+        assert!(worst < 5e-3);
+    }
+
+
+    /// ammonia: saturated-N improper (cos double well at 80 deg)
+    #[test]
+    fn nh3_improper_vs_xtb() {
+        let at = [7usize, 1, 1, 1];
+        let xyz = [
+            [0.0, 0.0, 0.0], [0.0, 0.9377, 0.3814],
+            [0.8121, -0.4688, 0.3814], [-0.8121, -0.4688, 0.3814],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        println!("torsion {:+.9} (ref +0.000028596109)", e.torsion);
+        assert!((e.torsion - 0.000028596109).abs() < 5e-8, "improper off: {}", e.torsion);
+        // consistency + FD
+        let e1 = g.energy(&xyz).total();
+        let mut grad = vec![[0.0f64; 3]; 4];
+        let e2 = g.energy_and_gradient(&xyz, &mut grad).total();
+        assert!((e1 - e2).abs() < 1e-12);
+        let h = 1e-4;
+        let mut worst = 0.0f64;
+        for a in 0..4 { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            let fd = (g.energy(&p).total() - g.energy(&m).total()) * 627.5094740631 / (2.0*h);
+            worst = worst.max((grad[a][t] - fd).abs());
+        }}
+        println!("NH3 FD max diff = {worst:.2e} kcal/mol/A");
+        assert!(worst < 5e-3);
+    }
+}
+
+#[cfg(test)]
+mod tests_ring3 {
+    use super::*;
+
+    /// methylcyclopropane: exercises the 3-ring-center + acyclic-neighbor
+    /// angle correction (xtb ringsj+ringsk.eq.102, i.e. sentinel-99 + 3;
+    /// regression for the initial port where ring_size's 0-for-acyclic made
+    /// the branch dead). xtb 6.7.1 --gfnff --verbose references (Eh).
+    #[test]
+    fn methylcyclopropane_vs_xtb() {
+        let at = [6usize, 6, 6, 6, 1, 1, 1, 1, 1, 1, 1, 1];
+        let xyz = [
+            [1.441100, 0.074800, -0.254100],
+            [0.154300, -0.020800, 0.509900],
+            [-1.005500, -0.806300, 0.007300],
+            [-1.080100, 0.680800, -0.061300],
+            [2.116900, 0.736500, 0.359200],
+            [1.306300, 0.649100, -1.204200],
+            [1.900400, -0.909000, -0.418600],
+            [0.266700, -0.065600, 1.615600],
+            [-1.663800, -1.360100, 0.723200],
+            [-0.829400, -1.361100, -0.911600],
+            [-0.981500, 1.115800, -1.067700],
+            [-1.625300, 1.265900, 0.702400],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        println!("bond  {:+.9} (ref -1.994328837257)", e.bond);
+        println!("angle {:+.9} (ref +0.045553364714)", e.angle);
+        println!("tors  {:+.9} (ref +0.007939436401)", e.torsion);
+        println!("rep   {:+.9} (ref +0.081124347742)", e.rep);
+        println!("es    {:+.9} (ref -0.003499883044)", e.es);
+        println!("disp  {:+.9} (ref -0.004866138639)", e.disp);
+        println!("batm  {:+.9} (ref -0.000131084366)", e.batm);
+        assert!((e.bond - (-1.994328837257)).abs() < 5e-6, "bond off: {}", e.bond);
+        // tight angle tolerance is what catches a dead 99+3 correction:
+        // several C-Cr-Cme / H-Cr-C angles get phi0 82->86 and shift ~1e-4 Eh
+        assert!((e.angle - 0.045553364714).abs() < 5e-7, "angle off: {}", e.angle);
+        assert!((e.torsion - 0.007939436401).abs() < 5e-7, "tors off: {}", e.torsion);
+        assert!((e.rep - 0.081124347742).abs() < 5e-7, "rep off: {}", e.rep);
+        assert!((e.es - (-0.003499883044)).abs() < 5e-7, "es off: {}", e.es);
+        assert!((e.disp - (-0.004866138639)).abs() < 5e-8, "disp off: {}", e.disp);
+        assert!((e.batm - (-0.000131084366)).abs() < 5e-7, "batm off: {}", e.batm);
+        // consistency + FD
+        let e1 = g.energy(&xyz).total();
+        let mut grad = vec![[0.0f64; 3]; 12];
+        let e2 = g.energy_and_gradient(&xyz, &mut grad).total();
+        assert!((e1 - e2).abs() < 1e-12);
+        let h = 1e-4;
+        let mut worst = 0.0f64;
+        for a in 0..12 { for t in 0..3 {
+            let mut p = xyz.to_vec(); p[a][t] += h;
+            let mut m = xyz.to_vec(); m[a][t] -= h;
+            let fd = (g.energy(&p).total() - g.energy(&m).total()) * 627.5094740631 / (2.0 * h);
+            worst = worst.max((grad[a][t] - fd).abs());
+        }}
+        println!("methylcyclopropane FD max diff = {worst:.2e} kcal/mol/A");
+        assert!(worst < 5e-3);
+    }
+}
+
+/// organic-subset hybridization (gfnff_ini2.F90 215-360), returning
+/// (hyb, nitro-N itag flags)
+fn angle_at(xyz: &[[f64; 3]], a: usize, b: usize, c: usize) -> f64 {
+    let v1 = [xyz[a][0]-xyz[b][0], xyz[a][1]-xyz[b][1], xyz[a][2]-xyz[b][2]];
+    let v2 = [xyz[c][0]-xyz[b][0], xyz[c][1]-xyz[b][1], xyz[c][2]-xyz[b][2]];
+    let cos = (v1[0]*v2[0]+v1[1]*v2[1]+v1[2]*v2[2])
+        / ((v1[0]*v1[0]+v1[1]*v1[1]+v1[2]*v1[2]).sqrt() * (v2[0]*v2[0]+v2[1]*v2[1]+v2[2]*v2[2]).sqrt());
+    cos.clamp(-1.0, 1.0).acos() * 180.0 / std::f64::consts::PI
+}
+
+fn assign_hyb(at: &[usize], nb: &[Vec<usize>], _xyz: &[[f64; 3]], _qa: &[f64]) -> (Vec<i32>, Vec<bool>) {
+    let n = at.len();
+    let mut hyb = vec![0i32; n];
+    let mut nitro_n = vec![false; n];
+    for i in 0..n {
+        let z = at[i];
+        let nn = nb[i].len();
+        let group = if z == 1 || z == 2 { z as i32 }
+            else if matches!(z, 5|6|7|8|9|14|15|16|17|33|34|35|51|52|53) {
+                let core = if z <= 9 { 2 } else if z <= 18 { 10 } else if z <= 36 { 18 } else { 36 };
+                (z - core) as i32
+            } else if matches!(z, 13) { 3 } else { 0 };
+        match group {
+            1 => { if nn == 2 { hyb[i] = 1; } else if nn > 2 && nn <= 4 { hyb[i] = 3; } }
+            3 => { if nn >= 4 { hyb[i] = 3; } else if nn == 3 { hyb[i] = 2; } else if nn == 2 { hyb[i] = 1; } }
+            4 => {
+                if nn >= 4 { hyb[i] = 3; }
+                else if nn == 3 { hyb[i] = 2; }
+                else if nn == 2 {
+                    let phi = angle_at(_xyz, nb[i][0], i, nb[i][1]);
+                    hyb[i] = if phi < 150.0 { 2 } else { 1 };
+                }
+                else if nn == 1 { hyb[i] = 1; }
+            }
+            5 => {
+                // N family (gfnff_ini2.F90 280-341)
+                if nn >= 4 { hyb[i] = 3; }
+                else if nn == 3 {
+                    hyb[i] = 3;
+                    if z == 7 {
+                        let kk = nb[i].iter().filter(|&&j| at[j] == 8 && nb[j].len() == 1).count();
+                        let ll = nb[i].iter().filter(|&&j| at[j] == 5 && nb[j].len() == 4).count();
+                        let ns = nb[i].iter().filter(|&&j| at[j] == 16 && nb[j].len() == 4).count();
+                        if ns == 1 && ll == 0 && kk == 0 { hyb[i] = 3; }
+                        if ll == 1 && ns == 0 { hyb[i] = 2; }
+                        if kk >= 1 { hyb[i] = 2; nitro_n[i] = true; }  // itag=1
+                    }
+                }
+                else if nn == 2 {
+                    hyb[i] = 2;
+                    let (ja, jb) = (nb[i][0], nb[i][1]);
+                    for j in [ja, jb] {
+                        if nb[j].len() == 1 && (at[j] == 6 || at[j] == 7) { hyb[i] = 1; }
+                    }
+                    if at[ja] == 7 && at[jb] == 7 && nb[ja].len() <= 2 && nb[jb].len() <= 2 { hyb[i] = 1; }
+                    if angle_at(_xyz, ja, i, jb) > 160.0 { hyb[i] = 1; }
+                }
+                else { hyb[i] = 1; }
+            }
+            6 => {
+                // O family (gfnff_ini2.F90 341-357)
+                if nn >= 2 { hyb[i] = 3; }
+                else {
+                    hyb[i] = 2;
+                    if let Some(&j) = nb[i].first() {
+                        if nb[j].len() == 1 { hyb[i] = 1; }   // CO / OH
+                    }
+                }
+            }
+            7 => { hyb[i] = if nn >= 2 { 5 } else { 1 }; }
+            _ => { hyb[i] = 0; }
+        }
+    }
+    (hyb, nitro_n)
 }
