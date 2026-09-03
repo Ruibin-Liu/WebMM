@@ -8,124 +8,185 @@
 <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"></script>
 <style>
   :root {
-    --bg: #0d1117; --surface: #161b22; --border: #30363d;
-    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950;
-    --red: #f85149; --orange: #d29922; --radius: 8px;
+    --bg: #070a12; --surface: rgba(14,20,32,0.72); --border: #1e2a3d;
+    --text: #e8eef7; --muted: #7f8ea6; --accent: #4cc2ff; --green: #4ade80;
+    --red: #ff4545; --violet: #b58cff; --amber: #fbbf24; --radius: 12px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { color-scheme: dark; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg); color: var(--text); line-height: 1.5;
+    background: radial-gradient(1200px 600px at 70% -10%, #101a2e 0%, var(--bg) 60%) fixed, var(--bg);
+    color: var(--text); line-height: 1.5; min-height: 100vh;
   }
-  /* Hero */
-  header {
-    padding: 40px 24px 24px; text-align: center;
-    background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
+  /* Sticky glass nav (shared with the playground) */
+  .topnav {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; gap: 18px;
+    padding: 12px 22px;
+    background: rgba(7,10,18,0.82); backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 2.4em; letter-spacing: -0.03em; margin-bottom: 6px; }
-  header h1 span { color: var(--accent); }
-  header .tagline { color: var(--muted); font-size: 1.1em; max-width: 620px; margin: 0 auto 20px; }
-  .badges { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .topnav .brand {
+    font-weight: 800; font-size: 1.15em; letter-spacing: -0.02em;
+    color: var(--text); text-decoration: none;
+  }
+  .topnav .brand span { color: var(--accent); text-shadow: 0 0 14px rgba(76,194,255,0.5); }
+  .topnav .links { margin-left: auto; display: flex; gap: 4px; }
+  .topnav .links a {
+    color: var(--muted); text-decoration: none; font-size: 0.88em;
+    padding: 6px 12px; border-radius: 8px; transition: color 0.15s, background 0.15s;
+  }
+  .topnav .links a:hover { color: var(--accent); background: rgba(76,194,255,0.08); }
+  .topnav .links a.active { color: var(--accent); background: rgba(76,194,255,0.12); }
+  /* Hero */
+  header.hero { text-align: center; padding: 46px 24px 30px; }
+  header.hero h1 { font-size: 2.6em; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 10px; }
+  header.hero h1 span {
+    background: linear-gradient(90deg, var(--accent), #8fdcff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  header.hero .tagline { color: var(--muted); font-size: 1.05em; max-width: 660px; margin: 0 auto 22px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 26px; }
   .badge {
     background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
     padding: 5px 14px; font-size: 0.82em; color: var(--muted);
   }
-  .badge strong { color: var(--green); }
+  .badge strong { color: var(--green); font-family: ui-monospace, monospace; }
+  .cta {
+    display: inline-block; padding: 13px 26px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), #2d9fe0); color: #00131f;
+    font-weight: 800; font-size: 1.0em; text-decoration: none;
+    box-shadow: 0 0 24px rgba(76,194,255,0.35);
+    transition: transform 0.12s, box-shadow 0.2s;
+  }
+  .cta:hover { transform: translateY(-2px); box-shadow: 0 0 38px rgba(76,194,255,0.55); }
   /* Main layout */
   main {
-    display: grid; grid-template-columns: 1fr 340px; gap: 16px;
-    padding: 16px; max-width: 1200px; margin: 0 auto;
+    display: grid; grid-template-columns: 1fr 340px; gap: 14px;
+    padding: 0 14px 16px; max-width: 1280px; margin: 0 auto;
   }
-  @media (max-width: 880px) { main { grid-template-columns: 1fr; } }
+  @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
   .panel {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 12px;
+    border-radius: var(--radius); padding: 14px; backdrop-filter: blur(10px);
   }
   /* Viewer */
   #viewer {
-    width: 100%; height: 400px; border-radius: 6px;
+    width: 100%; height: 480px; border-radius: 10px;
     background: #000; position: relative; overflow: hidden;
+    border: 1px solid #16202f;
+    box-shadow: inset 0 0 60px rgba(76,194,255,0.05), 0 0 40px rgba(76,194,255,0.06);
   }
   #viewer canvas { width: 100% !important; height: 100% !important; }
   .overlay {
-    position: absolute; top: 8px; left: 8px; z-index: 10;
-    background: rgba(0,0,0,0.7); border-radius: 6px; padding: 6px 10px;
-    font-size: 0.8em; font-family: monospace; color: var(--text);
-    pointer-events: none;
+    position: absolute; top: 10px; left: 10px; z-index: 10;
+    background: rgba(2,6,14,0.72); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 12px; font-size: 0.82em; font-family: ui-monospace, monospace;
+    color: var(--text); pointer-events: none; backdrop-filter: blur(4px);
   }
-  .overlay span { color: var(--accent); }
-  /* MD playback */
-  .playback { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .overlay span, .overlay b { color: var(--accent); }
+  /* Trajectory UI (hidden until the first MD/metad frame) */
+  #traj-ui { margin-top: 12px; }
+  .playback { display: flex; align-items: center; gap: 10px; }
   .playback button {
-    background: var(--border); color: var(--text); border: none; cursor: pointer;
-    width: 36px; height: 36px; border-radius: 6px; font-size: 1.1em;
+    background: #121a29; color: var(--text); border: 1px solid var(--border); cursor: pointer;
+    width: 36px; height: 36px; border-radius: 8px; font-size: 1.05em;
     display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s, transform 0.1s;
   }
-  .playback button:hover { background: #444c56; }
+  .playback button:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
   .playback button:disabled { opacity: 0.4; cursor: default; }
   .playback input[type=range] { flex: 1; accent-color: var(--accent); }
   .playback select {
-    background: var(--border); color: var(--text); border: none;
-    border-radius: 4px; padding: 4px 6px; font-size: 0.85em;
+    background: #121a29; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px; font-size: 0.85em;
   }
-  #chart { width: 100%; height: 80px; margin-top: 8px; border-radius: 4px; background: #0d1117; }
+  #chart, #fes-chart { width: 100%; border-radius: 8px; background: rgba(2,6,14,0.6); border: 1px solid #131c2b; }
+  #chart { height: 90px; margin-top: 10px; }
+  #fes-chart { height: 110px; margin-top: 10px; }
   .chart-legend { display: flex; gap: 14px; font-size: 0.75em; color: var(--muted); margin-top: 4px; }
-  .chart-legend span::before { content: '■ '; }
+  .chart-legend span::before { content: '\25A0 '; }
   .chart-legend .pe::before { color: var(--accent); }
   .chart-legend .temp::before { color: var(--red); }
+  .chart-legend .fes::before { color: var(--violet); }
   /* Controls */
-  .controls label { display: block; font-size: 0.8em; color: var(--muted); margin: 8px 0 3px; }
-  .presets { display: flex; flex-wrap: wrap; gap: 5px; }
+  .controls > label:first-child { margin-top: 0; }
+  .controls label { display: block; font-size: 0.78em; color: var(--muted); margin: 10px 0 4px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; }
   .presets button {
-    background: #21262d; color: var(--text); border: 1px solid var(--border);
-    border-radius: 14px; padding: 4px 10px; font-size: 0.78em; cursor: pointer;
+    background: rgba(18,26,41,0.8); color: var(--text); border: 1px solid var(--border);
+    border-radius: 16px; padding: 6px 13px; font-size: 0.8em; cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, transform 0.1s;
   }
-  .presets button:hover, .presets button.active { border-color: var(--accent); color: var(--accent); }
+  .presets button:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .presets button.active {
+    border-color: var(--accent); color: var(--accent);
+    background: rgba(76,194,255,0.1); box-shadow: 0 0 10px rgba(76,194,255,0.2);
+  }
   textarea {
-    width: 100%; height: 100px; background: #0d1117; color: var(--text);
-    border: 1px solid var(--border); border-radius: 6px; padding: 8px;
-    font-family: monospace; font-size: 0.75em; resize: vertical;
+    width: 100%; height: 110px; background: #0a0f1a; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+    font-family: ui-monospace, monospace; font-size: 0.72em; resize: vertical; margin-top: 8px;
   }
-  .actions { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
   button.action {
-    border: none; border-radius: 6px; padding: 10px; font-size: 0.9em;
-    cursor: pointer; font-weight: 600; transition: opacity 0.15s;
+    border: none; border-radius: 10px; padding: 12px; font-size: 0.92em;
+    cursor: pointer; font-weight: 700; transition: filter 0.15s, transform 0.1s;
   }
-  button.action:disabled { opacity: 0.5; cursor: wait; }
-  .btn-opt { background: var(--green); color: #000; }
-  .btn-md { background: var(--accent); color: #000; }
-  .btn-embed { background: var(--orange); color: #000; }
-  .btn-metad { background: #a371f7; color: #000; }
-  .opts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .opts-grid input {
-    background: #0d1117; color: var(--text); border: 1px solid var(--border);
-    border-radius: 4px; padding: 4px 6px; font-size: 0.85em; width: 100%;
+  button.action:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+  button.action:disabled { opacity: 0.45; cursor: wait; }
+  button.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-md { background: var(--accent); color: #00131f; }
+  .btn-opt { background: var(--green); color: #02130a; }
+  .btn-metad { background: var(--violet); color: #150826; }
+  .btn-embed { background: var(--amber); color: #1a1000; }
+  .opts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+  .opts-grid input, .opts-grid select {
+    background: #0a0f1a; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 7px; font-size: 0.85em; width: 100%;
   }
+  details { margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; transition: border-color 0.2s; }
+  details[open] { border-color: rgba(76,194,255,0.4); }
+  summary { cursor: pointer; font-size: 0.88em; color: var(--accent); font-weight: 600; }
+  summary:hover { text-shadow: 0 0 10px rgba(76,194,255,0.4); }
   .status {
-    padding: 8px 12px; border-radius: 6px; font-size: 0.85em; margin-top: 8px;
-    display: none;
+    padding: 9px 13px; border-radius: 10px; font-size: 0.84em; margin-top: 12px; display: none;
   }
   .status.show { display: block; }
-  .status.info { background: #1c2128; color: var(--accent); border: 1px solid var(--border); }
-  .status.success { background: #1a2332; color: var(--green); }
-  .status.error { background: #2d1517; color: var(--red); }
-  footer { text-align: center; padding: 30px; color: var(--muted); font-size: 0.85em; border-top: 1px solid var(--border); margin-top: 20px; }
+  .status.info { background: #0d1626; color: var(--accent); border: 1px solid var(--border); }
+  .status.success { background: #0a1f14; color: var(--green); border: 1px solid #14532d; }
+  .status.error { background: #260d0f; color: var(--red); border: 1px solid #5b1a1e; }
+  footer {
+    text-align: center; padding: 24px; color: var(--muted); font-size: 0.84em;
+    border-top: 1px solid var(--border); margin-top: 10px;
+  }
   footer a { color: var(--accent); text-decoration: none; }
-  .loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); font-size: 1.2em; }
+  footer a:hover { text-shadow: 0 0 10px rgba(76,194,255,0.4); }
+  .loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>Web<span>MM</span></h1>
-  <p class="tagline">MMFF94s force field, ETKDG embedding, geometry optimization, and molecular dynamics &mdash; all running in your browser via WebAssembly. No server, no API calls.</p>
+<nav class="topnav">
+  <a class="brand" href="index.html">Web<span>MM</span></a>
+  <div class="links">
+    <a href="index.html" class="active">Demo</a>
+    <a href="playground.html">Playground</a>
+    <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <h1>Molecular mechanics, <span>live in your browser</span></h1>
+  <p class="tagline">MMFF94s force field · ETKDG embedding · geometry optimization · MD &amp; metadynamics — compiled from Rust to WebAssembly. No server, no API calls.</p>
   <div class="badges">
     <div class="badge"><strong>230/230</strong> match RDKit</div>
     <div class="badge"><strong>~1.4&times;</strong> RDKit speed</div>
     <div class="badge"><strong>0</strong> server calls</div>
-    <div class="badge"><strong>+ MD</strong> engine</div>
+    <div class="badge"><strong>+MD</strong> &amp; metadynamics</div>
   </div>
+  <a class="cta" href="playground.html">🎮 Open the Playground — grab a molecule and feel the force field &rarr;</a>
 </header>
 
 <main>
@@ -134,66 +195,74 @@
       <div class="overlay" id="overlay">Loading WebAssembly…</div>
       <div class="loading" id="loading">Initializing…</div>
     </div>
-    <!-- MD playback -->
-    <div class="playback">
-      <button id="btn-prev" title="Previous frame" disabled>&#9664;</button>
-      <button id="btn-play" title="Play/pause" disabled>&#9658;</button>
-      <button id="btn-next" title="Next frame" disabled>&#9654;</button>
-      <input type="range" id="frame-slider" min="0" max="1" value="0" disabled>
-      <select id="speed">
-        <option value="15">15 fps</option>
-        <option value="30" selected>30 fps</option>
-        <option value="60">60 fps</option>
-      </select>
+    <!-- trajectory UI: hidden until the first MD/metad frame exists -->
+    <div id="traj-ui" style="display:none">
+      <div class="playback">
+        <button id="btn-prev" title="Previous frame" disabled>&#9664;</button>
+        <button id="btn-play" title="Play/pause" disabled>&#9658;</button>
+        <button id="btn-next" title="Next frame" disabled>&#9654;</button>
+        <input type="range" id="frame-slider" min="0" max="1" value="0" disabled>
+        <select id="speed">
+          <option value="15">15 fps</option>
+          <option value="30" selected>30 fps</option>
+          <option value="60">60 fps</option>
+        </select>
+      </div>
+      <canvas id="chart" width="760" height="90"></canvas>
+      <div class="chart-legend">
+        <span class="pe" id="legend-pe">Potential Energy</span>
+        <span class="temp" id="legend-temp">Temperature (K)</span>
+      </div>
+      <canvas id="fes-chart" width="760" height="110" style="display:none"></canvas>
+      <div class="chart-legend" id="fes-legend-row" style="display:none"><span class="fes" id="legend-fes">Free Energy Surface</span></div>
     </div>
-    <canvas id="chart" width="760" height="80"></canvas>
-    <div class="chart-legend">
-      <span class="pe" id="legend-pe">Potential Energy</span>
-      <span class="temp" id="legend-temp">Temperature (K)</span>
-    </div>
-    <canvas id="fes-chart" width="760" height="100" style="margin-top:8px"></canvas>
-    <div class="chart-legend"><span class="pe" id="legend-fes">Free Energy Surface</span></div>
   </div>
 
   <div class="panel controls">
-    <label>Molecules</label>
+    <label>Molecule</label>
     <div class="presets" id="presets"></div>
-    <label style="margin-top:10px">SDF Input</label>
-    <textarea id="sdf-input" spellcheck="false" placeholder="Paste an SDF here…"></textarea>
 
     <div class="actions">
-      <button class="action btn-opt" id="btn-optimize" disabled>⚙ Optimize (MMFF94s)</button>
-      <button class="action btn-md" id="btn-md" disabled>🔥 Run Molecular Dynamics</button>
-      <button class="action btn-metad" id="btn-metad" disabled>🔬 Run Metadynamics</button>
-      <button class="action btn-embed" id="btn-embed" disabled>🌐 Embed 3D (ETKDG)</button>
-    </div>
-
-    <label style="margin-top:12px">MD Options</label>
-    <div class="opts-grid">
-      <div><label>Steps</label><input type="number" id="md-steps" value="100000" min="100" step="100"></div>
-      <div><label>dt (fs)</label><input type="number" id="md-dt" value="1.0" min="0.1" step="0.1"></div>
-      <div><label>Temp (K)</label><input type="number" id="md-temp" value="300" min="0" step="10"></div>
-      <div><label>Friction (1/ps)</label><input type="number" id="md-friction" value="1.0" min="0" step="0.5"></div>
-      <div><label>Snapshot every</label><input type="number" id="md-snap" value="20" min="1" step="5"></div>
-      <div><label>Seed</label><input type="number" id="md-seed" value="42" min="0" step="1"></div>
+      <button class="action btn-md" id="btn-md" disabled>Run Molecular Dynamics</button>
+      <button class="action btn-opt" id="btn-optimize" disabled>Optimize (MMFF94s)</button>
+      <button class="action btn-metad" id="btn-metad" disabled>Run Metadynamics</button>
+      <button class="action btn-embed" id="btn-embed" disabled>Embed 3D (ETKDG)</button>
     </div>
 
     <div class="status" id="status"></div>
 
-    <label style="margin-top:8px">Metadynamics CV</label>
-    <div class="opts-grid">
-      <div><label>CV Type</label><select id="metad-cv-type" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px"><option>dihedral</option><option>distance</option></select></div>
-      <div><label>CV Atoms</label><input type="text" id="metad-cv-atoms" value="8,2,1,0"></div>
-      <div><label>Hill Height</label><input type="number" id="metad-hill-h" value="0.3" step="0.1"></div>
-      <div><label>Hill Width</label><input type="number" id="metad-hill-w" value="0.2" step="0.05"></div>
-      <div><label>Deposit Every</label><input type="number" id="metad-deposit" value="50" step="10"></div>
-      <div><label>Bias Factor γ</label><input type="number" id="metad-bias" value="10.0" step="1"></div>
-    </div>
+    <details>
+      <summary>Load your own (SDF / molblock)</summary>
+      <textarea id="sdf-input" spellcheck="false" placeholder="Paste a V2000 SDF / molblock here…"></textarea>
+    </details>
+
+    <details>
+      <summary>Advanced options</summary>
+      <label>MD Options</label>
+      <div class="opts-grid">
+        <div><label>Steps</label><input type="number" id="md-steps" value="100000" min="100" step="100"></div>
+        <div><label>dt (fs)</label><input type="number" id="md-dt" value="1.0" min="0.1" step="0.1"></div>
+        <div><label>Temp (K)</label><input type="number" id="md-temp" value="300" min="0" step="10"></div>
+        <div><label>Friction (1/ps)</label><input type="number" id="md-friction" value="1.0" min="0" step="0.5"></div>
+        <div><label>Snapshot every</label><input type="number" id="md-snap" value="20" min="1" step="5"></div>
+        <div><label>Seed</label><input type="number" id="md-seed" value="42" min="0" step="1"></div>
+      </div>
+      <label>Metadynamics CV</label>
+      <div class="opts-grid">
+        <div><label>CV Type</label><select id="metad-cv-type"><option>dihedral</option><option>distance</option></select></div>
+        <div><label>CV Atoms</label><input type="text" id="metad-cv-atoms" value="8,2,1,0"></div>
+        <div><label>Hill Height</label><input type="number" id="metad-hill-h" value="0.3" step="0.1"></div>
+        <div><label>Hill Width</label><input type="number" id="metad-hill-w" value="0.2" step="0.05"></div>
+        <div><label>Deposit Every</label><input type="number" id="metad-deposit" value="50" step="10"></div>
+        <div><label>Bias Factor γ</label><input type="number" id="metad-bias" value="10.0" step="1"></div>
+      </div>
+    </details>
   </div>
 </main>
 
 <footer>
-  WebMM &mdash; <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a> &mdash; Rust + WebAssembly + MMFF94s
+  <a href="index.html">Demo</a> · <a href="playground.html">Playground</a> · <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a><br>
+  WebMM &mdash; Rust + WebAssembly + MMFF94s · all physics runs entirely in your browser
 </footer>
 
 <script>
@@ -201,6 +270,7 @@ let wasm = null;
 let viewer = null;
 let currentSdf = null;
 let traj = null;       // {coords:Float64Array, energies:[], temps:[], times:[], nFrames, nAtoms}
+let alignRef = null;   // previous recorded frame (de-rotation reference)
 let playing = false;
 let playTimer = null;
 let currentFrame = 0;
@@ -289,6 +359,101 @@ function renderCoords(coords, sdf) {
   renderSdf(buildSdfFromCoords(coords, sdf));
 }
 
+// ---------------------------------------------------------------------------
+// Display de-rotation: the Langevin thermostat feeds the 3 rotational DOFs in
+// vacuum, so whole-body tumbling is real physics but distracting. Align each
+// recorded frame onto the previous one (mass-weighted Kabsch / Horn).
+// ---------------------------------------------------------------------------
+function rotVec(A, v) {
+  return [A[0]*v[0]+A[1]*v[1]+A[2]*v[2],
+          A[3]*v[0]+A[4]*v[1]+A[5]*v[2],
+          A[6]*v[0]+A[7]*v[1]+A[8]*v[2]];
+}
+function kabschAlign(p, q, w) {
+  const n = p.length / 3;
+  let sxx = 0, sxy = 0, sxz = 0, syx = 0, syy = 0, syz = 0, szx = 0, szy = 0, szz = 0;
+  for (let i = 0; i < n; i++) {
+    const wi = w[i], px = p[i*3], py = p[i*3+1], pz = p[i*3+2];
+    const qx = q[i*3], qy = q[i*3+1], qz = q[i*3+2];
+    sxx += wi*px*qx; sxy += wi*px*qy; sxz += wi*px*qz;
+    syx += wi*py*qx; syy += wi*py*qy; syz += wi*py*qz;
+    szx += wi*pz*qx; szy += wi*pz*qy; szz += wi*pz*qz;
+  }
+  const K = [
+    [sxx+syy+szz, syz-szy,     szx-sxz,     sxy-syx    ],
+    [syz-szy,     sxx-syy-szz, sxy+syx,     szx+sxz    ],
+    [szx-sxz,     sxy+syx,    -sxx+syy-szz, syz+szy    ],
+    [sxy-syx,     szx+sxz,     syz+szy,    -sxx-syy+szz],
+  ];
+  let v = [1, 0, 0, 0];
+  for (let it = 0; it < 30; it++) {
+    const nv = [0, 1, 2, 3].map(r => K[r][0]*v[0] + K[r][1]*v[1] + K[r][2]*v[2] + K[r][3]*v[3]);
+    const l = Math.hypot(...nv) || 1;
+    v = nv.map(x => x / l);
+  }
+  const [qw, qx, qy, qz] = v;
+  return [
+    1-2*(qy*qy+qz*qz), 2*(qx*qy-qz*qw),   2*(qx*qz+qy*qw),
+    2*(qx*qy+qz*qw),   1-2*(qx*qx+qz*qz), 2*(qy*qz-qx*qw),
+    2*(qx*qz-qy*qw),   2*(qy*qz+qx*qw),   1-2*(qx*qx+qy*qy),
+  ];
+}
+function mat3Mul(C, D) { // C·D, row-major 3×3
+  return [
+    C[0]*D[0]+C[1]*D[3]+C[2]*D[6], C[0]*D[1]+C[1]*D[4]+C[2]*D[7], C[0]*D[2]+C[1]*D[5]+C[2]*D[8],
+    C[3]*D[0]+C[4]*D[3]+C[5]*D[6], C[3]*D[1]+C[4]*D[4]+C[5]*D[7], C[3]*D[2]+C[4]*D[5]+C[5]*D[8],
+    C[6]*D[0]+C[7]*D[3]+C[8]*D[6], C[6]*D[1]+C[7]*D[4]+C[8]*D[7], C[6]*D[2]+C[7]*D[5]+C[8]*D[8],
+  ];
+}
+function orthonormalize(A) { // Gram-Schmidt on rows — keeps A a pure rotation
+  let r0 = [A[0], A[1], A[2]], r1 = [A[3], A[4], A[5]];
+  const n0 = Math.hypot(...r0); r0 = r0.map(x => x / n0);
+  const d = r1[0]*r0[0] + r1[1]*r0[1] + r1[2]*r0[2];
+  r1 = [r1[0]-d*r0[0], r1[1]-d*r0[1], r1[2]-d*r0[2]];
+  const n1 = Math.hypot(...r1); r1 = r1.map(x => x / n1);
+  const r2 = [r0[1]*r1[2]-r0[2]*r1[1], r0[2]*r1[0]-r0[0]*r1[2], r0[0]*r1[1]-r0[1]*r1[0]];
+  A[0]=r0[0];A[1]=r0[1];A[2]=r0[2];A[3]=r1[0];A[4]=r1[1];A[5]=r1[2];A[6]=r2[0];A[7]=r2[1];A[8]=r2[2];
+}
+// Center on COM, then remove whole-body rotation. Per-frame Kabsch is
+// noise-dominated (ballistic vibration leaks ~5°/frame at 300 K), so each
+// frame aligns to an EMA of past de-rotated frames (α=0.1 ≈ 10-frame memory):
+// the reference's vibration averages down and frames sharing one reference
+// cannot accumulate error (fixed-reference and windowed-rollover variants
+// both drift — measured offline + headless on the playground).
+let alignRot = IDENTITY3();
+function IDENTITY3() { return [1, 0, 0, 0, 1, 0, 0, 0, 1]; }
+function centerAndDerotate(raw, nA, masses) {
+  let cx = 0, cy = 0, cz = 0, tot = 0;
+  for (let a = 0; a < nA; a++) {
+    const m = masses[a];
+    cx += raw[a*3] * m; cy += raw[a*3+1] * m; cz += raw[a*3+2] * m; tot += m;
+  }
+  cx /= tot; cy /= tot; cz /= tot;
+  const centered = new Float64Array(nA * 3);
+  for (let a = 0; a < nA; a++) {
+    centered[a*3] = raw[a*3] - cx; centered[a*3+1] = raw[a*3+1] - cy; centered[a*3+2] = raw[a*3+2] - cz;
+  }
+  if (alignRef && alignRef.length === centered.length) {
+    const pre = new Float64Array(nA * 3);
+    for (let a = 0; a < nA; a++) {
+      const r = rotVec(alignRot, [centered[a*3], centered[a*3+1], centered[a*3+2]]);
+      pre[a*3] = r[0]; pre[a*3+1] = r[1]; pre[a*3+2] = r[2];
+    }
+    const B = kabschAlign(pre, alignRef, masses);
+    alignRot = mat3Mul(B, alignRot);
+    orthonormalize(alignRot);
+    for (let a = 0; a < nA; a++) {
+      const r = rotVec(alignRot, [centered[a*3], centered[a*3+1], centered[a*3+2]]);
+      centered[a*3] = r[0]; centered[a*3+1] = r[1]; centered[a*3+2] = r[2];
+    }
+    for (let j = 0; j < nA * 3; j++)
+      alignRef[j] = 0.9 * alignRef[j] + 0.1 * centered[j];
+  } else {
+    alignRef = Float64Array.from(centered);
+  }
+  return centered;
+}
+
 // Rebuild an SDF string with new coordinates from a flat [x0,y0,z0,...] array.
 // V2000 fixed columns: x[0,10) y[10,20) z[20,30) element[30,33); the rest of
 // each atom record (charge/mass/stereo) is preserved from the original line.
@@ -357,7 +522,7 @@ function runMD() {
       if (!state.success()) throw new Error(state.error());
       const nA = state.n_atoms();
       const myRun = ++runId;
-      disablePlayback(); traj = null;
+      disablePlayback(); traj = null; alignRef = null; alignRot = IDENTITY3();
       // ~120 displayed frames; >=20 fs per frame so the motion is clearly
       // visible. Short runs (<~20 ps) only vibrate in place at 300 K — the
       // 100 ps default shows methyl rotations / conformational motion.
@@ -367,19 +532,11 @@ function runMD() {
       const coordsArr = [], energies = [], temps = [], times = [];
       const masses = state.masses();
       // Vacuum runs drift (weakly damped COM diffusion) — display every frame
-      // centered on the center of mass so the molecule stays in view.
+      // COM-centered and de-rotated so the molecule stays in view, untumbled.
       const pushFrame = () => {
         if (myRun !== runId) return false;
-        const raw = state.coords();
-        let cx = 0, cy = 0, cz = 0, tot = 0;
-        for (let a = 0; a < nA; a++) {
-          const m = masses[a];
-          cx += raw[a*3] * m; cy += raw[a*3+1] * m; cz += raw[a*3+2] * m; tot += m;
-        }
-        cx /= tot; cy /= tot; cz /= tot;
-        for (let a = 0; a < nA; a++) {
-          coordsArr.push(raw[a*3] - cx, raw[a*3+1] - cy, raw[a*3+2] - cz);
-        }
+        const centered = centerAndDerotate(state.coords(), nA, masses);
+        for (let a = 0; a < nA * 3; a++) coordsArr.push(centered[a]);
         energies.push(state.potential_energy());
         temps.push(state.temperature());
         times.push(state.time_fs());
@@ -452,27 +609,19 @@ function runMetad() {
       if (!state.success()) throw new Error(state.error());
       const nA = state.n_atoms();
       const myRun = ++runId;
-      disablePlayback(); traj = null;
+      disablePlayback(); traj = null; alignRef = null; alignRot = IDENTITY3();
       const fps = parseInt(document.getElementById('speed').value) || 30;
       const chunk = Math.max(20, Math.ceil(nSteps / 120));
       const targetFrames = Math.ceil(nSteps / chunk);
       const coordsArr = [], energies = [], times = [], cvValues = [];
       const masses = state.masses();
       // Vacuum runs drift (weakly damped COM diffusion) — display every frame
-      // centered on the center of mass so the molecule stays in view.
+      // COM-centered and de-rotated so the molecule stays in view, untumbled.
       const fmtCv = v => cvType === 'distance' ? v.toFixed(2) + ' Å' : (v * 180 / Math.PI).toFixed(0) + '°';
       const pushFrame = () => {
         if (myRun !== runId) return false;
-        const raw = state.coords();
-        let cx = 0, cy = 0, cz = 0, tot = 0;
-        for (let a = 0; a < nA; a++) {
-          const m = masses[a];
-          cx += raw[a*3] * m; cy += raw[a*3+1] * m; cz += raw[a*3+2] * m; tot += m;
-        }
-        cx /= tot; cy /= tot; cz /= tot;
-        for (let a = 0; a < nA; a++) {
-          coordsArr.push(raw[a*3] - cx, raw[a*3+1] - cy, raw[a*3+2] - cz);
-        }
+        const centered = centerAndDerotate(state.coords(), nA, masses);
+        for (let a = 0; a < nA * 3; a++) coordsArr.push(centered[a]);
         energies.push(state.potential_energy());
         times.push(state.time_fs());
         cvValues.push(state.last_cv());
@@ -507,6 +656,8 @@ function runMetad() {
 
 function drawFES(fes_s, fes_f, hill_centers) {
   const cv = document.getElementById('fes-chart');
+  cv.style.display = 'block';
+  document.getElementById('fes-legend-row').style.display = 'flex';
   const ctx = cv.getContext('2d');
   const W = cv.width, H = cv.height;
   ctx.clearRect(0, 0, W, H);
@@ -524,9 +675,9 @@ function drawFES(fes_s, fes_f, hill_centers) {
     ctx.lineTo(x, y);
   }
   ctx.lineTo(W - pad, H - pad); ctx.closePath();
-  ctx.fillStyle = 'rgba(163,113,247,0.12)'; ctx.fill();
+  ctx.fillStyle = 'rgba(181,140,255,0.14)'; ctx.fill();
   // FES line
-  ctx.strokeStyle = '#a371f7'; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.strokeStyle = '#b58cff'; ctx.lineWidth = 2; ctx.beginPath();
   for (let i = 0; i < fes_s.length; i++) {
     const x = pad + (fes_s[i] - sMin) / sRange * (W - 2*pad);
     const y = H - pad - (fes_f[i] - fMin) / fRange * (H - 2*pad);
@@ -534,7 +685,7 @@ function drawFES(fes_s, fes_f, hill_centers) {
   }
   ctx.stroke();
   // hill centers as dots
-  ctx.fillStyle = '#f0883e';
+  ctx.fillStyle = '#fbbf24';
   for (const s of hill_centers) {
     const x = pad + (s - sMin) / sRange * (W - 2*pad);
     ctx.beginPath(); ctx.arc(x, H - pad, 1.5, 0, 2*Math.PI); ctx.fill();
@@ -557,6 +708,10 @@ function disablePlayback() {
   const sl = document.getElementById('frame-slider');
   sl.disabled = true; sl.max = 1; sl.value = 0;
   clearChart();
+  // back to the clean initial state: no trajectory, no charts
+  document.getElementById('traj-ui').style.display = 'none';
+  document.getElementById('fes-chart').style.display = 'none';
+  document.getElementById('fes-legend-row').style.display = 'none';
 }
 function togglePlay() {
   if (!traj) return;
@@ -578,6 +733,8 @@ function readouts() { updateReadouts(currentFrame); }
 
 function updateViewerFrame(frame) {
   if (!viewer || !traj || !currentSdf) return;
+  // a trajectory exists — reveal the playback/chart UI (once, idempotent)
+  document.getElementById('traj-ui').style.display = 'block';
   // 3Dmol 2.4 caches geometry: mutating atom positions + viewer.render()
   // does NOT update the canvas (verified: 0 px change after a 5 A shift).
   // Rebuild the model from THIS frame's coords instead — the camera is a
@@ -623,9 +780,9 @@ function drawChart() {
     }
     ctx.stroke();
   };
-  drawLine(traj.energies, traj.eMin, traj.eMax, '#58a6ff');
+  drawLine(traj.energies, traj.eMin, traj.eMax, '#4cc2ff');
   if (traj.temps && traj.temps.length > 0) {
-    drawLine(traj.temps, traj.tMin, traj.tMax, '#f85149');
+    drawLine(traj.temps, traj.tMin, traj.tMax, '#ff4545');
   }
   // cursor
   ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
