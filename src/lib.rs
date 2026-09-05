@@ -262,6 +262,102 @@ pub fn generate_initial_coordinates_wasm(sdf_content: &str) -> Result<ETKDGResul
     })
 }
 
+/// Batch ETKDG embedding for the conformer ensemble: n structures with
+/// seeds seed_base + i (diverse by construction; i=0 reproduces the
+/// single-structure export's seed 42 when seed_base = 42).
+#[wasm_bindgen]
+pub struct ConformerBatch {
+    coordinates: Vec<f64>,   // n_confs * n_atoms * 3, conformer-major
+    n_atoms: usize,
+    n_confs: usize,
+    success: bool,
+    error: String,
+}
+
+#[wasm_bindgen]
+impl ConformerBatch {
+    #[wasm_bindgen]
+    pub fn get_coordinates(&self) -> Vec<f64> {
+        self.coordinates.clone()
+    }
+
+    #[wasm_bindgen]
+    pub fn get_n_atoms(&self) -> usize {
+        self.n_atoms
+    }
+
+    #[wasm_bindgen]
+    pub fn get_n_confs(&self) -> usize {
+        self.n_confs
+    }
+
+    #[wasm_bindgen]
+    pub fn get_success(&self) -> bool {
+        self.success
+    }
+
+    #[wasm_bindgen]
+    pub fn get_error(&self) -> String {
+        self.error.clone()
+    }
+}
+
+#[wasm_bindgen]
+pub fn generate_conformers_wasm(sdf_content: &str, n: usize, seed_base: u64) -> ConformerBatch {
+    console_error_panic_hook::set_once();
+    if n == 0 || n > 500 {
+        return ConformerBatch {
+            coordinates: Vec::new(), n_atoms: 0, n_confs: 0, success: false,
+            error: format!("n must be in 1..=500, got {}", n),
+        };
+    }
+    let trimmed = sdf_content.trim();
+    if trimmed.is_empty() || trimmed.len() < 10 {
+        return ConformerBatch {
+            coordinates: Vec::new(), n_atoms: 0, n_confs: 0, success: false,
+            error: "Empty or invalid SDF content".to_string(),
+        };
+    }
+    let mol = match crate::molecule::parser::parse_sdf(trimmed) {
+        Ok(m) => m,
+        Err(e) => {
+            return ConformerBatch {
+                coordinates: Vec::new(), n_atoms: 0, n_confs: 0, success: false,
+                error: format!("Parse error: {}", e),
+            };
+        }
+    };
+
+    let mut coordinates = Vec::new();
+    let mut n_ok = 0usize;
+    for i in 0..n {
+        let config = crate::etkdg::ETKDGConfig {
+            random_seed: (seed_base + i as u64) as i64,
+            ..Default::default()
+        };
+        let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &config);
+        if coords.is_empty() {
+            continue; // embedding failed for this seed; skip
+        }
+        for c in &coords {
+            coordinates.extend_from_slice(c);
+        }
+        n_ok += 1;
+    }
+    let n_atoms_out = if n_ok > 0 { coordinates.len() / (3 * n_ok) } else { 0 };
+    ConformerBatch {
+        coordinates,
+        n_atoms: n_atoms_out,
+        n_confs: n_ok,
+        success: n_ok > 0,
+        error: if n_ok == 0 {
+            "All embeddings failed".to_string()
+        } else {
+            String::new()
+        },
+    }
+}
+
 /// Shared engine dispatch: optimize + per-term breakdown (kcal/mol) at the
 /// final geometry. Returns (optimizer result, terms JSON, engine label).
 fn optimize_dispatch(
@@ -1260,6 +1356,59 @@ impl MetaDLive {
             Some(m) => m.free_energy_surface(&s),
             None => Vec::new(),
         }
+    }
+}
+
+/// Conformer batch embedding: seeds differ → structures differ (M2)
+#[cfg(test)]
+mod conformer_batch_tests {
+    use super::*;
+
+    fn rmsd(a: &[f64], b: &[f64]) -> f64 {
+        // heavy-atom-free quick check: raw coordinate deviation (same atom
+        // order, no alignment) — diverse embeddings differ by >> 0.1 A even
+        // unaligned on the largest excursions; use max |d| as the metric
+        a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).fold(0.0f64, f64::max)
+    }
+
+    const ETHANOL_SDF: &str = "ethanol\n  test\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n\
+    0.8867    0.1097    0.1398 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -0.4649   -0.1632   -0.4871 C   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -1.4909    0.4041    0.2927 O   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    1.0600    1.1872    0.2278 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    1.6800   -0.3300   -0.4500 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
+    0.9343   -0.3042    1.0520 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -0.5119    0.2500   -1.4970 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -1.0630   -1.0663   -0.6857 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
+   -1.7063   -0.3065    0.9326 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
+  1  2  1  0\n  2  3  1  0\n  1  4  1  0\n  1  5  1  0\n  1  6  1  0\n  2  7  1  0\n  2  8  1  0\n  3  9  1  0\nM  END";
+
+    #[test]
+    fn conformer_batch_diversity_and_reproducibility() {
+        let batch = generate_conformers_wasm(ETHANOL_SDF, 4, 42);
+        assert!(batch.get_success(), "batch failed: {}", batch.get_error());
+        assert_eq!(batch.get_n_confs(), 4);
+        assert_eq!(batch.get_n_atoms(), 9);
+        let c = batch.get_coordinates();
+        assert_eq!(c.len(), 4 * 9 * 3);
+        // reproducibility: same seed_base → identical output
+        let again = generate_conformers_wasm(ETHANOL_SDF, 4, 42);
+        assert!(c.iter().zip(again.get_coordinates().iter()).all(|(a, b)| (a - b).abs() < 1e-12));
+        // diversity: pairwise max-coordinate deviation between different seeds
+        let n = 9 * 3;
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                let d = rmsd(&c[i * n..(i + 1) * n], &c[j * n..(j + 1) * n]);
+                assert!(d > 0.1, "conformers {} and {} nearly identical (max dev {:.3})", i, j, d);
+            }
+        }
+        // seed_base 42, i=0 reproduces the single-structure export (seed 42)
+        let single = generate_initial_coordinates_wasm(ETHANOL_SDF).unwrap();
+        let d0 = rmsd(&c[0..n], &single.get_coordinates());
+        assert!(d0 < 1e-9, "conf 0 (seed 42) != single-structure embed (dev {:.3})", d0);
+        // invalid n rejected
+        assert!(!generate_conformers_wasm(ETHANOL_SDF, 0, 42).get_success());
+        assert!(!generate_conformers_wasm(ETHANOL_SDF, 501, 42).get_success());
     }
 }
 
