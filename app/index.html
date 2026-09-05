@@ -1,0 +1,1823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebMM Workbench</title>
+<meta name="description" content="A lightweight, ligand-based CADD workbench: draw, inspect, embed 3D, optimize, and enumerate conformers — all locally in your browser. Powered by RDKit, JSME, and the WebMM force-field engine.">
+<meta name="keywords" content="WebMM, molecular mechanics, CADD, conformers, ETKDG, MMFF94, GFN-FF, SMILES, JSME, RDKit, molecular properties, browser cheminformatics">
+<script defer src="vendor/jsme/jsme/jsme.nocache.js"></script>
+<script src="vendor/3Dmol-min.js"></script>
+<style>
+:root {
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --good: #166534;
+  --bad: #b91c1c;
+}
+
+ * { box-sizing: border-box; }
+
+ body {
+   margin: 0;
+   background: var(--bg);
+   color: var(--text);
+   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                Roboto, Helvetica, Arial, sans-serif;
+ }
+
+ .container {
+   max-width: 1100px;
+   margin: 2.5rem auto;
+   padding: 0 1.5rem;
+ }
+
+ header {
+   margin-bottom: 1.5rem;
+ }
+
+ h1 {
+   font-size: 1.5rem;
+   margin: 0;
+   font-weight: 600;
+ }
+
+ .subtitle {
+   color: var(--muted);
+   margin-top: 0.25rem;
+   font-size: 0.95rem;
+ }
+
+ .version {
+   color: var(--muted);
+   margin-top: 0.5rem;
+   font-size: 0.8rem;
+   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+ }
+
+ .badges {
+   margin-top: 0.75rem;
+   display: flex;
+   gap: 0.75rem;
+   flex-wrap: wrap;
+ }
+
+ .badge {
+   display: inline-flex;
+   align-items: center;
+   padding: 0.35rem 0.65rem;
+   border-radius: 6px;
+   background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+   color: var(--text);
+   font-size: 0.75rem;
+   font-weight: 500;
+   border: 1px solid var(--border);
+   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+   text-decoration: none;
+   transition: all 0.15s ease;
+ }
+
+ .badge:hover {
+   transform: translateY(-1px);
+   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+   border-color: var(--accent);
+ }
+
+ .badge svg {
+   width: 13px;
+   height: 13px;
+   margin-right: 5px;
+   border: none;
+   background: transparent;
+ }
+
+ .result-badge {
+   display: inline-block;
+   padding: 0.25rem 0.5rem;
+   border-radius: 4px;
+   font-size: 0.75rem;
+   font-weight: 500;
+ }
+
+ .result-badge.pass {
+   background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+   color: #166534;
+ }
+
+ .result-badge.fail {
+   background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+   color: #b91c1c;
+ }
+
+ .modal {
+   display: none;
+   position: fixed;
+   top: 0;
+   left: 0;
+   width: 100%;
+   height: 100%;
+   background: rgba(0,0,0,0.5);
+   z-index: 1000;
+ }
+
+ .modal-content {
+   position: relative;
+   width: 90%;
+   max-width: 900px;
+   max-height: 90%;
+   margin: 2rem auto;
+   background: #fff;
+   border-radius: 10px;
+   display: flex;
+   flex-direction: column;
+ }
+
+ .modal-header {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   padding: 1rem 1.5rem;
+   border-bottom: 1px solid var(--border);
+ }
+
+ .modal-header h2 {
+   margin: 0;
+   font-size: 1.1rem;
+   font-weight: 600;
+ }
+
+   .modal-header .close-btn {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0 0.5rem;
+      line-height: 1;
+      color: var(--text);
+   }
+
+   .modal-header .action-btn {
+      font-size: 0.85rem;
+   }
+
+ .modal-header .copy-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+ .modal-header .copy-btn:hover {
+    background: #1d4ed8;
+  }
+
+ .modal-body {
+   flex: 1;
+   overflow: auto;
+   padding: 1.5rem;
+ }
+
+ .modal-body pre {
+   margin: 0;
+   white-space: pre-wrap;
+   word-wrap: break-word;
+   font-size: 0.8rem;
+   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+ }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  padding: 0.65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+  .controls {
+   margin-top: 0.75rem;
+   display: grid;
+   grid-template-columns: repeat(2, 1fr);
+   gap: 0.5rem;
+  }
+
+  .controls button {
+   display: inline-flex;
+   align-items: center;
+   gap: 4px;
+  }
+
+  .controls button svg {
+   width: 14px;
+   height: 14px;
+  }
+
+ button {
+   appearance: none;
+   border: 1px solid var(--border);
+   background: #fff;
+   color: var(--text);
+   padding: 0.4rem 0.7rem;
+   border-radius: 8px;
+   font-size: 0.85rem;
+   cursor: pointer;
+   width: auto;
+ }
+
+ button.primary {
+   background: var(--accent);
+   color: #fff;
+   border-color: var(--accent);
+ }
+
+ button:hover {
+   background: #f8fafc;
+   border-color: var(--accent);
+ }
+
+ button:active {
+   transform: translateY(1px);
+ }
+
+ button:disabled {
+   opacity: 0.6;
+   cursor: not-allowed;
+ }
+
+  button.copied {
+    background: #22c55e;
+    color: #fff;
+    border-color: #22c55e;
+  }
+
+  #historyList > div {
+    position: relative;
+  }
+
+  #historyList > div:hover {
+    background: #f8fafc;
+    border-color: var(--accent);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+
+  .history-item-delete {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    color: var(--muted);
+  }
+
+  #historyList > div:hover .history-item-delete {
+    opacity: 1;
+  }
+
+  .history-item-delete:hover {
+    background: #fee2e2;
+    color: #dc2626;
+  }
+
+  #historyList > div > div {
+    padding-right: 1.5rem;
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    width: 110px;
+  }
+
+  .action-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .action-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  }
+
+  .action-btn:active {
+    transform: translateY(0);
+  }
+
+  .action-btn.edit {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border-color: #3b82f6;
+    color: #1d4ed8;
+  }
+
+  .action-btn.edit:hover {
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+    border-color: #2563eb;
+  }
+
+  .action-btn.clear {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border-color: #ef4444;
+    color: #dc2626;
+  }
+
+  .action-btn.clear:hover {
+    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+    border-color: #dc2626;
+  }
+
+  .action-btn.history {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    border-color: #22c55e;
+    color: #16a34a;
+  }
+
+  .action-btn.history:hover {
+    background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+    border-color: #16a34a;
+  }
+
+  .action-btn.export {
+    background: linear-gradient(135deg, #fef9c3 0%, #fef08a 100%);
+    border-color: #eab308;
+    color: #ca8a04;
+  }
+
+  .action-btn.export:hover {
+    background: linear-gradient(135deg, #fef08a 0%, #fde047 100%);
+    border-color: #ca8a04;
+  }
+
+  /* 3D Structure actions (WebMM engine, wired in M1) */
+  .action-btn.spatial {
+    background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+    border-color: #8b5cf6;
+    color: #6d28d9;
+  }
+
+  .action-btn.spatial:hover {
+    background: linear-gradient(135deg, #ede9fe 0%, #ddd6fe 100%);
+    border-color: #7c3aed;
+  }
+
+  .engine-sel {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    padding: 0.4rem 0.7rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .engine-sel:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  /* 3D Structure viewer placeholder */
+  #viewer3d {
+    position: relative;          /* anchor 3Dmol's absolutely-positioned canvas */
+    width: 100%;
+    height: 420px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background:
+      linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .spiral-note {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 0.5rem;
+  }
+
+  .drop {
+   margin-top: 0.75rem;
+   border: 1px dashed var(--border);
+   border-radius: 8px;
+   padding: 0.6rem;
+   font-size: 0.8rem;
+   color: var(--muted);
+   text-align: center;
+   margin-bottom: 1rem;
+  }
+
+  .separator {
+   margin-top: 0.75rem;
+   margin-bottom: 0.75rem;
+   text-align: center;
+   font-size: 0.75rem;
+   color: var(--muted);
+  }
+
+#error {
+  margin-top: 0.75rem;
+  color: var(--bad);
+  white-space: pre-wrap;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+ #svg svg {
+   width: 100%;
+   max-width: 100%;
+   border: 1px solid var(--border);
+   border-radius: 6px;
+   background: #fff;
+   display: block;
+ }
+
+ #svg {
+   width: 100%;
+ }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+td {
+  padding: 0.25rem 0.35rem;
+  vertical-align: top;
+}
+
+td.key {
+  color: var(--muted);
+  width: 45%;
+}
+
+td.value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
+.good { color: var(--good); font-weight: 500; }
+.bad  { color: var(--bad);  font-weight: 500; }
+
+details {
+  margin-top: 0.75rem;
+}
+
+  pre {
+    background: #f1f5f9;
+    border-radius: 6px;
+    padding: 0.5rem;
+    overflow-x: auto;
+    font-size: 0.8rem;
+  }
+
+  .copyright {
+    text-align: center;
+    padding: 2rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin-top: auto;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+ <header>
+   <h1>WebMM Workbench</h1>
+    <div class="subtitle">
+      A lightweight, ligand-based CADD workbench — draw, inspect, embed 3D, optimize, and enumerate conformers, all locally in your browser
+    </div>
+   <div class="badges">
+     <span class="badge" title="All processing happens in your browser - no data sent anywhere">
+       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+         <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+       </svg>
+       Runs Locally
+     </span>
+     <span class="badge" onclick="viewSource()" title="View HTML source">
+       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+         <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+       </svg>
+       View Source
+     </span>
+     <a class="badge" href="../site/index.html" title="Interactive MD &amp; metadynamics demo (separate page)">
+       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+       </svg>
+       WebMM Demo
+     </a>
+     <a class="badge" href="../site/playground.html" title="Interactive playground — drag atoms, twist bonds, run live MD">
+       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+         <circle cx="12" cy="12" r="10"/>
+         <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+         <line x1="12" y1="17" x2="12.01" y2="17"/>
+       </svg>
+       Playground
+     </a>
+   </div>
+   <div class="version">RDKit version: <span id="rdkitVersion">Loading...</span> · engine: <span id="engineVersion">M1</span></div>
+ </header>
+
+<div class="panel">
+  <textarea id="input" placeholder="Paste SMILES, MolBlock, or SDF here"></textarea>
+
+  <div class="separator">-- or --</div>
+
+   <div class="drop" id="drop">
+     Drag & drop MOL / SDF / TXT files here
+   </div>
+
+     <div class="action-buttons">
+      <button onclick="openJSME()" class="action-btn edit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+        </svg>
+        Draw/Edit
+      </button>
+      <button onclick="clearAll()" class="action-btn clear">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="3,6 5,6 21,6"/>
+          <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/>
+        </svg>
+        Clear
+      </button>
+      <button onclick="showHistory()" class="action-btn history">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12,6 12,12 16,14"/>
+        </svg>
+        History
+      </button>
+    </div>
+
+  <div id="error"></div>
+</div>
+
+<div id="output" style="display:none">
+
+   <div class="panel grid">
+     <div>
+         <strong>2D Structure</strong>
+         <div id="svg" style="margin-top:0.75rem; margin-bottom:0.75rem;"></div>
+         <div class="controls">
+           <button onclick="downloadSVG()">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+               <polyline points="7,10 12,15 17,10"/>
+               <line x1="12" y1="15" x2="12" y2="3"/>
+             </svg>
+             Download SVG
+           </button>
+           <button onclick="downloadPNG()">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+               <polyline points="7,10 12,15 17,10"/>
+               <line x1="12" y1="15" x2="12" y2="3"/>
+             </svg>
+             Download PNG
+           </button>
+           <button onclick="copySVG()">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+             </svg>
+             Copy SVG
+           </button>
+           <button onclick="copyShareLink()">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+             </svg>
+             Share link
+           </button>
+         </div>
+       </div>
+
+      <div>
+        <strong>Properties</strong>
+        <table id="props"></table>
+
+        <details>
+          <summary>More Properties</summary>
+          <table id="moreProps"></table>
+        </details>
+
+        <br>
+        <strong>Rules</strong>
+        <table id="rules"></table>
+
+        <details>
+          <summary>More Rules</summary>
+          <table id="moreRules"></table>
+        </details>
+      </div>
+  </div>
+
+   <div class="panel">
+     <strong>3D Structure</strong>
+     <div id="viewer3d" style="margin-top:0.75rem;">
+       Embed a 3D structure to begin (ETKDG)
+     </div>
+     <div class="action-buttons">
+       <button id="btnEmbed" class="action-btn spatial" onclick="embed3D()" disabled title="ETKDG distance-geometry embedding">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+           <path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/>
+           <path d="M12 11l8-4.5M12 11v9M12 11L4 6.5"/>
+         </svg>
+         Embed 3D
+       </button>
+       <select id="engineSel" class="engine-sel" title="Force-field engine">
+         <option value="MMFF94s" selected>MMFF94s</option>
+         <option value="MMFF94">MMFF94</option>
+         <option value="GFNFF">GFN-FF</option>
+       </select>
+       <button id="btnOpt" class="action-btn spatial" onclick="optimize3D()" disabled title="L-BFGS geometry optimization">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+           <polyline points="23 4 23 10 17 10"/>
+           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+         </svg>
+         Optimize
+       </button>
+       <button id="btnConf" class="action-btn spatial" onclick="showError('Conformer ensemble arrives in M2 — see PLAN.md')" disabled title="M2">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+           <circle cx="6" cy="6" r="3"/>
+           <circle cx="18" cy="6" r="3"/>
+           <circle cx="12" cy="17" r="3"/>
+         </svg>
+         Conformers
+       </button>
+       <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled>
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+           <polyline points="7,10 12,15 17,10"/>
+           <line x1="12" y1="15" x2="12" y2="3"/>
+         </svg>
+         Export SDF
+       </button>
+       <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled>XYZ</button>
+       <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled>PNG</button>
+     </div>
+     <div id="status3d" class="version" style="margin-top:0.5rem;">Engine loading…</div>
+     <div id="energyPanel" style="display:none; margin-top:0.75rem;">
+       <strong>WebMM Energy (kcal/mol)</strong>
+       <table id="eterms"></table>
+     </div>
+     <div class="spiral-note">
+       Interactive MD &amp; metadynamics live in the <a href="../site/playground.html">Playground</a> and <a href="../site/index.html">Demo</a> pages.
+     </div>
+   </div>
+
+   <div class="panel">
+     <table>
+       <tr>
+         <td class="key">Name</td>
+         <td class="value" id="name"></td>
+       </tr>
+     </table>
+
+     <strong>Representations</strong>
+    <table>
+      <tr>
+        <td class="key">Canonical SMILES</td>
+        <td class="value" id="smiles"></td>
+        <td><button onclick="copy('smiles')">Copy</button></td>
+      </tr>
+      <tr>
+        <td class="key">InChI</td>
+        <td class="value" id="inchi"></td>
+        <td><button onclick="copy('inchi')">Copy</button></td>
+      </tr>
+      <tr>
+        <td class="key">InChIKey</td>
+        <td class="value" id="inchikey"></td>
+        <td><button onclick="copy('inchikey')">Copy</button></td>
+      </tr>
+    </table>
+
+     <details>
+       <summary>MolBlock</summary>
+       <pre id="molblock"></pre>
+       <button onclick="copy('molblock')">Copy MolBlock</button>
+       <button onclick="downloadSDF()">Download SDF</button>
+      </details>
+   </div>
+ </div>
+
+  <div class="copyright">
+   © <span id="year"></span> <a href="https://github.com/Ruibin-Liu/WebMM" target="_blank" rel="noopener">WebMM</a> — structure editing &amp; properties by <a href="https://ruibin-liu.github.io/molecule-clipboard/" target="_blank" rel="noopener">RDKit + JSME</a>, 3D engine by WebMM
+ </div>
+
+<div id="jsmeModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>JSME Editor</h2>
+      <button class="close-btn" onclick="closeJSME()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="jsme_container" style="width: 100%; height: 475px;"></div>
+    </div>
+    <div class="modal-header" style="border-top: 1px solid var(--border); border-bottom: none;">
+      <button class="action-btn clear" onclick="closeJSME()">Cancel</button>
+      <button class="action-btn edit" onclick="applyJSME()">Apply to Workbench</button>
+    </div>
+  </div>
+</div>
+
+<div id="historyModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>History</h2>
+      <div>
+        <button class="copy-btn" onclick="exportHistoryToCSV()">Export CSV</button>
+        <button class="copy-btn" onclick="clearHistory()">Clear All</button>
+        <button class="close-btn" onclick="closeHistoryModal()">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body" id="historyList"></div>
+  </div>
+</div>
+
+<div id="sourceModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>HTML Source</h2>
+      <div>
+        <button class="copy-btn" onclick="copySource()">Copy</button>
+        <button class="close-btn" onclick="closeSourceModal()">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <pre id="sourceCode"></pre>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+let rdkitModule = null;
+
+   async function initRDKit() {
+     try {
+       rdkitModule = await initRDKitModule();
+       displayVersion();
+       loadFromURL();
+       setupAutoProcess();
+       loadHistory();
+     } catch(e) {
+       document.getElementById("error").textContent = "Failed to load RDKit: " + e;
+     }
+   }
+
+   function setupAutoProcess() {
+     const input = document.getElementById("input");
+     input.addEventListener("blur", () => {
+       process(true);
+     });
+     input.addEventListener("keydown", (e) => {
+       if (e.key === "Enter") {
+         process(true);
+       }
+     });
+   }
+</script>
+<script src="vendor/RDKit_minimal.js"></script>
+<script>initRDKit();</script>
+
+<script>
+ let mol = null;
+ let sourceMolblock = null;   // original parsed molblock — preserves 3D coords + H
+
+   function process(updateURL = true) {
+     clearError();
+     try {
+       let input = document.getElementById("input").value;
+       if (!input.trim()) throw "Empty input";
+
+       const name = extractCompoundName(input);
+
+       if (mol) mol.delete();
+       mol = rdkitModule.get_mol(input);
+       if (!mol || !mol.is_valid()) throw "Unable to parse molecule";
+
+       // keep the original parse for the 3D chain (canonical re-parse would
+       // strip hydrogens and coordinates — MC parity for the 2D chain only)
+       sourceMolblock = mol.get_molblock();
+
+       const smiles = mol.get_smiles();
+       mol.delete();
+
+       mol = rdkitModule.get_mol(smiles);
+       if (!mol || !mol.is_valid()) throw "Unable to generate 2D structure";
+
+        render(mol, name);
+        if (updateURL) setURL(smiles, name);
+        addToHistory(smiles, name);
+     } catch (e) {
+       showError(e);
+     }
+   }
+
+  function displayVersion() {
+    document.getElementById("rdkitVersion").textContent = rdkitModule.version();
+  }
+
+   function extractCompoundName(input) {
+    let trimmedInput = input.trim();
+
+    if (trimmedInput.includes('\n') || trimmedInput.includes('V2000') || trimmedInput.includes('V3000')) {
+      const lines = trimmedInput.split('\n');
+      if (lines.length > 0 && (lines[0].includes('V2000') || lines[0].includes('V3000') || lines.length >= 3)) {
+        const firstLine = lines[0].trim();
+        if (firstLine && !firstLine.match(/^V\d+$/)) {
+          return firstLine.substring(0, 255);
+        }
+      }
+    } else {
+      const parts = trimmedInput.split(/\s+/);
+      if (parts.length > 1) {
+        const smilesPart = parts[0];
+        const namePart = parts.slice(1).join(' ');
+        if (namePart.trim()) {
+          try {
+            const testMol = rdkitModule.get_mol(smilesPart);
+            if (testMol && testMol.is_valid()) {
+              testMol.delete();
+              return namePart.trim();
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const dateStr = `${year}${month}${day}`;
+
+    const counter = getNextCounter(dateStr);
+    return `WB-${dateStr}-${counter}`;
+  }
+
+  function getNextCounter(dateStr) {
+    const key = 'wb-compoundNameCounters';
+    const saved = localStorage.getItem(key);
+    const counters = saved ? JSON.parse(saved) : {};
+
+    if (!counters[dateStr]) {
+      counters[dateStr] = 0;
+    }
+
+    counters[dateStr]++;
+    localStorage.setItem(key, JSON.stringify(counters));
+
+    return counters[dateStr];
+  }
+
+  function render(m, name) {
+    document.getElementById("output").style.display = "block";
+
+    let svgContent = m.get_svg();
+    const svgParser = new DOMParser();
+    const svgDoc = svgParser.parseFromString(svgContent, 'image/svg+xml');
+    const svgElement = svgDoc.querySelector('svg');
+
+    if (svgElement) {
+      const viewBox = svgElement.getAttribute('viewBox');
+      let width = svgElement.getAttribute('width');
+      let height = svgElement.getAttribute('height');
+
+      if (viewBox) {
+        const parts = viewBox.split(/\s+/).map(parseFloat);
+        width = parts[2] - parts[0];
+        height = parts[3] - parts[1];
+        svgElement.setAttribute('viewBox', `0 0 ${width} ${height + 40}`);
+      } else if (width && height) {
+        width = parseFloat(width);
+        height = parseFloat(height);
+      }
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', width / 2);
+      text.setAttribute('y', height + 25);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('font-size', '14');
+      text.setAttribute('font-family', 'Arial, sans-serif');
+      text.setAttribute('font-weight', 'bold');
+      text.setAttribute('fill', '#0f172a');
+      text.textContent = name;
+      svgElement.appendChild(text);
+
+      svgContent = svgElement.outerHTML;
+    }
+
+    document.getElementById("svg").innerHTML = svgContent;
+
+    document.getElementById("name").textContent = name;
+
+    let molblock = m.get_molblock();
+    const lines = molblock.split('\n');
+    if (lines.length >= 3) {
+      lines[0] = name.substring(0, 255);
+      molblock = lines.join('\n');
+    }
+    document.getElementById("molblock").textContent = molblock;
+
+    document.getElementById("smiles").textContent = m.get_smiles();
+    const inchi = m.get_inchi();
+    document.getElementById("inchi").textContent = inchi;
+    document.getElementById("inchikey").textContent = rdkitModule.get_inchikey_for_inchi(inchi);
+
+   const d = JSON.parse(m.get_descriptors());
+
+   const props = [
+     ["MW",    d.amw.toFixed(2)],
+     ["cLogP", d.CrippenClogP.toFixed(2)],
+     ["TPSA",  d.tpsa.toFixed(2)],
+     ["HBD",   d.NumHBD],
+     ["HBA",   d.NumHBA],
+     ["RotB",  d.NumRotatableBonds]
+   ];
+
+   document.getElementById("props").innerHTML = "";
+   props.forEach(([k, v]) => {
+     document.getElementById("props").insertAdjacentHTML(
+       "beforeend",
+       `<tr><td class="key">${k}</td><td class="value">${v}</td></tr>`
+     );
+   });
+
+    const lipinski =
+      d.amw <= 500 &&
+      d.CrippenClogP <= 5 &&
+      d.NumHBD <= 5 &&
+      d.NumHBA <= 10;
+
+    const veber =
+      d.tpsa <= 140 &&
+      d.NumRotatableBonds <= 10;
+
+    document.getElementById("rules").innerHTML = `
+      <tr><td class="key">Lipinski</td><td class="value"><span class="result-badge ${lipinski?'pass':'fail'}">${lipinski?'Pass':'Fail'}</span></td></tr>
+      <tr><td class="key">Veber</td><td class="value"><span class="result-badge ${veber?'pass':'fail'}">${veber?'Pass':'Fail'}</span></td></tr>
+    `;
+
+    const moreProps = [
+      ["Exact MW", d.exactmw.toFixed(2)],
+      ["Heavy Atoms", d.NumHeavyAtoms],
+      ["Heteroatoms", d.NumHeteroatoms],
+      ["Total Rings", d.NumRings],
+      ["Aromatic Rings", d.NumAromaticRings],
+      ["Aliphatic Rings", d.NumAliphaticRings],
+      ["Fsp3", d.FractionCSP3.toFixed(3)],
+      ["Labute ASA", d.labuteASA.toFixed(2)]
+    ];
+
+    document.getElementById("moreProps").innerHTML = "";
+    moreProps.forEach(([k, v]) => {
+      document.getElementById("moreProps").insertAdjacentHTML(
+        "beforeend",
+        `<tr><td class="key">${k}</td><td class="value">${v}</td></tr>`
+      );
+    });
+
+    const egan = d.tpsa <= 132;
+
+    const ghose =
+      d.amw >= 160 && d.amw <= 480 &&
+      d.CrippenClogP >= -0.4 && d.CrippenClogP <= 5.6 &&
+      d.NumRings >= 1 && d.NumRings <= 5 &&
+      d.NumAtoms >= 20 && d.NumAtoms <= 70 &&
+      d.NumHeteroatoms >= 2 && d.NumHeteroatoms <= 15;
+
+    const mce18 =
+      d.amw <= 450 &&
+      d.CrippenClogP <= 5.3 &&
+      d.tpsa <= 131 &&
+      d.NumHBD <= 3 &&
+      d.NumHBA <= 6 &&
+      d.NumRotatableBonds <= 9;
+
+    const reos =
+      d.CrippenClogP > 0 && d.CrippenClogP < 5 &&
+      d.amw < 500 &&
+      d.NumHBD < 4 &&
+      d.NumHBA < 9;
+
+    const alertHighLogP = d.CrippenClogP > 5;
+    const alertHighTPSA = d.tpsa > 140;
+    const alertTooFlexible = d.NumRotatableBonds > 10;
+    const alertLowFsp3 = d.FractionCSP3 < 0.25;
+    const alertTooManyRings = d.NumRings > 5;
+    const alertStereo = d.NumAtomStereoCenters > 3;
+
+    document.getElementById("moreRules").innerHTML = `
+      <tr><td class="key">Egan's Rule</td><td class="value"><span class="result-badge ${egan?'pass':'fail'}">${egan?'Pass':'Fail'}</span></td></tr>
+      <tr><td class="key">Ghose Filter</td><td class="value"><span class="result-badge ${ghose?'pass':'fail'}">${ghose?'Pass':'Fail'}</span></td></tr>
+      <tr><td class="key">MCE-18 Filter</td><td class="value"><span class="result-badge ${mce18?'pass':'fail'}">${mce18?'Pass':'Fail'}</span></td></tr>
+      <tr><td class="key">REOS Filter</td><td class="value"><span class="result-badge ${reos?'pass':'fail'}">${reos?'Pass':'Fail'}</span></td></tr>
+      <tr><td class="key" colspan="2" style="background:#fef3c7; padding: 4px;"><strong>Property Alerts</strong></td></tr>
+      <tr><td class="key">High LogP (>5)</td><td class="value"><span class="result-badge ${alertHighLogP?'fail':'pass'}">${alertHighLogP?'Alert':'OK'}</span></td></tr>
+      <tr><td class="key">High TPSA (>140)</td><td class="value"><span class="result-badge ${alertHighTPSA?'fail':'pass'}">${alertHighTPSA?'Alert':'OK'}</span></td></tr>
+      <tr><td class="key">Too Flexible (>10)</td><td class="value"><span class="result-badge ${alertTooFlexible?'fail':'pass'}">${alertTooFlexible?'Alert':'OK'}</span></td></tr>
+      <tr><td class="key">Low Fsp3 (<0.25)</td><td class="value"><span class="result-badge ${alertLowFsp3?'fail':'pass'}">${alertLowFsp3?'Alert':'OK'}</span></td></tr>
+      <tr><td class="key">Too Many Rings (>5)</td><td class="value"><span class="result-badge ${alertTooManyRings?'fail':'pass'}">${alertTooManyRings?'Alert':'OK'}</span></td></tr>
+      <tr><td class="key">Complex Stereo (>3)</td><td class="value"><span class="result-badge ${alertStereo?'fail':'pass'}">${alertStereo?'Alert':'OK'}</span></td></tr>
+    `;
+  }
+
+  function copy(id) {
+    const text = document.getElementById(id).textContent;
+    navigator.clipboard.writeText(text);
+
+    const button = document.querySelector(`button[onclick="copy('${id}')"]`);
+    if (button) {
+      const originalText = button.textContent;
+      button.classList.add('copied');
+      button.textContent = 'Copied!';
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.classList.remove('copied');
+      }, 1500);
+    }
+  }
+
+   function downloadSDF() {
+     const molblock = document.getElementById("molblock").textContent;
+     const name = document.getElementById("name").textContent;
+     const sdf = molblock + "$$$$";
+
+     const a = document.createElement("a");
+     a.href = URL.createObjectURL(new Blob([sdf], {type:"chemical/x-mdl-molfile"}));
+     const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 100);
+     a.download = `${safeName}.sdf`;
+     a.click();
+   }
+
+ function setURL(smiles, name) {
+   const data = JSON.stringify({smiles, name});
+   location.hash = "mol=" + btoa(data);
+ }
+
+ function loadFromURL() {
+    if (!location.hash.startsWith("#mol=")) return;
+    const data = JSON.parse(atob(location.hash.slice(5)));
+    let inputValue = data.smiles;
+    if (data.name) {
+      inputValue = data.smiles + " " + data.name;
+    }
+    document.getElementById("input").value = inputValue;
+    process(false);
+ }
+
+ function copyShareLink() {
+    navigator.clipboard.writeText(location.href);
+
+    const btn = document.querySelector("button[onclick='copyShareLink()']");
+    const originalText = btn.textContent;
+    btn.classList.add('copied');
+    btn.textContent = 'Copied!';
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.classList.remove('copied');
+    }, 1500);
+  }
+
+  function downloadSVG() {
+     const s = document.querySelector("#svg svg");
+     const svgContent = addSVGWrapper(s.outerHTML);
+     const name = document.getElementById("name").textContent;
+
+     const a = document.createElement("a");
+     a.href = URL.createObjectURL(new Blob([svgContent], {type:"image/svg+xml"}));
+     const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 100);
+     a.download = `${safeName}.svg`;
+     a.click();
+   }
+
+  const PNG_EXPORT_PRESET = {
+    baseSize: 300,
+    pngSize: 1200,
+    strokeWidth: 2.0,
+    fontSize: 15,
+    fontFamily: 'Arial, Helvetica, sans-serif',
+    strokeColor: '#000000',
+    backgroundColor: '#ffffff',
+    lineCap: 'round',
+    lineJoin: 'round'
+  };
+
+  function downloadPNG() {
+     const svgEl = document.querySelector("#svg svg");
+     if (!svgEl) {
+       alert("No structure rendered.");
+       return;
+     }
+
+     const name = document.getElementById("name").textContent;
+     const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 100);
+
+    let svgContent = svgEl.outerHTML;
+
+    const processPath = (match) => {
+      const hasAtom = match.includes('class="') && match.match(/class="[^"]*atom/);
+      const hasBond = match.includes('class="') && match.match(/class="[^"]*bond/);
+
+      if (!hasAtom && !hasBond) return match;
+
+      let result = match;
+
+      if (hasAtom) {
+        result = result.replace(/\sfill="[^"]*"/g, '');
+        result = result.replace(/fill:\s*#[0-9a-fA-F]+;?/gi, 'fill:#000000;');
+        result = result.replace(/fill:\s*rgb\([^)]+\);?/gi, 'fill:#000000;');
+      }
+
+      if (hasBond) {
+        result = result.replace(/\sstroke="[^"]*"/g, '');
+        result = result.replace(/stroke:\s*#[0-9a-fA-F]+;?/gi, 'stroke:#000000;');
+        result = result.replace(/stroke:\s*rgb\([^)]+\);?/gi, 'stroke:#000000;');
+      }
+
+      return result;
+    };
+
+    svgContent = svgContent.replace(/<path[^>]*>/g, processPath);
+
+    svgContent = svgContent.replace(/width="[^"]*"/, `width="${PNG_EXPORT_PRESET.pngSize}"`);
+    svgContent = svgContent.replace(/height="[^"]*"/, `height="${PNG_EXPORT_PRESET.pngSize}"`);
+    svgContent = svgContent.replace(/viewBox="[^"]*"/, `viewBox="0 0 ${PNG_EXPORT_PRESET.baseSize} ${PNG_EXPORT_PRESET.baseSize}"`);
+
+    const blob = new Blob([svgContent], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+
+    const img = new Image();
+    img.src = url;
+
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = PNG_EXPORT_PRESET.pngSize;
+      canvas.height = PNG_EXPORT_PRESET.pngSize;
+
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = PNG_EXPORT_PRESET.backgroundColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      URL.revokeObjectURL(url);
+
+       const a = document.createElement("a");
+       a.href = canvas.toDataURL("image/png");
+       a.download = `${safeName}.png`;
+       a.click();
+     };
+
+    img.onerror = () => {
+      showError("Failed to render SVG as PNG");
+      URL.revokeObjectURL(url);
+    };
+  }
+
+ function copySVG() {
+   const s = document.querySelector("#svg svg");
+   navigator.clipboard.writeText(addSVGWrapper(s.outerHTML));
+
+   const btn = document.querySelector("button[onclick='copySVG()']");
+   const originalText = btn.textContent;
+   btn.classList.add('copied');
+   btn.textContent = 'Copied!';
+   setTimeout(() => {
+     btn.textContent = originalText;
+     btn.classList.remove('copied');
+   }, 1500);
+ }
+
+ function addSVGWrapper(svgContent) {
+   if (!svgContent.includes('xmlns=')) {
+     return svgContent.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+   }
+   return svgContent;
+ }
+
+   function clearAll() {
+      history.replaceState(null, "", location.pathname);
+      window.location.reload();
+    }
+
+   function viewSource() {
+     document.getElementById("sourceCode").textContent = document.documentElement.outerHTML;
+     document.getElementById("sourceModal").style.display = "block";
+   }
+
+    function closeSourceModal() {
+      document.getElementById("sourceModal").style.display = "none";
+    }
+
+    function copySource() {
+      navigator.clipboard.writeText(document.documentElement.outerHTML);
+      const btn = document.querySelector(".copy-btn");
+      const originalText = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => btn.textContent = originalText, 1500);
+    }
+
+   function showError(e) {
+   document.getElementById("error").textContent = (e && e.toString) ? e.toString() : String(e);
+ }
+  function clearError() {
+    document.getElementById("error").textContent = "";
+  }
+
+  const drop = document.getElementById("drop");
+  drop.ondragover = e => { e.preventDefault(); drop.style.borderColor = "var(--accent)"; };
+  drop.ondragleave = () => drop.style.borderColor = "var(--border)";
+  drop.ondrop = e => {
+    e.preventDefault();
+    drop.style.borderColor = "var(--border)";
+    const f = e.dataTransfer.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { document.getElementById("input").value = r.result; process(); };
+     r.readAsText(f);
+   };
+
+   let jsmeInstance = null;
+   let jsmeModalOpen = false;
+   let moleculeToLoad = null;
+   let originalName = null;
+   let jsmeInitialized = false;
+
+  function createJSME() {
+    if (jsmeInitialized) return;
+
+    if (typeof JSApplet !== 'undefined') {
+      jsmeInstance = new JSApplet.JSME("jsme_container", "100%", "100%", {
+        "options": "star,query"
+      });
+      jsmeInitialized = true;
+
+      if (jsmeModalOpen && moleculeToLoad) {
+        setTimeout(() => {
+          if (jsmeInstance && moleculeToLoad) {
+            jsmeInstance.readGenericMolecularInput(moleculeToLoad);
+            setTimeout(() => {
+              if (jsmeInstance) {
+                jsmeInstance.deferredRepaint();
+              }
+            }, 200);
+          }
+        }, 300);
+      }
+    }
+  }
+
+   function openJSME() {
+     document.getElementById("jsmeModal").style.display = "block";
+     jsmeModalOpen = true;
+
+     const currentInput = document.getElementById("input").value;
+     moleculeToLoad = currentInput.trim();
+     originalName = extractCompoundName(currentInput);
+
+     if (moleculeToLoad && mol && mol.is_valid()) {
+       moleculeToLoad = mol.get_smiles();
+     }
+
+    if (!jsmeInitialized) {
+      const checkJSME = setInterval(() => {
+        if (typeof JSApplet !== 'undefined') {
+          clearInterval(checkJSME);
+          setTimeout(() => {
+            createJSME();
+          }, 200);
+        }
+      }, 100);
+      return;
+    }
+
+    if (jsmeInstance && moleculeToLoad) {
+      setTimeout(() => {
+        jsmeInstance.readGenericMolecularInput(moleculeToLoad);
+        setTimeout(() => {
+          jsmeInstance.deferredRepaint();
+        }, 100);
+      }, 200);
+    }
+  }
+
+   function closeJSME() {
+     document.getElementById("jsmeModal").style.display = "none";
+     jsmeModalOpen = false;
+     moleculeToLoad = null;
+     originalName = null;
+   }
+
+  function applyJSME() {
+      if (jsmeInstance) {
+        const smiles = jsmeInstance.smiles();
+        if (smiles && smiles.trim()) {
+          const inputValue = originalName ? smiles + " " + originalName : smiles;
+          document.getElementById("input").value = inputValue;
+          process();
+        }
+      }
+      closeJSME();
+  }
+
+  let compoundHistory = [];
+
+  function loadHistory() {
+    const saved = localStorage.getItem('wb-compoundHistory');
+    if (saved) {
+      try {
+        compoundHistory = JSON.parse(saved);
+      } catch (e) {
+        compoundHistory = [];
+      }
+    }
+  }
+
+  function saveHistory() {
+    localStorage.setItem('wb-compoundHistory', JSON.stringify(compoundHistory));
+  }
+
+  function addToHistory(smiles, name) {
+    const now = new Date();
+    const timestamp = now.toLocaleString();
+
+    compoundHistory = compoundHistory.filter(c => c.smiles !== smiles);
+    compoundHistory.unshift({ smiles, name, timestamp });
+
+    if (compoundHistory.length > 50) {
+      compoundHistory = compoundHistory.slice(0, 50);
+    }
+
+    saveHistory();
+  }
+
+  function showHistory() {
+    loadHistory();
+    const historyList = document.getElementById('historyList');
+
+    if (compoundHistory.length === 0) {
+      historyList.innerHTML = '<p style="color: var(--muted); text-align: center; padding: 2rem;">No history yet. Process some compounds to see them here.</p>';
+    } else {
+      historyList.innerHTML = compoundHistory.map((compound, index) => `
+        <div style="border: 1px solid var(--border); border-radius: 8px; padding: 1rem; cursor: pointer; transition: all 0.15s ease;" onclick="loadFromHistory(${index})">
+          <button class="history-item-delete" onclick="event.stopPropagation(); deleteFromHistory(${index})" title="Delete from history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+            <div>
+              <strong style="display: block; margin-bottom: 0.25rem;">${compound.name}</strong>
+              <code style="font-size: 0.8rem; color: var(--muted);">${compound.smiles}</code>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--muted); text-align: right;">
+              ${compound.timestamp}
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    document.getElementById('historyModal').style.display = 'block';
+  }
+
+  function closeHistoryModal() {
+    document.getElementById('historyModal').style.display = 'none';
+  }
+
+  async function exportHistoryToCSV() {
+    if (compoundHistory.length === 0) {
+      alert('No history to export.');
+      return;
+    }
+
+    const headers = [
+      'Name',
+      'SMILES',
+      'InChI',
+      'InChIKey',
+      'MW',
+      'cLogP',
+      'TPSA',
+      'HBD',
+      'HBA',
+      'RotB',
+      'Exact MW',
+      'Heavy Atoms',
+      'Heteroatoms',
+      'Total Rings',
+      'Aromatic Rings',
+      'Aliphatic Rings',
+      'Fsp3',
+      'Labute ASA',
+      'Lipinski',
+      'Veber',
+      'Egan',
+      'Ghose',
+      'MCE-18',
+      'REOS',
+      'High LogP',
+      'High TPSA',
+      'Too Flexible',
+      'Low Fsp3',
+      'Too Many Rings',
+      'Complex Stereo',
+      'Timestamp'
+    ];
+
+    let csvContent = headers.join(',') + '\n';
+
+    for (const compound of compoundHistory) {
+      try {
+        const m = rdkitModule.get_mol(compound.smiles);
+        if (!m || !m.is_valid()) {
+          csvContent += compound.name + ',ERROR,,,,,,,,,,,,,,,,,,,,,,,,,,,' + compound.timestamp + '\n';
+          continue;
+        }
+
+        const inchi = m.get_inchi();
+        const inchikey = rdkitModule.get_inchikey_for_inchi(inchi);
+        const d = JSON.parse(m.get_descriptors());
+
+        const lipinski =
+          d.amw <= 500 &&
+          d.CrippenClogP <= 5 &&
+          d.NumHBD <= 5 &&
+          d.NumHBA <= 10;
+
+        const veber =
+          d.tpsa <= 140 &&
+          d.NumRotatableBonds <= 10;
+
+        const egan = d.tpsa <= 132;
+
+        const ghose =
+          d.amw >= 160 && d.amw <= 480 &&
+          d.CrippenClogP >= -0.4 && d.CrippenClogP <= 5.6 &&
+          d.NumRings >= 1 && d.NumRings <= 5 &&
+          d.NumAtoms >= 20 && d.NumAtoms <= 70 &&
+          d.NumHeteroatoms >= 2 && d.NumHeteroatoms <= 15;
+
+        const mce18 =
+          d.amw <= 450 &&
+          d.CrippenClogP <= 5.3 &&
+          d.tpsa <= 131 &&
+          d.NumHBD <= 3 &&
+          d.NumHBA <= 6 &&
+          d.NumRotatableBonds <= 9;
+
+        const reos =
+          d.CrippenClogP > 0 && d.CrippenClogP < 5 &&
+          d.amw < 500 &&
+          d.NumHBD < 4 &&
+          d.NumHBA < 9;
+
+        const alertHighLogP = d.CrippenClogP > 5;
+        const alertHighTPSA = d.tpsa > 140;
+        const alertTooFlexible = d.NumRotatableBonds > 10;
+        const alertLowFsp3 = d.FractionCSP3 < 0.25;
+        const alertTooManyRings = d.NumRings > 5;
+        const alertStereo = d.NumAtomStereoCenters > 3;
+
+        const row = [
+          compound.name,
+          compound.smiles,
+          inchi,
+          inchikey,
+          d.amw.toFixed(2),
+          d.CrippenClogP.toFixed(2),
+          d.tpsa.toFixed(2),
+          d.NumHBD,
+          d.NumHBA,
+          d.NumRotatableBonds,
+          d.exactmw.toFixed(2),
+          d.NumHeavyAtoms,
+          d.NumHeteroatoms,
+          d.NumRings,
+          d.NumAromaticRings,
+          d.NumAliphaticRings,
+          d.FractionCSP3.toFixed(3),
+          d.labuteASA.toFixed(2),
+          lipinski ? 'Pass' : 'Fail',
+          veber ? 'Pass' : 'Fail',
+          egan ? 'Pass' : 'Fail',
+          ghose ? 'Pass' : 'Fail',
+          mce18 ? 'Pass' : 'Fail',
+          reos ? 'Pass' : 'Fail',
+          alertHighLogP ? 'Alert' : 'OK',
+          alertHighTPSA ? 'Alert' : 'OK',
+          alertTooFlexible ? 'Alert' : 'OK',
+          alertLowFsp3 ? 'Alert' : 'OK',
+          alertTooManyRings ? 'Alert' : 'OK',
+          alertStereo ? 'Alert' : 'OK',
+          compound.timestamp
+        ].map(field => {
+          const s = String(field);
+          if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+            return '"' + s.replace(/"/g, '""') + '"';
+          }
+          return s;
+        }).join(',');
+
+        csvContent += row + '\n';
+        m.delete();
+      } catch (e) {
+        csvContent += compound.name + ',ERROR,,,,,,,,,,,,,,,,,,,,,,,,,,,' + compound.timestamp + '\n';
+      }
+    }
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'workbench_history_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function loadFromHistory(index) {
+    const compound = compoundHistory[index];
+    if (compound) {
+      const inputValue = compound.name ? compound.smiles + " " + compound.name : compound.smiles;
+      document.getElementById("input").value = inputValue;
+      process();
+      closeHistoryModal();
+    }
+  }
+
+  function deleteFromHistory(index) {
+    if (index >= 0 && index < compoundHistory.length) {
+      compoundHistory.splice(index, 1);
+      saveHistory();
+      showHistory();
+    }
+  }
+
+  function clearHistory() {
+    if (confirm('Are you sure you want to clear all history?')) {
+      compoundHistory = [];
+      saveHistory();
+      showHistory();
+    }
+  }
+</script>
+
+<script>
+  document.getElementById("year").textContent = "2025-" + new Date().getFullYear();
+</script>
+
+<script>
+// ===== WebMM 3D engine (M1): embed / optimize / energy breakdown / export =====
+let webmm = null;          // wasm module (set when the ES module below loads)
+let viewer = null;         // 3Dmol viewer
+let sdf3d = null;          // current 3D SDF text (from embed/optimize)
+
+function set3dStatus(html) {
+  document.getElementById('status3d').innerHTML = html;
+}
+
+function enable3dActions() {
+  for (const id of ['btnEmbed', 'btnOpt', 'btnSdf', 'btnXyz', 'btnPng'])
+    document.getElementById(id).disabled = false;
+}
+
+function initViewer() {
+  if (viewer) return viewer;
+  const el = document.getElementById('viewer3d');
+  el.innerHTML = '';
+  viewer = $3Dmol.createViewer(el, { backgroundColor: 'white' });
+  viewer.resize();
+  return viewer;
+}
+
+function showSdfIn3D(sdf) {
+  sdf3d = sdf;
+  const v = initViewer();
+  v.clear();
+  v.addModel(sdf, 'sdf');
+  v.setStyle({}, { stick: { radius: 0.15 }, sphere: { scale: 0.25 } });
+  v.zoomTo();
+  v.render();
+  for (const id of ['btnOpt', 'btnSdf', 'btnXyz', 'btnPng'])
+    document.getElementById(id).disabled = false;
+}
+
+// Rebuild an SDF string with new coordinates from a flat [x,y,z,...] array
+// (same V2000 fixed-column surgery as the demo page).
+function buildSdfFromCoords(coords, sdf) {
+  const lines = sdf.trim().split('\n');
+  const na = parseInt(lines[3].substring(0, 3));
+  const nb = parseInt(lines[3].substring(3, 6));
+  const header = lines.slice(0, 4);
+  const atomLines = [];
+  for (let i = 0; i < na; i++) {
+    const x = coords[i*3].toFixed(4).padStart(10);
+    const y = coords[i*3+1].toFixed(4).padStart(10);
+    const z = coords[i*3+2].toFixed(4).padStart(10);
+    atomLines.push(`${x}${y}${z}${lines[4+i].substring(30)}`);
+  }
+  const bondLines = lines.slice(4+na, 4+na+nb);
+  return [...header, ...atomLines, ...bondLines, 'M  END'].join('\n');
+}
+
+function currentMolblock() {
+  // prefer the original parse (3D coords + explicit H survive); fall back to
+  // the canonical 2D molblock shown in the MolBlock details
+  if (sourceMolblock && sourceMolblock.trim()) return sourceMolblock;
+  const mb = document.getElementById('molblock').textContent;
+  if (!mb.trim()) throw 'Process a molecule first (2D panel)';
+  return mb;
+}
+
+function embed3D() {
+  clearError();
+  try {
+    const mb = currentMolblock();
+    // 3D input: use as-is (same semantics as the engine's has_3d check)
+    const lines = mb.trim().split('\n');
+    const na = parseInt(lines[3].substring(0, 3));
+    let has3d = false;
+    for (let i = 0; i < na; i++) {
+      if (Math.abs(parseFloat(lines[4+i].substring(20, 30))) > 1e-6) { has3d = true; break; }
+    }
+    if (has3d) {
+      showSdfIn3D(mb);
+      set3dStatus('3D coordinates present — ready to Optimize');
+      return;
+    }
+    set3dStatus('Embedding 3D (ETKDG)…');
+    setTimeout(() => {
+      try {
+        const t0 = performance.now();
+        const res = webmm.generate_initial_coordinates_wasm(mb);
+        if (!res.get_success()) throw res.get_error();
+        const coords = res.get_coordinates();
+        const sdf = buildSdfFromCoords(coords, mb);
+        showSdfIn3D(sdf);
+        const dt = ((performance.now() - t0) / 1000).toFixed(2);
+        set3dStatus(`Embedded ${res.get_n_atoms()} atoms in ${dt}s — now pick an engine and Optimize`);
+      } catch (e) { showError(e); set3dStatus('Embed failed'); }
+    }, 20);
+  } catch (e) { showError(e); }
+}
+
+function renderEnergyPanel(res, dt) {
+  const terms = JSON.parse(res.get_energy_terms_json());
+  const rows = Object.entries(terms)
+    .map(([k, v]) => `<tr><td class="key">${k}</td><td class="value">${v.toFixed(4)}</td></tr>`).join('');
+  document.getElementById('eterms').innerHTML = rows +
+    `<tr><td class="key"><strong>total</strong></td><td class="value"><strong>${res.final_energy.toFixed(4)}</strong></td></tr>`;
+  document.getElementById('energyPanel').style.display = 'block';
+  set3dStatus(`<b>E(${res.get_engine()}) = ${res.final_energy.toFixed(2)} kcal/mol</b> · ` +
+    `${res.converged ? 'converged' : 'NOT converged'} · ${res.iterations} iterations · ${dt}s`);
+}
+
+function optimize3D() {
+  clearError();
+  try {
+    if (!sdf3d) { embed3D(); return; }   // auto-embed first
+    const engine = document.getElementById('engineSel').value;
+    set3dStatus(`Optimizing with ${engine} (L-BFGS)…`);
+    setTimeout(() => {
+      try {
+        const t0 = performance.now();
+        const opts = new webmm.OptimizationOptions();
+        opts.engine = engine;
+        opts.set_max_iterations(500);
+        const res = webmm.optimize_from_sdf(sdf3d, opts);
+        const nA = res.n_atoms;
+        const coords = new Float64Array(nA * 3);
+        for (let a = 0; a < nA; a++)
+          for (let d = 0; d < 3; d++) coords[a*3+d] = res.get_coord(a, d);
+        showSdfIn3D(buildSdfFromCoords([...coords], sdf3d));
+        renderEnergyPanel(res, ((performance.now() - t0) / 1000).toFixed(2));
+      } catch (e) { showError(e); set3dStatus('Optimization failed'); }
+    }, 20);
+  } catch (e) { showError(e); }
+}
+
+function safeName() {
+  return (document.getElementById('name').textContent || 'molecule')
+    .replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 100);
+}
+
+function downloadBlob(text, ext, mime) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+  a.download = `${safeName()}.${ext}`;
+  a.click();
+}
+
+function require3D() {
+  if (!sdf3d) { showError('Embed a 3D structure first'); return false; }
+  return true;
+}
+
+function exportSDF3D() {
+  if (require3D()) downloadBlob(sdf3d + '$$$$', 'sdf', 'chemical/x-mdl-molfile');
+}
+
+function exportXYZ() {
+  if (!require3D()) return;
+  const lines = sdf3d.trim().split('\n');
+  const na = parseInt(lines[3].substring(0, 3));
+  const syms = [];
+  const pos = [];
+  for (let i = 0; i < na; i++) {
+    syms.push(lines[4+i].substring(30, 33).trim());
+    pos.push([parseFloat(lines[4+i].substring(0, 10)),
+              parseFloat(lines[4+i].substring(10, 20)),
+              parseFloat(lines[4+i].substring(20, 30))]);
+  }
+  let xyz = `${na}\n${document.getElementById('name').textContent}\n`;
+  for (let i = 0; i < na; i++) xyz += `${syms[i]} ${pos[i][0]} ${pos[i][1]} ${pos[i][2]}\n`;
+  downloadBlob(xyz, 'xyz', 'chemical/x-xyz');
+}
+
+function exportPNG3D() {
+  if (!require3D()) return;
+  const a = document.createElement('a');
+  a.href = initViewer().pngURI(1200, 900);
+  a.download = `${safeName()}_3d.png`;
+  a.click();
+}
+</script>
+
+<script type="module">
+  import init, * as wasm from '../pkg/webmm.js';
+  await init();
+  window.webmm = wasm;
+  window.dispatchEvent(new Event('webmmready'));
+</script>
+<script>
+  window.addEventListener('webmmready', () => {
+    webmm = window.webmm;
+    window.webmmReady = true;
+    enable3dActions();
+    set3dStatus('Engine ready — Embed 3D to begin');
+  });
+</script>
+</body>
+</html>
