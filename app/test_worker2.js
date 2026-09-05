@@ -1,1 +1,0 @@
-self.onmessage = e => { import(e.data.url).then(m => self.postMessage({ type: "pong", has: typeof m.generate_conformers_wasm })).catch(err => self.postMessage({ type: "importfail", msg: String(err).slice(0, 200) })); };
