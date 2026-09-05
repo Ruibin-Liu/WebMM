@@ -17,6 +17,8 @@ MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit
 **ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
 
 ## Recently Completed
++- **Workbench v1.2 — Workers 构象农场(4 线程并行,12 构象全氢优化 3.7s)+ Pages 部署接入。** `app/conf.worker.js`(module worker):每个 worker 领一段种子区间,批量 ETKDG → 3D 附氢 → 全原子优化 → 流式回传每个完成构象;主线程聚合排序/剪枝/表格,Cancel = 立即 terminate。wasm 模块 URL 依赖部署布局(repo 根 vs Pages 的 pkg 根),由主线程双布局动态导入解析后以绝对 URL 传给 worker;init/run 用 initPromise 串行化(async onmessage 不排队,'run' 抢跑会拿到 undefined 模块——踩坑记录);worker 版剪枝循环的 k.i 索引 bug(种子号误作数组下标)已修。
++  验收(M2 CDP 9/9 更新):12 构象 4 workers 3.7s;能量升序/ΔE/点击行/ensemble SDF/显氢 RDKit 回读(33 原子)/取消路径 UI 可用;零 console error。回归 M0 37/37、M1 10/10、M3 12/12;cargo test 237/237、clippy 0。pages.yml:app/** 触发 + cp -r app pkg/app staging。
 +- **Workbench v1.1 — 引擎侧加氢(重原子快速嵌入 + 3D 几何附氢),SMILES 输入获得全氢 MMFF 能量。** Rust `src/molecule/hydrogens.rs`:标准价态表(芳香键计 1.5、电荷修正价态 O⁻=1/N⁺=4/C±=3)算 H 数 → 图扩展 → **3D 几何附着**(单重邻键:反向四面体扇 109.5°;双邻:反向平分线 + 垂直;≥3 邻:负向量和;键长 C-H 1.09/N-H 1.01/O-H 0.97/S-H 1.34);含 M CHG 往返的 V2000 序列化;显氢输入原样返回(防重复加)。wasm:`add_hydrogens_wasm`(2D 输入兜底)+ `attach_hydrogens_3d_wasm`(3D 附着,配合重原子嵌入)。
 +  **应用管线重构:ETKDG 只嵌重原子(~1s),3D 附氢后全原子优化** —— 显氢嵌入对原子数超线性爆炸(33 原子全氢 ibuprofen 单次嵌入 21.8s vs 13 原子 1.09s,12 构象阻塞主线程数分钟)。重构后 ibuprofen 12 构象系综 251s→6.7s(~37×)。附带的 yieldToUI()(MessageChannel + setTimeout 竞速)消除后台定时器节流导致的数分钟级 yield 卡顿。
 +  验收:Rust 加氢 5 测试(乙醇 6H/苯环 6H/羧酸根 O⁻ 无 H/显氢不变/3D 几何:键长 + 无 H-H 重叠);M2 CDP 9/9(全氢系综:能量分布合理 ΔE 至 4.27,此前隐氢挤在 0.2);回归 M0 37/37、M1 10/10、M3 12/12;cargo test 237/237、clippy 0。

@@ -1957,78 +1957,99 @@ function heavyFlat(coords, sdf) {
   return out;
 }
 
-async function runConformers() {
+function runConformers() {
   clearError();
-  if (confRun) { confRun.cancelled = true; set3dStatus('Cancelling after current conformer…'); return; }
+  if (confRun) { cancelConformers(); return; }
   try {
     const n = Math.max(1, Math.min(500, parseInt(document.getElementById('confN').value) || 50));
     const rmsdCut = parseFloat(document.getElementById('confRmsd').value) || 0.5;
     const engine = document.getElementById('engineSel').value;
-    const seedBase = 42;
-    const mb = currentMolblock();   // heavy-only batch embed (fast); H attached per conformer
-    confRun = { cancelled: false };
+    const mb = currentMolblock();
+    const maxIter = 500;
+
+    // worker farm: one seed share per worker (hardware-bound, ≤4)
+    const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 4, n));
+    const per = Math.ceil(n / W);
+    confRun = { cancelled: false, workers: [], active: 0, confs: [], t0: performance.now() };
     document.getElementById('btnConf').textContent = 'Cancel';
-    set3dStatus(`Embedding ${n} conformers (ETKDG)…`);
-    await yieldToUI();
+    set3dStatus(`Embedding + optimizing ${n} conformers on ${W} worker${W > 1 ? 's' : ''}…`);
 
-    const batch = webmm.generate_conformers_wasm(mb, n, BigInt(seedBase));
-    if (!batch.get_success()) throw batch.get_error();
-    const na = batch.get_n_atoms();
-    const nc = batch.get_n_confs();
-    const flat = batch.get_coordinates();
-    const confs = [];
-    const t0 = performance.now();
-    for (let i = 0; i < nc; i++) {
-      if (confRun.cancelled) break;
-      const coords = Array.from(flat.slice(i * na * 3, (i + 1) * na * 3));
-      const sdfHeavyI = buildSdfFromCoords(coords, mb);
-      const sdfAllI = webmm.attach_hydrogens_3d_wasm(sdfHeavyI);
-      const opts = new webmm.OptimizationOptions();
-      opts.engine = engine; opts.set_max_iterations(500);
-      const res = webmm.optimize_from_sdf(sdfAllI, opts);
-      const optCoords = [];
-      for (let a = 0; a < res.n_atoms; a++)
-        for (let d = 0; d < 3; d++) optCoords.push(res.get_coord(a, d));
-      confs.push({ i, E: res.final_energy, coords: optCoords, sdf: buildSdfFromCoords(optCoords, sdfAllI) });
-      if (i % 5 === 0 || i === nc - 1)
-        set3dStatus(`Optimizing conformers (${i + 1}/${nc})… ${((performance.now() - t0) / 1000).toFixed(1)}s`);
-      await yieldToUI();
+    for (let w = 0; w < W; w++) {
+      const count = Math.min(per, n - w * per);
+      if (count <= 0) break;
+      const seedBase = 42 + w * per;
+      const worker = new Worker('conf.worker.js', { type: 'module' });
+      confRun.workers.push(worker);
+      confRun.active++;
+      worker.onmessage = (e) => {
+        const m = e.data;
+        if (confRun && confRun.cancelled) return;
+        if (m.type === 'conf') {
+          confRun.confs.push({ seed: m.seed, E: m.E, coords: m.coords, sdf: m.sdf });
+          set3dStatus(`Optimizing conformers — ${confRun.confs.length}/${n} done… ${((performance.now() - confRun.t0) / 1000).toFixed(1)}s`);
+        } else if (m.type === 'done') {
+          confRun.active--;
+          if (confRun.active === 0 && !confRun.cancelled) finishConformers(engine, rmsdCut, W);
+        } else if (m.type === 'error') {
+          showError('Worker: ' + m.message);
+          cancelConformers();
+        }
+      };
+      worker.onerror = (e) => {
+        showError('Worker error: ' + (e.message || 'load failed'));
+        cancelConformers();
+      };
+      worker.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
+      worker.postMessage({ type: 'run', sdfHeavy: mb, seedBase, count, engine, maxIter });
     }
-    if (confRun.cancelled) {
-      set3dStatus(`Cancelled at ${confs.length}/${nc} conformers`);
-    }
-    if (!confs.length) { set3dStatus('No conformers optimized'); confRun = null; document.getElementById('btnConf').textContent = 'Conformers'; return; }
-
-    // rank + RMSD prune (heavy atoms, Kabsch-aligned)
-    confs.sort((a, b) => a.E - b.E);
-    const heavy = confs.map(c => heavyFlat(c.coords, c.sdf));
-    const kept = [];
-    for (let i = 0; i < confs.length; i++) {
-      let dup = false;
-      for (const k of kept) {
-        if (kabschRmsd(heavy[i], heavy[k.i]) < rmsdCut) { dup = true; break; }
-      }
-      if (!dup) kept.push({ i: confs[i].i, E: confs[i].E, coords: confs[i].coords, sdf: confs[i].sdf });
-    }
-    const Emin = kept[0].E;
-    kept.forEach(k => k.dE = k.E - Emin);
-    confEnsemble = kept;
-
-    // show the lowest-energy one in 3D
-    showSdfIn3D(confEnsemble[0].sdf);
-    const rows = confEnsemble.map((k, r) =>
-      `<tr tabindex="0" role="button" aria-label="Show conformer ${r + 1}, E ${k.E.toFixed(2)} kcal/mol" style="cursor:pointer;" onclick="showEnsembleConf(${r})">` +
-      `<td class="key">#${r + 1} (seed ${seedBase + k.i})</td>` +
-      `<td class="value">E=${k.E.toFixed(2)}${r === 0 ? '' : ' · ΔE=' + k.dE.toFixed(2)}</td></tr>`).join('');
-    document.getElementById('confTable').innerHTML = rows;
-    document.getElementById('confPanel').style.display = 'block';
-    set3dStatus(`Conformers: ${confs.length} optimized (${((performance.now() - t0) / 1000).toFixed(1)}s), ` +
-      `${kept.length} kept after RMSD ≥ ${rmsdCut} Å — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
   } catch (e) {
-    showError(e); set3dStatus('Conformer run failed');
+    showError(e);
+    cancelConformers();
   }
+}
+
+function cancelConformers() {
+  if (!confRun) return;
+  confRun.cancelled = true;
+  for (const w of confRun.workers) w.terminate();
   confRun = null;
   document.getElementById('btnConf').textContent = 'Conformers';
+  set3dStatus('Cancelled');
+}
+
+function finishConformers(engine, rmsdCut, W) {
+  const confs = confRun.confs.slice();
+  const dt = ((performance.now() - confRun.t0) / 1000).toFixed(1);
+  for (const w of confRun.workers) w.terminate();
+  confRun = null;
+  document.getElementById('btnConf').textContent = 'Conformers';
+  if (!confs.length) { set3dStatus('No conformers optimized'); return; }
+
+  // rank + RMSD prune (heavy atoms, Kabsch-aligned)
+  confs.sort((a, b) => a.E - b.E);
+  const heavy = confs.map(c => heavyFlat(c.coords, c.sdf));
+  const keptIdx = [];
+  for (let i = 0; i < confs.length; i++) {
+    let dup = false;
+    for (const j of keptIdx) {
+      if (kabschRmsd(heavy[i], heavy[j]) < rmsdCut) { dup = true; break; }
+    }
+    if (!dup) keptIdx.push(i);
+  }
+  const kept = keptIdx.map(i => confs[i]);
+  const Emin = kept[0].E;
+  kept.forEach(k => k.dE = k.E - Emin);
+  confEnsemble = kept;
+
+  showSdfIn3D(confEnsemble[0].sdf);
+  const rows = confEnsemble.map((k, r) =>
+    `<tr tabindex="0" role="button" aria-label="Show conformer ${r + 1}, E ${k.E.toFixed(2)} kcal/mol" style="cursor:pointer;" onclick="showEnsembleConf(${r})">` +
+    `<td class="key">#${r + 1} (seed ${k.seed})</td>` +
+    `<td class="value">E=${k.E.toFixed(2)}${r === 0 ? '' : ' · ΔE=' + k.dE.toFixed(2)}</td></tr>`).join('');
+  document.getElementById('confTable').innerHTML = rows;
+  document.getElementById('confPanel').style.display = 'block';
+  set3dStatus(`<b>Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ` +
+    `${kept.length} kept after RMSD ≥ ${rmsdCut} Å</b> — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
 }
 
 function showEnsembleConf(r) {
@@ -2045,9 +2066,18 @@ function exportEnsembleSDF() {
 </script>
 
 <script type="module">
-  import init, * as wasm from '../pkg/webmm.js';
-  await init();
-  window.webmm = wasm;
+  // dual-layout: repo root serves ../pkg/, GitHub Pages serves the wasm at
+  // the site root — try both and remember the resolved URL for workers
+  let mod;
+  try {
+    mod = await import('../pkg/webmm.js');
+    window.__webmmUrl = new URL('../pkg/webmm.js', location.href).href;
+  } catch (e) {
+    mod = await import('../webmm.js');
+    window.__webmmUrl = new URL('../webmm.js', location.href).href;
+  }
+  await mod.default();   // default export = the loader (named init() is a wasm passthrough)
+  window.webmm = mod;
   window.dispatchEvent(new Event('webmmready'));
 </script>
 <script>

@@ -7,6 +7,7 @@ on:
     paths:
       - 'src/**'
       - 'site/**'
+      - 'app/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/pages.yml'
@@ -57,6 +58,9 @@ jobs:
       run: |
         cp site/index.html pkg/index.html
         cp site/playground.html pkg/playground.html
+
+    - name: Stage Workbench app
+      run: cp -r app pkg/app
 
     - name: Setup Pages
       uses: actions/configure-pages@v5
