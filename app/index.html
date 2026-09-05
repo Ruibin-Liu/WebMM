@@ -694,7 +694,7 @@ details {
          </svg>
          Optimize
        </button>
-       <button id="btnConf" class="action-btn spatial" onclick="showError('Conformer ensemble arrives in M2 — see PLAN.md')" disabled title="M2">
+       <button id="btnConf" class="action-btn spatial" onclick="runConformers()" disabled title="Batch ETKDG + optimize + rank + RMSD prune">
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
            <circle cx="6" cy="6" r="3"/>
            <circle cx="18" cy="6" r="3"/>
@@ -702,6 +702,12 @@ details {
          </svg>
          Conformers
        </button>
+       <label class="engine-sel" style="display:inline-flex;align-items:center;gap:4px;" title="number of embedding seeds (1–500)">N
+         <input id="confN" type="number" min="1" max="500" value="50" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
+       </label>
+       <label class="engine-sel" style="display:inline-flex;align-items:center;gap:4px;" title="RMSD prune threshold (Å, heavy atoms)">RMSD
+         <input id="confRmsd" type="number" min="0.05" max="3" step="0.05" value="0.5" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
+       </label>
        <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled>
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -717,6 +723,11 @@ details {
      <div id="energyPanel" style="display:none; margin-top:0.75rem;">
        <strong>WebMM Energy (kcal/mol)</strong>
        <table id="eterms"></table>
+     </div>
+     <div id="confPanel" style="display:none; margin-top:0.75rem;">
+       <strong>Conformer Ensemble (kcal/mol, pruned)</strong>
+       <table id="confTable"></table>
+       <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">Export ensemble SDF</button>
      </div>
      <div class="spiral-note">
        Interactive MD &amp; metadynamics live in the <a href="../site/playground.html">Playground</a> and <a href="../site/index.html">Demo</a> pages.
@@ -1639,7 +1650,7 @@ function set3dStatus(html) {
 }
 
 function enable3dActions() {
-  for (const id of ['btnEmbed', 'btnOpt', 'btnSdf', 'btnXyz', 'btnPng'])
+  for (const id of ['btnEmbed', 'btnOpt', 'btnSdf', 'btnXyz', 'btnPng', 'btnConf'])
     document.getElementById(id).disabled = false;
 }
 
@@ -1802,6 +1813,154 @@ function exportPNG3D() {
   a.href = initViewer().pngURI(1200, 900);
   a.download = `${safeName()}_3d.png`;
   a.click();
+}
+
+// ===== M2: conformer ensemble =====
+let confRun = null;        // { cancelled } while running
+let confEnsemble = null;   // [{i, E, sdf}] kept after pruning, sorted by E
+
+// Kabsch alignment via quaternion power iteration (same approach as the
+// playground); heavy atoms only for RMSD pruning.
+function kabschRmsd(pFlat, qFlat, sym) {
+  const n3 = pFlat.length, n = n3 / 3;
+  // centers of mass
+  let pc = [0, 0, 0], qc = [0, 0, 0];
+  for (let i = 0; i < n; i++) for (let d = 0; d < 3; d++) { pc[d] += pFlat[i*3+d] / n; qc[d] += qFlat[i*3+d] / n; }
+  const P = new Float64Array(n3), Q = new Float64Array(n3);
+  for (let i = 0; i < n; i++) for (let d = 0; d < 3; d++) { P[i*3+d] = pFlat[i*3+d] - pc[d]; Q[i*3+d] = qFlat[i*3+d] - qc[d]; }
+  // correlation matrix K = P^T·Q, then power-iterate the quaternion
+  let K = [[0,0,0],[0,0,0],[0,0,0]];
+  for (let i = 0; i < n; i++) for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) K[r][c] += P[i*3+r] * Q[i*3+c];
+  let v = [1, 0, 0, 0];
+  for (let it = 0; it < 30; it++) {
+    // Kq embeds the 4x4 quaternion matrix action from K (Shepperd's method)
+    const Kq = [
+      [K[0][0]+K[1][1]+K[2][2], K[2][1]-K[1][2],      K[0][2]-K[2][0],      K[1][0]-K[0][1]],
+      [K[2][1]-K[1][2],      K[0][0]-K[1][1]-K[2][2], K[1][0]+K[0][1],      K[0][2]+K[2][0]],
+      [K[0][2]-K[2][0],      K[1][0]+K[0][1],        -K[0][0]+K[1][1]-K[2][2], K[2][1]+K[1][2]],
+      [K[1][0]-K[0][1],      K[0][2]+K[2][0],        K[2][1]+K[1][2],      -K[0][0]-K[1][1]+K[2][2]],
+    ];
+    const nv = [0,1,2,3].map(r => Kq[r][0]*v[0] + Kq[r][1]*v[1] + Kq[r][2]*v[2] + Kq[r][3]*v[3]);
+    const L = Math.hypot(...nv) || 1;
+    v = nv.map(x => x / L);
+  }
+  // rotate Q by quaternion v and measure RMSD
+  const [w, x, y, z] = v;
+  const R = [
+    [1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y)],
+    [2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x)],
+    [2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y)],
+  ];
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const qr = [Q[i*3], Q[i*3+1], Q[i*3+2]];
+    const qri = [
+      R[0][0]*qr[0] + R[1][0]*qr[1] + R[2][0]*qr[2],
+      R[0][1]*qr[0] + R[1][1]*qr[1] + R[2][1]*qr[2],
+      R[0][2]*qr[0] + R[1][2]*qr[1] + R[2][2]*qr[2],
+    ];
+    for (let d = 0; d < 3; d++) sum += (P[i*3+d] - qri[d]) ** 2;
+  }
+  return Math.sqrt(sum / n);
+}
+
+function heavyFlat(coords, sdf) {
+  // keep non-H atoms of a flat coordinate array (match atom count in sdf)
+  const lines = sdf.trim().split('\n');
+  const na = parseInt(lines[3].substring(0, 3));
+  const keep = [];
+  for (let i = 0; i < na; i++) {
+    const sym = lines[4+i].substring(30, 33).trim();
+    if (sym !== 'H') keep.push(i);
+  }
+  const out = [];
+  for (const i of keep) out.push(coords[i*3], coords[i*3+1], coords[i*3+2]);
+  return out;
+}
+
+async function runConformers() {
+  clearError();
+  if (confRun) { confRun.cancelled = true; set3dStatus('Cancelling after current conformer…'); return; }
+  try {
+    const n = Math.max(1, Math.min(500, parseInt(document.getElementById('confN').value) || 50));
+    const rmsdCut = parseFloat(document.getElementById('confRmsd').value) || 0.5;
+    const engine = document.getElementById('engineSel').value;
+    const seedBase = 42;
+    const mb = currentMolblock();
+    confRun = { cancelled: false };
+    document.getElementById('btnConf').textContent = 'Cancel';
+    set3dStatus(`Embedding ${n} conformers (ETKDG)…`);
+    await new Promise(r => setTimeout(r, 20));
+
+    const batch = webmm.generate_conformers_wasm(mb, n, BigInt(seedBase));
+    if (!batch.get_success()) throw batch.get_error();
+    const na = batch.get_n_atoms();
+    const nc = batch.get_n_confs();
+    const flat = batch.get_coordinates();
+    const confs = [];
+    const t0 = performance.now();
+    for (let i = 0; i < nc; i++) {
+      if (confRun.cancelled) break;
+      const coords = Array.from(flat.slice(i * na * 3, (i + 1) * na * 3));
+      const sdfI = buildSdfFromCoords(coords, mb);
+      const opts = new webmm.OptimizationOptions();
+      opts.engine = engine; opts.set_max_iterations(500);
+      const res = webmm.optimize_from_sdf(sdfI, opts);
+      const optCoords = [];
+      for (let a = 0; a < res.n_atoms; a++)
+        for (let d = 0; d < 3; d++) optCoords.push(res.get_coord(a, d));
+      confs.push({ i, E: res.final_energy, coords: optCoords });
+      if (i % 5 === 0 || i === nc - 1)
+        set3dStatus(`Optimizing conformers (${i + 1}/${nc})… ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+      await new Promise(r => setTimeout(r, 0));
+    }
+    if (confRun.cancelled) {
+      set3dStatus(`Cancelled at ${confs.length}/${nc} conformers`);
+    }
+    if (!confs.length) { set3dStatus('No conformers optimized'); confRun = null; document.getElementById('btnConf').textContent = 'Conformers'; return; }
+
+    // rank + RMSD prune (heavy atoms, Kabsch-aligned)
+    confs.sort((a, b) => a.E - b.E);
+    const heavy = confs.map(c => heavyFlat(c.coords, mb));
+    const kept = [];
+    for (let i = 0; i < confs.length; i++) {
+      let dup = false;
+      for (const k of kept) {
+        if (kabschRmsd(heavy[i], heavy[k.i]) < rmsdCut) { dup = true; break; }
+      }
+      if (!dup) kept.push({ i: confs[i].i, E: confs[i].E, coords: confs[i].coords });
+    }
+    const Emin = kept[0].E;
+    kept.forEach(k => k.dE = k.E - Emin);
+    confEnsemble = kept.map(k => ({ ...k, sdf: buildSdfFromCoords(k.coords, mb) }));
+
+    // show the lowest-energy one in 3D
+    showSdfIn3D(confEnsemble[0].sdf);
+    const rows = confEnsemble.map((k, r) =>
+      `<tr style="cursor:pointer;" onclick="showEnsembleConf(${r})">` +
+      `<td class="key">#${r + 1} (seed ${seedBase + k.i})</td>` +
+      `<td class="value">E=${k.E.toFixed(2)}${r === 0 ? '' : ' · ΔE=' + k.dE.toFixed(2)}</td></tr>`).join('');
+    document.getElementById('confTable').innerHTML = rows;
+    document.getElementById('confPanel').style.display = 'block';
+    set3dStatus(`Conformers: ${confs.length} optimized (${((performance.now() - t0) / 1000).toFixed(1)}s), ` +
+      `${kept.length} kept after RMSD ≥ ${rmsdCut} Å — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
+  } catch (e) {
+    showError(e); set3dStatus('Conformer run failed');
+  }
+  confRun = null;
+  document.getElementById('btnConf').textContent = 'Conformers';
+}
+
+function showEnsembleConf(r) {
+  if (!confEnsemble || !confEnsemble[r]) return;
+  showSdfIn3D(confEnsemble[r].sdf);
+  set3dStatus(`Conformer #${r + 1}: E = ${confEnsemble[r].E.toFixed(2)} kcal/mol (ΔE = ${confEnsemble[r].dE.toFixed(2)})`);
+}
+
+function exportEnsembleSDF() {
+  if (!confEnsemble || !confEnsemble.length) { showError('Run Conformers first'); return; }
+  const sdf = confEnsemble.map(k => k.sdf + '$$$$').join('\n');
+  downloadBlob(sdf, 'conformers.sdf', 'chemical/x-mdl-molfile');
 }
 </script>
 
