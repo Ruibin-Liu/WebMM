@@ -17,6 +17,10 @@ MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit
 **ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
 
 ## Recently Completed
++- **Workbench v1.1 — 引擎侧加氢(重原子快速嵌入 + 3D 几何附氢),SMILES 输入获得全氢 MMFF 能量。** Rust `src/molecule/hydrogens.rs`:标准价态表(芳香键计 1.5、电荷修正价态 O⁻=1/N⁺=4/C±=3)算 H 数 → 图扩展 → **3D 几何附着**(单重邻键:反向四面体扇 109.5°;双邻:反向平分线 + 垂直;≥3 邻:负向量和;键长 C-H 1.09/N-H 1.01/O-H 0.97/S-H 1.34);含 M CHG 往返的 V2000 序列化;显氢输入原样返回(防重复加)。wasm:`add_hydrogens_wasm`(2D 输入兜底)+ `attach_hydrogens_3d_wasm`(3D 附着,配合重原子嵌入)。
++  **应用管线重构:ETKDG 只嵌重原子(~1s),3D 附氢后全原子优化** —— 显氢嵌入对原子数超线性爆炸(33 原子全氢 ibuprofen 单次嵌入 21.8s vs 13 原子 1.09s,12 构象阻塞主线程数分钟)。重构后 ibuprofen 12 构象系综 251s→6.7s(~37×)。附带的 yieldToUI()(MessageChannel + setTimeout 竞速)消除后台定时器节流导致的数分钟级 yield 卡顿。
++  验收:Rust 加氢 5 测试(乙醇 6H/苯环 6H/羧酸根 O⁻ 无 H/显氢不变/3D 几何:键长 + 无 H-H 重叠);M2 CDP 9/9(全氢系综:能量分布合理 ΔE 至 4.27,此前隐氢挤在 0.2);回归 M0 37/37、M1 10/10、M3 12/12;cargo test 237/237、clippy 0。
++  注:M0/M1 测试中的 "caffeine" Kekulé SMILES 实为**茶碱**(C7H8N4O2,MW 180.16,21 原子含氢);demo 预设 24 原子结构才是真咖啡因(MW 194.19)。能量对比基准不受影响。
 +- **Workbench M3 — 可分享 URL 状态 + 无障碍/键盘打磨 + 一个全局级 SDF 解析修复。** URL 深链扩展:engine/confN/confRmsd 编码进 #mol= 状态并在载入时恢复(先于 process,保证运行即用);base64 换成 unicode 安全的 TextEncoder 路径(MC 原版 btoa 对非 Latin1 名字会抛错)。模态:Escape 关闭最上层、点击背景关闭;构象表格行获得 tabindex/role=button/Enter/Space 激活;error/status 区 aria-live、模态 role=dialog+labelledby、输入 aria-label(15 处)。axe-core 扫描:serious/critical 违规 0。
 +  **全局修复 — sdfLines() 归一化**:RDKit get_molblock 对 SMILES 来源分子输出**空标题行**,而前端所有 trim().split('\n') + 固定下标(取 counts@3)被 trim 吃掉空行后整体偏移一行——counts 读到原子行(坐标开头数字被 parseInt 成"5"/"18"),产生"expected 18, got 5"类间歇性解析错误。改为按 V2000 标记**内容搜索** counts 行并归一(buildSdfFromCoords/embed3D/exportXYZ/heavyFlat 全部接入)。M1 之前能用纯属侥幸(用的是 render() 补过标题的显示版 molblock)。
 +  验收(M3 CDP 12/12):URL 三参数恢复+setURL 往返;Escape/背景关闭;axe serious/critical = 0;构象行键盘激活;全链路(embed→optimize→conformers)冒烟;1440/820 截图;零 console error。回归:M0 37/37、M1 10/10、M2 9/9;cargo test 232/232、clippy 0。README 新增 Workbench 章节。

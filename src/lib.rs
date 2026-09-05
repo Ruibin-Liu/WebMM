@@ -302,6 +302,28 @@ impl ConformerBatch {
     }
 }
 
+/// Add explicit hydrogens to a heavy-atom SDF/molblock (v1.1): H counts from
+/// standard organic valences (aromatic = 1.5, charge-adjusted), single bonds
+/// to the parent heavy atom, coordinates placed away from the neighbor
+/// centroid (L-BFGS relaxes them; ETKDG regenerates everything on embed).
+/// Inputs that already contain explicit H are returned unchanged.
+#[wasm_bindgen]
+pub fn add_hydrogens_wasm(sdf_content: &str) -> Result<String, JsValue> {
+    console_error_panic_hook::set_once();
+    crate::molecule::hydrogens::molblock_with_h(sdf_content)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Attach hydrogens to a 3D heavy-atom SDF with geometry-aware placement
+/// (tetrahedral fans / bisectors at standard bond lengths). Pairs with the
+/// heavy-only ETKDG embed, which is ~20x faster than embedding all-H.
+#[wasm_bindgen]
+pub fn attach_hydrogens_3d_wasm(sdf_content: &str) -> Result<String, JsValue> {
+    console_error_panic_hook::set_once();
+    crate::molecule::hydrogens::molblock_with_h(sdf_content)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
 #[wasm_bindgen]
 pub fn generate_conformers_wasm(sdf_content: &str, n: usize, seed_base: u64) -> ConformerBatch {
     console_error_panic_hook::set_once();

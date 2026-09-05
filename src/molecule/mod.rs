@@ -1,4 +1,5 @@
 pub mod graph;
+pub mod hydrogens;
 pub mod parser;
 
 pub use graph::{Angle, Hybridization, OutOfPlane, Torsion};

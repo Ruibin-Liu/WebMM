@@ -1720,6 +1720,20 @@ function showSdfIn3D(sdf) {
     document.getElementById(id).disabled = false;
 }
 
+// Yield to the UI without setTimeout: MessageChannel tasks are immune to
+// background/intensive timer throttling (headless test runners and hidden
+// tabs clamp setTimeout to seconds, stalling batch work for minutes).
+function yieldToUI() {
+  return new Promise(r => {
+    let done = false;
+    const fire = () => { if (!done) { done = true; r(); } };
+    const ch = new MessageChannel();
+    ch.port1.onmessage = fire;
+    ch.port2.postMessage(0);
+    setTimeout(fire, 50);   // fallback: never stall if the channel is starved
+  });
+}
+
 // Normalize an SDF/molblock so the V2000 counts line sits at index 3
 // (title + program + comment above it). RDKit's get_molblock emits an EMPTY
 // title line for SMILES-derived mols; a leading .trim() would swallow it and
@@ -1765,31 +1779,35 @@ function embed3D() {
   clearError();
   try {
     const mb = currentMolblock();
+    const naHeavy = parseInt(sdfLines(mb)[3].substring(0, 3));
     // 3D input: use as-is (same semantics as the engine's has_3d check)
     const lines = sdfLines(mb);
-    const na = parseInt(lines[3].substring(0, 3));
     let has3d = false;
-    for (let i = 0; i < na; i++) {
+    for (let i = 0; i < naHeavy; i++) {
       if (Math.abs(parseFloat(lines[4+i].substring(20, 30))) > 1e-6) { has3d = true; break; }
     }
     if (has3d) {
-      showSdfIn3D(mb);
-      set3dStatus('3D coordinates present — ready to Optimize');
+      const withH = webmm.attach_hydrogens_3d_wasm(mb);
+      showSdfIn3D(withH);
+      set3dStatus('3D coordinates present — hydrogens attached — ready to Optimize');
       return;
     }
-    set3dStatus('Embedding 3D (ETKDG)…');
-    setTimeout(() => {
+    // heavy-only ETKDG embed (fast), then geometry-aware H attachment
+    set3dStatus('Embedding 3D (ETKDG, heavy atoms)…');
+    yieldToUI().then(() => {
       try {
         const t0 = performance.now();
         const res = webmm.generate_initial_coordinates_wasm(mb);
         if (!res.get_success()) throw res.get_error();
         const coords = res.get_coordinates();
-        const sdf = buildSdfFromCoords(coords, mb);
-        showSdfIn3D(sdf);
+        const sdfHeavy = buildSdfFromCoords(coords, mb);
+        const withH = webmm.attach_hydrogens_3d_wasm(sdfHeavy);
+        showSdfIn3D(withH);
         const dt = ((performance.now() - t0) / 1000).toFixed(2);
-        set3dStatus(`Embedded ${res.get_n_atoms()} atoms in ${dt}s — now pick an engine and Optimize`);
+        const nAll = parseInt(sdfLines(withH)[3].substring(0, 3));
+        set3dStatus(`Embedded ${naHeavy} heavy atoms (+${nAll - naHeavy} H) in ${dt}s — now pick an engine and Optimize`);
       } catch (e) { showError(e); set3dStatus('Embed failed'); }
-    }, 20);
+    });
   } catch (e) { showError(e); }
 }
 
@@ -1812,7 +1830,7 @@ function optimize3D() {
     if (!sdf3d) { embed3D(); return; }   // auto-embed first
     const engine = document.getElementById('engineSel').value;
     set3dStatus(`Optimizing with ${engine} (L-BFGS)…`);
-    setTimeout(() => {
+    yieldToUI().then(() => {
       try {
         const t0 = performance.now();
         const opts = new webmm.OptimizationOptions();
@@ -1826,7 +1844,7 @@ function optimize3D() {
         showSdfIn3D(buildSdfFromCoords([...coords], sdf3d));
         renderEnergyPanel(res, ((performance.now() - t0) / 1000).toFixed(2));
       } catch (e) { showError(e); set3dStatus('Optimization failed'); }
-    }, 20);
+    });
   } catch (e) { showError(e); }
 }
 
@@ -1947,11 +1965,11 @@ async function runConformers() {
     const rmsdCut = parseFloat(document.getElementById('confRmsd').value) || 0.5;
     const engine = document.getElementById('engineSel').value;
     const seedBase = 42;
-    const mb = currentMolblock();
+    const mb = currentMolblock();   // heavy-only batch embed (fast); H attached per conformer
     confRun = { cancelled: false };
     document.getElementById('btnConf').textContent = 'Cancel';
     set3dStatus(`Embedding ${n} conformers (ETKDG)…`);
-    await new Promise(r => setTimeout(r, 20));
+    await yieldToUI();
 
     const batch = webmm.generate_conformers_wasm(mb, n, BigInt(seedBase));
     if (!batch.get_success()) throw batch.get_error();
@@ -1963,17 +1981,18 @@ async function runConformers() {
     for (let i = 0; i < nc; i++) {
       if (confRun.cancelled) break;
       const coords = Array.from(flat.slice(i * na * 3, (i + 1) * na * 3));
-      const sdfI = buildSdfFromCoords(coords, mb);
+      const sdfHeavyI = buildSdfFromCoords(coords, mb);
+      const sdfAllI = webmm.attach_hydrogens_3d_wasm(sdfHeavyI);
       const opts = new webmm.OptimizationOptions();
       opts.engine = engine; opts.set_max_iterations(500);
-      const res = webmm.optimize_from_sdf(sdfI, opts);
+      const res = webmm.optimize_from_sdf(sdfAllI, opts);
       const optCoords = [];
       for (let a = 0; a < res.n_atoms; a++)
         for (let d = 0; d < 3; d++) optCoords.push(res.get_coord(a, d));
-      confs.push({ i, E: res.final_energy, coords: optCoords });
+      confs.push({ i, E: res.final_energy, coords: optCoords, sdf: buildSdfFromCoords(optCoords, sdfAllI) });
       if (i % 5 === 0 || i === nc - 1)
         set3dStatus(`Optimizing conformers (${i + 1}/${nc})… ${((performance.now() - t0) / 1000).toFixed(1)}s`);
-      await new Promise(r => setTimeout(r, 0));
+      await yieldToUI();
     }
     if (confRun.cancelled) {
       set3dStatus(`Cancelled at ${confs.length}/${nc} conformers`);
@@ -1982,18 +2001,18 @@ async function runConformers() {
 
     // rank + RMSD prune (heavy atoms, Kabsch-aligned)
     confs.sort((a, b) => a.E - b.E);
-    const heavy = confs.map(c => heavyFlat(c.coords, mb));
+    const heavy = confs.map(c => heavyFlat(c.coords, c.sdf));
     const kept = [];
     for (let i = 0; i < confs.length; i++) {
       let dup = false;
       for (const k of kept) {
         if (kabschRmsd(heavy[i], heavy[k.i]) < rmsdCut) { dup = true; break; }
       }
-      if (!dup) kept.push({ i: confs[i].i, E: confs[i].E, coords: confs[i].coords });
+      if (!dup) kept.push({ i: confs[i].i, E: confs[i].E, coords: confs[i].coords, sdf: confs[i].sdf });
     }
     const Emin = kept[0].E;
     kept.forEach(k => k.dE = k.E - Emin);
-    confEnsemble = kept.map(k => ({ ...k, sdf: buildSdfFromCoords(k.coords, mb) }));
+    confEnsemble = kept;
 
     // show the lowest-energy one in 3D
     showSdfIn3D(confEnsemble[0].sdf);
