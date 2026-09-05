@@ -575,11 +575,11 @@ details {
  </header>
 
 <div class="panel">
-  <textarea id="input" placeholder="Paste SMILES, MolBlock, or SDF here"></textarea>
+  <textarea id="input" aria-label="Molecule input: SMILES, MolBlock, or SDF" placeholder="Paste SMILES, MolBlock, or SDF here"></textarea>
 
   <div class="separator">-- or --</div>
 
-   <div class="drop" id="drop">
+   <div class="drop" id="drop" role="button" tabindex="0" aria-label="Drag and drop MOL, SDF, or TXT files here">
      Drag & drop MOL / SDF / TXT files here
    </div>
 
@@ -606,7 +606,7 @@ details {
       </button>
     </div>
 
-  <div id="error"></div>
+  <div id="error" role="alert" aria-live="polite"></div>
 </div>
 
 <div id="output" style="display:none">
@@ -671,7 +671,7 @@ details {
 
    <div class="panel">
      <strong>3D Structure</strong>
-     <div id="viewer3d" style="margin-top:0.75rem;">
+     <div id="viewer3d" role="img" aria-label="3D molecule viewer" style="margin-top:0.75rem;">
        Embed a 3D structure to begin (ETKDG)
      </div>
      <div class="action-buttons">
@@ -682,7 +682,7 @@ details {
          </svg>
          Embed 3D
        </button>
-       <select id="engineSel" class="engine-sel" title="Force-field engine">
+       <select id="engineSel" class="engine-sel" aria-label="Force-field engine" title="Force-field engine">
          <option value="MMFF94s" selected>MMFF94s</option>
          <option value="MMFF94">MMFF94</option>
          <option value="GFNFF">GFN-FF</option>
@@ -703,10 +703,10 @@ details {
          Conformers
        </button>
        <label class="engine-sel" style="display:inline-flex;align-items:center;gap:4px;" title="number of embedding seeds (1–500)">N
-         <input id="confN" type="number" min="1" max="500" value="50" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
+         <input id="confN" aria-label="Number of conformers" type="number" min="1" max="500" value="50" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
        </label>
        <label class="engine-sel" style="display:inline-flex;align-items:center;gap:4px;" title="RMSD prune threshold (Å, heavy atoms)">RMSD
-         <input id="confRmsd" type="number" min="0.05" max="3" step="0.05" value="0.5" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
+         <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
        </label>
        <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled>
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -719,14 +719,14 @@ details {
        <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled>XYZ</button>
        <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled>PNG</button>
      </div>
-     <div id="status3d" class="version" style="margin-top:0.5rem;">Engine loading…</div>
+     <div id="status3d" class="version" aria-live="polite" style="margin-top:0.5rem;">Engine loading…</div>
      <div id="energyPanel" style="display:none; margin-top:0.75rem;">
        <strong>WebMM Energy (kcal/mol)</strong>
        <table id="eterms"></table>
      </div>
      <div id="confPanel" style="display:none; margin-top:0.75rem;">
        <strong>Conformer Ensemble (kcal/mol, pruned)</strong>
-       <table id="confTable"></table>
+       <table id="confTable" aria-label="Conformer ensemble energies"></table>
        <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">Export ensemble SDF</button>
      </div>
      <div class="spiral-note">
@@ -774,10 +774,10 @@ details {
    © <span id="year"></span> <a href="https://github.com/Ruibin-Liu/WebMM" target="_blank" rel="noopener">WebMM</a> — structure editing &amp; properties by <a href="https://ruibin-liu.github.io/molecule-clipboard/" target="_blank" rel="noopener">RDKit + JSME</a>, 3D engine by WebMM
  </div>
 
-<div id="jsmeModal" class="modal">
+<div id="jsmeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="jsmeTitle">
   <div class="modal-content">
     <div class="modal-header">
-      <h2>JSME Editor</h2>
+      <h2 id="jsmeTitle">JSME Editor</h2>
       <button class="close-btn" onclick="closeJSME()">&times;</button>
     </div>
     <div class="modal-body">
@@ -790,10 +790,10 @@ details {
   </div>
 </div>
 
-<div id="historyModal" class="modal">
+<div id="historyModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
   <div class="modal-content">
     <div class="modal-header">
-      <h2>History</h2>
+      <h2 id="historyTitle">History</h2>
       <div>
         <button class="copy-btn" onclick="exportHistoryToCSV()">Export CSV</button>
         <button class="copy-btn" onclick="clearHistory()">Clear All</button>
@@ -804,10 +804,10 @@ details {
   </div>
 </div>
 
-<div id="sourceModal" class="modal">
+<div id="sourceModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="sourceTitle">
   <div class="modal-content">
     <div class="modal-header">
-      <h2>HTML Source</h2>
+      <h2 id="sourceTitle">HTML Source</h2>
       <div>
         <button class="copy-btn" onclick="copySource()">Copy</button>
         <button class="close-btn" onclick="closeSourceModal()">&times;</button>
@@ -1123,13 +1123,36 @@ let rdkitModule = null;
    }
 
  function setURL(smiles, name) {
-   const data = JSON.stringify({smiles, name});
-   location.hash = "mol=" + btoa(data);
+   const data = { smiles, name };
+   // M3: persist simulation state for shareable deep-links
+   data.engine = document.getElementById('engineSel').value;
+   data.confN = document.getElementById('confN').value;
+   data.confRmsd = document.getElementById('confRmsd').value;
+   location.hash = "mol=" + b64Encode(JSON.stringify(data));
+ }
+
+ // unicode-safe base64 (btoa throws on non-Latin1 — names can be any script)
+ function b64Encode(s) {
+   return btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+ }
+ function b64Decode(s) {
+   return new TextDecoder().decode(Uint8Array.from(atob(s), c => c.charCodeAt(0)));
  }
 
  function loadFromURL() {
     if (!location.hash.startsWith("#mol=")) return;
-    const data = JSON.parse(atob(location.hash.slice(5)));
+    let data;
+    try {
+      data = JSON.parse(b64Decode(location.hash.slice(5)));
+    } catch (e) {
+      showError('Bad share link: ' + e);
+      return;
+    }
+    // restore simulation state first so the run below uses it
+    if (data.engine && ['MMFF94s', 'MMFF94', 'GFNFF'].includes(data.engine))
+      document.getElementById('engineSel').value = data.engine;
+    if (data.confN) document.getElementById('confN').value = data.confN;
+    if (data.confRmsd) document.getElementById('confRmsd').value = data.confRmsd;
     let inputValue = data.smiles;
     if (data.name) {
       inputValue = data.smiles + " " + data.name;
@@ -1295,6 +1318,28 @@ let rdkitModule = null;
   function clearError() {
     document.getElementById("error").textContent = "";
   }
+
+  // M3: Escape closes the topmost modal; backdrop click closes; focus returns
+  const MODALS = ['jsmeModal', 'historyModal', 'sourceModal'];
+  for (const id of MODALS) {
+    const m = document.getElementById(id);
+    m.addEventListener('mousedown', e => { if (e.target === m) m.style.display = 'none'; });
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    for (const id of MODALS) {
+      const m = document.getElementById(id);
+      if (m.style.display === 'block') { m.style.display = 'none'; return; }
+    }
+  });
+  // conformer table rows are clickable — give them keyboard activation
+  document.getElementById('confTable').addEventListener('keydown', e => {
+    const tr = e.target.closest('tr[tabindex]');
+    if (tr && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      tr.click();
+    }
+  });
 
   const drop = document.getElementById("drop");
   drop.ondragover = e => { e.preventDefault(); drop.style.borderColor = "var(--accent)"; };
@@ -1675,10 +1720,24 @@ function showSdfIn3D(sdf) {
     document.getElementById(id).disabled = false;
 }
 
+// Normalize an SDF/molblock so the V2000 counts line sits at index 3
+// (title + program + comment above it). RDKit's get_molblock emits an EMPTY
+// title line for SMILES-derived mols; a leading .trim() would swallow it and
+// shift every fixed column index by one (root cause of "expected N, got M"
+// parse errors). Locate the counts line by CONTENT instead.
+function sdfLines(sdf) {
+  const L = sdf.replace(/\r/g, '').split('\n');
+  const ci = L.findIndex(l => l.includes('V2000'));
+  if (ci === 3) return L;
+  if (ci > 3) return L.slice(ci - 3);
+  for (let k = 3 - Math.max(ci, 0); k > 0; k--) L.unshift('');
+  return L;
+}
+
 // Rebuild an SDF string with new coordinates from a flat [x,y,z,...] array
 // (same V2000 fixed-column surgery as the demo page).
 function buildSdfFromCoords(coords, sdf) {
-  const lines = sdf.trim().split('\n');
+  const lines = sdfLines(sdf);
   const na = parseInt(lines[3].substring(0, 3));
   const nb = parseInt(lines[3].substring(3, 6));
   const header = lines.slice(0, 4);
@@ -1707,7 +1766,7 @@ function embed3D() {
   try {
     const mb = currentMolblock();
     // 3D input: use as-is (same semantics as the engine's has_3d check)
-    const lines = mb.trim().split('\n');
+    const lines = sdfLines(mb);
     const na = parseInt(lines[3].substring(0, 3));
     let has3d = false;
     for (let i = 0; i < na; i++) {
@@ -1741,8 +1800,10 @@ function renderEnergyPanel(res, dt) {
   document.getElementById('eterms').innerHTML = rows +
     `<tr><td class="key"><strong>total</strong></td><td class="value"><strong>${res.final_energy.toFixed(4)}</strong></td></tr>`;
   document.getElementById('energyPanel').style.display = 'block';
+  const msg = res.get_message();
+  const msgTxt = (res.converged || !msg) ? '' : ' · ' + msg;
   set3dStatus(`<b>E(${res.get_engine()}) = ${res.final_energy.toFixed(2)} kcal/mol</b> · ` +
-    `${res.converged ? 'converged' : 'NOT converged'} · ${res.iterations} iterations · ${dt}s`);
+    `${res.converged ? 'converged' : 'NOT converged'} · ${res.iterations} iterations · ${dt}s${msgTxt}`);
 }
 
 function optimize3D() {
@@ -1792,7 +1853,7 @@ function exportSDF3D() {
 
 function exportXYZ() {
   if (!require3D()) return;
-  const lines = sdf3d.trim().split('\n');
+  const lines = sdfLines(sdf3d);
   const na = parseInt(lines[3].substring(0, 3));
   const syms = [];
   const pos = [];
@@ -1866,7 +1927,7 @@ function kabschRmsd(pFlat, qFlat, sym) {
 
 function heavyFlat(coords, sdf) {
   // keep non-H atoms of a flat coordinate array (match atom count in sdf)
-  const lines = sdf.trim().split('\n');
+  const lines = sdfLines(sdf);
   const na = parseInt(lines[3].substring(0, 3));
   const keep = [];
   for (let i = 0; i < na; i++) {
@@ -1937,7 +1998,7 @@ async function runConformers() {
     // show the lowest-energy one in 3D
     showSdfIn3D(confEnsemble[0].sdf);
     const rows = confEnsemble.map((k, r) =>
-      `<tr style="cursor:pointer;" onclick="showEnsembleConf(${r})">` +
+      `<tr tabindex="0" role="button" aria-label="Show conformer ${r + 1}, E ${k.E.toFixed(2)} kcal/mol" style="cursor:pointer;" onclick="showEnsembleConf(${r})">` +
       `<td class="key">#${r + 1} (seed ${seedBase + k.i})</td>` +
       `<td class="value">E=${k.E.toFixed(2)}${r === 0 ? '' : ' · ΔE=' + k.dE.toFixed(2)}</td></tr>`).join('');
     document.getElementById('confTable').innerHTML = rows;

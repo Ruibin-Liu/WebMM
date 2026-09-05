@@ -17,6 +17,9 @@ MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit
 **ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
 
 ## Recently Completed
++- **Workbench M3 — 可分享 URL 状态 + 无障碍/键盘打磨 + 一个全局级 SDF 解析修复。** URL 深链扩展:engine/confN/confRmsd 编码进 #mol= 状态并在载入时恢复(先于 process,保证运行即用);base64 换成 unicode 安全的 TextEncoder 路径(MC 原版 btoa 对非 Latin1 名字会抛错)。模态:Escape 关闭最上层、点击背景关闭;构象表格行获得 tabindex/role=button/Enter/Space 激活;error/status 区 aria-live、模态 role=dialog+labelledby、输入 aria-label(15 处)。axe-core 扫描:serious/critical 违规 0。
++  **全局修复 — sdfLines() 归一化**:RDKit get_molblock 对 SMILES 来源分子输出**空标题行**,而前端所有 trim().split('\n') + 固定下标(取 counts@3)被 trim 吃掉空行后整体偏移一行——counts 读到原子行(坐标开头数字被 parseInt 成"5"/"18"),产生"expected 18, got 5"类间歇性解析错误。改为按 V2000 标记**内容搜索** counts 行并归一(buildSdfFromCoords/embed3D/exportXYZ/heavyFlat 全部接入)。M1 之前能用纯属侥幸(用的是 render() 补过标题的显示版 molblock)。
++  验收(M3 CDP 12/12):URL 三参数恢复+setURL 往返;Escape/背景关闭;axe serious/critical = 0;构象行键盘激活;全链路(embed→optimize→conformers)冒烟;1440/820 截图;零 console error。回归:M0 37/37、M1 10/10、M2 9/9;cargo test 232/232、clippy 0。README 新增 Workbench 章节。
 +- **Workbench M2 — 构象系综(批量 ETKDG + 逐构象优化 + 能量排序 + RMSD 剪枝 + 多构象 SDF 导出)。** Rust:`generate_conformers_wasm(sdf, n, seed_base)` 批量嵌入(seed_base+i, i=0@42 与单体导出逐位一致;n 截 1..=500;失败 seed 跳过),测试锁定可复现性/多样性/同一性/校验。前端:Conformers 按钮 + N/RMSD 阈值内联输入 → 批量嵌入 → 逐构象(所选引擎)L-BFGS(每构象让出主线程,进度实时,可取消)→ 能量升序排名 → Kabsch 对齐重原子 RMSD 贪心剪枝 → 表格(排名/种子/E/ΔE,点击行切换 3D 视图)→ Export ensemble SDF(每构象 $$$$‌块)。注意:u64 参数经 wasm-bindgen 映射为 JS BigInt(踩坑记录)。
 +  验收(M2 CDP 9/9):ibuprofen 12 构象 1.5s,8 个经 RMSD≥0.5 Å 保留;能量升序、ΔE[0]=0;点击行切换视图;ensemble SDF 8 块且首块被 RDKit.js 读取(15 显式+18 隐氢=33,MC 描述符语义);取消路径 UI 可用;零 console error。回归:M0 37/37、M1 10/10、demo MMFF -123.49 不变。
 +  已知限制(记录):SMILES 输入为隐氢结构,RDKit.js minimal 的 add_hs 不生效 → MMFF 能量为重原子口径(隐氢 MMFF 能量可为正,如 ibuprofen +51.66;全氢参考见 M1 咖啡因 -123.49),构象"相对能量排序"不受影响。v1.1 候选:引擎侧加氢导出。

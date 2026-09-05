@@ -5,6 +5,20 @@ conformer embedding, MMFF94/MMFF94s force field with L-BFGS optimization,
 gas-phase molecular dynamics, well-tempered metadynamics, and GBSA implicit
 solvation. Runs fully in the browser via WebAssembly.
 
+## WebMM Workbench (`app/`)
+
+A lightweight, ligand-based CADD web app built on top of this engine, with the
+interface aligned with [Molecule Clipboard](https://ruibin-liu.github.io/molecule-clipboard/):
+draw (JSME), inspect (RDKit descriptors, drug rules), then **embed 3D (ETKDG),
+optimize (MMFF94/MMFF94s/GFN-FF), enumerate + rank + RMSD-prune conformers**,
+and export SDF/XYZ/PNG — all locally, no uploads, offline-capable (all deps
+vendored). Interactive MD & metadynamics live in the Playground/Demo pages.
+
+```bash
+npm run build   # wasm-pack -> pkg/ (served as ../pkg from app/)
+python3 -m http.server 8000   # from the repo root, then open /app/index.html
+```
+
 ## Project Structure
 
 ```
