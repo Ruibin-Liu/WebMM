@@ -126,7 +126,9 @@ pub fn optimize(
         // Update history
         let x_new_2d = flatten_to_2d(&x, n_atoms);
         let mut g_new_2d = vec![[0.0f64; 3]; n_atoms];
-        let _ = ff.energy_and_gradient(&x_new_2d, &mut g_new_2d);
+        // E at the updated x — keeps the invariant final_energy == E(optimized_coords)
+        // even when exiting via max_iterations (previously stale by one step)
+        final_energy = ff.energy_and_gradient(&x_new_2d, &mut g_new_2d);
 
         let mut g_new = Vec::with_capacity(n_coords);
         for grad in g_new_2d.iter() {

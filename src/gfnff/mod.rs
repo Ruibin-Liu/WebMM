@@ -316,11 +316,24 @@ impl GfnffForceField {
     pub fn new(at: &[usize], xyz: &[[f64; 3]], charge: f64) -> Self {
         GfnffForceField { inner: std::rc::Rc::new(Gfnff::new(at, xyz, charge)) }
     }
+
+    /// EnergyComponents at arbitrary coordinates (Eh, topology fixed at setup),
+    /// matching what energy_and_gradient totals — for term-wise display.
+    pub fn components_at(&self, coords: &[[f64; 3]]) -> EnergyComponents {
+        self.inner.energy(coords)
+    }
 }
 
 impl crate::forces::ForceField for GfnffForceField {
     fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
-        let e = self.inner.energy_and_gradient(coords, grad);
+        let e = self.inner.energy_and_gradient(coords, grad);   // E in Eh, grad in Eh/Bohr
+        // convert BOTH to kcal/mol and kcal/mol/Å (the previous version scaled
+        // only the energy, leaving the gradient 2.24× too small — L-BFGS then
+        // stalled at the input geometry and "converged" immediately)
+        const SCALE: f64 = 627.5094740631 / BOHR;
+        for g in grad.iter_mut() {
+            for c in g.iter_mut() { *c *= SCALE; }
+        }
         e.total() * 627.5094740631   // Eh -> kcal/mol
     }
 }
@@ -425,10 +438,8 @@ impl Gfnff {
                 let z = at[i];
                 let h = hyb[i];
                 if matches!(z, 6|7|8|9|16) && (h == 1 || h == 2) { piadr_temp[i] = true; }
-                if matches!(z, 7..=9) {
-                    let attached = nb[i].iter().any(|&j| hyb[j] == 1 || hyb[j] == 2);
-                    if attached && h != 3 { piadr_temp[i] = true; }
-                }
+                let attached_sp2 = nb[i].iter().any(|&j| hyb[j] == 1 || hyb[j] == 2);
+                if matches!(z, 7..=9) && attached_sp2 { piadr_temp[i] = true; }   // picon: sp3 N/O/F on sp2 joins π (nofs)
             }
         }
         // fragment detection: connected components on the bond graph
@@ -858,10 +869,11 @@ impl Gfnff {
             let hyb = self.topo.hyb[i];
             let inlist = matches!(z, 6 | 7 | 8 | 9 | 16);
             let mut piat = (hyb == 1 || hyb == 2) && inlist;
-            // sp3 N/O/F attached to sp2/sp -> pi (nofs rule)
+            // sp3 N/O/F attached to sp2/sp → pi (nofs rule; xtb ini 373-386:
+            // picon = kk>0 .and. nofs — NO hyb!=3 condition, amide N's join)
             let attached_sp2 = self.topo.nb[i].iter()
                 .any(|&j| self.topo.hyb[j] == 1 || self.topo.hyb[j] == 2);
-            if matches!(z, 7..=9) && attached_sp2 && hyb != 3 { piat = true; }
+            if matches!(z, 7..=9) && attached_sp2 { piat = true; }
             if !attached_sp2 && hyb == 3 { piat = false; }
             if z == 7 && self.topo.nb[i].len() > 3 { piat = false; } // NR4
             if piat { piadr[i] = true; }
@@ -4250,3 +4262,7 @@ fn assign_hyb(at: &[usize], nb: &[Vec<usize>], _xyz: &[[f64; 3]], _qa: &[f64]) -
     }
     (hyb, nitro_n)
 }
+
+
+
+

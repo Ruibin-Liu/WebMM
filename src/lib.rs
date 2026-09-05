@@ -78,6 +78,10 @@ impl Default for ConvergenceOptions {
 pub struct OptimizationOptions {
     #[wasm_bindgen(getter_with_clone, setter)]
     pub mmff_variant: String,
+    /// Force-field engine: "MMFF94s" (default), "MMFF94", or "GFNFF".
+    /// Empty falls back to the legacy mmff_variant field.
+    #[wasm_bindgen(getter_with_clone)]
+    pub engine: String,
     #[wasm_bindgen(skip)]
     pub convergence: ConvergenceOptions,
 }
@@ -114,6 +118,7 @@ impl Default for OptimizationOptions {
     fn default() -> Self {
         Self {
             mmff_variant: "MMFF94s".to_string(),
+            engine: String::new(),
             convergence: ConvergenceOptions::default(),
         }
     }
@@ -129,6 +134,12 @@ pub struct OptimizationResult {
     #[wasm_bindgen(getter_with_clone)]
     pub message: String,
     coordinates: Vec<f64>,
+    /// JSON object term→value (kcal/mol) summing to final_energy;
+    /// keys are engine-specific (MMFF: bond/angle/stretch_bend/torsion/oop/
+    /// vdw/electrostatic; GFN-FF: bond/angle/torsion/rep/es/disp/hb/xb/batm)
+    energy_terms_json: String,
+    #[wasm_bindgen(getter_with_clone)]
+    engine_used: String,
 }
 
 #[wasm_bindgen]
@@ -151,6 +162,18 @@ impl OptimizationResult {
     #[wasm_bindgen]
     pub fn get_message(&self) -> String {
         self.message.clone()
+    }
+
+    /// JSON object of per-term energies (kcal/mol), engine-specific keys.
+    #[wasm_bindgen]
+    pub fn get_energy_terms_json(&self) -> String {
+        self.energy_terms_json.clone()
+    }
+
+    /// Engine actually used: "MMFF94s", "MMFF94", or "GFNFF".
+    #[wasm_bindgen]
+    pub fn get_engine(&self) -> String {
+        self.engine_used.clone()
     }
 
     #[wasm_bindgen]
@@ -239,6 +262,54 @@ pub fn generate_initial_coordinates_wasm(sdf_content: &str) -> Result<ETKDGResul
     })
 }
 
+/// Shared engine dispatch: optimize + per-term breakdown (kcal/mol) at the
+/// final geometry. Returns (optimizer result, terms JSON, engine label).
+fn optimize_dispatch(
+    mol: &crate::molecule::Molecule,
+    initial_coords: &[[f64; 3]],
+    options: &OptimizationOptions,
+) -> (crate::optimizer::OptimizationResult, String, String) {
+    const EH_KCAL: f64 = 627.5094740631;
+    let engine = if options.engine.is_empty() {
+        // legacy field fallback
+        match options.mmff_variant.as_str() { "MMFF94" => "MMFF94", _ => "MMFF94s" }.to_string()
+    } else {
+        options.engine.to_uppercase()
+    };
+    match engine.as_str() {
+        "GFNFF" | "GFN-FF" => {
+            let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+            let charge: f64 = mol.atoms.iter().map(|a| a.charge).sum();
+            let ff = crate::gfnff::GfnffForceField::new(&at, initial_coords, charge);
+            let r = crate::optimizer::optimize(&ff, initial_coords, &options.convergence);
+            let ec = ff.components_at(&r.optimized_coords);
+            let terms = serde_json::json!({
+                "bond": ec.bond * EH_KCAL, "angle": ec.angle * EH_KCAL,
+                "torsion": ec.torsion * EH_KCAL, "rep": ec.rep * EH_KCAL,
+                "es": ec.es * EH_KCAL, "disp": ec.disp * EH_KCAL,
+                "hb": ec.hb * EH_KCAL, "xb": ec.xb * EH_KCAL,
+                "batm": ec.batm * EH_KCAL,
+            });
+            (r, terms.to_string(), "GFNFF".to_string())
+        }
+        _ => {
+            let variant = match engine.as_str() {
+                "MMFF94" => MMFFVariant::MMFF94, _ => MMFFVariant::MMFF94s,
+            };
+            let ff = crate::mmff::MMFFForceField::new(mol, variant);
+            let r = crate::optimizer::optimize(&ff, initial_coords, &options.convergence);
+            let bd = ff.calculate_energy_breakdown(&r.optimized_coords);
+            let terms = serde_json::json!({
+                "bond": bd.bond, "angle": bd.angle, "stretch_bend": bd.stretch_bend,
+                "torsion": bd.torsion, "oop": bd.oop, "vdw": bd.vdw,
+                "electrostatic": bd.electrostatic,
+            });
+            let used = if variant == MMFFVariant::MMFF94 { "MMFF94" } else { "MMFF94s" };
+            (r, terms.to_string(), used.to_string())
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> OptimizationResult {
     console_error_panic_hook::set_once();
@@ -252,6 +323,8 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
                 iterations: 0,
                 message: format!("Parse error: {}", e),
                 coordinates: Vec::new(),
+                energy_terms_json: "{}".to_string(),
+                engine_used: String::new(),
             };
         }
     };
@@ -269,13 +342,7 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
         crate::etkdg::generate_initial_coords_with_config(&mol, &etkdg_config)
     };
 
-    let variant = match options.mmff_variant.as_str() {
-        "MMFF94" => MMFFVariant::MMFF94,
-        _ => MMFFVariant::MMFF94s,
-    };
-
-    let ff = crate::mmff::MMFFForceField::new(&mol, variant);
-    let optimizer_result = crate::optimizer::optimize(&ff, &initial_coords, &options.convergence);
+    let (optimizer_result, terms_json, engine_used) = optimize_dispatch(&mol, &initial_coords, &options);
 
     let mut flat_coords = Vec::new();
     for coord in &optimizer_result.optimized_coords {
@@ -289,6 +356,8 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
         iterations: optimizer_result.iterations,
         message: "Optimization completed".to_string(),
         coordinates: flat_coords,
+        energy_terms_json: terms_json,
+        engine_used,
     }
 }
 
@@ -310,19 +379,15 @@ pub fn optimize_from_sdf_direct(
                 iterations: 0,
                 message: format!("Parse error: {}", e),
                 coordinates: Vec::new(),
+                energy_terms_json: "{}".to_string(),
+                engine_used: String::new(),
             };
         }
     };
 
     let initial_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
 
-    let variant = match options.mmff_variant.as_str() {
-        "MMFF94" => MMFFVariant::MMFF94,
-        _ => MMFFVariant::MMFF94s,
-    };
-
-    let ff = crate::mmff::MMFFForceField::new(&mol, variant);
-    let optimizer_result = crate::optimizer::optimize(&ff, &initial_coords, &options.convergence);
+    let (optimizer_result, terms_json, engine_used) = optimize_dispatch(&mol, &initial_coords, &options);
 
     let mut flat_coords = Vec::new();
     for coord in &optimizer_result.optimized_coords {
@@ -336,6 +401,8 @@ pub fn optimize_from_sdf_direct(
         iterations: optimizer_result.iterations,
         message: "Optimization completed".to_string(),
         coordinates: flat_coords,
+        energy_terms_json: terms_json,
+        engine_used,
     }
 }
 
