@@ -2225,6 +2225,7 @@ function embed3D() {
       return;
     }
     // heavy-only ETKDG embed (fast), then geometry-aware H attachment
+    // + short MMFF relaxation to fix H clashes
     set3dStatus('Embedding 3D (ETKDG, heavy atoms)…');
     yieldToUI().then(() => {
       try {
@@ -2234,10 +2235,20 @@ function embed3D() {
         const coords = res.get_coordinates();
         const sdfHeavy = buildSdfFromCoords(coords, mb);
         const withH = webmm.attach_hydrogens_3d_wasm(sdfHeavy);
-        showSdfIn3D(withH);
-        const dt = ((performance.now() - t0) / 1000).toFixed(2);
         const nAll = parseInt(sdfLines(withH)[3].substring(0, 3));
-        set3dStatus(`Embedded ${naHeavy} heavy atoms (+${nAll - naHeavy} H) in ${dt}s — now pick an engine and Optimize`);
+        // Relax H positions: the geometric attachment has H-H/H-heavy
+        // clashes; 300 MMFF iterations fix them
+        set3dStatus(`Relaxing ${nAll} atoms (MMFF 300 it)…`);
+        const opts = new webmm.OptimizationOptions();
+        opts.engine = 'MMFF94s'; opts.set_max_iterations(300);
+        const res3 = webmm.optimize_from_sdf(withH, opts);
+        const optCoords = [];
+        for (let a = 0; a < res3.n_atoms; a++)
+          for (let d = 0; d < 3; d++) optCoords.push(res3.get_coord(a, d));
+        const sdfOpt = buildSdfFromCoords(optCoords, withH);
+        showSdfIn3D(sdfOpt);
+        const dt = ((performance.now() - t0) / 1000).toFixed(2);
+        set3dStatus(`Embedded ${naHeavy} heavy + ${nAll - naHeavy} H atoms in ${dt}s — now pick an engine and Optimize`);
       } catch (e) { showError(e); set3dStatus('Embed failed'); }
     });
   } catch (e) { showError(e); }
