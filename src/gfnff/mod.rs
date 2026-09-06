@@ -32,6 +32,10 @@
 //! the etkdg distance-geometry code.
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::type_complexity)]
+// The module intentionally mirrors the Fortran source layout (compact
+// multi-declaration lines, section blocks) — formatting it would destroy the
+// line-by-line correspondence with gfnff_eg/gfnff_ini that the port relies on.
+#![cfg_attr(rustfmt, rustfmt_skip)]
 
 use serde::Deserialize;
 use std::collections::HashMap;

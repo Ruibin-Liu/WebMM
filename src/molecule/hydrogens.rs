@@ -18,15 +18,34 @@ fn std_valence(z: usize, charge: f64) -> f64 {
     let q = charge as i32;
     match z {
         1 => 1.0,
-        5 => 3.0,                                            // B
-        6 => if q != 0 { 3.0 } else { 4.0 },                 // C±
-        7 => match q { 1 => 4.0, -1 => 2.0, -2 => 1.0, _ => 3.0 },
-        8 => match q { 1 => 3.0, -1 => 1.0, _ => 2.0 },
-        9 | 17 | 35 | 53 => 1.0,                             // F Cl Br I
-        14 => 4.0,                                           // Si
-        15 => 3.0,                                           // P
-        16 => match q { 1 => 3.0, -1 => 1.0, _ => 2.0 },     // S
-        _ => 0.0,                                            // unknown → no H
+        5 => 3.0, // B
+        6 => {
+            if q != 0 {
+                3.0
+            } else {
+                4.0
+            }
+        } // C±
+        7 => match q {
+            1 => 4.0,
+            -1 => 2.0,
+            -2 => 1.0,
+            _ => 3.0,
+        },
+        8 => match q {
+            1 => 3.0,
+            -1 => 1.0,
+            _ => 2.0,
+        },
+        9 | 17 | 35 | 53 => 1.0, // F Cl Br I
+        14 => 4.0,               // Si
+        15 => 3.0,               // P
+        16 => match q {
+            1 => 3.0,
+            -1 => 1.0,
+            _ => 2.0,
+        }, // S
+        _ => 0.0,                // unknown → no H
     }
 }
 
@@ -64,10 +83,17 @@ pub fn add_hydrogens(mol: &Molecule) -> Molecule {
     }
 
     // H count per heavy atom
-    let n_h_per: Vec<usize> = mol.atoms.iter().enumerate()
+    let n_h_per: Vec<usize> = mol
+        .atoms
+        .iter()
+        .enumerate()
         .map(|(i, a)| {
             let need = (std_valence(a.atomic_number as usize, a.charge) - explicit[i]).round();
-            if need > 0.0 { need as usize } else { 0 }
+            if need > 0.0 {
+                need as usize
+            } else {
+                0
+            }
         })
         .collect();
     let total_h: usize = n_h_per.iter().sum();
@@ -90,21 +116,24 @@ pub fn add_hydrogens(mol: &Molecule) -> Molecule {
         }
         let p = mol.atoms[i].position;
         // unit vectors from this atom to its heavy neighbors + bond length
-        let dirs: Vec<[f64; 3]> = mol.adjacency[i].iter()
+        let dirs: Vec<[f64; 3]> = mol.adjacency[i]
+            .iter()
             .filter(|&&j| mol.atoms[j].atomic_number != 1)
             .map(|&j| {
-                let v = [mol.atoms[j].position[0] - p[0],
-                         mol.atoms[j].position[1] - p[1],
-                         mol.atoms[j].position[2] - p[2]];
+                let v = [
+                    mol.atoms[j].position[0] - p[0],
+                    mol.atoms[j].position[1] - p[1],
+                    mol.atoms[j].position[2] - p[2],
+                ];
                 let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-6);
                 [v[0] / len, v[1] / len, v[2] / len]
             })
             .collect();
         let l = match mol.atoms[i].atomic_number as usize {
-            8 => 0.97,          // O-H
-            7 => 1.01,          // N-H
-            16 => 1.34,         // S-H
-            _ => 1.09,          // C-H default
+            8 => 0.97,  // O-H
+            7 => 1.01,  // N-H
+            16 => 1.34, // S-H
+            _ => 1.09,  // C-H default
         };
         // k=1: three/few H in a tetrahedral fan opposite the single bond;
         // k=2: one on the reversed bisector, one perpendicular;
@@ -112,26 +141,36 @@ pub fn add_hydrogens(mol: &Molecule) -> Molecule {
         let h_dirs: Vec<[f64; 3]> = match dirs.len() {
             1 => {
                 let d = dirs[0];
-                let refv = if d[2].abs() < 0.9 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+                let refv = if d[2].abs() < 0.9 {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    [1.0, 0.0, 0.0]
+                };
                 let u = normalize3(cross3(d, refv));
                 let w = cross3(d, u);
                 // tetrahedral: 109.5° from the bond axis, cos = -1/3
                 let n_fan = n_hi.min(3);
-                (0..n_fan).map(|k| {
-                    let phi = k as f64 * 2.0 * std::f64::consts::PI / n_fan as f64;
-                    let cu = phi.cos() * (2.0f64.sqrt() * 2.0 / 3.0);
-                    let sw = phi.sin() * (2.0f64.sqrt() * 2.0 / 3.0);
-                    normalize3([
-                        -d[0] / 3.0 + cu * u[0] + sw * w[0],
-                        -d[1] / 3.0 + cu * u[1] + sw * w[1],
-                        -d[2] / 3.0 + cu * u[2] + sw * w[2],
-                    ])
-                }).chain(std::iter::repeat(normalize3([-d[0], -d[1], -d[2]])))
-                 .take(n_hi)
-                 .collect()
+                (0..n_fan)
+                    .map(|k| {
+                        let phi = k as f64 * 2.0 * std::f64::consts::PI / n_fan as f64;
+                        let cu = phi.cos() * (2.0f64.sqrt() * 2.0 / 3.0);
+                        let sw = phi.sin() * (2.0f64.sqrt() * 2.0 / 3.0);
+                        normalize3([
+                            -d[0] / 3.0 + cu * u[0] + sw * w[0],
+                            -d[1] / 3.0 + cu * u[1] + sw * w[1],
+                            -d[2] / 3.0 + cu * u[2] + sw * w[2],
+                        ])
+                    })
+                    .chain(std::iter::repeat(normalize3([-d[0], -d[1], -d[2]])))
+                    .take(n_hi)
+                    .collect()
             }
             2 => {
-                let b = normalize3([dirs[0][0] + dirs[1][0], dirs[0][1] + dirs[1][1], dirs[0][2] + dirs[1][2]]);
+                let b = normalize3([
+                    dirs[0][0] + dirs[1][0],
+                    dirs[0][1] + dirs[1][1],
+                    dirs[0][2] + dirs[1][2],
+                ]);
                 let perp = normalize3(cross3(dirs[0], dirs[1]));
                 let mut v = vec![b];
                 v.push(perp);
@@ -140,7 +179,9 @@ pub fn add_hydrogens(mol: &Molecule) -> Molecule {
             _ => {
                 let mut sum = [0.0f64; 3];
                 for d in &dirs {
-                    sum[0] -= d[0]; sum[1] -= d[1]; sum[2] -= d[2];
+                    sum[0] -= d[0];
+                    sum[1] -= d[1];
+                    sum[2] -= d[2];
                 }
                 vec![normalize3(sum)]
             }
@@ -187,7 +228,11 @@ fn normalize3(v: [f64; 3]) -> [f64; 3] {
 }
 
 fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
 /// Serialize a Molecule back to a V2000 molblock (title + program + comment +
@@ -201,7 +246,10 @@ pub fn to_molblock(mol: &Molecule) -> String {
     out.push('\n');
     let na = mol.atoms.len();
     let nb = mol.bonds.len();
-    out.push_str(&format!("{:>3}{:>3}  0  0  0  0  0  0  0  0999 V2000\n", na, nb));
+    out.push_str(&format!(
+        "{:>3}{:>3}  0  0  0  0  0  0  0  0999 V2000\n",
+        na, nb
+    ));
     for a in &mol.atoms {
         out.push_str(&format!(
             "{:>10.4}{:>10.4}{:>10.4} {:<3} 0  0  0  0  0  0  0  0  0  0  0  0\n",
@@ -259,8 +307,19 @@ mod tests {
         let m = parse_mb(&with_h);
         eprintln!("parsed {} atoms, {} bonds", m.atoms.len(), m.bonds.len());
         assert_eq!(m.atoms.len(), 9, "CCO + 5H");
-        let h_on = |a: usize| m.adjacency[a].iter().filter(|&&j| m.atoms[j].atomic_number == 1).count();
-        eprintln!("atoms={}, H_on(C0,C1,O2)=({},{},{})", m.atoms.len(), h_on(0), h_on(1), h_on(2));
+        let h_on = |a: usize| {
+            m.adjacency[a]
+                .iter()
+                .filter(|&&j| m.atoms[j].atomic_number == 1)
+                .count()
+        };
+        eprintln!(
+            "atoms={}, H_on(C0,C1,O2)=({},{},{})",
+            m.atoms.len(),
+            h_on(0),
+            h_on(1),
+            h_on(2)
+        );
         assert_eq!(h_on(0), 3, "CH3");
         assert_eq!(h_on(1), 2, "CH2");
         assert_eq!(h_on(2), 1, "OH");
@@ -274,8 +333,12 @@ mod tests {
         let mut mb = String::from("benzene\n  test\n\n  6  6  0  0  0  0  0  0  0  0999 V2000\n");
         for k in 0..6 {
             let a = k as f64 * std::f64::consts::PI / 3.0;
-            mb.push_str(&format!("{:>10.4}{:>10.4}{:>10.4} C   0  0  0  0  0  0  0  0  0  0  0  0\n",
-                1.39 * a.cos(), 1.39 * a.sin(), 0.0));
+            mb.push_str(&format!(
+                "{:>10.4}{:>10.4}{:>10.4} C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+                1.39 * a.cos(),
+                1.39 * a.sin(),
+                0.0
+            ));
         }
         for k in 0..6 {
             mb.push_str(&format!("{:>3}{:>3}  4  0\n", k + 1, (k + 1) % 6 + 1));
@@ -320,14 +383,16 @@ mod tests {
                 add_hydrogens(&heavy)
             }
         };
-        let hs: Vec<usize> = (0..mol.atoms.len()).filter(|&i| mol.atoms[i].atomic_number == 1).collect();
+        let hs: Vec<usize> = (0..mol.atoms.len())
+            .filter(|&i| mol.atoms[i].atomic_number == 1)
+            .collect();
         // bond lengths
         for &h in &hs {
             let &p = mol.adjacency[h].first().unwrap();
             let d = ((mol.atoms[h].position[0] - mol.atoms[p].position[0]).powi(2)
                 + (mol.atoms[h].position[1] - mol.atoms[p].position[1]).powi(2)
                 + (mol.atoms[h].position[2] - mol.atoms[p].position[2]).powi(2))
-                .sqrt();
+            .sqrt();
             assert!((0.9..1.45).contains(&d), "H{}-parent bond length {}", h, d);
         }
         // H-H separation
@@ -336,7 +401,7 @@ mod tests {
                 let d = ((mol.atoms[*ha].position[0] - mol.atoms[*hb].position[0]).powi(2)
                     + (mol.atoms[*ha].position[1] - mol.atoms[*hb].position[1]).powi(2)
                     + (mol.atoms[*ha].position[2] - mol.atoms[*hb].position[2]).powi(2))
-                    .sqrt();
+                .sqrt();
                 assert!(d > 0.5, "H{} and H{} too close: {}", ha, hb, d);
             }
         }
@@ -350,5 +415,3 @@ mod tests {
         assert_eq!(m.atoms.len(), 9, "no double addition");
     }
 }
-
-

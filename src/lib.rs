@@ -267,7 +267,7 @@ pub fn generate_initial_coordinates_wasm(sdf_content: &str) -> Result<ETKDGResul
 /// single-structure export's seed 42 when seed_base = 42).
 #[wasm_bindgen]
 pub struct ConformerBatch {
-    coordinates: Vec<f64>,   // n_confs * n_atoms * 3, conformer-major
+    coordinates: Vec<f64>, // n_confs * n_atoms * 3, conformer-major
     n_atoms: usize,
     n_confs: usize,
     success: bool,
@@ -310,8 +310,7 @@ impl ConformerBatch {
 #[wasm_bindgen]
 pub fn add_hydrogens_wasm(sdf_content: &str) -> Result<String, JsValue> {
     console_error_panic_hook::set_once();
-    crate::molecule::hydrogens::molblock_with_h(sdf_content)
-        .map_err(|e| JsValue::from_str(&e))
+    crate::molecule::hydrogens::molblock_with_h(sdf_content).map_err(|e| JsValue::from_str(&e))
 }
 
 /// Attach hydrogens to a 3D heavy-atom SDF with geometry-aware placement
@@ -320,8 +319,7 @@ pub fn add_hydrogens_wasm(sdf_content: &str) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn attach_hydrogens_3d_wasm(sdf_content: &str) -> Result<String, JsValue> {
     console_error_panic_hook::set_once();
-    crate::molecule::hydrogens::molblock_with_h(sdf_content)
-        .map_err(|e| JsValue::from_str(&e))
+    crate::molecule::hydrogens::molblock_with_h(sdf_content).map_err(|e| JsValue::from_str(&e))
 }
 
 #[wasm_bindgen]
@@ -329,14 +327,20 @@ pub fn generate_conformers_wasm(sdf_content: &str, n: usize, seed_base: u64) -> 
     console_error_panic_hook::set_once();
     if n == 0 || n > 500 {
         return ConformerBatch {
-            coordinates: Vec::new(), n_atoms: 0, n_confs: 0, success: false,
+            coordinates: Vec::new(),
+            n_atoms: 0,
+            n_confs: 0,
+            success: false,
             error: format!("n must be in 1..=500, got {}", n),
         };
     }
     let trimmed = sdf_content.trim();
     if trimmed.is_empty() || trimmed.len() < 10 {
         return ConformerBatch {
-            coordinates: Vec::new(), n_atoms: 0, n_confs: 0, success: false,
+            coordinates: Vec::new(),
+            n_atoms: 0,
+            n_confs: 0,
+            success: false,
             error: "Empty or invalid SDF content".to_string(),
         };
     }
@@ -344,7 +348,10 @@ pub fn generate_conformers_wasm(sdf_content: &str, n: usize, seed_base: u64) -> 
         Ok(m) => m,
         Err(e) => {
             return ConformerBatch {
-                coordinates: Vec::new(), n_atoms: 0, n_confs: 0, success: false,
+                coordinates: Vec::new(),
+                n_atoms: 0,
+                n_confs: 0,
+                success: false,
                 error: format!("Parse error: {}", e),
             };
         }
@@ -366,7 +373,11 @@ pub fn generate_conformers_wasm(sdf_content: &str, n: usize, seed_base: u64) -> 
         }
         n_ok += 1;
     }
-    let n_atoms_out = if n_ok > 0 { coordinates.len() / (3 * n_ok) } else { 0 };
+    let n_atoms_out = if n_ok > 0 {
+        coordinates.len() / (3 * n_ok)
+    } else {
+        0
+    };
     ConformerBatch {
         coordinates,
         n_atoms: n_atoms_out,
@@ -390,7 +401,11 @@ fn optimize_dispatch(
     const EH_KCAL: f64 = 627.5094740631;
     let engine = if options.engine.is_empty() {
         // legacy field fallback
-        match options.mmff_variant.as_str() { "MMFF94" => "MMFF94", _ => "MMFF94s" }.to_string()
+        match options.mmff_variant.as_str() {
+            "MMFF94" => "MMFF94",
+            _ => "MMFF94s",
+        }
+        .to_string()
     } else {
         options.engine.to_uppercase()
     };
@@ -412,7 +427,8 @@ fn optimize_dispatch(
         }
         _ => {
             let variant = match engine.as_str() {
-                "MMFF94" => MMFFVariant::MMFF94, _ => MMFFVariant::MMFF94s,
+                "MMFF94" => MMFFVariant::MMFF94,
+                _ => MMFFVariant::MMFF94s,
             };
             let ff = crate::mmff::MMFFForceField::new(mol, variant);
             let r = crate::optimizer::optimize(&ff, initial_coords, &options.convergence);
@@ -422,7 +438,11 @@ fn optimize_dispatch(
                 "torsion": bd.torsion, "oop": bd.oop, "vdw": bd.vdw,
                 "electrostatic": bd.electrostatic,
             });
-            let used = if variant == MMFFVariant::MMFF94 { "MMFF94" } else { "MMFF94s" };
+            let used = if variant == MMFFVariant::MMFF94 {
+                "MMFF94"
+            } else {
+                "MMFF94s"
+            };
             (r, terms.to_string(), used.to_string())
         }
     }
@@ -460,7 +480,8 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
         crate::etkdg::generate_initial_coords_with_config(&mol, &etkdg_config)
     };
 
-    let (optimizer_result, terms_json, engine_used) = optimize_dispatch(&mol, &initial_coords, &options);
+    let (optimizer_result, terms_json, engine_used) =
+        optimize_dispatch(&mol, &initial_coords, &options);
 
     let mut flat_coords = Vec::new();
     for coord in &optimizer_result.optimized_coords {
@@ -505,7 +526,8 @@ pub fn optimize_from_sdf_direct(
 
     let initial_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
 
-    let (optimizer_result, terms_json, engine_used) = optimize_dispatch(&mol, &initial_coords, &options);
+    let (optimizer_result, terms_json, engine_used) =
+        optimize_dispatch(&mol, &initial_coords, &options);
 
     let mut flat_coords = Vec::new();
     for coord in &optimizer_result.optimized_coords {
@@ -1390,7 +1412,10 @@ mod conformer_batch_tests {
         // heavy-atom-free quick check: raw coordinate deviation (same atom
         // order, no alignment) — diverse embeddings differ by >> 0.1 A even
         // unaligned on the largest excursions; use max |d| as the metric
-        a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).fold(0.0f64, f64::max)
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f64, f64::max)
     }
 
     const ETHANOL_SDF: &str = "ethanol\n  test\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n\
@@ -1415,19 +1440,32 @@ mod conformer_batch_tests {
         assert_eq!(c.len(), 4 * 9 * 3);
         // reproducibility: same seed_base → identical output
         let again = generate_conformers_wasm(ETHANOL_SDF, 4, 42);
-        assert!(c.iter().zip(again.get_coordinates().iter()).all(|(a, b)| (a - b).abs() < 1e-12));
+        assert!(c
+            .iter()
+            .zip(again.get_coordinates().iter())
+            .all(|(a, b)| (a - b).abs() < 1e-12));
         // diversity: pairwise max-coordinate deviation between different seeds
         let n = 9 * 3;
         for i in 0..4 {
             for j in (i + 1)..4 {
                 let d = rmsd(&c[i * n..(i + 1) * n], &c[j * n..(j + 1) * n]);
-                assert!(d > 0.1, "conformers {} and {} nearly identical (max dev {:.3})", i, j, d);
+                assert!(
+                    d > 0.1,
+                    "conformers {} and {} nearly identical (max dev {:.3})",
+                    i,
+                    j,
+                    d
+                );
             }
         }
         // seed_base 42, i=0 reproduces the single-structure export (seed 42)
         let single = generate_initial_coordinates_wasm(ETHANOL_SDF).unwrap();
         let d0 = rmsd(&c[0..n], &single.get_coordinates());
-        assert!(d0 < 1e-9, "conf 0 (seed 42) != single-structure embed (dev {:.3})", d0);
+        assert!(
+            d0 < 1e-9,
+            "conf 0 (seed 42) != single-structure embed (dev {:.3})",
+            d0
+        );
         // invalid n rejected
         assert!(!generate_conformers_wasm(ETHANOL_SDF, 0, 42).get_success());
         assert!(!generate_conformers_wasm(ETHANOL_SDF, 501, 42).get_success());
