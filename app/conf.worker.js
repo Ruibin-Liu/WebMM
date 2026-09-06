@@ -51,7 +51,9 @@ self.onmessage = async (e) => {
   try {
     await initPromise;   // 'run' waits for init (async handlers don't queue)
     const { sdfHeavy, seedBase, count, engine, maxIter } = msg;
+    const t0 = Date.now();
     const batch = wasm.generate_conformers_wasm(sdfHeavy, count, BigInt(seedBase));
+    console.log('[worker] embed ' + count + ' confs: ' + (Date.now() - t0) + 'ms, na=' + batch.get_n_atoms() + ', ok=' + batch.get_success());
     if (!batch.get_success()) throw new Error(batch.get_error());
     const na = batch.get_n_atoms();
     const flat = batch.get_coordinates();

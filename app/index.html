@@ -403,6 +403,25 @@ textarea:focus {
     border-color: #7c3aed;
   }
 
+  .mode-tabs {
+    display: flex; gap: 0; margin-bottom: 0.6rem;
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    width: max-content;
+  }
+  .mode-tab {
+    border: none; border-radius: 0; background: #fff; color: var(--muted);
+    padding: 0.35rem 0.9rem; font-size: 0.8rem; font-weight: 500; cursor: pointer;
+  }
+  .mode-tab.active {
+    background: var(--accent); color: #fff;
+  }
+  .mode-tab:hover:not(.active) { background: #f1f5f9; }
+
+  #batchPanel table { font-size: 0.78rem; }
+  #batchPanel td { padding: 0.2rem 0.3rem; }
+  #batchPanel tbody tr { cursor: pointer; }
+  #batchPanel tbody tr:hover { background: #f1f5f9; }
+
   .engine-sel {
     appearance: none;
     border: 1px solid var(--border);
@@ -576,7 +595,25 @@ details {
  </header>
 
 <div class="panel">
+  <div class="mode-tabs" role="tablist">
+    <button class="mode-tab active" id="tabSingle" role="tab" aria-selected="true" onclick="switchMode('single')">Single</button>
+    <button class="mode-tab" id="tabBatch" role="tab" aria-selected="false" onclick="switchMode('batch')">Batch</button>
+  </div>
   <textarea id="input" aria-label="Molecule input: SMILES, MolBlock, or SDF" placeholder="Paste SMILES, MolBlock, or SDF here"></textarea>
+  <div id="batchBar" style="display:none;">
+    <div class="separator">-- one SMILES per line, or a multi-record SDF --</div>
+    <div class="action-buttons" style="justify-content:flex-start;">
+      <button id="btnBatchRun" class="primary" onclick="runBatch()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,3 19,12 5,21"/></svg>
+        Run batch
+      </button>
+      <button id="btnBatchCancel" class="action-btn clear" onclick="cancelBatch()" style="display:none;width:auto;">Cancel</button>
+      <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
+        <input type="checkbox" id="batch3d"> 3D: embed + MMFF94s optimize
+      </label>
+      <span class="version" id="batchInfo">descriptors + drug rules · 3D optional · export CSV/SDF</span>
+    </div>
+  </div>
 
   <div class="separator">-- or --</div>
 
@@ -584,7 +621,7 @@ details {
      Drag & drop MOL / SDF / TXT files here
    </div>
 
-     <div class="action-buttons">
+     <div class="action-buttons" id="singleActions">
       <button onclick="openJSME()" class="action-btn edit">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
@@ -786,6 +823,24 @@ details {
       </details>
    </div>
  </div>
+
+  <div id="batchPanel" class="panel" style="display:none;">
+     <strong>Batch Results</strong>
+     <div class="version" id="batchStatus" aria-live="polite" style="margin:0.3rem 0 0.5rem;"></div>
+     <div class="action-buttons" style="justify-content:flex-start; margin-bottom:0.6rem;">
+       <button id="btnBatchCSV" class="action-btn export" onclick="exportBatchCSV()">Export CSV</button>
+       <button id="btnBatchSDF" class="action-btn export" onclick="exportBatchSDF()">Export SDF</button>
+     </div>
+     <div style="overflow-x:auto;">
+     <table id="batchTable">
+       <thead>
+         <tr><th>#</th><th>Name</th><th>SMILES</th><th>Formula</th><th>MW</th><th>cLogP</th><th>TPSA</th><th>HBD</th><th>HBA</th><th>RotB</th><th>Lipinski</th><th>Veber</th><th>E MMFF94s</th></tr>
+       </thead>
+       <tbody id="batchRows"></tbody>
+     </table>
+     </div>
+     <div class="version" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+   </div>
 
   <div class="copyright">
    © <span id="year"></span> <a href="https://github.com/Ruibin-Liu/WebMM" target="_blank" rel="noopener">WebMM</a> — structure editing &amp; properties by <a href="https://ruibin-liu.github.io/molecule-clipboard/" target="_blank" rel="noopener">RDKit + JSME</a>, 3D engine by WebMM
@@ -1848,6 +1903,274 @@ function yieldToUI() {
 // title line for SMILES-derived mols; a leading .trim() would swallow it and
 // shift every fixed column index by one (root cause of "expected N, got M"
 // parse errors). Locate the counts line by CONTENT instead.
+// ===== v1.4: batch molecule mode =====
+let batchMode = false;
+let batchRun = null;       // farm state while running
+let batchQueue = [];       // pending 3D jobs
+let batchWorkers = [];
+let batchResults = [];
+
+function switchMode(m) {
+  batchMode = (m === 'batch');
+  document.getElementById('tabSingle').classList.toggle('active', !batchMode);
+  document.getElementById('tabBatch').classList.toggle('active', batchMode);
+  document.getElementById('tabSingle').setAttribute('aria-selected', String(!batchMode));
+  document.getElementById('tabBatch').setAttribute('aria-selected', String(batchMode));
+  document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
+  document.getElementById('singleActions').style.display = batchMode ? 'none' : 'flex';
+  document.getElementById('input').placeholder = batchMode
+    ? 'One SMILES per line (optionally: SMILES name), or a multi-record SDF'
+    : 'Paste SMILES, MolBlock, or SDF here';
+}
+
+function parseBatchInputs() {
+  const raw = document.getElementById('input').value;
+  const out = [];
+  if (raw.includes('$$$$')) {
+    for (const block of raw.split('$$$$')) {
+      if (!block.trim()) continue;
+      const L = sdfLines(block);
+      const name = (L[0] || '').trim() || ('batch-' + (out.length + 1));
+      out.push({ smiles: block.trim(), name, isMolblock: true });
+    }
+    return out;
+  }
+  for (let line of raw.split('\n')) {
+    line = line.trim();
+    if (!line) continue;
+    const parts = line.split(/\s+/);
+    out.push({ smiles: parts[0], name: parts.length > 1 ? parts.slice(1).join(' ') : null });
+  }
+  return out;
+}
+
+function describeBatchMolecule(item, idx) {
+  const r = { idx, name: item.name, smiles: item.smiles, input: item.smiles,
+              isMolblock: !!item.isMolblock, E: null, sdf: null, error: null };
+  try {
+    let m = rdkitModule.get_mol(item.smiles);
+    if (!m || !m.is_valid()) throw 'parse error';
+    r.smiles = m.get_smiles();
+    const inchi = m.get_inchi();
+    r.inchikey = rdkitModule.get_inchikey_for_inchi(inchi);
+    const d = JSON.parse(m.get_descriptors());
+    r.MW = d.amw.toFixed(2); r.cLogP = d.CrippenClogP.toFixed(2); r.TPSA = d.tpsa.toFixed(2);
+    r.HBD = d.NumHBD; r.HBA = d.NumHBA; r.RotB = d.NumRotatableBonds;
+    r.exactmw = d.exactmw.toFixed(2); r.heavy = d.NumHeavyAtoms; r.fsp3 = d.FractionCSP3.toFixed(3);
+    r.lipinski = (d.amw <= 500 && d.CrippenClogP <= 5 && d.NumHBD <= 5 && d.NumHBA <= 10) ? 'Pass' : 'Fail';
+    r.veber = (d.tpsa <= 140 && d.NumRotatableBonds <= 10) ? 'Pass' : 'Fail';
+    m.delete();
+  } catch (e) {
+    r.error = String(e && e.message ? e.message : e);
+  }
+  return r;
+}
+
+function batchFormula(r) {
+  try {
+    if (r.sdf) return hillFormula(r.sdf, 0);
+    const m = rdkitModule.get_mol(r.smiles);
+    if (!m || !m.is_valid()) return '—';
+    const mb = m.get_molblock();
+    const nAtoms = parseInt(mb.split('\n')[3].substring(0, 3));
+    const desc = JSON.parse(m.get_descriptors());
+    m.delete();
+    return hillFormula(mb, Math.max(0, (desc.NumAtoms || nAtoms) - nAtoms));
+  } catch (e) { return '—'; }
+}
+
+function renderBatchRow(r) {
+  const tb = document.getElementById('batchRows');
+  const tr = tb.querySelector(`tr[data-idx="${r.idx}"]`);
+  const cells = r.error
+    ? `<td>${r.idx + 1}</td><td>${r.name || ''}</td><td colspan="11" style="color:var(--bad);">${r.error}</td>`
+    : `<td>${r.idx + 1}</td><td>${r.name || ''}</td>` +
+      `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${r.smiles}">${r.smiles}</td>` +
+      `<td class="value">${batchFormula(r)}</td>` +
+      `<td class="value">${r.MW}</td><td class="value">${r.cLogP}</td><td class="value">${r.TPSA}</td>` +
+      `<td class="value">${r.HBD}</td><td class="value">${r.HBA}</td><td class="value">${r.RotB}</td>` +
+      `<td><span class="result-badge ${r.lipinski === 'Pass' ? 'pass' : 'fail'}">${r.lipinski}</span></td>` +
+      `<td><span class="result-badge ${r.veber === 'Pass' ? 'pass' : 'fail'}">${r.veber}</span></td>` +
+      `<td class="value">${r.E !== null && r.E !== undefined ? r.E.toFixed(2) : '—'}</td>`;
+  if (tr) tr.innerHTML = cells;
+  else {
+    const el = document.createElement('tr');
+    el.dataset.idx = r.idx;
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', 'Load ' + (r.name || r.smiles) + ' into the single view');
+    el.addEventListener('click', () => loadBatchRow(r.idx));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadBatchRow(r.idx); } });
+    el.innerHTML = cells;
+    tb.appendChild(el);
+  }
+}
+
+function pumpBatch() {
+  if (!batchRun) return;
+  const idle = batchWorkers.filter(w => !w.busy);
+  for (const w of idle) {
+    const job = batchQueue.shift();
+    if (!job) break;
+    w.busy = true; w.job = job;
+    w.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
+    w.postMessage({ type: 'run', sdfHeavy: job.sdfHeavy, seedBase: job.seed, count: 1,
+                    engine: 'MMFF94s', maxIter: 500 });
+  }
+  const doneCount = batchResults.filter(r => r.E !== null && r.E !== undefined).length + batchResults.filter(r => r.error).length;
+  document.getElementById('batchStatus').textContent =
+    `3D: ${doneCount}/${batchResults.length} done` + (batchRun.cancelled ? ' · cancelling…' : '');
+  if (batchQueue.length === 0 && batchWorkers.every(w => !w.busy)) finishBatch();
+}
+
+function finishBatch() {
+  const cancelled = batchRun.cancelled;
+  batchRun = null;
+  document.getElementById('btnBatchRun').style.display = '';
+  document.getElementById('btnBatchCancel').style.display = 'none';
+  document.getElementById('batchStatus').textContent = (cancelled ? 'Cancelled — ' : '') +
+    `${batchResults.filter(r => !r.error).length}/${batchResults.length} molecules processed`;
+}
+
+async function runBatch() {
+  if (batchRun) { cancelBatch(); return; }
+  clearError();
+  const items = parseBatchInputs();
+  if (!items.length) { showError('Nothing to process — enter one SMILES per line'); return; }
+  if (items.length > 200) { showError('Batch limited to 200 molecules per run'); return; }
+  const want3d = document.getElementById('batch3d').checked;
+
+  batchRun = { cancelled: false, want3d };
+  batchResults = [];
+  document.getElementById('batchRows').innerHTML = '';
+  document.getElementById('batchPanel').style.display = 'block';
+  document.getElementById('btnBatchRun').style.display = 'none';
+  document.getElementById('btnBatchCancel').style.display = '';
+
+  // descriptors (main thread, fast)
+  items.forEach((item, idx) => {
+    const r = describeBatchMolecule(item, idx);
+    r.done = true;
+    batchResults.push(r);
+    renderBatchRow(r);
+  });
+
+  document.getElementById('batchStatus').textContent =
+    `Descriptors: ${batchResults.filter(r => !r.error).length}/${batchResults.length} OK`;
+
+  if (!want3d) {
+    finishBatch();
+    return;
+  }
+
+  // 3D: one single-conformer task per molecule through the worker farm
+  batchQueue = [];
+  batchResults.forEach((r, idx) => {
+    if (r.error) return;
+    let sdfHeavy = null;
+    try {
+      if (r.isMolblock) sdfHeavy = r.input;
+      else {
+        const m = rdkitModule.get_mol(r.smiles);
+        sdfHeavy = m.get_molblock();
+        m.delete();
+      }
+    } catch (e) { sdfHeavy = null; }
+    if (!sdfHeavy) { r.error = '3D prep failed'; renderBatchRow(r); return; }
+    batchQueue.push({ idx, seed: 42 + idx, result: r, sdfHeavy, done: false });
+  });
+  if (!batchQueue.length) { finishBatch(); return; }
+  ensureBatchWorkers(Math.min(4, batchQueue.length));
+  pumpBatch();
+}
+
+function ensureBatchWorkers(count) {
+  const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 4, count));
+  while (batchWorkers.length < W) {
+    const w = new Worker('conf.worker.js', { type: 'module' });
+    w.busy = false; w.job = null;
+    w.onmessage = (e) => {
+      const m = e.data;
+      const job = w.job;
+      if (m.type === 'ready') return;   // init done; the job is still running — busy stays true until 'done'
+      if (!job) return;
+      if (m.type === 'conf') {
+        window.__confMsgs = (window.__confMsgs || 0) + 1;
+        job.result.E = m.E;
+        job.result.sdf = m.sdf;
+        job.result.converged = m.converged;
+        renderBatchRow(job.result);
+      } else if (m.type === 'done') {
+        w.busy = false; w.job = null; job.done = true;
+        pumpBatch();
+      } else if (m.type === 'error') {
+        w.busy = false; w.job = null; job.done = true;
+        job.result.error = m.message;
+        renderBatchRow(job.result);
+        pumpBatch();
+      }
+    };
+    w.onerror = (e) => {
+      showError('Batch worker error: ' + (e.message || 'load failed'));
+      w.busy = false;
+      if (w.job) { w.job.done = true; if (w.job.result) w.job.result.error = 'worker error'; }
+      pumpBatch();
+    };
+    batchWorkers.push(w);
+  }
+  return batchWorkers;
+}
+
+function cancelBatch() {
+  if (!batchRun) return;
+  batchRun.cancelled = true;
+  batchQueue = [];
+  for (const w of batchWorkers) { try { w.terminate(); } catch (e) {} }
+  batchWorkers = [];
+  batchRun = null;
+  document.getElementById('btnBatchRun').style.display = '';
+  document.getElementById('btnBatchCancel').style.display = 'none';
+  document.getElementById('batchStatus').textContent = 'Cancelled';
+}
+
+function loadBatchRow(idx) {
+  const r = batchResults[idx];
+  if (!r || r.error) return;
+  switchMode('single');
+  document.getElementById('input').value = (r.name ? r.smiles + ' ' + r.name : r.smiles);
+  process(true);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function exportBatchCSV() {
+  const headers = ['Name', 'SMILES', 'InChIKey', 'Formula', 'MW', 'cLogP', 'TPSA', 'HBD', 'HBA', 'RotB',
+                   'Exact MW', 'Heavy Atoms', 'Fsp3', 'Lipinski', 'Veber', 'E_MMFF94s_kcal'];
+  const rows = batchResults.map(r => {
+    if (r.error) return [r.name || '', r.smiles || '', 'ERROR'];
+    return [r.name || '', r.smiles, r.inchikey || '', batchFormula(r), r.MW, r.cLogP, r.TPSA,
+            r.HBD, r.HBA, r.RotB, r.exactmw || '', r.heavy || '', r.fsp3 || '',
+            r.lipinski, r.veber, r.E !== null && r.E !== undefined ? r.E.toFixed(3) : ''];
+  });
+  const esc = v => { const s = String(v); return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  let csv = headers.join(',') + '\n';
+  for (const row of rows) csv += row.map(esc).join(',') + '\n';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+  a.download = 'batch_results_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportBatchSDF() {
+  const blocks = batchResults.filter(r => r.sdf).map(r => r.sdf + '$$$$');
+  if (!blocks.length) { showError('No 3D structures — run batch with "3D" enabled'); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([blocks.join('\n')], { type: 'chemical/x-mdl-molfile' }));
+  a.download = 'batch_3d.sdf';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function sdfLines(sdf) {
   const L = sdf.replace(/\r/g, '').split('\n');
   const ci = L.findIndex(l => l.includes('V2000'));

@@ -14,6 +14,11 @@ optimize (MMFF94/MMFF94s/GFN-FF), enumerate + rank + RMSD-prune conformers**,
 and export SDF/XYZ/PNG — all locally, no uploads, offline-capable (all deps
 vendored). Interactive MD & metadynamics live in the Playground/Demo pages.
 
+Batch mode: switch the input panel to **Batch**, paste one SMILES per line
+(or a multi-record SDF), optionally embed + optimize each in 3D (MMFF94s,
+parallel workers), and export the descriptor/drug-rule table as CSV plus a
+multi-record 3D SDF.
+
 ```bash
 npm run build   # wasm-pack -> pkg/ (served as ../pkg from app/)
 python3 -m http.server 8000   # from the repo root, then open /app/index.html
