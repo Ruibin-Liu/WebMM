@@ -17,6 +17,7 @@ MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit
 **ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
 
 ## Recently Completed
++- **ETKDG 已知问题定位(adagrasib 回归夹具,修复排期 v1.5)。** 用户报告 adagrasib(KRAS G12C 抑制剂,43 重原子,两个 [C@H])嵌入错误——对拍 RDKit 2025.09 确认两个缺陷:(1) **立体化学**:find_chiral_centers 完全忽略输入手性规格,把手性体积约束设为无符号正值区间 (5,100),而 RDKit 正确目标两中心符号相反(-4.68/+4.42)——无法同时满足,嵌入结果逐中心 ~50% 概率手性反转(实测 atom 33 R,应为 S);(2) **性能**:43 重原子嵌入 ~100s+(RDKit 瞬时)。夹具 fixtures_adagrasib_2d.mol + #[ignore] 测试记录修复后断言。修复方案:楔键/hash 解析 → 逐中心带符号目标(tag 奇偶 × 邻居排序奇偶)→ 带符号 bounds;另需嵌入性能优化。
 +- **Workbench v1.4 — 批量分子模式(Single/Batch 切换)。** 输入面板新增 Batch 标签:每行一个 SMILES(可选 "SMILES name" 后缀)或多记录 SDF,上限 200;可选 "3D: embed + MMFF94s optimize"(复用 conf.worker.js 农场,每分子一个 count=1 任务,4 workers 并行);结果表逐行流式渲染(Formula/MW/cLogP/TPSA/HBD/HBA/RotB/Lipinski/Veber 徽章/E MMFF94s/解析错误行内标注),Export CSV(全描述符)/Export SDF(3D 多记录),点击行加载到单分子视图。AA 对齐:结果表键盘可达(role=button/tabindex/Enter)。
 +  踩坑记录:(1) 构建行 HTML 时漏写 el.innerHTML = cells(行存在但恒空);(2) worker 'ready' 消息不应清主线程 busy 标志——'ready' 后 'run' 才开始,提前置 idle 会让 finishBatch 在优化完成前触发(E 全为空、SDF 缺块);(3) 测试断言:C7H8N4O2 的 amw=180.17(非 180.16),RDKit 描述符 NumAtoms 含隐氢(乙醇 33=9 显式+24 隐氢? — 乙醇 9 原子全显式;ibuprofen 33=15 显式+18 隐氢)。
 +  验收(M4 CDP 14/14):描述符批量 5 分子(含 1 解析错误行内标注)/MW=180.17/徽章;3D 批量 3 分子(E -1.52/+16.23/-138.69 全收敛);CSV 6 行;ensemble SDF 3 块且首块 RDKit 可读(9 原子);行点击加载;60 分子取消 UI 恢复;空输入报错;零 console error。回归:M0 37/37、M1 10/10、M2 9/9、M3 12/12;cargo test 238/238、clippy 0、fmt ✓。
