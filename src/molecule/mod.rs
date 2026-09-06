@@ -33,6 +33,10 @@ pub enum BondStereo {
     None,
     Cis,
     Trans,
+    /// V2000 bond stereo code 1: wedge up toward the viewer (begin atom = stereocenter)
+    Wedge,
+    /// V2000 bond stereo code 6: hash down away from the viewer
+    Hash,
     AtropCW,
     AtropCCW,
 }

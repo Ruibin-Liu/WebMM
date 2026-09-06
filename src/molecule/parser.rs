@@ -144,7 +144,10 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
             let stereo = if line.len() >= 12 {
                 let stereo_code: i32 = line[9..12].trim().parse().unwrap_or(0);
                 match stereo_code {
-                    6 => BondStereo::Cis,
+                    // V2000: 1 = wedge up, 6 = hash down (CTFile spec)
+                    1 => BondStereo::Wedge,
+                    6 => BondStereo::Hash,
+                    3 => BondStereo::Cis,
                     7 => BondStereo::Trans,
                     _ => BondStereo::None,
                 }

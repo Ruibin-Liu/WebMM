@@ -1458,8 +1458,10 @@ mod conformer_batch_tests {
         let sum: f64 = res.get_charges().iter().sum();
         assert!(sum.abs() < 1e-6, "charges sum to ~0, got {}", sum);
         // GFN-FF path: charges present too
-        let mut opts = OptimizationOptions::default();
-        opts.engine = "GFNFF".to_string();
+        let opts = OptimizationOptions {
+            engine: "GFNFF".to_string(),
+            ..Default::default()
+        };
         let res = optimize_from_sdf(ETHANOL_SDF, opts);
         assert_eq!(res.get_charges().len(), 9);
         let sum: f64 = res.get_charges().iter().sum();
