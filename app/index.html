@@ -741,7 +741,7 @@ details {
          Conformers
        </button>
        <label class="engine-sel" style="display:inline-flex;align-items:center;gap:4px;" title="number of embedding seeds (1–500)">N
-         <input id="confN" aria-label="Number of conformers" type="number" min="1" max="500" value="50" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
+         <input id="confN" aria-label="Number of conformers" type="number" min="1" max="2000" value="100" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
        </label>
        <label class="engine-sel" style="display:inline-flex;align-items:center;gap:4px;" title="RMSD prune threshold (Å, heavy atoms)">RMSD
          <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
@@ -2162,7 +2162,7 @@ function exportBatchCSV() {
 }
 
 function exportBatchSDF() {
-  const blocks = batchResults.filter(r => r.sdf).map(r => r.sdf + '$$$$');
+  const blocks = batchResults.filter(r => r.sdf).map(r => r.sdf + '\n$$$$');
   if (!blocks.length) { showError('No 3D structures — run batch with "3D" enabled'); return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([blocks.join('\n')], { type: 'chemical/x-mdl-molfile' }));
@@ -2404,16 +2404,17 @@ function runConformers() {
     const maxIter = 500;
 
     // worker farm: one seed share per worker (hardware-bound, ≤4)
-    const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 4, n));
+    const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 12, n));
     const per = Math.ceil(n / W);
     confRun = { cancelled: false, workers: [], active: 0, confs: [], t0: performance.now() };
     document.getElementById('btnConf').textContent = 'Cancel';
     set3dStatus(`Embedding + optimizing ${n} conformers on ${W} worker${W > 1 ? 's' : ''}…`);
 
+    const MAX_PER_CALL = 500;   // Rust generate_conformers_wasm: n must be 1..=500
     for (let w = 0; w < W; w++) {
-      const count = Math.min(per, n - w * per);
+      const count = Math.min(per, n - w * per, MAX_PER_CALL);
       if (count <= 0) break;
-      const seedBase = 42 + w * per;
+      const seedBase = 42 + w * MAX_PER_CALL;
       const worker = new Worker('conf.worker.js', { type: 'module' });
       confRun.workers.push(worker);
       confRun.active++;
@@ -2422,7 +2423,8 @@ function runConformers() {
         if (confRun && confRun.cancelled) return;
         if (m.type === 'conf') {
           confRun.confs.push({ seed: m.seed, E: m.E, coords: m.coords, sdf: m.sdf });
-          set3dStatus(`Optimizing conformers — ${confRun.confs.length}/${n} done… ${((performance.now() - confRun.t0) / 1000).toFixed(1)}s`);
+          const pct = Math.round(confRun.confs.length / n * 100);
+          set3dStatus(`Optimizing conformers — ${confRun.confs.length}/${n} (${pct}%)… ${((performance.now() - confRun.t0) / 1000).toFixed(1)}s`);
         } else if (m.type === 'done') {
           confRun.active--;
           if (confRun.active === 0 && !confRun.cancelled) finishConformers(engine, rmsdCut, W);
@@ -2500,7 +2502,7 @@ function showEnsembleConf(r) {
 
 function exportEnsembleSDF() {
   if (!confEnsemble || !confEnsemble.length) { showError('Run Conformers first'); return; }
-  const sdf = confEnsemble.map(k => k.sdf + '$$$$').join('\n');
+  const sdf = confEnsemble.map(k => k.sdf + '\n$$$$').join('\n');
   downloadBlob(sdf, 'conformers.sdf', 'chemical/x-mdl-molfile');
 }
 </script>
