@@ -138,6 +138,9 @@ pub struct OptimizationResult {
     /// keys are engine-specific (MMFF: bond/angle/stretch_bend/torsion/oop/
     /// vdw/electrostatic; GFN-FF: bond/angle/torsion/rep/es/disp/hb/xb/batm)
     energy_terms_json: String,
+    /// per-atom partial charges at the optimized geometry (MMFF: BCI;
+    /// GFN-FF: topology EEQ qa)
+    charges: Vec<f64>,
     #[wasm_bindgen(getter_with_clone)]
     engine_used: String,
 }
@@ -168,6 +171,12 @@ impl OptimizationResult {
     #[wasm_bindgen]
     pub fn get_energy_terms_json(&self) -> String {
         self.energy_terms_json.clone()
+    }
+
+    /// Per-atom partial charges at the optimized geometry.
+    #[wasm_bindgen]
+    pub fn get_charges(&self) -> Vec<f64> {
+        self.charges.clone()
     }
 
     /// Engine actually used: "MMFF94s", "MMFF94", or "GFNFF".
@@ -397,7 +406,12 @@ fn optimize_dispatch(
     mol: &crate::molecule::Molecule,
     initial_coords: &[[f64; 3]],
     options: &OptimizationOptions,
-) -> (crate::optimizer::OptimizationResult, String, String) {
+) -> (
+    crate::optimizer::OptimizationResult,
+    String,
+    String,
+    Vec<f64>,
+) {
     const EH_KCAL: f64 = 627.5094740631;
     let engine = if options.engine.is_empty() {
         // legacy field fallback
@@ -423,7 +437,8 @@ fn optimize_dispatch(
                 "hb": ec.hb * EH_KCAL, "xb": ec.xb * EH_KCAL,
                 "batm": ec.batm * EH_KCAL,
             });
-            (r, terms.to_string(), "GFNFF".to_string())
+            let charges = ff.charges();
+            (r, terms.to_string(), "GFNFF".to_string(), charges)
         }
         _ => {
             let variant = match engine.as_str() {
@@ -443,7 +458,8 @@ fn optimize_dispatch(
             } else {
                 "MMFF94s"
             };
-            (r, terms.to_string(), used.to_string())
+            let charges = ff.charges.clone();
+            (r, terms.to_string(), used.to_string(), charges)
         }
     }
 }
@@ -463,6 +479,7 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
                 coordinates: Vec::new(),
                 energy_terms_json: "{}".to_string(),
                 engine_used: String::new(),
+                charges: Vec::new(),
             };
         }
     };
@@ -480,7 +497,7 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
         crate::etkdg::generate_initial_coords_with_config(&mol, &etkdg_config)
     };
 
-    let (optimizer_result, terms_json, engine_used) =
+    let (optimizer_result, terms_json, engine_used, charges) =
         optimize_dispatch(&mol, &initial_coords, &options);
 
     let mut flat_coords = Vec::new();
@@ -497,6 +514,7 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
         coordinates: flat_coords,
         energy_terms_json: terms_json,
         engine_used,
+        charges,
     }
 }
 
@@ -520,13 +538,14 @@ pub fn optimize_from_sdf_direct(
                 coordinates: Vec::new(),
                 energy_terms_json: "{}".to_string(),
                 engine_used: String::new(),
+                charges: Vec::new(),
             };
         }
     };
 
     let initial_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
 
-    let (optimizer_result, terms_json, engine_used) =
+    let (optimizer_result, terms_json, engine_used, charges) =
         optimize_dispatch(&mol, &initial_coords, &options);
 
     let mut flat_coords = Vec::new();
@@ -543,6 +562,7 @@ pub fn optimize_from_sdf_direct(
         coordinates: flat_coords,
         energy_terms_json: terms_json,
         engine_used,
+        charges,
     }
 }
 
@@ -1429,6 +1449,22 @@ mod conformer_batch_tests {
    -1.0630   -1.0663   -0.6857 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
    -1.7063   -0.3065    0.9326 H   0  0  0  0  0  0  0  0  0  0  0  0\n\
   1  2  1  0\n  2  3  1  0\n  1  4  1  0\n  1  5  1  0\n  1  6  1  0\n  2  7  1  0\n  2  8  1  0\n  3  9  1  0\nM  END";
+
+    #[test]
+    fn optimize_returns_charges() {
+        let opts = OptimizationOptions::default();
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert_eq!(res.get_charges().len(), 9, "one charge per atom");
+        let sum: f64 = res.get_charges().iter().sum();
+        assert!(sum.abs() < 1e-6, "charges sum to ~0, got {}", sum);
+        // GFN-FF path: charges present too
+        let mut opts = OptimizationOptions::default();
+        opts.engine = "GFNFF".to_string();
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert_eq!(res.get_charges().len(), 9);
+        let sum: f64 = res.get_charges().iter().sum();
+        assert!(sum.abs() < 1e-6, "GFN charges sum to ~0, got {}", sum);
+    }
 
     #[test]
     fn conformer_batch_diversity_and_reproducibility() {

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMM Workbench</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='10' r='6' fill='%232563eb'/%3E%3Ccircle cx='23' cy='14' r='5' fill='%23ef4444'/%3E%3Ccircle cx='15' cy='24' r='5' fill='%2322c55e'/%3E%3Cpath d='M10 10L23 14L15 24L10 10' stroke='%23334155' stroke-width='2' fill='none'/%3E%3C/svg%3E">
 <meta name="description" content="A lightweight, ligand-based CADD workbench: draw, inspect, embed 3D, optimize, and enumerate conformers — all locally in your browser. Powered by RDKit, JSME, and the WebMM force-field engine.">
 <meta name="keywords" content="WebMM, molecular mechanics, CADD, conformers, ETKDG, MMFF94, GFN-FF, SMILES, JSME, RDKit, molecular properties, browser cheminformatics">
 <script defer src="vendor/jsme/jsme/jsme.nocache.js"></script>
@@ -719,6 +720,16 @@ details {
        <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled>XYZ</button>
        <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled>PNG</button>
      </div>
+     <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+       <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
+         <input type="checkbox" id="chargeColor" disabled> Color atoms by partial charge
+         <span title="blue = positive, red = negative; white = neutral" style="display:inline-flex; gap:2px;">
+           <span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
+           <span style="width:10px;height:10px;border-radius:2px;background:#f1f5f9;border:1px solid var(--border);display:inline-block;"></span>
+           <span style="width:10px;height:10px;border-radius:2px;background:#ef4444;display:inline-block;"></span>
+         </span>
+       </label>
+     </div>
      <div id="status3d" class="version" aria-live="polite" style="margin-top:0.5rem;">Engine loading…</div>
      <div id="energyPanel" style="display:none; margin-top:0.75rem;">
        <strong>WebMM Energy (kcal/mol)</strong>
@@ -726,6 +737,8 @@ details {
      </div>
      <div id="confPanel" style="display:none; margin-top:0.75rem;">
        <strong>Conformer Ensemble (kcal/mol, pruned)</strong>
+       <canvas id="confChart" width="560" height="96" style="width:100%; margin:0.4rem 0 0.2rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;" aria-label="Conformer energy chart - click a bar to show that conformer"></canvas>
+       <div class="version" id="confChartAxis" style="margin-bottom:0.4rem;"></div>
        <table id="confTable" aria-label="Conformer ensemble energies"></table>
        <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">Export ensemble SDF</button>
      </div>
@@ -744,6 +757,10 @@ details {
 
      <strong>Representations</strong>
     <table>
+      <tr>
+        <td class="key">Formula</td>
+        <td class="value" id="formula"></td>
+      </tr>
       <tr>
         <td class="key">Canonical SMILES</td>
         <td class="value" id="smiles"></td>
@@ -995,6 +1012,12 @@ let rdkitModule = null;
     const inchi = m.get_inchi();
     document.getElementById("inchi").textContent = inchi;
     document.getElementById("inchikey").textContent = rdkitModule.get_inchikey_for_inchi(inchi);
+    const mbForFormula = m.get_molblock();
+    const countsLine = mbForFormula.split('\n')[3];
+    const nAtoms = parseInt(countsLine.substring(0, 3));
+    const desc = JSON.parse(m.get_descriptors());
+    const implicitH = Math.max(0, (desc.NumAtoms || nAtoms) - nAtoms);
+    document.getElementById("formula").textContent = hillFormula(mbForFormula, implicitH);
 
    const d = JSON.parse(m.get_descriptors());
 
@@ -1685,8 +1708,94 @@ let rdkitModule = null;
 </script>
 
 <script>
-// ===== WebMM 3D engine (M1): embed / optimize / energy breakdown / export =====
-let webmm = null;          // wasm module (set when the ES module below loads)
+// ===== v1.3: formula + charge coloring + conformer energy chart =====
+let lastCharges = null;    // per-atom partial charges from the last optimize
+let chargeColorOn = false;
+
+function hillFormula(sdf, implicitH) {
+  // Hill notation: molblock symbols + implicit H (RDKit descriptor semantics)
+  const lines = sdfLines(sdf);
+  const na = parseInt(lines[3].substring(0, 3));
+  const counts = { H: implicitH || 0 };
+  for (let i = 0; i < na; i++) {
+    const sym = lines[4 + i].substring(30, 33).trim();
+    counts[sym] = (counts[sym] || 0) + 1;
+  }
+  if (!counts.H) delete counts.H;
+  const parts = [];
+  const syms = Object.keys(counts).sort();
+  if (counts.C) parts.push('C' + (counts.C > 1 ? counts.C : ''));
+  if (counts.H) parts.push('H' + (counts.H > 1 ? counts.H : ''));
+  for (const sym of syms) {
+    if (sym === 'C' || sym === 'H') continue;
+    parts.push(sym + (counts[sym] > 1 ? counts[sym] : ''));
+  }
+  return parts.join('') || '—';
+}
+
+function chargeColor(q) {
+  // blue = positive, red = negative, white ≈ neutral (±0.4 saturates)
+  const t = Math.max(-1, Math.min(1, q / 0.4));
+  const mix = (a, b, k) => Math.round(a + (b - a) * k);
+  let r, g, b;
+  if (t >= 0) {
+    r = mix(0xf1, 0x3b, t); g = mix(0xf5, 0x82, t); b = mix(0xf9, 0xf6, t);
+  } else {
+    r = mix(0xf1, 0xef, -t); g = mix(0xf5, 0x44, -t); b = mix(0xf9, 0x44, -t);
+  }
+  return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+}
+
+function applyStyle() {
+  if (!viewer || !sdf3d) return;
+  if (chargeColorOn && lastCharges && lastCharges.length) {
+    const cf = (atom) => chargeColor(lastCharges[atom.index] || 0);
+    viewer.setStyle({}, {
+      stick: { radius: 0.15, colorfunc: cf },
+      sphere: { scale: 0.25, colorfunc: cf },
+    });
+  } else {
+    viewer.setStyle({}, { stick: { radius: 0.15 }, sphere: { scale: 0.25 } });
+  }
+  viewer.render();
+}
+
+function drawConformerChart() {
+  const cv = document.getElementById('confChart');
+  if (!cv || !confEnsemble || !confEnsemble.length) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const n = confEnsemble.length;
+  const Es = confEnsemble.map(k => k.E);
+  const Emin = Math.min(...Es), Emax = Math.max(...Es);
+  const span = Math.max(Emax - Emin, 1e-6);
+  const pad = 14, bw = (W - 2 * pad) / n;
+  // bars
+  for (let r = 0; r < n; r++) {
+    const dE = confEnsemble[r].E - Emin;
+    const hFrac = Math.max(0.04, 1 - dE / span);           // tallest = lowest E
+    const bh = (H - 26) * hFrac;
+    ctx.fillStyle = r === selConf ? '#2563eb' : (confEnsemble[r].converged === false ? '#f59e0b' : '#93c5fd');
+    ctx.fillRect(pad + r * bw + 1.5, H - 18 - bh, bw - 3, bh);
+    if (n <= 16) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      if (dE < 0.005) ctx.fillText('min', pad + r * bw + bw / 2, H - 22 - bh);
+    }
+  }
+  ctx.fillStyle = '#64748b';
+  ctx.font = '9px ui-monospace, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('ΔE=0', pad, H - 6);
+  ctx.textAlign = 'right';
+  ctx.fillText('ΔE=' + (Emax - Emin).toFixed(2) + ' kcal/mol', W - pad, H - 6);
+  document.getElementById('confChartAxis').textContent =
+    `${n} conformers · click a bar (or a table row) to show it`;
+}
+
+
 let viewer = null;         // 3Dmol viewer
 let sdf3d = null;          // current 3D SDF text (from embed/optimize)
 
@@ -1842,7 +1951,10 @@ function optimize3D() {
         for (let a = 0; a < nA; a++)
           for (let d = 0; d < 3; d++) coords[a*3+d] = res.get_coord(a, d);
         showSdfIn3D(buildSdfFromCoords([...coords], sdf3d));
+        lastCharges = res.get_charges();
+        document.getElementById('chargeColor').disabled = false;
         renderEnergyPanel(res, ((performance.now() - t0) / 1000).toFixed(2));
+        if (chargeColorOn) applyStyle();
       } catch (e) { showError(e); set3dStatus('Optimization failed'); }
     });
   } catch (e) { showError(e); }
@@ -1896,6 +2008,7 @@ function exportPNG3D() {
 
 // ===== M2: conformer ensemble =====
 let confRun = null;        // { cancelled } while running
+let selConf = -1;          // selected conformer rank (0-based) for the chart
 let confEnsemble = null;   // [{i, E, sdf}] kept after pruning, sorted by E
 
 // Kabsch alignment via quaternion power iteration (same approach as the
@@ -2041,7 +2154,9 @@ function finishConformers(engine, rmsdCut, W) {
   kept.forEach(k => k.dE = k.E - Emin);
   confEnsemble = kept;
 
+  selConf = 0;
   showSdfIn3D(confEnsemble[0].sdf);
+  drawConformerChart();
   const rows = confEnsemble.map((k, r) =>
     `<tr tabindex="0" role="button" aria-label="Show conformer ${r + 1}, E ${k.E.toFixed(2)} kcal/mol" style="cursor:pointer;" onclick="showEnsembleConf(${r})">` +
     `<td class="key">#${r + 1} (seed ${k.seed})</td>` +
@@ -2054,7 +2169,9 @@ function finishConformers(engine, rmsdCut, W) {
 
 function showEnsembleConf(r) {
   if (!confEnsemble || !confEnsemble[r]) return;
+  selConf = r;
   showSdfIn3D(confEnsemble[r].sdf);
+  drawConformerChart();
   set3dStatus(`Conformer #${r + 1}: E = ${confEnsemble[r].E.toFixed(2)} kcal/mol (ΔE = ${confEnsemble[r].dE.toFixed(2)})`);
 }
 
@@ -2081,6 +2198,18 @@ function exportEnsembleSDF() {
   window.dispatchEvent(new Event('webmmready'));
 </script>
 <script>
+  document.getElementById('confChart').addEventListener('click', (e) => {
+    if (!confEnsemble || !confEnsemble.length) return;
+    const rect = e.target.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const pad = 14 / rect.width;
+    const idx = Math.floor((x - pad) / ((1 - 2 * pad) / confEnsemble.length));
+    if (idx >= 0 && idx < confEnsemble.length) showEnsembleConf(idx);
+  });
+  document.getElementById('chargeColor').addEventListener('change', (e) => {
+    chargeColorOn = e.target.checked;
+    applyStyle();
+  });
   window.addEventListener('webmmready', () => {
     webmm = window.webmm;
     window.webmmReady = true;

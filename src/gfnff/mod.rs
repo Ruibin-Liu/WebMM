@@ -326,6 +326,11 @@ impl GfnffForceField {
     pub fn components_at(&self, coords: &[[f64; 3]]) -> EnergyComponents {
         self.inner.energy(coords)
     }
+
+    /// Topology EEQ charges (qa) from setup — for charge coloring/exports.
+    pub fn charges(&self) -> Vec<f64> {
+        self.inner.topo.qa.clone()
+    }
 }
 
 impl crate::forces::ForceField for GfnffForceField {
