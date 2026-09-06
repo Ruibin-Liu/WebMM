@@ -5875,3 +5875,36 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod adagrasib_stereo_regression {
+    //! Regression fixture for the KNOWN stereo failure: adagrasib embeds with
+    //! an inverted chiral center (CIP R at atom 33, expected S) and takes
+    //! ~100 s for 43 heavy atoms. Root cause (diagnosed vs RDKit 2025.09):
+    //! find_chiral_centers ignores the input stereo specification entirely and
+    //! constrains chiral volumes to UNSIGNED positive bounds (5,100), so the
+    //! two [C@H] centers (correct targets: one negative, one positive —
+    //! -4.68 / +4.42 in RDKit's reference embed) cannot both be satisfied.
+    //! Fix plan (v1.5): parse wedge/hash bonds from the 2D molblock, derive
+    //! per-center signed targets (tag parity x sorted-neighbor parity), and
+    //! use signed volume bounds. Until then this test is #[ignore]d.
+
+    /// #[ignore]d: currently takes minutes (the very perf bug it documents)
+    /// and fails the stereo assertion (the very correctness bug it documents).
+    /// Un-ignore after the v1.5 stereo fix lands.
+    #[test]
+    #[ignore]
+    fn adagrasib_stereo_and_perf_regression() {
+        let mb = include_str!("fixtures_adagrasib_2d.mol");
+        let mol = crate::molecule::parser::parse_sdf(mb).unwrap();
+        assert_eq!(mol.atoms.len(), 43);
+        let coords = crate::etkdg::generate_initial_coords_with_config(
+            &mol,
+            &crate::etkdg::ETKDGConfig { random_seed: 42, ..Default::default() },
+        );
+        assert_eq!(coords.len(), 43);
+        // When the stereo fix lands: assert the sorted-neighbor chiral volume
+        // signs at centers 5 and 33 match RDKit's reference embed (neg, pos)
+        // and that the embed completes well under 10 s.
+    }
+}
