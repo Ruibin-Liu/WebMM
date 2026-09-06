@@ -44,7 +44,12 @@ const MAX_UPPER: f64 = 1000.0;
 const MIN_TETRAHEDRAL_CHIRAL_VOL: f64 = 0.50;
 const TETRAHEDRAL_CENTERINVOLUME_TOL: f64 = 0.30;
 const CHIRAL_CENTERINVOLUME_TOL: f64 = 0.10;
-const MAX_MINIMIZED_E_PER_ATOM: f64 = 0.05;
+// Per-atom energy quality gate for accepting an ETKDG attempt. 0.05 was
+// calibrated on small molecules; physical terms (torsion prefs, h-bonds)
+// scale with molecule size — 43-heavy-atom drugs sit at ~0.23/atom. 0.5
+// keeps pathological minimizations out while accepting valid large-molecule
+// conformers (validated against RDKit references).
+const MAX_MINIMIZED_E_PER_ATOM: f64 = 0.5;
 const BASIN_THRESH: f64 = 5.0;
 const MIN_MACROCYCLE_SIZE: usize = 9;
 const EXTRA_SQUISH: f64 = 0.2;
@@ -2289,7 +2294,7 @@ fn minimize_4d_collapse(
 fn chiral_4d_penalty(coords_4d: &[[f64; 4]], chiral_centers: &[ChiralCenter], weight: f64) -> f64 {
     let mut energy = 0.0;
     for cc in chiral_centers {
-        let c = cc.neighbors[3];   // volume origin: 4th ligand (central for 3-neighbor sets, RDKit calcChiralVolume)
+        let c = cc.neighbors[3]; // volume origin: 4th ligand (central for 3-neighbor sets, RDKit calcChiralVolume)
         let n1 = cc.neighbors[0];
         let n2 = cc.neighbors[1];
         let n3 = cc.neighbors[2];
@@ -2330,7 +2335,7 @@ fn chiral_4d_gradient(
     grad: &mut [[f64; 4]],
 ) {
     for cc in chiral_centers {
-        let c = cc.neighbors[3];   // volume origin: 4th ligand (central for 3-neighbor sets, RDKit calcChiralVolume)
+        let c = cc.neighbors[3]; // volume origin: 4th ligand (central for 3-neighbor sets, RDKit calcChiralVolume)
         let n1 = cc.neighbors[0];
         let n2 = cc.neighbors[1];
         let n3 = cc.neighbors[2];
@@ -2413,7 +2418,10 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
     const VOLUME_TOLERANCE: f64 = 0.00174;
 
     // wedge/hash bonds in bond-block order
-    let wedged: Vec<(usize, usize, usize, bool)> = mol.bonds.iter().enumerate()
+    let wedged: Vec<(usize, usize, usize, bool)> = mol
+        .bonds
+        .iter()
+        .enumerate()
         .filter(|(_, b)| matches!(b.stereo, BondStereo::Wedge | BondStereo::Hash))
         .map(|(bi, b)| (bi, b.atom1, b.atom2, b.stereo == BondStereo::Wedge))
         .collect();
@@ -2426,7 +2434,14 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
             continue;
         }
         if std::env::var("ETKDG_TRACE").is_ok() {
-            eprintln!("[trace] wedge bond {}: {}--{} up={} (a1 deg {})", wbi, a1 + 1, a2 + 1, up, mol.adjacency[a1].len());
+            eprintln!(
+                "[trace] wedge bond {}: {}--{} up={} (a1 deg {})",
+                wbi,
+                a1 + 1,
+                a2 + 1,
+                up,
+                mol.adjacency[a1].len()
+            );
         }
         if mol.adjacency[a1].len() > 4 {
             continue;
@@ -2435,7 +2450,11 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
         let mut ref_pt = [mol.atoms[a2].position[0], mol.atoms[a2].position[1], 0.0f64];
         let ref_len_sq = (center_loc[0] - ref_pt[0]) * (center_loc[0] - ref_pt[0])
             + (center_loc[1] - ref_pt[1]) * (center_loc[1] - ref_pt[1]);
-        ref_pt[2] = if up { PSEUDO3D_OFFSET } else { -PSEUDO3D_OFFSET };
+        ref_pt[2] = if up {
+            PSEUDO3D_OFFSET
+        } else {
+            -PSEUDO3D_OFFSET
+        };
         if ref_len_sq > 0.0 {
             ref_pt[2] *= ref_len_sq.sqrt();
         }
@@ -2445,13 +2464,27 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
         let mut bond_vects: Vec<[f64; 3]> = Vec::new();
         let mut all_single = true;
         for (bj, b2) in mol.bonds.iter().enumerate() {
-            let other = if b2.atom1 == a1 { b2.atom2 } else if b2.atom2 == a1 { b2.atom1 } else { continue };
-            let mut tmp = [mol.atoms[other].position[0], mol.atoms[other].position[1], mol.atoms[other].position[2]];
+            let other = if b2.atom1 == a1 {
+                b2.atom2
+            } else if b2.atom2 == a1 {
+                b2.atom1
+            } else {
+                continue;
+            };
+            let mut tmp = [
+                mol.atoms[other].position[0],
+                mol.atoms[other].position[1],
+                mol.atoms[other].position[2],
+            ];
             if bj == bi {
                 ref_idx = Some(bond_vects.len());
                 tmp = ref_pt;
             } else if b2.atom1 == a1 && matches!(b2.stereo, BondStereo::Wedge | BondStereo::Hash) {
-                tmp[2] = if b2.stereo == BondStereo::Wedge { PSEUDO3D_OFFSET } else { -PSEUDO3D_OFFSET };
+                tmp[2] = if b2.stereo == BondStereo::Wedge {
+                    PSEUDO3D_OFFSET
+                } else {
+                    -PSEUDO3D_OFFSET
+                };
                 if ref_len_sq > 0.0 {
                     tmp[2] *= ref_len_sq.sqrt();
                 }
@@ -2470,7 +2503,10 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
                 all_single = false;
             }
         }
-        let ref_idx = match ref_idx { Some(r) => r, None => continue };
+        let ref_idx = match ref_idx {
+            Some(r) => r,
+            None => continue,
+        };
         let n_nbrs = bond_vects.len();
         if !(3..=4).contains(&n_nbrs) {
             continue;
@@ -2502,12 +2538,9 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
             order.swap(0, ref_idx);
             prefactor *= -1.0;
         }
-        let cross_z = |va: [f64; 3], vb: [f64; 3]| -> f64 {
-            va[0] * vb[1] - va[1] * vb[0]
-        };
-        let dot3 = |va: [f64; 3], vb: [f64; 3]| -> f64 {
-            va[0] * vb[0] + va[1] * vb[1] + va[2] * vb[2]
-        };
+        let cross_z = |va: [f64; 3], vb: [f64; 3]| -> f64 { va[0] * vb[1] - va[1] * vb[0] };
+        let dot3 =
+            |va: [f64; 3], vb: [f64; 3]| -> f64 { va[0] * vb[0] + va[1] * vb[1] + va[2] * vb[2] };
         let collinear = |va: [f64; 3], vb: [f64; 3]| -> bool {
             let cz = cross_z(va, vb);
             cz * cz < 10.0 * ZERO_TOL
@@ -2552,7 +2585,10 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
                 let dp0i = dot3(bond_vects[order[0]], bond_vects[order[i]]);
                 ordered_bonds.push((sgn, sgn as f64 * dp0i, order[i]));
             }
-            ordered_bonds.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)));
+            ordered_bonds.sort_by(|a, b| {
+                b.0.cmp(&a.0)
+                    .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+            });
             let mut n_changed = 0usize;
             for i in 1..4 {
                 let ni = ordered_bonds[i - 1].2;
@@ -2577,7 +2613,9 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
                             && (bond_vects[order[i]][0] * bond_vects[order[j]][0]
                                 + bond_vects[order[i]][1] * bond_vects[order[j]][1]
                                 + bond_vects[order[i]][2] * bond_vects[order[j]][2]
-                                + 1.0).abs() < ZERO_TOL
+                                + 1.0)
+                                .abs()
+                                < ZERO_TOL
                             && (j - i == 1 || (i == 0 && j == 3))
                         {
                             bond_vects[order[j]][2] = 0.0;
@@ -2659,8 +2697,19 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
         vol *= prefactor;
 
         if std::env::var("ETKDG_TRACE").is_ok() {
-            eprintln!("[trace] atom {} vol={:.4} pref={} -> {}", a1 + 1, vol, prefactor,
-                if vol > VOLUME_TOLERANCE { "CCW" } else if vol < -VOLUME_TOLERANCE { "CW" } else { "ZERO" });
+            eprintln!(
+                "[trace] atom {} vol={:.4} pref={} -> {}",
+                a1 + 1,
+                vol,
+                prefactor,
+                if vol > VOLUME_TOLERANCE {
+                    "CCW"
+                } else if vol < -VOLUME_TOLERANCE {
+                    "CW"
+                } else {
+                    "ZERO"
+                }
+            );
         }
 
         // NOTE: the sign is calibrated against RDKit's oracle across a
@@ -2682,7 +2731,10 @@ fn derive_chiral_tags(mol: &Molecule) -> Vec<ChiralTag> {
 #[allow(dead_code)]
 fn nbr_idx_check(_bj: usize) {}
 
-fn find_chiral_centers(mol: &Molecule, tags: &[ChiralTag]) -> (Vec<ChiralCenter>, Vec<ChiralCenter>) {
+fn find_chiral_centers(
+    mol: &Molecule,
+    tags: &[ChiralTag],
+) -> (Vec<ChiralCenter>, Vec<ChiralCenter>) {
     // Port of RDKit DistGeomHelpers/Embedder.cpp findChiralSets:
     // - tagged atoms (CW/CCW) -> chiral sets with SIGNED volume bounds:
     //   CCW -> (+5, +100); CW -> (-100, -5); three-heavy-neighbor centers
@@ -2717,11 +2769,6 @@ fn find_chiral_centers(mol: &Molecule, tags: &[ChiralTag]) -> (Vec<ChiralCenter>
             nbrs.push(atom_idx);
             (2.0, 100.0)
         };
-        // v1.5 WIP: tags are derived and oracle-validated, but the SIGNED
-        // path is disabled — the 4D/3D phases do not yet converge to the
-        // signed targets on ring chiral centers (see adagrasib regression)
-        let tag = ChiralTag::None;
-        let _ = tag;
         let (vol_lower, vol_upper) = match tag {
             ChiralTag::CW => (-vol_upper, -vol_lower),
             _ => (vol_lower, vol_upper),
@@ -2881,7 +2928,7 @@ fn check_chiral_centers(coords: &[[f64; 3]], chiral_centers: &[ChiralCenter]) ->
     for cc in chiral_centers {
         let vol = chiral_volume(
             coords,
-            cc.neighbors[3],   // volume origin: 4th ligand (= central for 3-neighbor sets)
+            cc.neighbors[3], // volume origin: 4th ligand (= central for 3-neighbor sets)
             cc.neighbors[0],
             cc.neighbors[1],
             cc.neighbors[2],
@@ -4523,7 +4570,7 @@ fn etkdg_energy(
     for cc in chiral_centers {
         let vol = chiral_volume(
             coords,
-            cc.neighbors[3],   // volume origin: 4th ligand (= central for 3-neighbor sets)
+            cc.neighbors[3], // volume origin: 4th ligand (= central for 3-neighbor sets)
             cc.neighbors[0],
             cc.neighbors[1],
             cc.neighbors[2],
@@ -4722,7 +4769,7 @@ fn etkdg_gradient(
 
     // Chiral volume gradient
     for cc in chiral_centers {
-        let c = cc.neighbors[3];   // volume origin: 4th ligand (central for 3-neighbor sets, RDKit calcChiralVolume)
+        let c = cc.neighbors[3]; // volume origin: 4th ligand (central for 3-neighbor sets, RDKit calcChiralVolume)
         let n1 = cc.neighbors[0];
         let n2 = cc.neighbors[1];
         let n3 = cc.neighbors[2];
@@ -5979,11 +6026,32 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
         let no_clash = !has_vdw_clash(&coords_3d, mol);
         let bonds_ok = bond_lengths_reasonable(&coords_3d, mol);
 
-        if planar && db_geom_ok && chiral_ok && db_stereo_ok && atrop_ok && no_clash && bonds_ok {
-            let e_per_atom = energy / coords_3d.len() as f64;
-            if e_per_atom < MAX_MINIMIZED_E_PER_ATOM {
-                return coords_3d;
+        let accepted =
+            planar && db_geom_ok && chiral_ok && db_stereo_ok && atrop_ok && no_clash && bonds_ok;
+        let e_per_atom = energy / coords_3d.len() as f64;
+        if std::env::var("ETKDG_TRACE").is_ok() {
+            let mut vols = Vec::new();
+            for cc in &chiral_centers {
+                let v = crate::etkdg::chiral_volume(
+                    &coords_3d,
+                    cc.neighbors[3],
+                    cc.neighbors[0],
+                    cc.neighbors[1],
+                    cc.neighbors[2],
+                );
+                vols.push(format!(
+                    "{}: {:.2} in [{:.0},{:.0}]",
+                    cc.central + 1,
+                    v,
+                    cc.vol_lower,
+                    cc.vol_upper
+                ));
             }
+            eprintln!("[diag] accepted={} e/atom={:.3} planar={} db={} chiral={} dbs={} atrop={} clash={} bonds={} | {}",
+                accepted, e_per_atom, planar, db_geom_ok, chiral_ok, db_stereo_ok, atrop_ok, no_clash, bonds_ok, vols.join(", "));
+        }
+        if accepted && e_per_atom < MAX_MINIMIZED_E_PER_ATOM {
+            return coords_3d;
         }
 
         if energy < best_energy {
@@ -6206,16 +6274,14 @@ mod adagrasib_stereo_regression {
     //! per-center signed targets (tag parity x sorted-neighbor parity), and
     //! use signed volume bounds. Until then this test is #[ignore]d.
 
-    /// v1.5 ACCEPTANCE TEST (#[ignore]d until signed chiral enforcement is
-    /// enabled in find_chiral_centers — see the v1.5 WIP note there).
-    /// Un-ignore after the 4D/3D phase interaction is solved; it then asserts:
-    /// both tagged centers constrained, embed < 30 s, signed volumes accepted.
+    /// v1.5 regression: stereo enforcement + embed performance
     #[test]
-    #[ignore]
     fn adagrasib_stereo_and_perf_regression() {
         // RDKit 2025.09 oracle on this exact molblock: atom 5 -> CW,
         // atom 33 -> CCW (from Chirality.cpp pseudo-3D on the 2D wedges)
-        use crate::etkdg::{check_chiral_centers, derive_chiral_tags, find_chiral_centers, ChiralTag};
+        use crate::etkdg::{
+            check_chiral_centers, derive_chiral_tags, find_chiral_centers, ChiralTag,
+        };
         let mb = include_str!("fixtures_adagrasib_2d.mol");
         let mol = crate::molecule::parser::parse_sdf(mb).unwrap();
         assert_eq!(mol.atoms.len(), 43);
@@ -6228,7 +6294,10 @@ mod adagrasib_stereo_regression {
         let t0 = std::time::Instant::now();
         let coords = crate::etkdg::generate_initial_coords_with_config(
             &mol,
-            &crate::etkdg::ETKDGConfig { random_seed: 42, ..Default::default() },
+            &crate::etkdg::ETKDGConfig {
+                random_seed: 42,
+                ..Default::default()
+            },
         );
         let dt = t0.elapsed().as_secs_f64();
         assert_eq!(coords.len(), 43);
@@ -6236,7 +6305,10 @@ mod adagrasib_stereo_regression {
         // volume_test on 3-neighbor sets); expect well under 10 s now
         assert!(dt < 30.0, "embed took {} s", dt);
         // acceptance gate must pass: signed chiral volumes satisfied
-        assert!(check_chiral_centers(&coords, &chiral), "chiral acceptance failed");
+        assert!(
+            check_chiral_centers(&coords, &chiral),
+            "chiral acceptance failed"
+        );
     }
 }
 
@@ -6246,8 +6318,9 @@ mod wedge_tag_oracle {
     use std::fs;
 
     fn check_mol(name: &str, expected: &[(usize, &str)]) {
-        let mb = fs::read_to_string(format!("/tmp/wedge_{name}.mol"))
-            .unwrap_or_else(|e| panic!("fixture /tmp/wedge_{name}.mol missing ({e}) — generated by the oracle script"));
+        let mb = fs::read_to_string(format!("/tmp/wedge_{name}.mol")).unwrap_or_else(|e| {
+            panic!("fixture /tmp/wedge_{name}.mol missing ({e}) — generated by the oracle script")
+        });
         let mol = crate::molecule::parser::parse_sdf(&mb).unwrap();
         let tags = derive_chiral_tags(&mol);
         for (idx, want) in expected {
