@@ -1826,10 +1826,12 @@ function drawConformerChart() {
   const Emin = Math.min(...Es), Emax = Math.max(...Es);
   const span = Math.max(Emax - Emin, 1e-6);
   const pad = 14, bw = (W - 2 * pad) / n;
-  // bars
+  // bars — height encodes ΔE (standard energy reading: taller = higher E);
+  // conformers stay ranked by ascending E, so rank 1 (lowest) is the flat
+  // stub on the left, marked 'min' and highlighted when selected.
   for (let r = 0; r < n; r++) {
     const dE = confEnsemble[r].E - Emin;
-    const hFrac = Math.max(0.04, 1 - dE / span);           // tallest = lowest E
+    const hFrac = Math.max(0.04, dE / span);               // height ∝ ΔE
     const bh = (H - 26) * hFrac;
     ctx.fillStyle = r === selConf ? '#2563eb' : (confEnsemble[r].converged === false ? '#f59e0b' : '#93c5fd');
     ctx.fillRect(pad + r * bw + 1.5, H - 18 - bh, bw - 3, bh);
@@ -1843,7 +1845,7 @@ function drawConformerChart() {
   ctx.fillStyle = '#64748b';
   ctx.font = '9px ui-monospace, monospace';
   ctx.textAlign = 'left';
-  ctx.fillText('ΔE=0', pad, H - 6);
+  ctx.fillText('min ΔE=0', pad, H - 6);
   ctx.textAlign = 'right';
   ctx.fillText('ΔE=' + (Emax - Emin).toFixed(2) + ' kcal/mol', W - pad, H - 6);
   document.getElementById('confChartAxis').textContent =
