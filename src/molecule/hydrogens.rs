@@ -257,11 +257,21 @@ pub fn to_molblock(mol: &Molecule) -> String {
         ));
     }
     for b in &mol.bonds {
+        // V2000 bond stereo column (10-12): wedge/hash MUST round-trip —
+        // derive_chiral_tags reads it to perceive tetrahedral stereochemistry.
+        let stereo_code = match b.stereo {
+            BondStereo::Wedge => 1,
+            BondStereo::Hash => 6,
+            BondStereo::Cis => 3,
+            BondStereo::Trans => 7,
+            BondStereo::None | BondStereo::AtropCW | BondStereo::AtropCCW => 0,
+        };
         out.push_str(&format!(
-            "{:>3}{:>3}{:>3}  0\n",
+            "{:>3}{:>3}{:>3}{:>3}\n",
             b.atom1 + 1,
             b.atom2 + 1,
-            bond_code(&b.bond_type)
+            bond_code(&b.bond_type),
+            stereo_code
         ));
     }
     // formal charges
@@ -413,5 +423,36 @@ mod tests {
         let again = molblock_with_h(&with_h).unwrap();
         let m = parse_mb(&again);
         assert_eq!(m.atoms.len(), 9, "no double addition");
+    }
+
+    #[test]
+    fn wedge_hash_roundtrip_through_add_hydrogens() {
+        // 2-bromobutane: C2 is a stereocenter defined by a hash bond (code 6)
+        // from C2 -> Br. add_hydrogens + to_molblock must preserve the code,
+        // else derive_chiral_tags loses the stereo input and embeds a mirror.
+        const MB: &str = "2-bromobutane\n  test\n\n  5  4  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.0000    1.4000    0.0000 Br  0  0  0  0  0  0  0  0  0  0  0  0\n    2.2000   -0.9000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.9000    1.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  6\n  2  4  1  0\n  1  5  1  0\nM  END";
+        let with_h = molblock_with_h(MB).unwrap();
+        let m = parse_mb(&with_h);
+        // find the C2-Br bond (atoms 1-2 0-based) and check its stereo
+        let br = m.atoms.iter().position(|a| a.symbol == "Br").unwrap();
+        let b = m
+            .bonds
+            .iter()
+            .find(|b| (b.atom1 == 1 && b.atom2 == br) || (b.atom1 == br && b.atom2 == 1))
+            .expect("C-Br bond");
+        assert_eq!(b.stereo, BondStereo::Hash, "hash code must round-trip");
+
+        // and the emitted molblock carries code 6 on that bond line
+        let mut found = false;
+        for line in with_h.lines() {
+            if line.len() >= 12 && line[9..12].trim() == "6" {
+                let a1: usize = line[0..3].trim().parse().unwrap();
+                let a2: usize = line[3..6].trim().parse().unwrap();
+                if (a1 == 2 && a2 == br + 1) || (a1 == br + 1 && a2 == 2) {
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "emitted molblock must carry stereo code 6 on C-Br");
     }
 }
