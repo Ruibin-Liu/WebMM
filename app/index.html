@@ -221,8 +221,11 @@ textarea:focus {
   .controls {
    margin-top: 0.75rem;
    display: grid;
-   grid-template-columns: repeat(2, 1fr);
+   grid-template-columns: repeat(4, 1fr);
    gap: 0.5rem;
+  }
+  @media (max-width: 900px) {
+    .controls { grid-template-columns: repeat(2, 1fr); }
   }
 
   .controls button {
@@ -506,7 +509,7 @@ textarea:focus {
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.3fr 1fr;   /* 2D + controls need more room than Properties */
   gap: 1.25rem;
 }
 
@@ -1036,7 +1039,7 @@ let rdkitModule = null;
   function render(m, name) {
     document.getElementById("output").style.display = "block";
 
-    let svgContent = m.get_svg();
+    let svgContent = m.get_svg(300, 300);   // squarer canvas: taller 2D image
     const svgParser = new DOMParser();
     const svgDoc = svgParser.parseFromString(svgContent, 'image/svg+xml');
     const svgElement = svgDoc.querySelector('svg');
