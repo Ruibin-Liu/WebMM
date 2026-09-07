@@ -17,6 +17,8 @@ MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit
 **ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
 
 ## Recently Completed
++- **全氢 ETKDG 嵌入管线(Workbench Embed 3D,与 RDKit 语义对齐)。** 用户指出 MMFF 弛豫补丁只是权宜之计,新体系可能失败。诊断:WASM 构建里全氢嵌入已经够快(adagrasib 78 原子 1.2-2.3s,旧观测 20s+ 是陈旧构建),无需 heavy-only 捷径。管线改为 add_hydrogens(图扩展)→ generate_initial_coordinates(全原子距离几何,H 与重原子同等参与 bounds/VDW/torsion)→ 直接展示,无弛豫步骤。**根因修复:to_molblock 把键 stereo 列硬编码为 0,楔键/hash round-trip 全丢 → add_hydrogens 后 derive_chiral_tags 失去手性输入 → 中心 33 镜像(R 而非 S)**。修复:按 V2000 输出 stereo 码(Wedge=1/Hash=6/Cis=3/Trans=7)+ 回归测试。验证(adagrasib):H-H min 1.771 Å 零冲突(几何附着为 0.193 Å)、C-H 1.105 Å、5=S/33=S 与 RDKit 一致;咖啡因 all-H E(MMFF94s)=-138.69 与参考一致;241 测试 + CDP 37/10/9/12/14 全绿。
++- **构象农场升级 + SDF 导出修复。** Worker 上限 4→12(hardware-bound),构象数默认 50→100、上限 500→2000,JS 侧每 worker 调用限幅 500(与 Rust 校验一致),种子 42+w×500 不重叠,进度百分比。SDF 导出 `$$$$` 缺换行(拼在 M END 行)致 Python RDKit 1/177 解析失败——补换行后 177/177。实测 ibuprofen 200 构象 8 workers 79s,RMSD 0.5 保留 177。
 +- **ETKDG v1.5 立体化学 + 性能修复(全部落地,240 测试通过)。** 三项根因修复,全部对拍 RDKit 2025.09 验证:
 +  (1) **volume_test 3-邻居永假**:3-邻居 chiral set 的 neighbors[3] == central → v4 ≡ 零向量 → |cross·v4| = 0 < vol_thresh 恒真 → return false → 验收从不通过 → 烧满 430 次尝试 = 102s+。修复:neighbors[3] == central 时跳过 v4 检查。
 +  (2) **能量门槛分级**:MAX_MINIMIZED_E_PER_ATOM = 0.05 对大分子过严(43 重原子药物 e/atom ≈ 0.23,来自扭转偏好/h-bond 物理项,非病态最小化)→ 放宽至 0.5。
