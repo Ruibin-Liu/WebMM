@@ -33,3 +33,4 @@ proptest-regressions/
 scripts/webmm_atom_types.json
 scripts/val_set/webmm_ref.json
 
+gfnff_*
