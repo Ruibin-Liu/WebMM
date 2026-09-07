@@ -406,6 +406,94 @@ textarea:focus {
     border-color: #7c3aed;
   }
 
+  /* --- 3D Structure toolbar: neutral tokens, one visual system --- */
+  .action-buttons.spatial-bar {
+    justify-content: flex-start;
+    gap: 0.5rem;
+  }
+  .spatial-bar .action-btn {
+    width: auto;                      /* no fixed 110px — labels differ */
+    background: #fff;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.45rem 0.8rem;
+  }
+  .spatial-bar .action-btn:hover {
+    background: #f8fafc;
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .spatial-bar .action-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .spatial-bar .action-btn.primary:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+    color: #fff;
+  }
+  .spatial-bar .action-btn:disabled,
+  .spatial-bar .engine-sel:disabled,
+  .spatial-bar .mini-field:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+    border-color: var(--border);
+    color: var(--muted);
+    background: #f8fafc;
+  }
+  .spatial-bar .action-btn.primary:disabled {
+    background: var(--accent);
+    color: #fff;
+  }
+  .spatial-bar .mini-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 8px;
+    padding: 0 0.55rem;
+    height: calc(0.85rem * 1.5 + 0.9rem + 2px);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .spatial-bar .mini-field input {
+    width: 46px;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-weight: 500;
+    color: var(--text);
+    padding: 0.45rem 0;
+  }
+  .spatial-bar .mini-field input:focus {
+    outline: none;
+  }
+  .spatial-bar .mini-field:focus-within {
+    border-color: var(--accent);
+  }
+  .spatial-bar .bar-divider {
+    width: 1px;
+    align-self: stretch;
+    margin: 0.2rem 0.25rem;
+    background: var(--border);
+  }
+  .spatial-bar .action-btn.export {
+    background: #fff;
+    border-color: var(--border);
+    color: var(--muted);
+    padding: 0.45rem 0.7rem;
+    gap: 0.35rem;
+  }
+  .spatial-bar .action-btn.export:hover {
+    background: #f8fafc;
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
   .mode-tabs {
     display: flex; gap: 0; margin-bottom: 0.6rem;
     border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
@@ -739,8 +827,8 @@ details {
          <table id="eterms"></table>
        </div>
      </div>
-     <div class="action-buttons">
-       <button id="btnEmbed" class="action-btn spatial" onclick="embed3D()" disabled title="ETKDG distance-geometry embedding">
+     <div class="action-buttons spatial-bar">
+       <button id="btnEmbed" class="action-btn spatial primary" onclick="embed3D()" disabled title="ETKDG distance-geometry embedding">
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
            <path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/>
            <path d="M12 11l8-4.5M12 11v9M12 11L4 6.5"/>
@@ -767,22 +855,23 @@ details {
          </svg>
          Conformers
        </button>
-       <label class="engine-sel" style="display:inline-flex;align-items:center;gap:4px;" title="number of embedding seeds (1–500)">N
-         <input id="confN" aria-label="Number of conformers" type="number" min="1" max="2000" value="100" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
+       <label class="mini-field" title="number of embedding seeds (1–2000)">N
+         <input id="confN" aria-label="Number of conformers" type="number" min="1" max="2000" value="100">
        </label>
-       <label class="engine-sel" style="display:inline-flex;align-items:center;gap:4px;" title="RMSD prune threshold (Å, heavy atoms)">RMSD
-         <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5" style="width:52px;border:none;background:transparent;font:inherit;color:inherit;">
+       <label class="mini-field" title="RMSD prune threshold (Å, heavy atoms)">RMSD
+         <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5">
        </label>
-       <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled>
+       <span class="bar-divider" aria-hidden="true"></span>
+       <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled title="Export 3D structure as SDF">
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
            <polyline points="7,10 12,15 17,10"/>
            <line x1="12" y1="15" x2="12" y2="3"/>
          </svg>
-         Export SDF
+         SDF
        </button>
-       <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled>XYZ</button>
-       <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled>PNG</button>
+       <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled title="Export as XYZ">XYZ</button>
+       <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled title="Export viewer as PNG">PNG</button>
      </div>
      <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
        <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
