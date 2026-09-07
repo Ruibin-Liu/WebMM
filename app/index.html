@@ -2303,7 +2303,10 @@ function optimize3D() {
         const t0 = performance.now();
         const opts = new webmm.OptimizationOptions();
         opts.engine = engine;
-        opts.set_max_iterations(500);
+        // Adaptive iteration budget: flexible drug-like molecules need far
+        // more than a flat 500 (remdesivir, 77 atoms, converges at ~2300).
+        const naCur = parseInt(sdfLines(sdf3d)[3].substring(0, 3)) || 50;
+        opts.set_max_iterations(Math.min(6000, Math.max(500, naCur * 40)));
         const res = webmm.optimize_from_sdf(sdf3d, opts);
         const nA = res.n_atoms;
         const coords = new Float64Array(nA * 3);
