@@ -2369,16 +2369,34 @@ function embed3D() {
 }
 
 function renderEnergyPanel(res, dt) {
-  const terms = JSON.parse(res.get_energy_terms_json());
+  renderEnergyPanelData({
+    termsJson: res.get_energy_terms_json(),
+    E: res.final_energy,
+    converged: res.converged,
+    iterations: res.iterations,
+    engine: res.get_engine(),
+    message: res.get_message(),
+  }, dt);
+}
+
+function renderEnergyPanelData(d, dt) {
+  const terms = JSON.parse(d.termsJson);
   const rows = Object.entries(terms)
     .map(([k, v]) => `<tr><td class="key">${k}</td><td class="value">${v.toFixed(4)}</td></tr>`).join('');
   document.getElementById('eterms').innerHTML = rows +
-    `<tr><td class="key"><strong>total</strong></td><td class="value"><strong>${res.final_energy.toFixed(4)}</strong></td></tr>`;
+    `<tr><td class="key"><strong>total</strong></td><td class="value"><strong>${d.E.toFixed(4)}</strong></td></tr>`;
   document.getElementById('energyPanel').style.display = 'block';
-  const msg = res.get_message();
-  const msgTxt = (res.converged || !msg) ? '' : ' · ' + msg;
-  set3dStatus(`<b>E(${res.get_engine()}) = ${res.final_energy.toFixed(2)} kcal/mol</b> · ` +
-    `${res.converged ? 'converged' : 'NOT converged'} · ${res.iterations} iterations · ${dt}s${msgTxt}`);
+  const msgTxt = (d.converged || !d.message) ? '' : ' · ' + d.message;
+  set3dStatus(`<b>E(${d.engine}) = ${d.E.toFixed(2)} kcal/mol</b> · ` +
+    `${d.converged ? 'converged' : 'NOT converged'} · ${d.iterations} iterations · ${dt}s${msgTxt}`);
+}
+
+let optWorker = null;   // single-structure optimization worker (UI stays responsive)
+
+function getOptWorker() {
+  if (optWorker) return optWorker;
+  optWorker = new Worker('conf.worker.js', { type: 'module' });
+  return optWorker;
 }
 
 function optimize3D() {
@@ -2386,28 +2404,29 @@ function optimize3D() {
   try {
     if (!sdf3d) { embed3D(); return; }   // auto-embed first
     const engine = document.getElementById('engineSel').value;
-    set3dStatus(`Optimizing with ${engine} (L-BFGS)…`);
-    yieldToUI().then(() => {
-      try {
-        const t0 = performance.now();
-        const opts = new webmm.OptimizationOptions();
-        opts.engine = engine;
-        // Adaptive iteration budget: flexible drug-like molecules need far
-        // more than a flat 500 (remdesivir, 77 atoms, converges at ~2300).
-        const naCur = parseInt(sdfLines(sdf3d)[3].substring(0, 3)) || 50;
-        opts.set_max_iterations(Math.min(6000, Math.max(500, naCur * 40)));
-        const res = webmm.optimize_from_sdf(sdf3d, opts);
-        const nA = res.n_atoms;
-        const coords = new Float64Array(nA * 3);
-        for (let a = 0; a < nA; a++)
-          for (let d = 0; d < 3; d++) coords[a*3+d] = res.get_coord(a, d);
-        showSdfIn3D(buildSdfFromCoords([...coords], sdf3d));
-        lastCharges = res.get_charges();
+    // Adaptive iteration budget: flexible drug-like molecules need far
+    // more than a flat 500 (remdesivir, 77 atoms, converges at ~2300).
+    const naCur = parseInt(sdfLines(sdf3d)[3].substring(0, 3)) || 50;
+    const maxIter = Math.min(6000, Math.max(500, naCur * 40));
+    set3dStatus(`Optimizing with ${engine} (L-BFGS, up to ${maxIter} iterations)…`);
+    const t0 = performance.now();
+    const worker = getOptWorker();
+    worker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === 'optimized') {
+        const dt = ((performance.now() - t0) / 1000).toFixed(2);
+        showSdfIn3D(buildSdfFromCoords(m.coords, sdf3d));
+        lastCharges = m.charges;
         document.getElementById('chargeColor').disabled = false;
-        renderEnergyPanel(res, ((performance.now() - t0) / 1000).toFixed(2));
+        renderEnergyPanelData(m, dt);
         if (chargeColorOn) applyStyle();
-      } catch (e) { showError(e); set3dStatus('Optimization failed'); }
-    });
+      } else if (m.type === 'error') {
+        showError('Optimization: ' + m.message);
+        set3dStatus('Optimization failed');
+      }
+    };
+    worker.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
+    worker.postMessage({ type: 'optimize', sdf: sdf3d, engine, maxIter });
   } catch (e) { showError(e); }
 }
 

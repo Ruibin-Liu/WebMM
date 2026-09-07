@@ -47,6 +47,38 @@ self.onmessage = async (e) => {
     self.postMessage({ type: 'ready', seedBase: msg.seedBase });
     return;
   }
+  // Single-structure optimization off the main thread: keeps the UI
+  // responsive for large molecules (remdesivir ~19 s on the main thread).
+  if (msg.type === 'optimize') {
+    try {
+      await initPromise;
+      const { sdf, engine, maxIter } = msg;
+      const opts = new wasm.OptimizationOptions();
+      opts.engine = engine;
+      opts.set_max_iterations(maxIter);
+      const res = wasm.optimize_from_sdf(sdf, opts);
+      const coords = [];
+      for (let a = 0; a < res.n_atoms; a++)
+        for (let d = 0; d < 3; d++) coords.push(res.get_coord(a, d));
+      const charges = [];
+      for (let a = 0; a < res.n_atoms; a++) charges.push(res.get_charges()[a]);
+      self.postMessage({
+        type: 'optimized',
+        E: res.final_energy,
+        converged: res.converged,
+        iterations: res.iterations,
+        message: res.get_message(),
+        engine: res.get_engine(),
+        nAtoms: res.n_atoms,
+        coords,
+        charges,
+        termsJson: res.get_energy_terms_json(),
+      });
+    } catch (err) {
+      self.postMessage({ type: 'error', message: String(err && err.message ? err.message : err) });
+    }
+    return;
+  }
   if (msg.type !== 'run') return;
   try {
     await initPromise;   // 'run' waits for init (async handlers don't queue)
