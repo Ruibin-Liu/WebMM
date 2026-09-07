@@ -438,10 +438,20 @@ textarea:focus {
     border-color: var(--accent);
   }
 
-  /* 3D Structure viewer placeholder */
+  /* 3D Structure viewer + energy sidebar share a row (like the 2D panel's
+     structure/properties split). The energy column is display:none until an
+     engine reports, and the viewer then fills the whole row. */
+  .viewer-row {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
   #viewer3d {
     position: relative;          /* anchor 3Dmol's absolutely-positioned canvas */
-    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     height: 420px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -452,7 +462,15 @@ textarea:focus {
     justify-content: center;
     color: var(--muted);
     font-size: 0.85rem;
-    margin-bottom: 0.75rem;
+  }
+  #energyPanel {
+    flex: 0 0 280px;
+    min-width: 0;
+  }
+  @media (max-width: 900px) {
+    .viewer-row { flex-direction: column; align-items: stretch; }
+    #viewer3d { width: 100%; }
+    #energyPanel { flex: 1 1 auto; width: 100%; }
   }
 
   .spiral-note {
@@ -709,8 +727,14 @@ details {
 
    <div class="panel">
      <strong>3D Structure</strong>
-     <div id="viewer3d" role="img" aria-label="3D molecule viewer" style="margin-top:0.75rem;">
-       Embed a 3D structure to begin (ETKDG)
+     <div class="viewer-row">
+       <div id="viewer3d" role="img" aria-label="3D molecule viewer">
+         Embed a 3D structure to begin (ETKDG)
+       </div>
+       <div id="energyPanel" style="display:none;">
+         <strong>WebMM Energy (kcal/mol)</strong>
+         <table id="eterms"></table>
+       </div>
      </div>
      <div class="action-buttons">
        <button id="btnEmbed" class="action-btn spatial" onclick="embed3D()" disabled title="ETKDG distance-geometry embedding">
@@ -768,15 +792,10 @@ details {
        </label>
      </div>
      <div id="status3d" class="version" aria-live="polite" style="margin-top:0.5rem;">Engine loading…</div>
-     <div id="energyPanel" style="display:none; margin-top:0.75rem;">
-       <strong>WebMM Energy (kcal/mol)</strong>
-       <table id="eterms"></table>
-     </div>
      <div id="confPanel" style="display:none; margin-top:0.75rem;">
        <strong>Conformer Ensemble (kcal/mol, pruned)</strong>
-       <canvas id="confChart" width="560" height="96" style="width:100%; margin:0.4rem 0 0.2rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;" aria-label="Conformer energy chart - click a bar to show that conformer"></canvas>
+       <canvas id="confChart" tabindex="0" style="width:100%; height:96px; margin:0.4rem 0 0.2rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;" aria-label="Conformer energy chart - click a bar or use arrow keys to show that conformer"></canvas>
        <div class="version" id="confChartAxis" style="margin-bottom:0.4rem;"></div>
-       <table id="confTable" aria-label="Conformer ensemble energies"></table>
        <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">Export ensemble SDF</button>
      </div>
      <div class="spiral-note">
@@ -1410,13 +1429,13 @@ let rdkitModule = null;
       if (m.style.display === 'block') { m.style.display = 'none'; return; }
     }
   });
-  // conformer table rows are clickable — give them keyboard activation
-  document.getElementById('confTable').addEventListener('keydown', e => {
-    const tr = e.target.closest('tr[tabindex]');
-    if (tr && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault();
-      tr.click();
-    }
+  // conformer chart: arrow keys walk the ensemble once focused
+  document.getElementById('confChart').addEventListener('keydown', e => {
+    if (!confEnsemble || !confEnsemble.length) return;
+    const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    showEnsembleConf(Math.max(0, Math.min(confEnsemble.length - 1, selConf + step)));
   });
 
   const drop = document.getElementById("drop");
@@ -1818,8 +1837,16 @@ function applyStyle() {
 function drawConformerChart() {
   const cv = document.getElementById('confChart');
   if (!cv || !confEnsemble || !confEnsemble.length) return;
+  // HiDPI: size the backing store to CSS size × devicePixelRatio so the
+  // browser never upscales the bitmap (fixed 560×96 rendered blurry text
+  // when CSS-stretched to panel width on Retina displays).
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || cv.parentElement.clientWidth || 560;
+  const H = 96;
+  const bw2 = Math.round(W * dpr), bh2 = Math.round(H * dpr);
+  if (cv.width !== bw2 || cv.height !== bh2) { cv.width = bw2; cv.height = bh2; }
   const ctx = cv.getContext('2d');
-  const W = cv.width, H = cv.height;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // draw in CSS-pixel coordinates
   ctx.clearRect(0, 0, W, H);
   const n = confEnsemble.length;
   const Es = confEnsemble.map(k => k.E);
@@ -1837,19 +1864,19 @@ function drawConformerChart() {
     ctx.fillRect(pad + r * bw + 1.5, H - 18 - bh, bw - 3, bh);
     if (n <= 16) {
       ctx.fillStyle = '#64748b';
-      ctx.font = '9px ui-monospace, monospace';
+      ctx.font = '10px ui-monospace, monospace';
       ctx.textAlign = 'center';
       if (dE < 0.005) ctx.fillText('min', pad + r * bw + bw / 2, H - 22 - bh);
     }
   }
   ctx.fillStyle = '#64748b';
-  ctx.font = '9px ui-monospace, monospace';
+  ctx.font = '10px ui-monospace, monospace';
   ctx.textAlign = 'left';
   ctx.fillText('min ΔE=0', pad, H - 6);
   ctx.textAlign = 'right';
   ctx.fillText('ΔE=' + (Emax - Emin).toFixed(2) + ' kcal/mol', W - pad, H - 6);
   document.getElementById('confChartAxis').textContent =
-    `${n} conformers · click a bar (or a table row) to show it`;
+    `${n} conformers · click a bar or use ←/→ keys to show it`;
 }
 
 
@@ -2487,13 +2514,8 @@ function finishConformers(engine, rmsdCut, W) {
 
   selConf = 0;
   showSdfIn3D(confEnsemble[0].sdf);
-  drawConformerChart();
-  const rows = confEnsemble.map((k, r) =>
-    `<tr tabindex="0" role="button" aria-label="Show conformer ${r + 1}, E ${k.E.toFixed(2)} kcal/mol" style="cursor:pointer;" onclick="showEnsembleConf(${r})">` +
-    `<td class="key">#${r + 1} (seed ${k.seed})</td>` +
-    `<td class="value">E=${k.E.toFixed(2)}${r === 0 ? '' : ' · ΔE=' + k.dE.toFixed(2)}</td></tr>`).join('');
-  document.getElementById('confTable').innerHTML = rows;
   document.getElementById('confPanel').style.display = 'block';
+  drawConformerChart();
   set3dStatus(`<b>Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ` +
     `${kept.length} kept after RMSD ≥ ${rmsdCut} Å</b> — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
 }
