@@ -38,22 +38,18 @@ pub fn optimize(
     let mut final_energy = 0.0;
     let mut final_iter = 0;
 
+    // E+G once per iteration: the gradient evaluated at the updated point is
+    // carried into the next iteration instead of being discarded and
+    // recomputed at the top of the loop (halves the force-field calls).
+    let mut coords_2d = flatten_to_2d(&x, n_atoms);
+    let mut g_2d = vec![[0.0f64; 3]; n_atoms];
+    let mut energy = ff.energy_and_gradient(&coords_2d, &mut g_2d);
+    let mut g: Vec<f64> = g_2d
+        .iter()
+        .flat_map(|grad| [grad[0], grad[1], grad[2]])
+        .collect();
+
     for iter in 0..convergence.max_iterations {
-        // Calculate energy and gradient
-        let coords_2d = flatten_to_2d(&x, n_atoms);
-        let mut g_2d = vec![[0.0f64; 3]; n_atoms];
-        let energy = ff.energy_and_gradient(&coords_2d, &mut g_2d);
-
-        // Flatten gradient to 1D
-        let mut g = Vec::with_capacity(n_coords);
-        for grad in g_2d.iter() {
-            g.push(grad[0]);
-            g.push(grad[1]);
-            g.push(grad[2]);
-        }
-
-        final_energy = energy;
-
         // Check force convergence
         let max_f = g
             .iter()
@@ -63,7 +59,8 @@ pub fn optimize(
 
         if max_f < convergence.max_force && rms_f < convergence.rms_force {
             converged = true;
-            final_iter = iter + 1;
+            final_energy = energy;
+            final_iter = iter;
             break;
         }
 
@@ -87,16 +84,20 @@ pub fn optimize(
         };
 
         // Line search (Armijo backtracking)
-        // Use max-component scaling to get ~0.1 Å displacement per atom
+        // Steepest-descent steps need explicit displacement scaling; a true
+        // L-BFGS direction already carries the inverse-curvature scale, so the
+        // standard unit initial step applies. The old 0.1/0.3 A displacement
+        // caps starved flexible molecules (e.g. Remdesivir was 24 kcal/mol
+        // behind RDKit after 500 iterations).
         let max_component = d
             .iter()
             .map(|di| di.abs())
             .fold(0.0f64, f64::max)
             .max(1e-10);
-        let initial_alpha = if iter == 0 || s_history.len() < 3 {
-            0.1 / max_component // ~0.1 Å max displacement for steepest descent
+        let initial_alpha = if s_history.len() < 3 {
+            0.5 / max_component // ~0.5 A max displacement for steepest descent
         } else {
-            0.3 / max_component // slightly larger for L-BFGS
+            1.5 / max_component // ~1.5 A for L-BFGS steps
         };
         let alpha = armijo_line_search(
             ff,
@@ -123,15 +124,15 @@ pub fn optimize(
             x[i] += alpha * d[i];
         }
 
-        // Update history
-        let x_new_2d = flatten_to_2d(&x, n_atoms);
-        let mut g_new_2d = vec![[0.0f64; 3]; n_atoms];
-        // E at the updated x — keeps the invariant final_energy == E(optimized_coords)
-        // even when exiting via max_iterations (previously stale by one step)
-        final_energy = ff.energy_and_gradient(&x_new_2d, &mut g_new_2d);
+        // E+G at the updated point — reused as the next iteration's input
+        // (keeps the invariant final_energy == E(optimized_coords) even when
+        // exiting via max_iterations)
+        coords_2d = flatten_to_2d(&x, n_atoms);
+        energy = ff.energy_and_gradient(&coords_2d, &mut g_2d);
+        final_energy = energy;
 
         let mut g_new = Vec::with_capacity(n_coords);
-        for grad in g_new_2d.iter() {
+        for grad in g_2d.iter() {
             g_new.push(grad[0]);
             g_new.push(grad[1]);
             g_new.push(grad[2]);
@@ -157,6 +158,10 @@ pub fn optimize(
             y_history.push(g_diff.clone());
             rho_history.push(1.0 / y_dot_s);
         }
+
+        // carry the fresh gradient into the next iteration (this is what makes
+        // the restructure equivalent to the old double-evaluation loop)
+        g = g_new;
 
         final_iter = iter + 1;
     }

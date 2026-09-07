@@ -187,135 +187,69 @@ pub fn perceive_aromatic_bonds(mol: &mut Molecule) {
     }
 }
 
-/// Check if atom has a multiple bond (double, triple, or aromatic) within the given ring
-fn has_multiple_bond_in_ring(atom_idx: usize, ring_set: &HashSet<usize>, mol: &Molecule) -> bool {
-    mol.bonds.iter().any(|bond| {
-        (bond.atom1 == atom_idx || bond.atom2 == atom_idx)
-            && ring_set.contains(&bond.atom1)
-            && ring_set.contains(&bond.atom2)
-            && matches!(
-                bond.bond_type,
-                BondType::Double | BondType::Triple | BondType::Aromatic
-            )
-    })
-}
+/// RDKit `countAtomElec` (Aromaticity.cpp): electrons an atom can donate into
+/// a pi system. (default valence - degree) + lone pairs - formal charge.
+/// Returns -1 for atoms that cannot participate (metals, univalent, deg > 3).
+fn count_atom_elec(atom_idx: usize, mol: &Molecule) -> i32 {
+    let atom = &mol.atoms[atom_idx];
+    let z = atom.atomic_number as i32;
+    // RDKit PeriodicTable default valences for the common organic subset
+    let (dv, nouter) = match z {
+        5 => (3, 3),
+        6 => (4, 4),
+        7 => (3, 5),
+        8 => (2, 6),
+        14 => (4, 4),
+        15 => (3, 5),
+        16 => (2, 6),
+        33 => (3, 5),
+        34 => (2, 6),
+        9 | 17 | 35 | 53 => return -1, // univalent: can't be aromatic
+        _ => return -1,
+    };
 
-/// Check if a ring contains a heteroatom that can donate lone pairs (N, O, S)
-fn ring_has_heteroatom(ring: &[usize], mol: &Molecule) -> bool {
-    ring.iter()
-        .any(|&a| matches!(mol.atoms[a].atomic_number, 7 | 8 | 16))
-}
-
-/// Estimate total neighbor count including implicit hydrogens
-fn estimate_total_neighbors(atom_idx: usize, mol: &Molecule) -> usize {
-    let explicit_neighbors = mol.adjacency[atom_idx].len();
-    let explicit_valence: u32 = mol
+    // total degree: explicit neighbors (incl. explicit H) + implicit H.
+    // Aromatic bonds count 1.5 toward valence in RDKit; we mirror that below.
+    let explicit_neighbors = mol.adjacency[atom_idx].len() as i32;
+    let explicit_valence: f64 = mol
         .bonds
         .iter()
         .filter(|b| b.atom1 == atom_idx || b.atom2 == atom_idx)
         .map(|b| match b.bond_type {
-            BondType::Single => 1,
-            BondType::Double => 2,
-            BondType::Triple => 3,
-            BondType::Aromatic => 1,
+            BondType::Single => 1.0,
+            BondType::Double => 2.0,
+            BondType::Triple => 3.0,
+            BondType::Aromatic => 1.5,
         })
         .sum();
-
-    let typical_valence = match mol.atoms[atom_idx].atomic_number {
-        6 => 4,
-        7 => 3,
-        8 => 2,
-        16 => 2,
-        _ => return explicit_neighbors,
-    };
-
-    // explicit_valence can exceed typical_valence (e.g. hypervalent atoms), so the
-    // .max(0) guard is meaningful; the casts fix the type for the comparison.
-    #[allow(clippy::unnecessary_cast)]
-    let implicit_h = (typical_valence as i32 - explicit_valence as i32).max(0) as usize;
-    explicit_neighbors + implicit_h
-}
-
-/// Determine if an atom is a candidate for aromaticity in the given ring.
-/// Matches RDKit behavior where only atoms that can contribute electrons
-/// (or have empty p-orbitals) are considered.
-fn is_aromatic_candidate(atom_idx: usize, ring: &[usize], mol: &Molecule) -> bool {
-    let atom = &mol.atoms[atom_idx];
-    let ring_set: HashSet<usize> = ring.iter().copied().collect();
-    let ring_bonds = mol.adjacency[atom_idx]
-        .iter()
-        .filter(|&&n| ring_set.contains(&n))
-        .count();
-    let has_multiple = has_multiple_bond_in_ring(atom_idx, &ring_set, mol);
-
-    match atom.atomic_number {
-        6 => {
-            if has_multiple {
-                true
-            } else if ring.len() == 5 && ring_has_heteroatom(ring, mol) {
-                // In 5-membered heteroaromatics (furan, thiophene, imidazole),
-                // a C with only single bonds may still be sp2 if the ring
-                // has enough multiple bonds to suggest conjugation.
-                let multiple_bonds_in_ring = mol
-                    .bonds
-                    .iter()
-                    .filter(|b| ring_set.contains(&b.atom1) && ring_set.contains(&b.atom2))
-                    .filter(|b| {
-                        matches!(
-                            b.bond_type,
-                            BondType::Double | BondType::Triple | BondType::Aromatic
-                        )
-                    })
-                    .count();
-                multiple_bonds_in_ring >= 2
-            } else {
-                // Saturated C (e.g. cyclohexane, cyclohexene sp3 C's)
-                estimate_total_neighbors(atom_idx, mol) <= 3
-            }
-        }
-        7 => has_multiple || ring_bonds == 3 || (ring.len() == 5 && ring_bonds == 2),
-        8 | 16 => ring.len() == 5 && ring_bonds == 2 || has_multiple,
-        _ => has_multiple,
+    let implicit_h = ((dv as f64 - explicit_valence).floor().max(0.0)) as i32;
+    let degree = explicit_neighbors + implicit_h;
+    if degree > 3 {
+        return -1;
     }
+
+    // lone pairs = outer electrons - default valence - formal charge
+    let nlp = (nouter - dv - atom.charge as i32).max(0);
+
+    let mut res = (dv - degree) + nlp;
+
+    // triple bonds: >1 unsaturation caps the donation at 1 electron
+    if res > 1 {
+        let unsaturations = (explicit_valence - degree as f64) as i32;
+        if unsaturations > 1 {
+            res = 1;
+        }
+    }
+    res
 }
 
-/// Count pi electrons contributed by an atom to the aromatic ring.
-/// Assumes the atom is already confirmed as an aromatic candidate.
-/// Works correctly even after bonds have been upgraded to Aromatic.
-fn count_pi_electrons(atom_idx: usize, ring: &[usize], mol: &Molecule) -> i32 {
-    let atom = &mol.atoms[atom_idx];
-    let ring_set: HashSet<usize> = ring.iter().copied().collect();
-    let ring_bonds = mol.adjacency[atom_idx]
-        .iter()
-        .filter(|&&n| ring_set.contains(&n))
-        .count();
-    // Total neighbors (including explicit H/exocyclic substituents).
-    // Used to distinguish pyrrole-like N (3 neighbors) from pyridine-like N (2 neighbors).
-    let total_neighbors = mol.adjacency[atom_idx].len();
-
-    match atom.atomic_number {
-        6 => 1,
-        7 => {
-            if ring.len() == 5
-                && ring_bonds == 2
-                && (total_neighbors >= 3 || atom.charge < -0.5)
-                && atom.charge <= 0.5
-            {
-                // Pyrrole-like N in 5-membered ring (has H/substituent, or anionic)
-                // Positively charged N contributes only 1 (pyridinium-like)
-                2
-            } else if ring_bonds == 3 && total_neighbors >= 3 {
-                // Aniline-like N (3 ring bonds, has H or substituent)
-                2
-            } else {
-                1
-            }
-        }
-        8 | 16 if ring.len() == 5 && ring_bonds == 2 => {
-            // Furan/thiophene-like O/S always contributes lone pair
-            2
-        }
-        _ => 1,
+/// RDKit donor classification -> (lower, upper) electron bounds for Huckel.
+fn donor_bounds(res: i32) -> (i32, i32) {
+    match res {
+        r if r < 0 => (0, 0), // NoElectronDonorType
+        0 => (0, 0),          // Vacant (empty p-orbital)
+        r if r % 2 == 1 => (1, 1),
+        _ => (2, 2),
     }
 }
 
@@ -332,17 +266,39 @@ pub fn is_aromatic(atom_idx: usize, mol: &Molecule) -> bool {
             continue;
         }
 
-        // All atoms in the ring must be aromatic candidates
-        if !ring.iter().all(|&a| is_aromatic_candidate(a, ring, mol)) {
+        // RDKit applyHuckel: sum per-atom electron-donor bounds and accept
+        // the ring if any total in [rlw, rup] satisfies the 4n+2 rule.
+        let mut rlw = 0i32;
+        let mut rup = 0i32;
+        let mut n_any = 0i32;
+        let mut candidates = true;
+        for &a in ring {
+            let res = count_atom_elec(a, mol);
+            if res < 0 {
+                candidates = false;
+                break;
+            }
+            let (lw, up) = donor_bounds(res);
+            rlw += lw;
+            rup += up;
+            if res == 0 {
+                // VacantElectronDonorType: an empty p-orbital donor
+                n_any += 1;
+            }
+        }
+        if !candidates {
             continue;
         }
-
-        let mut pi_electrons = 0i32;
-        for &atom in ring {
-            pi_electrons += count_pi_electrons(atom, ring, mol);
+        if n_any > 1 {
+            continue; // RDKit: at most one vacant-p donor per ring
         }
-
-        if pi_electrons >= 6 && (pi_electrons - 2) % 4 == 0 {
+        if rup >= 6 {
+            for rie in rlw..=rup {
+                if (rie - 2) % 4 == 0 {
+                    return true;
+                }
+            }
+        } else if rup == 2 {
             return true;
         }
     }
