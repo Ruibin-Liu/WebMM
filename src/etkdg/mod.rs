@@ -50,6 +50,8 @@ const CHIRAL_CENTERINVOLUME_TOL: f64 = 0.10;
 // keeps pathological minimizations out while accepting valid large-molecule
 // conformers (validated against RDKit references).
 const MAX_MINIMIZED_E_PER_ATOM: f64 = 0.5;
+/// Loose acceptance cap for geometry-checked embeds (see embed_impl).
+const MAX_ACCEPT_E_PER_ATOM: f64 = 3.0;
 const BASIN_THRESH: f64 = 5.0;
 const MIN_MACROCYCLE_SIZE: usize = 9;
 const EXTRA_SQUISH: f64 = 0.2;
@@ -3198,6 +3200,10 @@ struct PlanarityConstraints {
     impropers: Vec<(usize, usize, usize, usize, f64)>,
     ring_torsions: Vec<(usize, usize, usize, usize)>,
     exocyclic_torsions: Vec<(usize, usize, usize, usize)>,
+    /// Geometric planarity set: RDKit-aromatic atoms PLUS every fully-sp2
+    /// 5/6-ring (kekule triazines etc.). Deliberately wider than the RDKit
+    /// aromaticity perception that MMFF typing follows — see
+    /// build_planarity_constraints.
     aromatic_atoms: HashSet<usize>,
     /// sp1 (linear) centers with exactly 2 neighbors: (central, n1, n2).
     /// Enforces 180° (S=C=S, C≡N-R, C=C=C) — the 1-3 bound tolerance alone
@@ -3207,9 +3213,33 @@ struct PlanarityConstraints {
 }
 
 fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
-    use crate::molecule::graph::{get_aromatic_atoms, get_neighbors};
+    use crate::molecule::graph::{get_aromatic_atoms, get_neighbors, determine_hybridization, Hybridization};
     let aromatic_atoms = get_aromatic_atoms(mol);
     let rings = crate::molecule::graph::find_rings(mol);
+
+    // Planarity set = RDKit-aromatic atoms ∪ every fully-sp2 5/6-ring.
+    // RDKit's aromaticity model intentionally leaves some conjugated rings
+    // non-aromatic (e.g. the kekule 1,2,4-triazine in remdesivir) so that
+    // MMFF types them as imines (3/9) — the force field must mirror that.
+    // ETKDG, however, needs the geometric truth: an all-sp2 ring IS planar.
+    // Without its torsions/impropers the embedder burns its attempt budget
+    // fighting ring puckers (remdesivir heavy embed: 13 s vs 0.26 s for a
+    // similar-size purine).
+    let mut planar_atoms = aromatic_atoms.clone();
+    for ring in &rings {
+        if !(5..=6).contains(&ring.len()) {
+            continue;
+        }
+        let all_conj = ring.iter().all(|&a| {
+            planar_atoms.contains(&a)
+                || matches!(determine_hybridization(a, mol), Hybridization::Sp2)
+        });
+        if all_conj {
+            for &a in ring {
+                planar_atoms.insert(a);
+            }
+        }
+    }
     let mut impropers = Vec::new();
     let mut ring_torsions = Vec::new();
     let mut exocyclic_torsions = Vec::new();
@@ -3218,7 +3248,7 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         if !(4..=6).contains(&ring.len()) {
             continue;
         }
-        let all_aromatic = ring.iter().all(|a| aromatic_atoms.contains(a));
+        let all_aromatic = ring.iter().all(|a| planar_atoms.contains(a));
         if all_aromatic {
             let rsize = ring.len();
             for start in 0..rsize {
@@ -3239,14 +3269,14 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
     // Excludes saturated fused rings (decalin — no double bonds).
     let aromatic_ring_sets: Vec<HashSet<usize>> = rings
         .iter()
-        .filter(|r| (4..=6).contains(&r.len()) && r.iter().all(|a| aromatic_atoms.contains(a)))
+        .filter(|r| (4..=6).contains(&r.len()) && r.iter().all(|a| planar_atoms.contains(a)))
         .map(|r| r.iter().copied().collect())
         .collect();
     for ring in &rings {
         if !(4..=6).contains(&ring.len()) {
             continue;
         }
-        if ring.iter().all(|a| aromatic_atoms.contains(a)) {
+        if ring.iter().all(|a| planar_atoms.contains(a)) {
             continue; // already handled above
         }
         let ring_set: HashSet<usize> = ring.iter().copied().collect();
@@ -3278,11 +3308,11 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         }
     }
 
-    // Iterate aromatic atoms in a DETERMINISTIC (sorted) order. aromatic_atoms is
+    // Iterate aromatic atoms in a DETERMINISTIC (sorted) order. planar_atoms is
     // a HashSet (Rust RandomState -> randomized per process); iterating it raw
     // made the planarity-constraint Vec order — and thus the embedding —
     // non-deterministic run-to-run (every aromatic molecule varied).
-    let mut arom_atoms: Vec<usize> = aromatic_atoms.iter().copied().collect();
+    let mut arom_atoms: Vec<usize> = planar_atoms.iter().copied().collect();
     arom_atoms.sort_unstable();
     for &atom_idx in &arom_atoms {
         let neighbors = get_neighbors(atom_idx, mol);
@@ -3304,12 +3334,12 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         }
         let ring_neighbors: Vec<usize> = neighbors
             .iter()
-            .filter(|&&n| aromatic_atoms.contains(&n))
+            .filter(|&&n| planar_atoms.contains(&n))
             .copied()
             .collect();
         let exo_neighbors: Vec<usize> = neighbors
             .iter()
-            .filter(|&&n| !aromatic_atoms.contains(&n))
+            .filter(|&&n| !planar_atoms.contains(&n))
             .copied()
             .collect();
         if ring_neighbors.len() >= 2 {
@@ -3321,7 +3351,7 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
 
     // Non-aromatic sp2 atoms: carboxyl, carbonyl, amide, etc.
     for atom_idx in 0..mol.atoms.len() {
-        if aromatic_atoms.contains(&atom_idx) {
+        if planar_atoms.contains(&atom_idx) {
             continue; // already handled above
         }
         let hyb = crate::molecule::graph::determine_hybridization(atom_idx, mol);
@@ -3440,7 +3470,7 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
         impropers,
         ring_torsions,
         exocyclic_torsions,
-        aromatic_atoms,
+        aromatic_atoms: planar_atoms,
         linear_centers: {
             let mut lc = Vec::new();
             for i in 0..mol.atoms.len() {
@@ -5810,6 +5840,9 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
         let first_e = minimize_4d_first(&mut coords_4d, &bounds, &chiral_centers, 400);
         let e_per_atom_4d = first_e / n_atoms as f64;
         if e_per_atom_4d >= MAX_MINIMIZED_E_PER_ATOM {
+            if std::env::var("ETKDG_DEBUG").is_ok() {
+                eprintln!("[attempt] 4d gate: E={:.2} E/atom={:.4}", first_e, e_per_atom_4d);
+            }
             if first_e < best_energy {
                 best_energy = first_e;
                 best_coords = coords_4d.iter().map(|c| [c[0], c[1], c[2]]).collect();
@@ -5990,6 +6023,25 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
 
         let planar = check_planarity(&coords_3d, mol, &pc, 0.1);
         let db_geom_ok = double_bond_geometry_checks(&coords_3d, &double_bond_ends);
+        if std::env::var("ETKDG_DEBUG").is_ok() {
+            if !db_geom_ok {
+                for &(a0, a1, a2) in &double_bond_ends {
+                    let v1 = [coords_3d[a1][0] - coords_3d[a0][0], coords_3d[a1][1] - coords_3d[a0][1], coords_3d[a1][2] - coords_3d[a0][2]];
+                    let v2 = [coords_3d[a1][0] - coords_3d[a2][0], coords_3d[a1][1] - coords_3d[a2][1], coords_3d[a1][2] - coords_3d[a2][2]];
+                    let n1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt();
+                    let n2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]).sqrt();
+                    let dot = (v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / (n1 * n2);
+                    if dot + 1.0 < 1e-3 {
+                        eprintln!("[attempt] LINEAR at double bond {}-{}-{} (angle {:.1} deg) syms {}{}{}",
+                            a0, a1, a2, dot.acos().to_degrees(),
+                            mol.atoms[a0].symbol, mol.atoms[a1].symbol, mol.atoms[a2].symbol);
+                    }
+                }
+            }
+            if !planar {
+                eprintln!("[attempt] planar=false");
+            }
+        }
 
         let mut chiral_ok = true;
         if !chiral_centers.is_empty() {
@@ -6050,7 +6102,17 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
             eprintln!("[diag] accepted={} e/atom={:.3} planar={} db={} chiral={} dbs={} atrop={} clash={} bonds={} | {}",
                 accepted, e_per_atom, planar, db_geom_ok, chiral_ok, db_stereo_ok, atrop_ok, no_clash, bonds_ok, vols.join(", "));
         }
-        if accepted && e_per_atom < MAX_MINIMIZED_E_PER_ATOM {
+        // Acceptance: the full geometry-check suite (planarity, double-bond
+        // geometry, chiral volumes, stereogen checks, vdW clashes, bond
+        // lengths) is the real quality gate. The energy per atom is only a
+        // proxy — for dense conjugated molecules (remdesivir: 42 heavy
+        // atoms, kekule triazine + phosphate) the ETKDG-energy floor sits
+        // around 1.3 e/atom no matter what, so a hard 0.5 gate burned all
+        // 420 attempts (13 s) and fell through to the same best-of geometry
+        // the checks had already accepted on attempt 1. Accept
+        // geometry-passing embeds up to the loose cap immediately; keep the
+        // tight gate as the fast path inside it.
+        if accepted && e_per_atom < MAX_ACCEPT_E_PER_ATOM {
             return coords_3d;
         }
 

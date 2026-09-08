@@ -2136,7 +2136,7 @@ function pumpBatch() {
     w.busy = true; w.job = job;
     w.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
     w.postMessage({ type: 'run', sdfHeavy: job.sdfHeavy, seedBase: job.seed, count: 1,
-                    engine: 'MMFF94s', maxIter: 500 });
+                    engine: 'MMFF94s', maxIter: 250 });  // RDKit-like per-conformer relaxation
   }
   const doneCount = batchResults.filter(r => r.E !== null && r.E !== undefined).length + batchResults.filter(r => r.error).length;
   document.getElementById('batchStatus').textContent =
@@ -2548,7 +2548,7 @@ function runConformers() {
     const rmsdCut = parseFloat(document.getElementById('confRmsd').value) || 0.5;
     const engine = document.getElementById('engineSel').value;
     const mb = currentMolblock();
-    const maxIter = 500;
+    const maxIter = 250;  // RDKit-like per-conformer relaxation
 
     // worker farm: one seed share per worker (hardware-bound, ≤4)
     const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 12, n));
