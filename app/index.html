@@ -411,6 +411,52 @@ textarea:focus {
     justify-content: flex-start;
     gap: 0.5rem;
   }
+  /* Joined control cluster: parameters live INSIDE the cluster of the
+     action they control (engine select belongs to Optimize; N/RMSD belong
+     to Conformers). Segments share one border, separated by 1px dividers. */
+  .ctl-group {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+  }
+  .ctl-group > * {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .ctl-group > * + * {
+    border-left: 1px solid var(--border);
+  }
+  .ctl-group > *:hover {
+    background: #f1f5f9;
+  }
+  .ctl-group > button.primary:hover {
+    background: #1d4ed8;
+    color: #fff;
+  }
+  .ctl-group .mini-field {
+    border: none;
+    border-radius: 0;
+    border-left: 1px solid var(--border);
+  }
+  .ctl-group .engine-sel {
+    border: none;
+    border-radius: 0;
+  }
+  .ctl-group .action-btn:disabled,
+  .ctl-group .engine-sel:disabled,
+  .ctl-group .mini-field:disabled {
+    background: #f8fafc;
+    color: var(--muted);
+    opacity: 0.6;
+  }
+  .ctl-group .action-btn.primary:disabled {
+    background: var(--accent);
+    color: #fff;
+  }
   .spatial-bar .action-btn {
     width: auto;                      /* no fixed 110px — labels differ */
     background: #fff;
@@ -828,50 +874,58 @@ details {
        </div>
      </div>
      <div class="action-buttons spatial-bar">
-       <button id="btnEmbed" class="action-btn spatial primary" onclick="embed3D()" disabled title="ETKDG distance-geometry embedding">
-         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-           <path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/>
-           <path d="M12 11l8-4.5M12 11v9M12 11L4 6.5"/>
-         </svg>
-         Embed 3D
-       </button>
-       <select id="engineSel" class="engine-sel" aria-label="Force-field engine" title="Force-field engine">
-         <option value="MMFF94s" selected>MMFF94s</option>
-         <option value="MMFF94">MMFF94</option>
-         <option value="GFNFF">GFN-FF</option>
-       </select>
-       <button id="btnOpt" class="action-btn spatial" onclick="optimize3D()" disabled title="L-BFGS geometry optimization">
-         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-           <polyline points="23 4 23 10 17 10"/>
-           <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-         </svg>
-         Optimize
-       </button>
-       <button id="btnConf" class="action-btn spatial" onclick="runConformers()" disabled title="Batch ETKDG + optimize + rank + RMSD prune">
-         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-           <circle cx="6" cy="6" r="3"/>
-           <circle cx="18" cy="6" r="3"/>
-           <circle cx="12" cy="17" r="3"/>
-         </svg>
-         Conformers
-       </button>
-       <label class="mini-field" title="number of embedding seeds (1–2000)">N
-         <input id="confN" aria-label="Number of conformers" type="number" min="1" max="2000" value="100">
-       </label>
-       <label class="mini-field" title="RMSD prune threshold (Å, heavy atoms)">RMSD
-         <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5">
-       </label>
+       <div class="ctl-group" title="ETKDG distance-geometry embedding">
+         <button id="btnEmbed" class="action-btn spatial primary" onclick="embed3D()" disabled>
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+             <path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/>
+             <path d="M12 11l8-4.5M12 11v9M12 11L4 6.5"/>
+           </svg>
+           Embed 3D
+         </button>
+       </div>
+       <div class="ctl-group" title="Force-field engine + L-BFGS geometry optimization">
+         <select id="engineSel" class="engine-sel" aria-label="Force-field engine">
+           <option value="MMFF94s" selected>MMFF94s</option>
+           <option value="MMFF94">MMFF94</option>
+           <option value="GFNFF">GFN-FF</option>
+         </select>
+         <button id="btnOpt" class="action-btn spatial" onclick="optimize3D()" disabled title="L-BFGS geometry optimization">
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+             <polyline points="23 4 23 10 17 10"/>
+             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+           </svg>
+           Optimize
+         </button>
+       </div>
+       <div class="ctl-group" title="Batch ETKDG + optimize + rank + RMSD prune">
+         <button id="btnConf" class="action-btn spatial" onclick="runConformers()" disabled>
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+             <circle cx="6" cy="6" r="3"/>
+             <circle cx="18" cy="6" r="3"/>
+             <circle cx="12" cy="17" r="3"/>
+           </svg>
+           Conformers
+         </button>
+         <label class="mini-field" title="number of embedding seeds (1–2000)">N
+           <input id="confN" aria-label="Number of conformers" type="number" min="1" max="2000" value="100">
+         </label>
+         <label class="mini-field" title="RMSD prune threshold (Å, heavy atoms)">RMSD
+           <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5">
+         </label>
+       </div>
        <span class="bar-divider" aria-hidden="true"></span>
-       <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled title="Export 3D structure as SDF">
-         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-           <polyline points="7,10 12,15 17,10"/>
-           <line x1="12" y1="15" x2="12" y2="3"/>
-         </svg>
-         SDF
-       </button>
-       <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled title="Export as XYZ">XYZ</button>
-       <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled title="Export viewer as PNG">PNG</button>
+       <div class="ctl-group" title="Export">
+         <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled title="Export 3D structure as SDF">
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+             <polyline points="7,10 12,15 17,10"/>
+             <line x1="12" y1="15" x2="12" y2="3"/>
+           </svg>
+           SDF
+         </button>
+         <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled title="Export as XYZ">XYZ</button>
+         <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled title="Export viewer as PNG">PNG</button>
+       </div>
      </div>
      <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
        <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
