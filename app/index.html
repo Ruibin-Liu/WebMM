@@ -1985,6 +1985,17 @@ function applyStyle() {
   viewer.render();
 }
 
+// Number of conformers the chart displays: the lowest 100, or everything
+// within 30 kcal/mol of the minimum — whichever is fewer (the ensemble
+// itself keeps all conformers; this is a display cap only).
+function displayedConfCount() {
+  if (!confEnsemble || !confEnsemble.length) return 0;
+  let w = 0;
+  const Emin0 = confEnsemble[0].E;
+  for (const k of confEnsemble) { if (k.E - Emin0 <= 30) w++; else break; }
+  return Math.min(confEnsemble.length, 100, w);
+}
+
 function drawConformerChart() {
   const cv = document.getElementById('confChart');
   if (!cv || !confEnsemble || !confEnsemble.length) return;
@@ -1999,12 +2010,6 @@ function drawConformerChart() {
   const ctx = cv.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // draw in CSS-pixel coordinates
   ctx.clearRect(0, 0, W, H);
-  // number of conformers the chart actually displays (display cap)
-  const displayedConfCount = () => {
-    let w = 0;
-    for (const k of confEnsemble) { if (k.E - confEnsemble[0].E <= 30) w++; else break; }
-    return Math.min(confEnsemble.length, 100, w);
-  };
   const n = confEnsemble.length;
   // Display cap: the lowest 100 bars, or everything within 30 kcal/mol of
   // the minimum — whichever is fewer (dense charts cannot be clicked).
@@ -3001,8 +3006,9 @@ function exportEnsembleSDF() {
     const rect = e.target.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const pad = 14 / rect.width;
-    const idx = Math.floor((x - pad) / ((1 - 2 * pad) / confEnsemble.length));
-    if (idx >= 0 && idx < confEnsemble.length) showEnsembleConf(idx);
+    const shown = displayedConfCount();
+    const idx = Math.floor((x - pad) / ((1 - 2 * pad) / shown));
+    if (idx >= 0 && idx < shown) showEnsembleConf(idx);
   });
   document.getElementById('chargeColor').addEventListener('change', (e) => {
     chargeColorOn = e.target.checked;
