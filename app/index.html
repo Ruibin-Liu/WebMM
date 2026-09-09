@@ -912,6 +912,9 @@ details {
          <label class="mini-field" title="RMSD prune threshold (Å, heavy atoms)">RMSD
            <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5">
          </label>
+         <label class="mini-field" title="Re-optimize conformers within this window of the minimum to full convergence (kcal/mol; 0 disables)">ΔE
+           <input id="confWin" aria-label="Re-optimization energy window in kcal per mol" type="number" min="0" max="50" step="0.5" value="5">
+         </label>
        </div>
        <span class="bar-divider" aria-hidden="true"></span>
        <div class="ctl-group" title="Export">
@@ -2773,6 +2776,104 @@ function cancelConformers() {
   set3dStatus('Cancelled');
 }
 
+// ---- post-ensemble re-optimization (ΔE window, full convergence) -------
+let reoptState = null;     // { queue, done, total, window, epoch, worker }
+let reoptWorker = null;
+
+function getReoptWorker() {
+  if (reoptWorker) return reoptWorker;
+  reoptWorker = new Worker('conf.worker.js', { type: 'module' });
+  return reoptWorker;
+}
+
+function sdfHeavyFlat(sdf) {
+  // heavy-atom flat coordinates parsed from the SDF atom block
+  const lines = sdfLines(sdf);
+  const na = parseInt(lines[3].substring(0, 3));
+  const flat = [];
+  for (let i = 0; i < na; i++) {
+    if (lines[4+i].substring(30, 33).trim() === 'H') continue;
+    flat.push(parseFloat(lines[4+i].substring(0, 10)),
+              parseFloat(lines[4+i].substring(10, 20)),
+              parseFloat(lines[4+i].substring(20, 30)));
+  }
+  return flat;
+}
+
+function startReopt(windowKcal, engine, confSummary) {
+  // Queue: conformers within the window of the current minimum. Each is
+  // re-optimized in the worker to full convergence (adaptive budget), then
+  // the ensemble is re-ranked and re-pruned.
+  const budget = Math.min(6000, Math.max(500, confEnsemble[0].sdf ? (parseInt(sdfLines(confEnsemble[0].sdf)[3].substring(0, 3)) || 50) * 40 : 2000));
+  const queue = [];
+  confEnsemble.forEach((k, idx) => { if (k.dE <= windowKcal) queue.push(idx); });
+  if (!queue.length) return;
+
+  reoptState = { queue, i: 0, done: 0, total: queue.length, window: windowKcal, epoch: molEpoch, engine, confSummary };
+  const worker = getReoptWorker();
+  document.getElementById('btnConf').disabled = true;
+  set3dStatus(`Re-optimizing ${queue.length} conformer(s) within ${windowKcal} kcal/mol to full convergence…`);
+
+  const next = () => {
+    const st = reoptState;
+    if (!st || st.cancelled || st.i >= st.queue.length) { finishReopt(); return; }
+    const idx = st.queue[st.i];
+    worker.postMessage({ type: 'optimize', sdf: confEnsemble[idx].sdf, engine, maxIter: budget });
+  };
+
+  worker.onmessage = (e) => {
+    const st = reoptState;
+    if (!st || st.epoch !== molEpoch) return;         // molecule changed: abort
+    const m = e.data;
+    if (m.type === 'optimized') {
+      const idx = st.queue[st.i];
+      confEnsemble[idx].E = m.E;
+      confEnsemble[idx].sdf = buildSdfFromCoords(m.coords, confEnsemble[idx].sdf);
+      confEnsemble[idx].converged = m.converged;
+      st.done++; st.i++;
+      showSdfIn3D(buildSdfFromCoords(m.coords, confEnsemble[idx].sdf));
+      set3dStatus(`Re-optimizing to convergence — ${st.done}/${st.total} done (E = ${m.E.toFixed(2)} kcal/mol)…`);
+      next();
+    } else if (m.type === 'error') {
+      showError('Re-optimization: ' + m.message);
+      finishReopt();
+    }
+  };
+  worker.onerror = (e) => { showError('Re-opt worker: ' + (e.message || 'failed')); finishReopt(); };
+  worker.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
+  next();
+}
+
+function finishReopt() {
+  const st = reoptState;
+  reoptState = null;
+  if (!st || st.epoch !== molEpoch) return;
+  // re-rank
+  confEnsemble.sort((a, b) => a.E - b.E);
+  const Emin = confEnsemble[0].E;
+  confEnsemble.forEach(k => { k.dE = k.E - Emin; });
+  // re-prune: converged relaxations can collapse onto the same minimum
+  const heavies = confEnsemble.map(k => sdfHeavyFlat(k.sdf));
+  const keptIdx = [];
+  for (let i = 0; i < confEnsemble.length; i++) {
+    let dup = false;
+    for (const j of keptIdx) {
+      if (kabschRmsd(heavies[i], heavies[j]) < 0.5) { dup = true; break; }
+    }
+    if (!dup) keptIdx.push(i);
+  }
+  const before = confEnsemble.length;
+  confEnsemble = keptIdx.map(i => confEnsemble[i]);
+  selConf = 0;
+  showSdfIn3D(confEnsemble[0].sdf);
+  document.getElementById('confPanel').style.display = 'block';
+  drawConformerChart();
+  syncConformerEnergy(0);
+  document.getElementById('btnConf').disabled = false;
+  set3dStatus(`<b>${st.confSummary}</b> · re-optimized ${st.done}/${st.total} within ${st.window} kcal/mol · ` +
+    `${before} → ${confEnsemble.length} after re-prune — lowest E = ${Emin.toFixed(2)} kcal/mol`);
+}
+
 function finishConformers(engine, rmsdCut, W) {
   const confs = confRun.confs.slice();
   const dt = ((performance.now() - confRun.t0) / 1000).toFixed(1);
@@ -2804,6 +2905,11 @@ function finishConformers(engine, rmsdCut, W) {
   syncConformerEnergy(0);   // energy panel shows rank-1 terms by default
   set3dStatus(`<b>Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ` +
     `${kept.length} kept after RMSD ≥ ${rmsdCut} Å</b> — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
+  // ΔE-window re-optimization to full convergence (0 disables)
+  const win = parseFloat(document.getElementById('confWin').value);
+  if (isFinite(win) && win > 0) {
+    startReopt(win, engine, `Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ${kept.length} kept after RMSD ≥ ${rmsdCut} Å`);
+  }
 }
 
 // Single-point energy + term decomposition for the shown conformer, rendered
