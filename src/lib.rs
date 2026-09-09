@@ -35,6 +35,12 @@ pub mod utils;
 #[cfg(test)]
 pub mod prop_tests;
 
+/// WebMM crate version (CARGO_PKG_VERSION), exposed for export provenance.
+#[wasm_bindgen]
+pub fn webmm_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[cfg(test)]
 mod opt_compare;
 

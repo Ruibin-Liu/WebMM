@@ -2048,6 +2048,7 @@ function reset3DState() {
   selConf = -1;
   sdf3d = null;
   lastCharges = null;
+  lastOptInfo = null;
   chargeColorOn = false;
   document.getElementById('chargeColor').checked = false;
   document.getElementById('energyPanel').style.display = 'none';
@@ -2308,6 +2309,8 @@ function ensureBatchWorkers(count) {
         job.result.E = m.E;
         job.result.sdf = m.sdf;
         job.result.converged = m.converged;
+        job.result.engine = 'MMFF94s';
+        job.result.iterations = m.iterations;
         renderBatchRow(job.result);
       } else if (m.type === 'done') {
         w.busy = false; w.job = null; job.done = true;
@@ -2371,7 +2374,18 @@ function exportBatchCSV() {
 }
 
 function exportBatchSDF() {
-  const blocks = batchResults.filter(r => r.sdf).map(r => r.sdf + '\n$$$$');
+  const done = batchResults.filter(r => r.sdf);
+  const blocks = done.map(r => {
+    const fields = sdfDataFields({
+      WEBMM_PROGRAM: `WebMM Workbench v${window.__webmmVersion || '?'}`,
+      WEBMM_ENGINE: r.engine,
+      WEBMM_ENERGY_KCAL_MOL: isFinite(r.E) ? r.E.toFixed(4) : '',
+      WEBMM_CONVERGED: r.converged ? 'true' : 'false',
+      WEBMM_ITERATIONS: r.iterations || '',
+      WEBMM_NAME: r.name || '',
+    });
+    return r.sdf + '\n' + fields + '$$$$';
+  });
   if (!blocks.length) { showError('No 3D structures — run batch with "3D" enabled'); return; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([blocks.join('\n')], { type: 'chemical/x-mdl-molfile' }));
@@ -2441,6 +2455,7 @@ function embed3D() {
     yieldToUI().then(() => {
       if (epoch !== molEpoch) return;   // molecule changed mid-embed: drop
       try {
+        lastOptInfo = null;             // fresh embed: not optimized yet
         const t0 = performance.now();
         // 1. extend the graph with explicit H (wedge codes round-trip →
         //    stereochemistry is perceived from the 2D input)
@@ -2509,6 +2524,7 @@ function optimize3D() {
         const dt = ((performance.now() - t0) / 1000).toFixed(2);
         showSdfIn3D(buildSdfFromCoords(m.coords, sdf3d));
         lastCharges = m.charges;
+        lastOptInfo = { engine: m.engine, E: m.E, converged: m.converged, iterations: m.iterations };
         document.getElementById('chargeColor').disabled = false;
         renderEnergyPanelData(m, dt);
         if (chargeColorOn) applyStyle();
@@ -2539,8 +2555,39 @@ function require3D() {
   return true;
 }
 
+// ---- provenance metadata for exports --------------------------------
+// lastOptInfo is set by a successful optimize and cleared by a fresh
+// embed/reset, so exports describe exactly how the current structure
+// was produced.
+let lastOptInfo = null;
+
+function optComment(info) {
+  // SDF line 2 / XYZ line 2 summary
+  if (!info) return 'WebMM ETKDG embed (not optimized)';
+  return `WebMM v${window.__webmmVersion || '?'} ${info.engine} E=${info.E.toFixed(2)} kcal/mol ` +
+         `${info.converged ? 'converged' : 'NOT converged'} iters=${info.iterations}`;
+}
+
+function sdfDataFields(fields) {
+  // V2000 SDF data block: "> <TAG>" + value lines, blank line after each
+  return Object.entries(fields)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `>  <${k}>\n${v}\n\n`)  // blank line separates fields
+    .join('');
+}
+
 function exportSDF3D() {
-  if (require3D()) downloadBlob(sdf3d + '$$$$', 'sdf', 'chemical/x-mdl-molfile');
+  if (!require3D()) return;
+  const info = lastOptInfo || { engine: 'ETKDG', E: NaN, converged: false, iterations: 0 };
+  const fields = {
+    WEBMM_PROGRAM: `WebMM Workbench v${window.__webmmVersion || '?'}`,
+    WEBMM_ENGINE: info.engine,
+    WEBMM_ENERGY_KCAL_MOL: isFinite(info.E) ? info.E.toFixed(4) : '',
+    WEBMM_CONVERGED: info.converged ? 'true' : 'false',
+    WEBMM_ITERATIONS: info.iterations || '',
+    WEBMM_GENERATOR: info.engine === 'ETKDG' ? 'ETKDG all-atom embed' : 'ETKDG embed + L-BFGS',
+  };
+  downloadBlob(sdf3d + '\n' + sdfDataFields(fields) + '$$$$', 'sdf', 'chemical/x-mdl-molfile');
 }
 
 function exportXYZ() {
@@ -2555,7 +2602,9 @@ function exportXYZ() {
               parseFloat(lines[4+i].substring(10, 20)),
               parseFloat(lines[4+i].substring(20, 30))]);
   }
-  let xyz = `${na}\n${document.getElementById('name').textContent}\n`;
+  const name = document.getElementById('name').textContent;
+  const comment = `${name} | ${optComment(lastOptInfo)} | WebMM v${window.__webmmVersion || '?'}`;
+  let xyz = `${na}\n${comment}\n`;
   for (let i = 0; i < na; i++) xyz += `${syms[i]} ${pos[i][0]} ${pos[i][1]} ${pos[i][2]}\n`;
   downloadBlob(xyz, 'xyz', 'chemical/x-xyz');
 }
@@ -2572,6 +2621,7 @@ function exportPNG3D() {
 let confRun = null;        // { cancelled } while running
 let selConf = -1;          // selected conformer rank (0-based) for the chart
 let confEnsemble = null;   // [{i, E, sdf}] kept after pruning, sorted by E
+let confEngine = 'MMFF94s';// engine the current ensemble was relaxed with
 
 // Kabsch alignment via quaternion power iteration (same approach as the
 // playground); heavy atoms only for RMSD pruning.
@@ -2639,6 +2689,7 @@ function runConformers() {
     const n = Math.max(1, Math.min(500, parseInt(document.getElementById('confN').value) || 50));
     const rmsdCut = parseFloat(document.getElementById('confRmsd').value) || 0.5;
     const engine = document.getElementById('engineSel').value;
+    confEngine = engine;
     const mb = currentMolblock();
     const maxIter = 250;  // RDKit-like per-conformer relaxation
 
@@ -2736,8 +2787,19 @@ function showEnsembleConf(r) {
 
 function exportEnsembleSDF() {
   if (!confEnsemble || !confEnsemble.length) { showError('Run Conformers first'); return; }
-  const sdf = confEnsemble.map(k => k.sdf + '\n$$$$').join('\n');
-  downloadBlob(sdf, 'conformers.sdf', 'chemical/x-mdl-molfile');
+  const records = confEnsemble.map((k, r) => {
+    const fields = sdfDataFields({
+      WEBMM_PROGRAM: `WebMM Workbench v${window.__webmmVersion || '?'}`,
+      WEBMM_ENGINE: confEngine || 'MMFF94s',
+      WEBMM_ENERGY_KCAL_MOL: k.E.toFixed(4),
+      WEBMM_CONVERGED: k.converged === false ? 'false' : 'true',
+      WEBMM_CONF_RANK: r + 1,
+      WEBMM_CONF_SEED: k.seed,
+      WEBMM_DE_KCAL_MOL: r === 0 ? '0' : k.dE.toFixed(4),
+    });
+    return k.sdf + '\n' + fields + '$$$$';
+  });
+  downloadBlob(records.join('\n'), 'conformers.sdf', 'chemical/x-mdl-molfile');
 }
 </script>
 
@@ -2771,6 +2833,7 @@ function exportEnsembleSDF() {
   });
   window.addEventListener('webmmready', () => {
     webmm = window.webmm;
+    window.__webmmVersion = webmm.webmm_version ? webmm.webmm_version() : '?';
     window.webmmReady = true;
     enable3dActions();
     set3dStatus('Engine ready — Embed 3D to begin');

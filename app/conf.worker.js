@@ -104,7 +104,7 @@ self.onmessage = async (e) => {
         for (let d = 0; d < 3; d++) optCoords.push(res.get_coord(a, d));
       self.postMessage({
         type: 'conf', seed: seedBase + i, E: res.final_energy,
-        converged: res.get_converged(),
+        converged: res.get_converged(), iterations: res.iterations,
         sdf: buildSdfFromCoords(optCoords, sdfAll), coords: optCoords,
       });
     }
