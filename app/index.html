@@ -907,7 +907,7 @@ details {
            Conformers
          </button>
          <label class="mini-field" title="number of embedding seeds (1–2000)">N
-           <input id="confN" aria-label="Number of conformers" type="number" min="1" max="2000" value="100">
+           <input id="confN" aria-label="Number of conformers" type="number" min="1" value="100">
          </label>
          <label class="mini-field" title="RMSD prune threshold (Å, heavy atoms)">RMSD
            <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5">
@@ -1586,7 +1586,7 @@ let rdkitModule = null;
     const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
     if (!step) return;
     e.preventDefault();
-    showEnsembleConf(Math.max(0, Math.min(confEnsemble.length - 1, selConf + step)));
+    showEnsembleConf(Math.max(0, Math.min(displayedConfCount() - 1, selConf + step)));
   });
 
   const drop = document.getElementById("drop");
@@ -1999,15 +1999,24 @@ function drawConformerChart() {
   const ctx = cv.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // draw in CSS-pixel coordinates
   ctx.clearRect(0, 0, W, H);
+  // number of conformers the chart actually displays (display cap)
+  const displayedConfCount = () => {
+    let w = 0;
+    for (const k of confEnsemble) { if (k.E - confEnsemble[0].E <= 30) w++; else break; }
+    return Math.min(confEnsemble.length, 100, w);
+  };
   const n = confEnsemble.length;
-  const Es = confEnsemble.map(k => k.E);
-  const Emin = Math.min(...Es), Emax = Math.max(...Es);
+  // Display cap: the lowest 100 bars, or everything within 30 kcal/mol of
+  // the minimum — whichever is fewer (dense charts cannot be clicked).
+  const shown = displayedConfCount();
+  const Es = confEnsemble.slice(0, shown).map(k => k.E);
+  const Emin = Es[0], Emax = Es[shown - 1];
   const span = Math.max(Emax - Emin, 1e-6);
-  const pad = 14, bw = (W - 2 * pad) / n;
+  const pad = 14, bw = (W - 2 * pad) / shown;
   // bars — height encodes ΔE (standard energy reading: taller = higher E);
   // conformers stay ranked by ascending E, so rank 1 (lowest) is the flat
   // stub on the left, marked 'min' and highlighted when selected.
-  for (let r = 0; r < n; r++) {
+  for (let r = 0; r < shown; r++) {
     const dE = confEnsemble[r].E - Emin;
     const hFrac = Math.max(0.04, dE / span);               // height ∝ ΔE
     const bh = (H - 26) * hFrac;
@@ -2027,7 +2036,8 @@ function drawConformerChart() {
   ctx.textAlign = 'right';
   ctx.fillText('ΔE=' + (Emax - Emin).toFixed(2) + ' kcal/mol', W - pad, H - 6);
   document.getElementById('confChartAxis').textContent =
-    `${n} conformers · click a bar or use ←/→ keys to show it`;
+    (shown < n ? `showing lowest ${shown} of ${n} conformers` : `${n} conformers`) +
+    ` · click a bar or use ←/→ keys to show it`;
 }
 
 
@@ -2721,7 +2731,7 @@ function runConformers() {
   clearError();
   if (confRun) { cancelConformers(); return; }
   try {
-    const n = Math.max(1, Math.min(500, parseInt(document.getElementById('confN').value) || 50));
+    const n = Math.max(1, parseInt(document.getElementById('confN').value) || 50);
     const rmsdCut = parseFloat(document.getElementById('confRmsd').value) || 0.5;
     const engine = document.getElementById('engineSel').value;
     confEngine = engine;

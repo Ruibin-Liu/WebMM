@@ -88,31 +88,39 @@ self.onmessage = async (e) => {
     await initPromise;   // 'run' waits for init (async handlers don't queue)
     const { sdfHeavy, seedBase, count, engine, maxIter } = msg;
     const t0 = Date.now();
-    const batch = wasm.generate_conformers_wasm(sdfHeavy, count, BigInt(seedBase));
-    console.log('[worker] embed ' + count + ' confs: ' + (Date.now() - t0) + 'ms, na=' + batch.get_n_atoms() + ', ok=' + batch.get_success());
-    if (!batch.get_success()) throw new Error(batch.get_error());
-    const na = batch.get_n_atoms();
-    const flat = batch.get_coordinates();
-    const nc = batch.get_n_confs();
-    self.postMessage({ type: 'meta', seedBase, nConfs: nc });
-    for (let i = 0; i < nc; i++) {
-      const coords = Array.from(flat.slice(i * na * 3, (i + 1) * na * 3));
-      const sdfHeavyI = buildSdfFromCoords(coords, sdfHeavy);
-      const sdfAll = wasm.attach_hydrogens_3d_wasm(sdfHeavyI);
-      const opts = new wasm.OptimizationOptions();
-      opts.engine = engine;
-      opts.set_max_iterations(maxIter);
-      const res = wasm.optimize_from_sdf(sdfAll, opts);
-      const optCoords = [];
-      for (let a = 0; a < res.n_atoms; a++)
-        for (let d = 0; d < 3; d++) optCoords.push(res.get_coord(a, d));
-      self.postMessage({
-        type: 'conf', seed: seedBase + i, E: res.final_energy,
-        converged: res.get_converged(), iterations: res.iterations,
-        termsJson: res.get_energy_terms_json(),
-        sdf: buildSdfFromCoords(optCoords, sdfAll), coords: optCoords,
-      });
+    // Embed in chunks of <=500 (the Rust batch validates 1..=500 per call);
+    // seeds stay continuous across chunks, so any requested count works.
+    const CHUNK = 500;
+    const na = wasm.generate_conformers_wasm(sdfHeavy, 1, BigInt(seedBase)).get_n_atoms();
+    let doneEmbed = 0;
+    for (let off = 0; off < count; off += CHUNK) {
+      const c = Math.min(CHUNK, count - off);
+      const batch = wasm.generate_conformers_wasm(sdfHeavy, c, BigInt(seedBase + off));
+      if (!batch.get_success()) throw new Error(batch.get_error());
+      const flat = batch.get_coordinates();
+      const nc = batch.get_n_confs();
+      doneEmbed += nc;
+      self.postMessage({ type: 'meta', seedBase, nConfs: doneEmbed });
+      for (let i = 0; i < nc; i++) {
+        const coords = Array.from(flat.slice(i * na * 3, (i + 1) * na * 3));
+        const sdfHeavyI = buildSdfFromCoords(coords, sdfHeavy);
+        const sdfAll = wasm.attach_hydrogens_3d_wasm(sdfHeavyI);
+        const opts = new wasm.OptimizationOptions();
+        opts.engine = engine;
+        opts.set_max_iterations(maxIter);
+        const res = wasm.optimize_from_sdf(sdfAll, opts);
+        const optCoords = [];
+        for (let a = 0; a < res.n_atoms; a++)
+          for (let d = 0; d < 3; d++) optCoords.push(res.get_coord(a, d));
+        self.postMessage({
+          type: 'conf', seed: seedBase + off + i, E: res.final_energy,
+          converged: res.get_converged(), iterations: res.iterations,
+          termsJson: res.get_energy_terms_json(),
+          sdf: buildSdfFromCoords(optCoords, sdfAll), coords: optCoords,
+        });
+      }
     }
+    console.log('[worker] embedded+optimized ' + count + ' confs in ' + (Date.now() - t0) + 'ms');
     self.postMessage({ type: 'done', seedBase });
   } catch (err) {
     self.postMessage({ type: 'error', message: String(err && err.message ? err.message : err) });
