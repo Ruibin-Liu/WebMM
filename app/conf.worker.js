@@ -32,7 +32,11 @@ function buildSdfFromCoords(coords, sdf) {
     atomLines.push(`${x}${y}${z}${lines[4 + i].substring(30)}`);
   }
   const bondLines = lines.slice(4 + na, 4 + na + nb);
-  return [...header, ...atomLines, ...bondLines, 'M  END'].join('\n');
+  // Preserve everything after the bond block — M CHG (formal charges!),
+  // other M properties and M END. Dropping this tail silently neutralized
+  // charged molecules at the 3D stage (e.g. piperazinium [NH+]).
+  const tail = lines.slice(4 + na + nb);
+  return [...header, ...atomLines, ...bondLines, ...(tail.length ? tail : ['M  END'])].join('\n');
 }
 
 self.onmessage = async (e) => {
