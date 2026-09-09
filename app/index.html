@@ -869,7 +869,7 @@ details {
          Embed a 3D structure to begin (ETKDG)
        </div>
        <div id="energyPanel" style="display:none;">
-         <strong>WebMM Energy (kcal/mol)</strong>
+         <strong id="energyTitle">WebMM Energy (kcal/mol)</strong>
          <table id="eterms"></table>
        </div>
      </div>
@@ -2049,6 +2049,7 @@ function reset3DState() {
   sdf3d = null;
   lastCharges = null;
   lastOptInfo = null;
+  lastEnergyTerms = null;
   chargeColorOn = false;
   document.getElementById('chargeColor').checked = false;
   document.getElementById('energyPanel').style.display = 'none';
@@ -2311,6 +2312,7 @@ function ensureBatchWorkers(count) {
         job.result.converged = m.converged;
         job.result.engine = 'MMFF94s';
         job.result.iterations = m.iterations;
+        job.result.termsJson = m.termsJson;
         renderBatchRow(job.result);
       } else if (m.type === 'done') {
         w.busy = false; w.job = null; job.done = true;
@@ -2376,6 +2378,8 @@ function exportBatchCSV() {
 function exportBatchSDF() {
   const done = batchResults.filter(r => r.sdf);
   const blocks = done.map(r => {
+    let terms = {};
+    try { terms = JSON.parse(r.termsJson || '{}'); } catch (e) { /* optional */ }
     const fields = sdfDataFields({
       WEBMM_PROGRAM: `WebMM Workbench v${window.__webmmVersion || '?'}`,
       WEBMM_ENGINE: r.engine,
@@ -2383,6 +2387,7 @@ function exportBatchSDF() {
       WEBMM_CONVERGED: r.converged ? 'true' : 'false',
       WEBMM_ITERATIONS: r.iterations || '',
       WEBMM_NAME: r.name || '',
+      ...termFields(terms),
     });
     return r.sdf + '\n' + fields + '$$$$';
   });
@@ -2444,6 +2449,7 @@ function embed3D() {
     if (has3d) {
       const withH = webmm.attach_hydrogens_3d_wasm(mb);
       showSdfIn3D(withH);
+      evaluateAndShowEnergy(withH, document.getElementById('engineSel').value, '3D input');
       set3dStatus('3D coordinates present — hydrogens attached — ready to Optimize');
       return;
     }
@@ -2465,6 +2471,7 @@ function embed3D() {
         if (!res.get_success()) throw res.get_error();
         const sdfAll = buildSdfFromCoords(Array.from(res.get_coordinates()), mbH);
         showSdfIn3D(sdfAll);
+        evaluateAndShowEnergy(sdfAll, document.getElementById('engineSel').value, 'ETKDG embed');
         const dt = ((performance.now() - t0) / 1000).toFixed(2);
         const nAll = parseInt(sdfLines(sdfAll)[3].substring(0, 3));
         set3dStatus(`Embedded ${nAll} atoms (incl. ${nAll - naHeavy} H) in ${dt}s — now pick an engine and Optimize`);
@@ -2484,8 +2491,13 @@ function renderEnergyPanel(res, dt) {
   }, dt);
 }
 
+const ENGINE_DISPLAY = { GFNFF: 'GFN-FF' };
+let lastEnergyTerms = null;   // term breakdown of the currently shown evaluation
 function renderEnergyPanelData(d, dt) {
   const terms = JSON.parse(d.termsJson);
+  lastEnergyTerms = terms;
+  document.getElementById('energyTitle').textContent =
+    `WebMM Energy (kcal/mol, ${ENGINE_DISPLAY[d.engine] || d.engine})`;
   const rows = Object.entries(terms)
     .map(([k, v]) => `<tr><td class="key">${k}</td><td class="value">${v.toFixed(4)}</td></tr>`).join('');
   document.getElementById('eterms').innerHTML = rows +
@@ -2572,6 +2584,14 @@ function optComment(info) {
          `${info.converged ? 'converged' : 'NOT converged'} iters=${info.iterations}`;
 }
 
+function termFields(terms) {
+  // per-term data fields, engine-specific names (MMFF: bond/angle/...;
+  // GFN-FF: rep/es/disp/hb/xb/batm)
+  const out = {};
+  for (const [k, v] of Object.entries(terms || {})) out[`WEBMM_E_${k.toUpperCase()}`] = v.toFixed(4);
+  return out;
+}
+
 function sdfDataFields(fields) {
   // V2000 SDF data block: "> <TAG>" + value lines, blank line after each
   return Object.entries(fields)
@@ -2590,6 +2610,7 @@ function exportSDF3D() {
     WEBMM_CONVERGED: info.converged ? 'true' : 'false',
     WEBMM_ITERATIONS: info.iterations || '',
     WEBMM_GENERATOR: info.engine === 'ETKDG' ? 'ETKDG all-atom embed' : 'ETKDG embed + L-BFGS',
+    ...termFields(lastEnergyTerms),
   };
   downloadBlob(sdf3d + '\n' + sdfDataFields(fields) + '$$$$', 'sdf', 'chemical/x-mdl-molfile');
 }
@@ -2607,7 +2628,10 @@ function exportXYZ() {
               parseFloat(lines[4+i].substring(20, 30))]);
   }
   const name = document.getElementById('name').textContent;
-  const comment = `${name} | ${optComment(lastOptInfo)} | WebMM v${window.__webmmVersion || '?'}`;
+  let comment = `${name} | ${optComment(lastOptInfo)} | WebMM v${window.__webmmVersion || '?'}`;
+  if (lastEnergyTerms) {
+    comment += ' | ' + Object.entries(lastEnergyTerms).map(([k, v]) => `E_${k}=${v.toFixed(3)}`).join(' ');
+  }
   let xyz = `${na}\n${comment}\n`;
   for (let i = 0; i < na; i++) xyz += `${syms[i]} ${pos[i][0]} ${pos[i][1]} ${pos[i][2]}\n`;
   downloadBlob(xyz, 'xyz', 'chemical/x-xyz');
@@ -2777,27 +2801,33 @@ function finishConformers(engine, rmsdCut, W) {
   showSdfIn3D(confEnsemble[0].sdf);
   document.getElementById('confPanel').style.display = 'block';
   drawConformerChart();
+  syncConformerEnergy(0);   // energy panel shows rank-1 terms by default
   set3dStatus(`<b>Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ` +
     `${kept.length} kept after RMSD ≥ ${rmsdCut} Å</b> — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
 }
 
 // Single-point energy + term decomposition for the shown conformer, rendered
 // into the energy panel (keeps it in sync when walking the ensemble).
-function syncConformerEnergy(r) {
-  if (!confEnsemble || !confEnsemble[r]) return;
-  const engine = confEngine || 'MMFF94s';
+// Single-point energy + term decomposition for an arbitrary 3D structure,
+// rendered into the energy panel (a few ms — safe on the main thread).
+function evaluateAndShowEnergy(sdf, engine, label) {
   try {
-    // single-point on this conformer's own geometry (sdf3d may lag until
-    // showSdfIn3D runs)
-    const d = JSON.parse(webmm.energy_terms_wasm(confEnsemble[r].sdf, engine));
+    const d = JSON.parse(webmm.energy_terms_wasm(sdf, engine));
     renderEnergyPanelData({
       termsJson: JSON.stringify(d.terms),
       E: d.E,
       engine: d.engine,
       singlePoint: true,
-      label: `conformer #${r + 1}`,
+      label,
     });
-  } catch (e) { /* keep the previous panel on failure */ }
+  } catch (e) { /* panel stays hidden on failure */ }
+}
+
+function syncConformerEnergy(r) {
+  if (!confEnsemble || !confEnsemble[r]) return;
+  // single-point on this conformer's own geometry (sdf3d may lag until
+  // showSdfIn3D runs)
+  evaluateAndShowEnergy(confEnsemble[r].sdf, confEngine || 'MMFF94s', `conformer #${r + 1}`);
 }
 
 function showEnsembleConf(r) {
@@ -2812,6 +2842,8 @@ function showEnsembleConf(r) {
 function exportEnsembleSDF() {
   if (!confEnsemble || !confEnsemble.length) { showError('Run Conformers first'); return; }
   const records = confEnsemble.map((k, r) => {
+    let terms = {};
+    try { terms = JSON.parse(webmm.energy_terms_wasm(k.sdf, confEngine || 'MMFF94s')).terms; } catch (e) { /* optional */ }
     const fields = sdfDataFields({
       WEBMM_PROGRAM: `WebMM Workbench v${window.__webmmVersion || '?'}`,
       WEBMM_ENGINE: confEngine || 'MMFF94s',
@@ -2820,6 +2852,7 @@ function exportEnsembleSDF() {
       WEBMM_CONF_RANK: r + 1,
       WEBMM_CONF_SEED: k.seed,
       WEBMM_DE_KCAL_MOL: r === 0 ? '0' : k.dE.toFixed(4),
+      ...termFields(terms),
     });
     return k.sdf + '\n' + fields + '$$$$';
   });

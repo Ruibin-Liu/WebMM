@@ -105,6 +105,7 @@ self.onmessage = async (e) => {
       self.postMessage({
         type: 'conf', seed: seedBase + i, E: res.final_energy,
         converged: res.get_converged(), iterations: res.iterations,
+        termsJson: res.get_energy_terms_json(),
         sdf: buildSdfFromCoords(optCoords, sdfAll), coords: optCoords,
       });
     }
