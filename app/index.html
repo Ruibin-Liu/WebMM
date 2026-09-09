@@ -746,7 +746,7 @@ details {
        Playground
      </a>
    </div>
-   <div class="version">RDKit version: <span id="rdkitVersion">Loading...</span> · engine: <span id="engineVersion">M1</span></div>
+   <div class="version">RDKit version: <span id="rdkitVersion">Loading...</span> · engine: <span id="engineVersion">WebMM</span></div>
  </header>
 
 <div class="panel">
@@ -2491,9 +2491,13 @@ function renderEnergyPanelData(d, dt) {
   document.getElementById('eterms').innerHTML = rows +
     `<tr><td class="key"><strong>total</strong></td><td class="value"><strong>${d.E.toFixed(4)}</strong></td></tr>`;
   document.getElementById('energyPanel').style.display = 'block';
-  const msgTxt = (d.converged || !d.message) ? '' : ' · ' + d.message;
-  set3dStatus(`<b>E(${d.engine}) = ${d.E.toFixed(2)} kcal/mol</b> · ` +
-    `${d.converged ? 'converged' : 'NOT converged'} · ${d.iterations} iterations · ${dt}s${msgTxt}`);
+  if (d.singlePoint) {
+    set3dStatus(`<b>E(${d.engine}) = ${d.E.toFixed(2)} kcal/mol</b> · single-point${d.label ? ' · ' + d.label : ''}`);
+  } else {
+    const msgTxt = (d.converged || !d.message) ? '' : ' · ' + d.message;
+    set3dStatus(`<b>E(${d.engine}) = ${d.E.toFixed(2)} kcal/mol</b> · ` +
+      `${d.converged ? 'converged' : 'NOT converged'} · ${d.iterations} iterations · ${dt}s${msgTxt}`);
+  }
 }
 
 let optWorker = null;   // single-structure optimization worker (UI stays responsive)
@@ -2777,11 +2781,31 @@ function finishConformers(engine, rmsdCut, W) {
     `${kept.length} kept after RMSD ≥ ${rmsdCut} Å</b> — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
 }
 
+// Single-point energy + term decomposition for the shown conformer, rendered
+// into the energy panel (keeps it in sync when walking the ensemble).
+function syncConformerEnergy(r) {
+  if (!confEnsemble || !confEnsemble[r]) return;
+  const engine = confEngine || 'MMFF94s';
+  try {
+    // single-point on this conformer's own geometry (sdf3d may lag until
+    // showSdfIn3D runs)
+    const d = JSON.parse(webmm.energy_terms_wasm(confEnsemble[r].sdf, engine));
+    renderEnergyPanelData({
+      termsJson: JSON.stringify(d.terms),
+      E: d.E,
+      engine: d.engine,
+      singlePoint: true,
+      label: `conformer #${r + 1}`,
+    });
+  } catch (e) { /* keep the previous panel on failure */ }
+}
+
 function showEnsembleConf(r) {
   if (!confEnsemble || !confEnsemble[r]) return;
   selConf = r;
   showSdfIn3D(confEnsemble[r].sdf);
   drawConformerChart();
+  syncConformerEnergy(r);
   set3dStatus(`Conformer #${r + 1}: E = ${confEnsemble[r].E.toFixed(2)} kcal/mol (ΔE = ${confEnsemble[r].dE.toFixed(2)})`);
 }
 
@@ -2834,6 +2858,7 @@ function exportEnsembleSDF() {
   window.addEventListener('webmmready', () => {
     webmm = window.webmm;
     window.__webmmVersion = webmm.webmm_version ? webmm.webmm_version() : '?';
+    document.getElementById('engineVersion').textContent = `WebMM v${window.__webmmVersion}`;
     window.webmmReady = true;
     enable3dActions();
     set3dStatus('Engine ready — Embed 3D to begin');

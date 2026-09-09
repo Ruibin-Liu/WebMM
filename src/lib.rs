@@ -41,6 +41,56 @@ pub fn webmm_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+use crate::forces::ForceField;
+
+const EH_KCAL: f64 = 627.5094740631;
+
+/// Single-point energy + term decomposition for a 3D structure (no
+/// optimization). Returns a JSON string: {"E", "terms": {...}, "engine"}.
+/// Used by the workbench to sync the energy panel when switching conformers.
+#[wasm_bindgen]
+pub fn energy_terms_wasm(sdf_content: &str, engine: String) -> Result<String, JsValue> {
+    console_error_panic_hook::set_once();
+    let mol = crate::molecule::parser::parse_sdf(sdf_content).map_err(|e| JsValue::from_str(&e))?;
+    let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+    if coords.is_empty() {
+        return Err(JsValue::from_str("no atoms"));
+    }
+    match engine.to_uppercase().as_str() {
+        "GFNFF" | "GFN-FF" => {
+            let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+            let charge: f64 = mol.atoms.iter().map(|a| a.charge).sum();
+            let ff = crate::gfnff::GfnffForceField::new(&at, &coords, charge);
+            let e = ff.energy_and_gradient(&coords, &mut vec![[0.0; 3]; coords.len()]);
+            let ec = ff.components_at(&coords);
+            let terms = serde_json::json!({
+                "bond": ec.bond * EH_KCAL, "angle": ec.angle * EH_KCAL,
+                "torsion": ec.torsion * EH_KCAL, "rep": ec.rep * EH_KCAL,
+                "es": ec.es * EH_KCAL, "disp": ec.disp * EH_KCAL,
+                "hb": ec.hb * EH_KCAL, "xb": ec.xb * EH_KCAL,
+                "batm": ec.batm * EH_KCAL,
+            });
+            Ok(serde_json::json!({ "E": e, "terms": terms, "engine": "GFNFF" }).to_string())
+        }
+        _ => {
+            let variant = match engine.to_uppercase().as_str() {
+                "MMFF94" => MMFFVariant::MMFF94,
+                _ => MMFFVariant::MMFF94s,
+            };
+            let ff = crate::mmff::MMFFForceField::new(&mol, variant);
+            let e = ff.energy_and_gradient(&coords, &mut vec![[0.0; 3]; coords.len()]);
+            let bd = ff.calculate_energy_breakdown(&coords);
+            let terms = serde_json::json!({
+                "bond": bd.bond, "angle": bd.angle, "stretch_bend": bd.stretch_bend,
+                "torsion": bd.torsion, "oop": bd.oop, "vdw": bd.vdw,
+                "electrostatic": bd.electrostatic,
+            });
+            let used = if variant == MMFFVariant::MMFF94 { "MMFF94" } else { "MMFF94s" };
+            Ok(serde_json::json!({ "E": e, "terms": terms, "engine": used }).to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 mod opt_compare;
 
