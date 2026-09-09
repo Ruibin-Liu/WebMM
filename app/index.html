@@ -1115,6 +1115,8 @@ let rdkitModule = null;
        if (!mol || !mol.is_valid()) throw "Unable to generate 2D structure";
 
         render(mol, name);
+        reset3DState();   // new molecule: the old 3D result is no longer valid
+        enable3dActions();
         if (updateURL) setURL(smiles, name);
         addToHistory(smiles, name);
      } catch (e) {
@@ -2028,14 +2030,46 @@ function drawConformerChart() {
 
 let viewer = null;         // 3Dmol viewer
 let sdf3d = null;          // current 3D SDF text (from embed/optimize)
+let molEpoch = 0;          // bumped on every process() — stale async results are dropped
+
+function clear3DViewer() {
+  const el = document.getElementById('viewer3d');
+  if (viewer && viewer.clear) { try { viewer.clear(); } catch (e) { /* ignore */ } }
+  viewer = null;
+  el.innerHTML = 'Embed a 3D structure to begin (ETKDG)';
+}
+
+// Reset every 3D-panel state when the input molecule changes: structure,
+// energy panel, conformer ensemble, charges, and button availability.
+function reset3DState() {
+  molEpoch++;
+  if (confRun) cancelConformers();
+  confEnsemble = null;
+  selConf = -1;
+  sdf3d = null;
+  lastCharges = null;
+  chargeColorOn = false;
+  document.getElementById('chargeColor').checked = false;
+  document.getElementById('energyPanel').style.display = 'none';
+  document.getElementById('confPanel').style.display = 'none';
+  clear3DViewer();
+  for (const id of ['btnEmbed', 'btnOpt', 'btnConf', 'btnSdf', 'btnXyz', 'btnPng']) {
+    document.getElementById(id).disabled = true;
+  }
+  document.getElementById('chargeColor').disabled = true;
+  set3dStatus('Engine ready — Embed 3D to begin');
+}
 
 function set3dStatus(html) {
   document.getElementById('status3d').innerHTML = html;
 }
 
 function enable3dActions() {
-  for (const id of ['btnEmbed', 'btnOpt', 'btnSdf', 'btnXyz', 'btnPng', 'btnConf'])
-    document.getElementById(id).disabled = false;
+  // Embed/Conformers need only a parsed molecule (Conformers runs its own
+  // ETKDG embeds). Optimize/exports unlock in showSdfIn3D once a 3D
+  // structure exists.
+  document.getElementById('btnEmbed').disabled = false;
+  document.getElementById('btnConf').disabled = false;
 }
 
 function initViewer() {
@@ -2403,7 +2437,9 @@ function embed3D() {
     // in the distance geometry, so their positions satisfy the same bounds /
     // VDW constraints as the heavy atoms — no clash-relaxation step needed.
     set3dStatus('Embedding 3D (ETKDG, all atoms incl. H)…');
+    const epoch = molEpoch;
     yieldToUI().then(() => {
+      if (epoch !== molEpoch) return;   // molecule changed mid-embed: drop
       try {
         const t0 = performance.now();
         // 1. extend the graph with explicit H (wedge codes round-trip →
@@ -2464,9 +2500,11 @@ function optimize3D() {
     const maxIter = Math.min(6000, Math.max(500, naCur * 40));
     set3dStatus(`Optimizing with ${engine} (L-BFGS, up to ${maxIter} iterations)…`);
     const t0 = performance.now();
+    const epoch = molEpoch;
     const worker = getOptWorker();
     worker.onmessage = (e) => {
       const m = e.data;
+      if (epoch !== molEpoch) return;     // molecule changed mid-optimize: drop
       if (m.type === 'optimized') {
         const dt = ((performance.now() - t0) / 1000).toFixed(2);
         showSdfIn3D(buildSdfFromCoords(m.coords, sdf3d));
