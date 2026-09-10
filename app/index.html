@@ -789,7 +789,7 @@ details {
      Drag & drop MOL / SDF / TXT files here
    </div>
 
-     <div class="action-buttons" id="singleActions" style="justify-content:flex-start;">
+     <div class="action-buttons" id="singleActions">
       <button onclick="openJSME()" class="action-btn primary">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
@@ -821,37 +821,41 @@ details {
      <div>
          <strong>2D Structure</strong>
          <div id="svg" style="margin-top:0.75rem; margin-bottom:0.75rem;"></div>
-         <div class="ctl-group" title="Export 2D structure (SVG / PNG), copy it, or share a link">
-           <button id="btn2dSvg" class="action-btn export" onclick="downloadSVG()" title="Download 2D structure as SVG">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-               <polyline points="7,10 12,15 17,10"/>
-               <line x1="12" y1="15" x2="12" y2="3"/>
-             </svg>
-             SVG
-           </button>
-           <button id="btn2dPng" class="action-btn export" onclick="downloadPNG()" title="Download 2D structure as PNG">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-               <polyline points="7,10 12,15 17,10"/>
-               <line x1="12" y1="15" x2="12" y2="3"/>
-             </svg>
-             PNG
-           </button>
-           <button id="btn2dCopy" class="action-btn export" onclick="copySVG()" title="Copy 2D structure as SVG to the clipboard">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-             </svg>
-             Copy
-           </button>
-           <button id="btn2dLink" class="action-btn export" onclick="copyShareLink()" title="Copy a shareable link to this molecule">
-             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-             </svg>
-             Link
-           </button>
+         <div style="display:flex; gap:0.75rem; justify-content:center;">
+           <div class="ctl-group" title="Download the 2D structure">
+             <button id="btn2dSvg" class="action-btn export" onclick="downloadSVG()" title="Download 2D structure as SVG">
+               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                 <polyline points="7,10 12,15 17,10"/>
+                 <line x1="12" y1="15" x2="12" y2="3"/>
+               </svg>
+               SVG
+             </button>
+             <button id="btn2dPng" class="action-btn export" onclick="downloadPNG()" title="Download 2D structure as PNG">
+               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                 <polyline points="7,10 12,15 17,10"/>
+                 <line x1="12" y1="15" x2="12" y2="3"/>
+               </svg>
+               PNG
+             </button>
+           </div>
+           <div class="ctl-group" title="Copy or share">
+             <button id="btn2dCopy" class="action-btn export" onclick="copySVG()" title="Copy 2D structure as SVG to the clipboard">
+               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+               </svg>
+               Copy
+             </button>
+             <button id="btn2dLink" class="action-btn export" onclick="copyShareLink()" title="Copy a shareable link to this molecule">
+               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                 <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+               </svg>
+               Link
+             </button>
+           </div>
          </div>
        </div>
 
