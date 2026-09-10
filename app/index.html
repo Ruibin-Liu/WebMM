@@ -744,13 +744,13 @@ details {
        </svg>
        View Source
      </span>
-     <a class="badge" href="../site/index.html" title="Interactive MD &amp; metadynamics demo (separate page)">
+     <a class="badge" id="linkDemo" href="../site/index.html" title="Interactive MD &amp; metadynamics demo (separate page)">
        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
        </svg>
        WebMM Demo
      </a>
-     <a class="badge" href="../site/playground.html" title="Interactive playground — drag atoms, twist bonds, run live MD">
+     <a class="badge" id="linkPlayground" href="../site/playground.html" title="Interactive playground — drag atoms, twist bonds, run live MD">
        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
          <circle cx="12" cy="12" r="10"/>
          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
@@ -957,7 +957,7 @@ details {
        <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">Export ensemble SDF</button>
      </div>
      <div class="spiral-note">
-       Interactive MD &amp; metadynamics live in the <a href="../site/playground.html">Playground</a> and <a href="../site/index.html">Demo</a> pages.
+       Interactive MD &amp; metadynamics live in the <a id="notePlayground" href="../site/playground.html">Playground</a> and <a id="noteDemo" href="../site/index.html">Demo</a> pages.
      </div>
    </div>
 
@@ -3049,11 +3049,38 @@ function exportEnsembleSDF() {
     chargeColorOn = e.target.checked;
     applyStyle();
   });
+  // The Demo/Playground pages live at ../site/ in the repo layout but at
+  // the deployment root on GitHub Pages — probe both and use whichever
+  // responds (keeps local dev and the Pages deploy working from one file).
+  async function resolveSitePage(page) {
+    const candidates = [
+      new URL('../site/' + page, location.href).href,
+      new URL(page, location.href).href,
+    ];
+    for (const c of candidates) {
+      try {
+        const r = await fetch(c, { method: 'HEAD' });
+        if (r.ok) return c;
+      } catch (err) { /* try next */ }
+    }
+    return candidates[0];
+  }
+
+  async function fixSiteLinks() {
+    for (const [id, page] of [
+      ['linkDemo', 'index.html'], ['noteDemo', 'index.html'],
+      ['linkPlayground', 'playground.html'], ['notePlayground', 'playground.html'],
+    ]) {
+      document.getElementById(id).href = await resolveSitePage(page);
+    }
+  }
+
   window.addEventListener('webmmready', () => {
     webmm = window.webmm;
     window.__webmmVersion = webmm.webmm_version ? webmm.webmm_version() : '?';
     document.getElementById('engineVersion').textContent = `WebMM v${window.__webmmVersion}`;
     window.webmmReady = true;
+    fixSiteLinks();
     enable3dActions();
     set3dStatus('Engine ready — Embed 3D to begin');
   });
