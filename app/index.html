@@ -3054,8 +3054,9 @@ function exportEnsembleSDF() {
   // responds (keeps local dev and the Pages deploy working from one file).
   async function resolveSitePage(page) {
     const candidates = [
-      new URL('../site/' + page, location.href).href,
-      new URL(page, location.href).href,
+      new URL('../site/' + page, location.href).href,                    // repo layout
+      new URL(page, new URL('.', window.__webmmUrl || location.href)).href, // deployed pkg root (next to webmm.js)
+      new URL(page, location.href).href,                                 // same dir as the app
     ];
     for (const c of candidates) {
       try {
