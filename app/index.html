@@ -23,11 +23,13 @@
 
  * { box-sizing: border-box; }
 
- /* Unified top navigation (shared with the Demo/Playground pages) */
+ /* Unified sticky top navigation (same pattern as the Demo/Playground pages) */
  .topnav {
+   position: sticky; top: 0; z-index: 100;
    display: flex; align-items: center; gap: 14px;
-   padding: 12px 22px; margin: -0px -0px 0.75rem;
-   background: #fff; border: 1px solid var(--border); border-radius: 10px;
+   padding: 12px 22px;
+   background: rgba(255,255,255,0.88); backdrop-filter: blur(10px);
+   border-bottom: 1px solid var(--border);
  }
  .topnav .brand {
    font-weight: 800; font-size: 1.05em; letter-spacing: -0.02em;
@@ -742,17 +744,17 @@ details {
 </style>
 </head>
 <body>
-<div class="container">
+<nav class="topnav">
+  <a class="brand" href="#">Web<span>MM</span></a>
+  <div class="links">
+    <a href="#" class="active">Workbench</a>
+    <a id="navDemo" href="../index.html">Demo</a>
+    <a id="navPlayground" href="../playground.html">Playground</a>
+    <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a>
+  </div>
+</nav>
 
- <nav class="topnav">
-   <a class="brand" href="#">Web<span>MM</span></a>
-   <div class="links">
-     <a href="#" class="active">Workbench</a>
-     <a id="navDemo" href="../index.html">Demo</a>
-     <a id="navPlayground" href="../playground.html">Playground</a>
-     <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a>
-   </div>
- </nav>
+<div class="container">
 
  <header>
    <h1>WebMM Workbench</h1>
