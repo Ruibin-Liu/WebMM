@@ -9,8 +9,8 @@
 <style>
   :root {
     --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0;
-    --text: #0f172a; --muted: #64748b; --accent: #2563eb; --green: #4ade80;
-    --red: #ff4545; --violet: #b58cff; --amber: #fbbf24; --radius: 12px;
+    --text: #0f172a; --muted: #64748b; --accent: #2563eb; --green: #16a34a;
+    --red: #dc2626; --violet: #7c3aed; --amber: #d97706; --radius: 12px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { color-scheme: light; }
@@ -52,7 +52,7 @@
     background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
     padding: 5px 14px; font-size: 0.82em; color: var(--muted);
   }
-  .badge strong { color: var(--green); font-family: ui-monospace, monospace; }
+  .badge strong { color: var(--accent); font-family: ui-monospace, monospace; }
   .cta {
     display: inline-block; padding: 13px 26px; border-radius: 12px;
     background: var(--accent); color: #fff;
@@ -137,10 +137,10 @@
   button.action:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
   button.action:disabled { opacity: 0.45; cursor: wait; }
   button.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .btn-md { background: var(--accent); color: #00131f; }
-  .btn-opt { background: var(--green); color: #02130a; }
-  .btn-metad { background: var(--violet); color: #150826; }
-  .btn-embed { background: var(--amber); color: #1a1000; }
+  .btn-md { background: var(--accent); color: #fff; }
+  .btn-opt, .btn-metad, .btn-embed { background: #fff; color: var(--text); border: 1px solid var(--border); }
+  .btn-opt:hover, .btn-metad:hover, .btn-embed:hover { border-color: var(--accent); color: var(--accent); background: #f8fafc; }
+  .action:disabled { opacity: 0.45; }
   .opts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
   .opts-grid input, .opts-grid select {
     background: #fff; color: var(--text); border: 1px solid var(--border);
@@ -155,7 +155,7 @@
   }
   .status.show { display: block; }
   .status.info { background: #eff6ff; color: var(--accent); border: 1px solid #bfdbfe; }
-  .status.success { background: #0a1f14; color: var(--green); border: 1px solid #14532d; }
+  .status.success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
   .status.error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
   footer {
     text-align: center; padding: 24px; color: var(--muted); font-size: 0.84em;
