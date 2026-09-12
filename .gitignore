@@ -34,3 +34,7 @@ scripts/webmm_atom_types.json
 scripts/val_set/webmm_ref.json
 
 gfnff_*
+
+# local wasm copies for the /site/ preview (copy from pkg/ when needed)
+site/webmm.js
+site/webmm_bg.wasm
