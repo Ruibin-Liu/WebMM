@@ -23,6 +23,25 @@
 
  * { box-sizing: border-box; }
 
+ /* Unified top navigation (shared with the Demo/Playground pages) */
+ .topnav {
+   display: flex; align-items: center; gap: 14px;
+   padding: 12px 22px; margin: -0px -0px 0.75rem;
+   background: #fff; border: 1px solid var(--border); border-radius: 10px;
+ }
+ .topnav .brand {
+   font-weight: 800; font-size: 1.05em; letter-spacing: -0.02em;
+   color: var(--text); text-decoration: none;
+ }
+ .topnav .brand span { color: var(--accent); }
+ .topnav .links { margin-left: auto; display: flex; gap: 4px; }
+ .topnav .links a {
+   color: var(--muted); text-decoration: none; font-size: 0.88em;
+   padding: 6px 12px; border-radius: 8px;
+ }
+ .topnav .links a:hover { color: var(--accent); background: rgba(37,99,235,0.08); }
+ .topnav .links a.active { color: #1d4ed8; background: rgba(37,99,235,0.14); font-weight: 500; }
+
  body {
    margin: 0;
    background: var(--bg);
@@ -725,6 +744,16 @@ details {
 <body>
 <div class="container">
 
+ <nav class="topnav">
+   <a class="brand" href="#">Web<span>MM</span></a>
+   <div class="links">
+     <a href="#" class="active">Workbench</a>
+     <a id="navDemo" href="../index.html">Demo</a>
+     <a id="navPlayground" href="../playground.html">Playground</a>
+     <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a>
+   </div>
+ </nav>
+
  <header>
    <h1>WebMM Workbench</h1>
     <div class="subtitle">
@@ -744,20 +773,7 @@ details {
        </svg>
        View Source
      </span>
-     <a class="badge" id="linkDemo" href="../index.html" title="Interactive MD &amp; metadynamics demo (separate page)">
-       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-       </svg>
-       WebMM Demo
-     </a>
-     <a class="badge" id="linkPlayground" href="../playground.html" title="Interactive playground — drag atoms, twist bonds, run live MD">
-       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-         <circle cx="12" cy="12" r="10"/>
-         <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-         <line x1="12" y1="17" x2="12.01" y2="17"/>
-       </svg>
-       Playground
-     </a>
+
    </div>
    <div class="version">RDKit version: <span id="rdkitVersion">Loading...</span> · engine: <span id="engineVersion">WebMM</span></div>
  </header>
@@ -1014,7 +1030,7 @@ details {
    </div>
 
   <div class="copyright">
-   © <span id="year"></span> <a href="https://github.com/Ruibin-Liu/WebMM" target="_blank" rel="noopener">WebMM</a> — structure editing &amp; properties by <a href="https://ruibin-liu.github.io/molecule-clipboard/" target="_blank" rel="noopener">RDKit + JSME</a>, 3D engine by WebMM
+   © <span id="year"></span> <a href="https://github.com/Ruibin-Liu/WebMM" target="_blank" rel="noopener">WebMM</a> — 2D structure editing &amp; properties powered by RDKit + JSME, 3D engine by WebMM
  </div>
 
 <div id="jsmeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="jsmeTitle">
@@ -3069,8 +3085,8 @@ function exportEnsembleSDF() {
 
   async function fixSiteLinks() {
     for (const [id, page] of [
-      ['linkDemo', 'index.html'], ['noteDemo', 'index.html'],
-      ['linkPlayground', 'playground.html'], ['notePlayground', 'playground.html'],
+      ['navDemo', 'index.html'], ['noteDemo', 'index.html'],
+      ['navPlayground', 'playground.html'], ['notePlayground', 'playground.html'],
     ]) {
       document.getElementById(id).href = await resolveSitePage(page);
     }
