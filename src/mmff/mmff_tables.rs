@@ -3199,12 +3199,27 @@ pub fn empirical_angle_params(
     r0_jk: f64,
     ring_size: u8,
 ) -> Option<(f64, f64)> {
-    // get_mmff_prop returns (atno, val, crd, pilp, mltb, arom, linh, sbmb) —
-    // crd and val were previously destructured swapped, which misrouted the
-    // theta0 rules for atoms with val != crd (e.g. sulfoxide S: val 3 / crd 4
-    // fell through to 120 degrees instead of 109.45)
+    empirical_angle_params_with_theta0(type_i, type_j, type_k, r0_ij, r0_jk, ring_size, None)
+}
+
+/// RDKit's getMMFFAngleBendEmpiricalRuleParams: when the tabulated row
+/// exists with ka == 0, theta0 comes from the table and the empirical ka is
+/// computed AT that theta0 (ka scales as 1/theta0^2 — using the rule's own
+/// theta0 instead skews the stiffness by (theta_rule/theta_tab)^2).
+pub fn empirical_angle_params_with_theta0(
+    type_i: u8,
+    type_j: u8,
+    type_k: u8,
+    r0_ij: f64,
+    r0_jk: f64,
+    ring_size: u8,
+    theta0_override: Option<f64>,
+) -> Option<(f64, f64)> {
+    // get_mmff_prop returns (atno, crd, val, pilp, mltb, arom, linh, sbmb) —
+    // crd is the coordination number (neighbors), val the total valence.
+    // RDKit's MMFFProp CSV parses in exactly this order (Params.cpp).
     let (atno_i, _, _, _, _, _, _, _) = get_mmff_prop(type_i)?;
-    let (atno_j, val_j, crd_j, _, mltb_j, _, linh_j, _) = get_mmff_prop(type_j)?;
+    let (atno_j, crd_j, val_j, _, mltb_j, _, linh_j, _) = get_mmff_prop(type_j)?;
     let (atno_k, _, _, _, _, _, _, _) = get_mmff_prop(type_k)?;
 
     let mut theta0: f64 = 120.0;
@@ -3232,6 +3247,7 @@ pub fn empirical_angle_params(
     } else if ring_size == 4 {
         theta0 = 90.0;
     }
+    let theta0 = theta0_override.unwrap_or(theta0);
 
     let mut z = [0.0f64; 3];
     let mut c = [0.0f64; 3];

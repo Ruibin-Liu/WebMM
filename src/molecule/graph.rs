@@ -825,6 +825,43 @@ mod tests {
     const METHYL_SULFITE: &str = "\n     RDKit          3D\n\n 12 11  0  0  0  0  0  0  0  0999 V2000\n    2.4151   -0.1206    0.2719 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1865    0.5011    0.6137 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0680    0.4775   -0.5437 S   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0418   -0.8984   -1.1386 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2205    0.6360    0.4079 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.4349    0.1513   -0.1428 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.8305    0.2997   -0.6505 H   0  0  0  0  0  0  0  0  0  0  0  0\n    3.1271    0.0669    1.0810 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2911   -1.2041    0.1754 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.2483    0.4243    0.5359 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.6390    0.6064   -1.1182 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.4173   -0.9401   -0.2273 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  3  4  2  0\n  3  5  1  0\n  5  6  1  0\n  1  7  1  0\n  1  8  1  0\n  1  9  1  0\n  6 10  1  0\n  6 11  1  0\n  6 12  1  0\nM  END\n";
 
     #[test]
+    fn prop_table_crd_is_coordination_number() {
+        // RDKit MMFFProp column order is (atno, crd, val, ...): crd is the
+        // coordination number, val the total valence. S(17) has three
+        // neighbours (crd 3, val 4); getting these swapped silently flips
+        // the torsion empirical rule from (g) to (e/f) — a 1.5 kcal/mol
+        // error on thiosulfinates.
+        let p17 = crate::mmff::mmff_tables::get_mmff_prop(17).unwrap();
+        assert_eq!(p17.1, 3, "crd(S17) = 3 neighbours");
+        assert_eq!(p17.2, 4, "val(S17) = 4");
+        let p15 = crate::mmff::mmff_tables::get_mmff_prop(15).unwrap();
+        assert_eq!(
+            (p15.1, p15.2, p15.3),
+            (2, 2, 1),
+            "S(15): crd 2, val 2, pilp 1"
+        );
+        let p1 = crate::mmff::mmff_tables::get_mmff_prop(1).unwrap();
+        assert_eq!((p1.1, p1.2), (4, 4), "sp3 C: crd 4, val 4");
+    }
+
+    #[test]
+    fn thiosulfinate_torsion_uses_rule_g() {
+        // CS(=O)SC: the C-S(17)-S(15)-C and O-S(17)-S(15)-C torsions must get
+        // V2 = 2.25 from empirical rule (g) case 3 (verified against RDKit's
+        // high-verbosity per-term output), not V3 = 0.163 from (e)/(f).
+        let p = crate::mmff::torsion::estimate_torsion_params_rdkit(
+            crate::mmff::MMFFAtomType::S_OX,
+            crate::mmff::MMFFAtomType::S_3,
+            16,
+            16,
+            crate::molecule::BondType::Single,
+        );
+        // central atoms passed as (S_OX=17, S_3=15): j=17 (mltb 2), k=15 (pilp 1)
+        // -> rule (g) case 3 -> V2 = 6 * 0.3 * sqrt(1.25*1.25) = 2.25
+        assert!((p.unwrap().v2 - 2.25).abs() < 1e-6);
+    }
+
+    #[test]
     fn sulfite_ester_typing_matches_rdkit() {
         // RDKit: C(1) O(6) S(17) O(7) O(6) C(1) — the sulfoxide S is 17 even
         // with two alkoxy O neighbours, and its =O oxygen is plain O_2 (7),

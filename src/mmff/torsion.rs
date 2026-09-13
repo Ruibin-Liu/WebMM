@@ -1952,10 +1952,11 @@ pub fn estimate_torsion_params_rdkit(
     bond_jk: BondType,
 ) -> Option<TorsionParams> {
     use crate::mmff::mmff_tables::{get_mmff_prop, get_periodic_table_row};
-    // (atno, val, crd, pilp, mltb, arom, linh, sbmb)
-    let (at_j, val_j, crd_j, pilp_j, mltb_j, _, linh_j, _) =
+    // (atno, crd, val, pilp, mltb, arom, linh, sbmb) — crd = coordination
+    // number, val = total valence (RDKit MMFFProp parser column order)
+    let (at_j, crd_j, val_j, pilp_j, mltb_j, _, linh_j, _) =
         get_mmff_prop(super::params::mmff_type_id(type_j))?;
-    let (at_k, val_k, crd_k, pilp_k, mltb_k, _, linh_k, _) =
+    let (at_k, crd_k, val_k, pilp_k, mltb_k, _, linh_k, _) =
         get_mmff_prop(super::params::mmff_type_id(type_k))?;
     let _ = (at_j, at_k);
 

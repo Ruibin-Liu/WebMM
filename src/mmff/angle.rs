@@ -116,12 +116,18 @@ fn get_angle_params_from_table(
         tabulated_theta0 = Some(t0);
     }
 
-    if let Some((ka, theta0)) =
-        mmff_tables::empirical_angle_params(ti, tj, tk, r0_ij, r0_jk, ring_size)
-    {
+    if let Some((ka, theta0)) = mmff_tables::empirical_angle_params_with_theta0(
+        ti,
+        tj,
+        tk,
+        r0_ij,
+        r0_jk,
+        ring_size,
+        tabulated_theta0,
+    ) {
         return Some(AngleParams {
             k_theta: ka,
-            theta0: tabulated_theta0.unwrap_or(theta0),
+            theta0,
         });
     }
 
