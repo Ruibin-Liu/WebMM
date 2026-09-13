@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebMM Playground — grab a molecule, feel the force field</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='10' r='6' fill='%232563eb'/%3E%3Ccircle cx='23' cy='14' r='5' fill='%23ef4444'/%3E%3Ccircle cx='15' cy='24' r='5' fill='%2322c55e'/%3E%3Cpath d='M10 10L23 14L15 24L10 10' stroke='%23334155' stroke-width='2' fill='none'/%3E%3C/svg%3E">
+<title>WebMM Playground — Grab a Molecule, Feel the Force Field</title>
 <meta name="description" content="An interactive molecular mechanics toy: drag atoms, crank the temperature, watch a real MMFF94s force field respond — live in your browser via WebAssembly.">
 <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"></script>
 <style>
@@ -15,7 +16,7 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { color-scheme: light; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg);
     color: var(--text); line-height: 1.5; min-height: 100vh;
   }
@@ -46,7 +47,7 @@
   @media (max-width: 920px) { main { grid-template-columns: 1fr; } }
   .panel {
     background: #fff; border: 1px solid var(--border);
-    border-radius: 12px; padding: 14px; backdrop-filter: blur(10px);
+    border-radius: 10px; padding: 1rem; backdrop-filter: blur(10px);
   }
   #viewer {
     width: 100%; height: 520px; border-radius: 10px;
@@ -88,7 +89,7 @@
   .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .presets button {
     background: #fff; color: var(--text); border: 1px solid var(--border);
-    border-radius: 10px; padding: 8px 10px; font-size: 0.82em; cursor: pointer;
+    border-radius: 8px; padding: 8px 10px; font-size: 0.85rem; cursor: pointer;
     text-align: left; transition: border-color 0.15s, transform 0.1s;
   }
   .presets button small { display: block; color: var(--muted); font-size: 0.72em; }
@@ -125,9 +126,9 @@
   button.action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   button.action:hover:not(:disabled) { filter: brightness(1.15); transform: translateY(-1px); }
   button.action:disabled { opacity: 0.45; cursor: wait; }
-  .btn-run { background: var(--accent); color: #00131f; }
-  .btn-relax { background: var(--green); color: #02130a; }
-  .btn-metad { background: var(--violet); color: #150826; }
+  .btn-run { background: var(--accent); color: #fff; }
+  .btn-relax, .btn-metad { background: #fff; color: var(--text); border: 1px solid var(--border); }
+  .btn-relax:hover:not(:disabled), .btn-metad:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   .ghost {
     background: #fff !important; color: var(--text) !important;
     border: 1px solid var(--border) !important; font-weight: 500 !important;
@@ -160,6 +161,11 @@
   .status.info { background: #eff6ff; color: var(--accent); border: 1px solid #bfdbfe; }
   .status.success { background: #0a1f14; color: var(--green); border: 1px solid #14532d; }
   .status.error { background: #fef2f2; color: var(--hot); border: 1px solid #fecaca; }
+  .page-head {
+    max-width: 1280px; margin: 0 auto; padding: 18px 14px 0;
+  }
+  .page-head h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .page-head p { color: var(--muted); font-size: 0.9rem; margin: 0; }
   footer {
     text-align: center; padding: 22px; color: var(--muted); font-size: 0.82em;
     border-top: 1px solid var(--border); margin-top: 14px;
@@ -179,6 +185,11 @@
     <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a>
   </div>
 </nav>
+
+<header class="page-head">
+  <h1>WebMM Playground</h1>
+  <p>Grab a molecule and pull — a real MMFF94s force field pushes back. Live MD and well-tempered metadynamics, all in your browser.</p>
+</header>
 
 <main>
   <div class="panel">
@@ -256,8 +267,7 @@
 </main>
 
 <footer>
-  Physics: MMFF94s · BAOAB Langevin MD · well-tempered metadynamics — all in your browser, no server.
-  Validated 230/230 vs RDKit to &lt;0.01 kcal/mol.
+  © <span id="year"></span> WebMM — Rust + WebAssembly · MMFF94s · ETKDG · MD &amp; metadynamics · no server, nothing leaves your browser
 </footer>
 
 <script>
@@ -1556,7 +1566,12 @@ function setStatus(msg, kind) {
 // ---------------------------------------------------------------------------
 async function init() {
   try {
-    wasm = await import('./webmm.js');
+    // dual layout: deployment root has webmm.js next to the page; the repo
+    // layout keeps it in ../pkg/ — try both so local dev needs no copies.
+    for (const url of ['./webmm.js', '../pkg/webmm.js']) {
+      try { wasm = await import(url); break; } catch (e) { /* next */ }
+    }
+    if (!wasm) throw new Error('webmm.js not found');
     if (wasm.default) await wasm.default();
     document.getElementById('loading').style.display = 'none';
     ['btn-run', 'btn-relax', 'btn-metad'].forEach(id => document.getElementById(id).disabled = false);
@@ -1631,6 +1646,9 @@ async function init() {
   }
 }
 init();
+</script>
+<script>
+  document.getElementById('year').textContent = '2025-' + new Date().getFullYear();
 </script>
 </body>
 </html>
