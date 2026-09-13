@@ -2127,10 +2127,11 @@ pub fn get_torsion_params(
         };
 
         let mut can_i = i_eq[i_wildcard as usize];
-        // Central atoms j,k: only generalize at iter >= 2 to avoid false matches
-        let jk_level = if iter >= 2 { 2 } else { 0 };
-        let mut can_j = j_eq[jk_level];
-        let mut can_k = k_eq[jk_level];
+        // RDKit's torsion lookup never generalizes the central j-k pair —
+        // only i and l walk the wildcard levels (stages 1-1-1-1, 2-2-2-2,
+        // 3-2-2-5, 5-2-2-3, 5-2-2-5; MMFFTorCollection::getMMFFTorParams).
+        let mut can_j = j_eq[0];
+        let mut can_k = k_eq[0];
         let mut can_l = l_eq[l_wildcard as usize];
 
         if can_j > can_k {
