@@ -37,6 +37,7 @@ pub fn optimize(
     let mut converged = false;
     let mut final_energy = 0.0;
     let mut final_iter = 0;
+    let mut fail_count = 0usize;
 
     // E+G once per iteration: the gradient evaluated at the updated point is
     // carried into the next iteration instead of being discarded and
@@ -111,6 +112,24 @@ pub fn optimize(
             1e-4,
             1e-10,
         );
+
+        // Line-search failure (no Armijo decrease at the floor): reset the
+        // L-BFGS memory and retry from steepest descent; after several
+        // consecutive failures the surface is numerically flat/broken here —
+        // stop rather than wander.
+        if alpha == 0.0 {
+            fail_count += 1;
+            s_history.clear();
+            y_history.clear();
+            rho_history.clear();
+            if fail_count >= 5 {
+                final_energy = energy;
+                final_iter = iter;
+                break;
+            }
+            continue;
+        }
+        fail_count = 0;
 
         // If step is tiny, reset L-BFGS history (corrupted approximation)
         if alpha * max_component < 1e-8 {
@@ -277,8 +296,20 @@ fn armijo_line_search(
         // Armijo condition: f(x + alpha*d) <= f(x) + c1 * alpha * g(x)^T * d
         let rhs = f0 + c1 * alpha * g_dot_d;
 
-        if f_new <= rhs || alpha <= min_alpha {
+        if f_new <= rhs {
             break;
+        }
+        if alpha <= min_alpha {
+            // The Armijo condition never held. Accept the floor step ONLY if
+            // it is finite and strictly decreases the energy — the old
+            // behaviour accepted it unconditionally, and with an exploded
+            // L-BFGS direction (|d| up to 1e12 after a force spike) the
+            // floor step is still macroscopic (~0.1-100 A): caffeine GFN-FF
+            // once jumped +248 kcal/mol into a basin it could never leave.
+            if f_new.is_finite() && f_new <= f0 {
+                break; // non-increasing: keep the old slither-through
+            }
+            return 0.0;
         }
 
         // Backtrack

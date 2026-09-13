@@ -2199,7 +2199,7 @@ pub fn torsion_energy(
     let cp0_norm = (cp0[0] * cp0[0] + cp0[1] * cp0[1] + cp0[2] * cp0[2]).sqrt();
     let cp1_norm = (cp1[0] * cp1[0] + cp1[1] * cp1[1] + cp1[2] * cp1[2]).sqrt();
 
-    if cp0_norm < 1e-12 || cp1_norm < 1e-12 {
+    if cp0_norm < DEGENERATE_CROSS_NORM || cp1_norm < DEGENERATE_CROSS_NORM {
         return 0.0;
     }
 
@@ -2215,6 +2215,41 @@ pub fn torsion_energy(
         + params.v3 * (1.0 + cos3_phi))
 }
 
+/// True when either defining plane of the i-j-k-l dihedral is degenerate
+/// (collinear triple), matching the cutoff torsion_energy uses.
+fn degenerate_torsion(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> bool {
+    let nrm = |a: [f64; 3], b: [f64; 3]| -> f64 {
+        let cx = a[1] * b[2] - a[2] * b[1];
+        let cy = a[2] * b[0] - a[0] * b[2];
+        let cz = a[0] * b[1] - a[1] * b[0];
+        (cx * cx + cy * cy + cz * cz).sqrt()
+    };
+    let v0 = [
+        coords[i][0] - coords[j][0],
+        coords[i][1] - coords[j][1],
+        coords[i][2] - coords[j][2],
+    ];
+    let v1 = [
+        coords[k][0] - coords[j][0],
+        coords[k][1] - coords[j][1],
+        coords[k][2] - coords[j][2],
+    ];
+    let v2 = [
+        coords[l][0] - coords[k][0],
+        coords[l][1] - coords[k][1],
+        coords[l][2] - coords[k][2],
+    ];
+    nrm(v0, v1) < DEGENERATE_CROSS_NORM || nrm(v1, v2) < DEGENERATE_CROSS_NORM
+}
+
+/// Cross-product norm below which a dihedral plane is treated as degenerate
+/// (collinear triple). The direction of such a cross product is numerical
+/// noise: cos(phi) jumps by O(1) under a 1e-7 A perturbation, so both the
+/// energy and the finite-difference gradient must switch it off consistently
+/// (E = 0 <=> grad = 0). 1e-6 sits safely above eps*|r| ~ 1e-7*1.5 A and
+/// safely below any real 3D geometry (> 0.001 degrees off linear).
+const DEGENERATE_CROSS_NORM: f64 = 1e-6;
+
 pub fn torsion_gradient(
     coords: &[[f64; 3]],
     atom1: usize,
@@ -2227,6 +2262,16 @@ pub fn torsion_gradient(
     // Guarantees energy/gradient consistency regardless of the dihedral
     // convention (RDKit r3=j-k sign). Central atoms j,k carry opposite-sign
     // gradients by construction (translational invariance).
+    // Degenerate reference geometry (collinear triple): the dihedral is
+    // undefined and torsion_energy conventionally returns 0. A finite
+    // difference there measures the 0 -> E(eps) JUMP (~1 kcal over 1e-7 A
+    // = 1e7 kcal/A) — a phantom force that stalls L-BFGS on exactly-planar
+    // 2D starts. The gradient is genuinely undefined here; report zero and
+    // let the other terms pull the geometry off the degeneracy.
+    if degenerate_torsion(coords, atom1, atom2, atom3, atom4) {
+        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+
     let eps = 1e-7;
     let e0 = torsion_energy(coords, atom1, atom2, atom3, atom4, params);
     let mut g = [[0.0f64; 3]; 4];

@@ -266,6 +266,9 @@ pub struct Topology {
     pub piadr: Vec<bool>,      // atom is a pi atom
     /// pi bond order per bond (parallel to `bonds`), HMO density matrix elements
     pub pibo: Vec<f64>,
+    /// bond type per bond (parallel to `bonds`): 1 single, 2 pi (incl. the
+    /// xtb pibo>0.1 promotion, ini 1305-1312), 3 sp/linear, 4 hypervalent
+    pub btyp: Vec<u8>,
     /// bond-path matrix: 0=unreached, 1=bonded, 2=1-3, 3=1-4, 5=far
     pub bpair: Vec<Vec<usize>>,
     /// smallest ring size containing the atom (0 = none); up to 20 rings each
@@ -565,7 +568,7 @@ impl Gfnff {
             group14 && nb[i].len() == 2 && hyb[i] == 2 && topo_q[i] >= -0.4
         }).collect();
 
-        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag, hbbas: vec![0.0; n], hbaci: vec![0.0; n], carbene, nitro_n: nitro, hb_h: Vec::new(), hb_ab: Vec::new(), xb_triples: Vec::new(), b3: Vec::new(), bond_hb_b: Vec::new(),
+        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], btyp: vec![1; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag, hbbas: vec![0.0; n], hbaci: vec![0.0; n], carbene, nitro_n: nitro, hb_h: Vec::new(), hb_ab: Vec::new(), xb_triples: Vec::new(), b3: Vec::new(), bond_hb_b: Vec::new(),
             rings_all: Vec::new() };
 
         let mut g = Gfnff { p, at: at.to_vec(), charge, topo, bonds: Vec::new(), angles: Vec::new(), torsions: Vec::new(), xyz0: xyz.clone() };
@@ -876,16 +879,21 @@ impl Gfnff {
         for i in 0..n {
             let z = self.at[i];
             let hyb = self.topo.hyb[i];
-            let inlist = matches!(z, 6 | 7 | 8 | 9 | 16);
-            let mut piat = (hyb == 1 || hyb == 2) && inlist;
-            // sp3 N/O/F attached to sp2/sp → pi (nofs rule; xtb ini 373-386:
-            // picon = kk>0 .and. nofs — NO hyb!=3 condition, amide N's join)
-            let attached_sp2 = self.topo.nb[i].iter()
-                .any(|&j| self.topo.hyb[j] == 1 || self.topo.hyb[j] == 2);
-            if matches!(z, 7..=9) && attached_sp2 { piat = true; }
-            if !attached_sp2 && hyb == 3 { piat = false; }
-            if z == 7 && self.topo.nb[i].len() > 3 { piat = false; } // NR4
-            if piat { piadr[i] = true; }
+            // xtb pilist = {B,C,N,O,F,S,Cl} (gfnff_ini2.F90 2198)
+            let pilist = matches!(z, 5 | 6 | 7 | 8 | 9 | 16 | 17);
+            // xtb nofs = {N,O,F,S,Cl} — sp3 lone-pair donors join a pi system
+            let nofs = matches!(z, 7 | 8 | 9 | 16 | 17);
+            let mut piat = (hyb == 1 || hyb == 2) && pilist;
+            let mut kk = 0; // count sp/sp2 neighbours (xtb ini 368-374)
+            for &j in &self.topo.nb[i] {
+                // O on hypervalent S (SO3): explicitly not a pi atom
+                if z == 8 && self.at[j] == 16 && self.topo.hyb[j] == 5 { piat = false; }
+                if self.topo.hyb[j] == 1 || self.topo.hyb[j] == 2 { kk += 1; }
+            }
+            let picon = kk > 0 && nofs;   // sp3 N/O/F/S/Cl attached to sp2/sp
+            if z == 7 && self.topo.nb[i].len() > 3 { continue; }  // NR3-X not pi
+            if z == 16 && self.topo.hyb[i] == 5 { continue; }     // SO3 S not pi
+            if picon || piat { piadr[i] = true; }
         }
         // connected components over pi atoms
         let mut pimvec = vec![0usize; n];   // pi-system id per atom (1-based), 0 = none
@@ -903,6 +911,18 @@ impl Gfnff {
         }
         // per-system electron count (piel rules) and atoms
         self.topo.pibo = vec![0.0; self.bonds.len()];
+        self.topo.btyp = vec![1u8; self.bonds.len()];
+        // base bond types from hybridization (xtb ini 1239-1252)
+        for (m, b) in self.bonds.iter().enumerate() {
+            let (hi, hj) = (self.topo.hyb[b.i], self.topo.hyb[b.j]);
+            let mut bt = 1u8;
+            if hi == 2 && hj == 2 { bt = 2; }
+            if (hi == 3 && hj == 2 && self.at[b.i] == 7)
+                || (hj == 3 && hi == 2 && self.at[b.j] == 7) { bt = 2; }
+            if hi == 1 || hj == 1 { bt = 3; }
+            if hi == 5 || hj == 5 { bt = 4; }
+            self.topo.btyp[m] = bt;
+        }
         let mut piadr_out = vec![false; n];
         // topology distances for the ipis EEQ re-solve (shared by all systems;
         // hoisted so multi-pi molecules do one Floyd pass instead of one each)
@@ -981,10 +1001,16 @@ impl Gfnff {
                 let (p, _eel, _eps, _focc) = hmo_solve(&api_last, nel - 1);
                 dens = p;
             }
-            // store pibo on bonds
+            // store pibo on bonds; pibo > 0.1 promotes the bond to pi type
+            // (xtb ini 1305-1312: btyp=2 for any non-sp bond with HMO bond
+            // order above threshold — aromatic C-S/C-O in thiophene/furan,
+            // conjugated amides, ...)
             for (bi_, b) in self.bonds.iter().enumerate() {
                 if pimvec[b.i] == pis && pimvec[b.j] == pis {
                     self.topo.pibo[bi_] = dens[pos(b.j)][pos(b.i)];
+                    if self.topo.btyp[bi_] != 3 && self.topo.pibo[bi_] > 0.1 {
+                        self.topo.btyp[bi_] = 2;
+                    }
                     piadr_out[b.i] = true;
                     piadr_out[b.j] = true;
                 }
@@ -1006,16 +1032,18 @@ impl Gfnff {
                 let hybi = self.topo.hyb[bi];
                 let hybj = self.topo.hyb[bj];
                 if hybi == 1 || hybj == 1 { continue; }       // sp/linear: no torsion
-                if hybi == 5 || hybj == 5 { continue; }       // hypervalent
                 if p.tors[zi-1] < 0.0 || p.tors[zj-1] < 0.0 { continue; }
                 if p.tors[zi-1] * p.tors[zj-1] < 1e-3 { continue; }
-                // N-sp2 bonds count as pi-type for torsions too (ini 1231-1234)
-                let btyp = if (hybi == 2 && hybj == 2)
-                    || (hybi == 3 && hybj == 2 && self.at[bi] == 7)
-                    || (hybi == 3 && hybj == 2 && self.at[bj] == 7) { 2 } else { 1 };
+                // stored bond type (hybridization rules + the pibo > 0.1 pi
+                // promotion from the HMO pass, xtb ini 1305-1312)
+                let btyp = self.bonds.iter()
+                    .position(|b| (b.i == bi && b.j == bj) || (b.i == bj && b.j == bi))
+                    .map(|m| self.topo.btyp[m])
+                    .unwrap_or(1);
                 let nhi = 1 + self.topo.nb[bi].iter().filter(|&&x| self.at[x] == 1).count();
                 let nhj = 1 + self.topo.nb[bj].iter().filter(|&&x| self.at[x] == 1).count();
                 let mut fij = p.tors[zi-1] * p.tors[zj-1] * ((nhi as f64) * (nhj as f64)).powf(0.07);
+                if btyp == 4 { fij *= 0.2; }   // hypervalent central (xtb ini 1871)
                 if alpha_co(&self.at, &self.topo.hyb, &self.topo.nb, &self.topo.piadr, bi, bj) { fij *= 1.3; }
                 // amide C-N torsions are stiffer (ini 1881-1883)
                 if self.topo.hyb[bj] == 3 && self.at[bj] == 6
@@ -4132,6 +4160,47 @@ mod tests_more3 {
         }}
         println!("NH3 FD max diff = {worst:.2e} kcal/mol/A");
         assert!(worst < 5e-3);
+    }
+}
+
+#[cfg(test)]
+mod tests_pibo_promotion {
+    use super::*;
+
+    /// Thiophene total energy vs xtb 6.7.1 --gfnff --sp (geometry from the
+    /// parity suite). Before the pibo > 0.1 -> btyp=2 promotion (xtb ini
+    /// 1305-1312) and the pilist/nofs {B,Cl,S} extension, the C-S ring
+    /// torsions took the sp3 branch and the energy was off by 0.024 Eh.
+    #[test]
+    fn thiophene_total_vs_xtb() {
+        let sdf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/gfnff/thiophene.mol")).unwrap();
+        let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+        let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+        let xyz: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        // xtb: -1.641860 Eh total; per-term: bond -1.743656, angle 0.022360,
+        // torsion 0.000309, rep 0.042613, es -0.037700 (printed 6dp)
+        assert!((e.total() - (-1.641860)).abs() < 2e-5,
+            "thiophene total {:+.6} vs xtb -1.641860", e.total());
+    }
+
+    /// Pyrrole: N (sp3, 2 nb in group 6 terms — actually N sp3 via lone pair)
+    /// joins the pi system via picon; xtb Hueckel ndim=5, Nel=6.
+    #[test]
+    fn pyrrole_pi_system_includes_nh() {
+        let sdf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/gfnff/pyrrole.mol")).unwrap();
+        let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+        let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+        let xyz: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        // all five ring atoms must be pi atoms (N-H included)
+        let ring_pi = (0..5).filter(|&i| g.topo.piadr[i]).count();
+        assert_eq!(ring_pi, 5, "pyrrole ring pi atoms: {ring_pi}/5");
+        // every ring bond promoted to btyp 2 (pibo > 0.1)
+        let ring_btyp2 = g.bonds.iter().zip(g.topo.btyp.iter())
+            .filter(|(b, &t)| b.i < 5 && b.j < 5 && t == 2).count();
+        assert_eq!(ring_btyp2, 5, "pyrrole ring bonds with btyp=2: {ring_btyp2}/5");
     }
 }
 

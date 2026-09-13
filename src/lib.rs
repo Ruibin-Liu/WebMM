@@ -488,7 +488,14 @@ fn optimize_dispatch(
             let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
             let charge: f64 = mol.atoms.iter().map(|a| a.charge).sum();
             let ff = crate::gfnff::GfnffForceField::new(&at, initial_coords, charge);
-            let r = crate::optimizer::optimize(&ff, initial_coords, &options.convergence);
+            // GFN-FF convergence: the default max_force (0.01 kcal/mol/A per
+            // component) is tighter than xtb's own --opt normal threshold and
+            // unreachable for some systems because the EEQ charges are
+            // re-solved every step. 0.05 kcal/mol/A still beats xtb normal.
+            let mut conv = options.convergence.clone();
+            conv.max_force = conv.max_force.max(0.05);
+            conv.rms_force = conv.rms_force.max(0.005);
+            let r = crate::optimizer::optimize(&ff, initial_coords, &conv);
             let ec = ff.components_at(&r.optimized_coords);
             let terms = serde_json::json!({
                 "bond": ec.bond * EH_KCAL, "angle": ec.angle * EH_KCAL,
