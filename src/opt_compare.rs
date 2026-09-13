@@ -60,6 +60,7 @@ fn make_mol(
                 _ => BondType::Single,
             },
             stereo: BondStereo::None,
+            kekule_type: None,
         })
         .collect();
     let n = atoms.len();

@@ -820,13 +820,15 @@ impl MMFFForceField {
                         && mol.bonds.iter().any(|b2| {
                             (b2.atom1 == other || b2.atom2 == other)
                                 && matches!(b2.bond_type, BondType::Double)
-                                && mol.atoms[if b2.atom1 == other {
-                                    b2.atom2
-                                } else {
-                                    b2.atom1
-                                }]
-                                .atomic_number
-                                    == 8
+                                && matches!(
+                                    mol.atoms[if b2.atom1 == other {
+                                        b2.atom2
+                                    } else {
+                                        b2.atom1
+                                    }]
+                                    .atomic_number,
+                                    8 | 16
+                                )
                         })
                 });
 
@@ -1229,8 +1231,8 @@ impl MMFFForceField {
                     {
                         MMFFAtomType::N_5OX
                     }
-                    // Amide / carbamate / urea N: non-aromatic N directly bonded to a
-                    // carbonyl C is MMFF 10 (N_AM). Excludes N=C imines (n_owns_cn)
+                    // Amide / carbamate / urea / thioamide N: non-aromatic N directly bonded to a
+                    // carbonyl or thiocarbonyl C is MMFF 10 (N_AM). Excludes N=C imines (n_owns_cn)
                     // like methyl isocyanate CH3-N=C=O where N has its own double bond.
                     (7, _, false, _) if has_c_o_neighbor && !n_owns_cn => MMFFAtomType::N_AM,
 
@@ -1668,7 +1670,9 @@ impl MMFFForceField {
                                 && {
                                     let o = if b2.atom1 == nbr { b2.atom2 } else { b2.atom1 };
                                     let an = mol.atoms[o].atomic_number;
-                                    an == 8 || an == 7 || an == 6
+                                    // O/N/C doubles; S covers thioamides
+                                    // (thiourea/thioacetamide N-H -> H_NAM)
+                                    an == 8 || an == 7 || an == 6 || an == 16
                                 }
                         })
                 });

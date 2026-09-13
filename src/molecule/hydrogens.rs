@@ -202,6 +202,7 @@ pub fn add_hydrogens(mol: &Molecule) -> Molecule {
                 atom2: atoms.len() - 1,
                 bond_type: BondType::Single,
                 stereo: BondStereo::None,
+                kekule_type: None,
             });
         }
     }

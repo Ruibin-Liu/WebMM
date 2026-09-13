@@ -858,13 +858,14 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
     let rings = crate::molecule::graph::find_rings(mol);
 
     // 1-2 bounds
+    let aromatic_all = crate::molecule::graph::mmff_aromatic_atoms(mol);
     for (bond_idx, bond) in mol.bonds.iter().enumerate() {
         let i = bond.atom1;
         let j = bond.atom2;
         let hyb_i = crate::molecule::graph::determine_hybridization(i, mol);
         let hyb_j = crate::molecule::graph::determine_hybridization(j, mol);
-        let aro_i = crate::molecule::graph::is_aromatic(i, mol);
-        let aro_j = crate::molecule::graph::is_aromatic(j, mol);
+        let aro_i = aromatic_all[i];
+        let aro_j = aromatic_all[j];
         let bl = compute_bond_length(
             &mol.atoms[i].symbol,
             hyb_i,
@@ -3742,6 +3743,7 @@ fn has_vdw_clash(coords: &[[f64; 3]], mol: &Molecule) -> bool {
 const BOND_LENGTH_TOLERANCE: f64 = 0.30;
 
 fn bond_lengths_reasonable(coords: &[[f64; 3]], mol: &Molecule) -> bool {
+    let aromatic_all = crate::molecule::graph::mmff_aromatic_atoms(mol);
     for bond in &mol.bonds {
         let i = bond.atom1;
         let j = bond.atom2;
@@ -3751,8 +3753,8 @@ fn bond_lengths_reasonable(coords: &[[f64; 3]], mol: &Molecule) -> bool {
         let actual = (dx * dx + dy * dy + dz * dz).sqrt();
         let hyb_i = crate::molecule::graph::determine_hybridization(i, mol);
         let hyb_j = crate::molecule::graph::determine_hybridization(j, mol);
-        let aro_i = crate::molecule::graph::is_aromatic(i, mol);
-        let aro_j = crate::molecule::graph::is_aromatic(j, mol);
+        let aro_i = aromatic_all[i];
+        let aro_j = aromatic_all[j];
         let expected = compute_bond_length(
             &mol.atoms[i].symbol,
             hyb_i,

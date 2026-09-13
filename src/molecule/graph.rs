@@ -150,8 +150,11 @@ pub fn determine_hybridization(atom_idx: usize, mol: &Molecule) -> Hybridization
 
 /// Find all aromatic atoms in the molecule
 pub fn get_aromatic_atoms(mol: &Molecule) -> HashSet<usize> {
-    (0..mol.atoms.len())
-        .filter(|&i| is_aromatic(i, mol))
+    mmff_aromatic_atoms(mol)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, b)| *b)
+        .map(|(i, _)| i)
         .collect()
 }
 
@@ -176,6 +179,9 @@ pub fn perceive_aromatic_bonds(mol: &mut Molecule) {
                     && ring_set.contains(&bond.atom2)
                     && bond.bond_type != BondType::Aromatic
                 {
+                    if bond.kekule_type.is_none() {
+                        bond.kekule_type = Some(bond.bond_type);
+                    }
                     bond.bond_type = BondType::Aromatic;
                     changed = true;
                 }
@@ -187,69 +193,293 @@ pub fn perceive_aromatic_bonds(mol: &mut Molecule) {
     }
 }
 
-/// RDKit `countAtomElec` (Aromaticity.cpp): electrons an atom can donate into
-/// a pi system. (default valence - degree) + lone pairs - formal charge.
-/// Returns -1 for atoms that cannot participate (metals, univalent, deg > 3).
-fn count_atom_elec(atom_idx: usize, mol: &Molecule) -> i32 {
-    let atom = &mol.atoms[atom_idx];
-    let z = atom.atomic_number as i32;
-    // RDKit PeriodicTable default valences for the common organic subset
-    let (dv, nouter) = match z {
-        5 => (3, 3),
-        6 => (4, 4),
-        7 => (3, 5),
-        8 => (2, 6),
-        14 => (4, 4),
-        15 => (3, 5),
-        16 => (2, 6),
-        33 => (3, 5),
-        34 => (2, 6),
-        9 | 17 | 35 | 53 => return -1, // univalent: can't be aromatic
-        _ => return -1,
-    };
-
-    // total degree: explicit neighbors (incl. explicit H) + implicit H.
-    // Aromatic bonds count 1.5 toward valence in RDKit; we mirror that below.
-    let explicit_neighbors = mol.adjacency[atom_idx].len() as i32;
-    let explicit_valence: f64 = mol
+/// RDKit `MolOps::setMMFFAromaticity` (Aromaticity.cpp) — the SDM
+/// ("simple delocalization model") used by MMFF atom typing.
+/// `MMFFGetMoleculeProperties` re-perceives aromaticity with this model
+/// internally, regardless of the molecule's incoming aromatic flags, so our
+/// MMFF types (and therefore energies) must follow it — not the default
+/// RDKit aromaticity model.
+///
+/// Per ring (iterated to a fixpoint so fused systems can propagate):
+/// - +2 pi electrons per DOUBLE ring bond (kekulized view);
+/// - a ring C, or N with total bond order 4, may bring contributions from
+///   exocyclic multiple bonds: +1 if the exocyclic double partner is already
+///   aromatic (fused-ring propagation), otherwise it sets `exoDouble`
+///   (which blocks the lone-pair bonus);
+/// - +2 if N/O/divalent-S is present, there is no exocyclic double, and the
+///   ring size is odd (pyrrole-type lone-pair donation);
+/// - every ring C/N must be sp2-like;
+/// - aromatic iff pi_e > 2 and (pi_e - 2) % 4 == 0.
+///
+/// Atoms of rings that fail the rule are never marked, but "perceived" atoms
+/// still unlock deferred rings in later passes (mirroring RDKit's
+/// `aromBitVect` vs aromatic flags distinction).
+/// Kekulize aromatic bonds that carry no recorded pre-aromatization order
+/// (hand-built molecules, MOL2/aromatic-form molblocks). Computes an
+/// alternating single/double assignment over each aromatic component so the
+/// SDM electron counting sees a valid Kekule structure. Mirrors the spirit of
+/// RDKit's `Kekulize` before `setMMFFAromaticity`. Bonds that were aromatized
+/// by `perceive_aromatic_bonds` keep their recorded order and are skipped.
+fn kekulize_unrecorded(mol: &Molecule) -> std::collections::HashMap<(usize, usize), i32> {
+    use std::collections::HashMap;
+    let mut assign: HashMap<(usize, usize), i32> = HashMap::new();
+    let needs: Vec<(usize, usize)> = mol
         .bonds
         .iter()
-        .filter(|b| b.atom1 == atom_idx || b.atom2 == atom_idx)
-        .map(|b| match b.bond_type {
-            BondType::Single => 1.0,
-            BondType::Double => 2.0,
-            BondType::Triple => 3.0,
-            BondType::Aromatic => 1.5,
+        .filter(|b| b.bond_type == BondType::Aromatic && b.kekule_type.is_none())
+        .map(|b| (b.atom1.min(b.atom2), b.atom1.max(b.atom2)))
+        .collect();
+    if needs.is_empty() {
+        return assign;
+    }
+
+    let n = mol.atoms.len();
+    // aromatic bond adjacency (indices into `needs`)
+    let mut nbrs: Vec<Vec<usize>> = vec![vec![]; n];
+    for (bi, &(a, b)) in needs.iter().enumerate() {
+        nbrs[a].push(bi);
+        nbrs[b].push(bi);
+    }
+
+    // Doubles each atom needs among its aromatic bonds (RDKit Kekulize
+    // semantics): aromatic carbons want exactly one double unless they
+    // already carry an explicit one; ring N wants one only when divalent
+    // (pyridine-type); O and divalent S contribute lone pairs, not doubles.
+    let want: Vec<i32> = (0..n)
+        .map(|a| {
+            let z = mol.atoms[a].atomic_number as i32;
+            let explicit_doubles = mol
+                .bonds
+                .iter()
+                .filter(|b| {
+                    (b.atom1 == a || b.atom2 == a)
+                        && b.bond_type != BondType::Aromatic
+                        && matches!(b.bond_type, BondType::Double | BondType::Triple)
+                })
+                .count() as i32;
+            match z {
+                6 => (1 - explicit_doubles).max(0),
+                7 if mol.adjacency[a].len() <= 2 && mol.atoms[a].charge == 0.0 => {
+                    (1 - explicit_doubles).max(0)
+                }
+                _ => 0,
+            }
         })
-        .sum();
-    let implicit_h = ((dv as f64 - explicit_valence).floor().max(0.0)) as i32;
-    let degree = explicit_neighbors + implicit_h;
-    if degree > 3 {
-        return -1;
-    }
+        .collect();
 
-    // lone pairs = outer electrons - default valence - formal charge
-    let nlp = (nouter - dv - atom.charge as i32).max(0);
-
-    let mut res = (dv - degree) + nlp;
-
-    // triple bonds: >1 unsaturation caps the donation at 1 electron
-    if res > 1 {
-        let unsaturations = (explicit_valence - degree as f64) as i32;
-        if unsaturations > 1 {
-            res = 1;
+    // backtracking over unassigned aromatic bonds (components are tiny)
+    let mut chosen: Vec<Option<bool>> = vec![None; needs.len()]; // true = double
+    let mut got: Vec<i32> = vec![0; n];
+    let mut budget: i64 = 200_000;
+    fn solve(
+        from: usize,
+        needs: &[(usize, usize)],
+        want: &[i32],
+        got: &mut [i32],
+        chosen: &mut [Option<bool>],
+        budget: &mut i64,
+    ) -> bool {
+        if *budget <= 0 {
+            return false;
         }
+        *budget -= 1;
+        let bi = match (from..needs.len()).find(|&i| chosen[i].is_none()) {
+            Some(bi) => bi,
+            None => return true,
+        };
+        for &is_double in &[true, false] {
+            let (a, b) = needs[bi];
+            if is_double && (got[a] + 1 > want[a] || got[b] + 1 > want[b]) {
+                continue;
+            }
+            chosen[bi] = Some(is_double);
+            if is_double {
+                got[a] += 1;
+                got[b] += 1;
+            }
+            if solve(bi + 1, needs, want, got, chosen, budget) {
+                return true;
+            }
+            if is_double {
+                got[a] -= 1;
+                got[b] -= 1;
+            }
+            chosen[bi] = None;
+        }
+        false
     }
-    res
+    if !solve(0, &needs, &want, &mut got, &mut chosen, &mut budget) {
+        return assign; // give up: leave unrecorded (treated as double)
+    }
+    for (bi, &(a, b)) in needs.iter().enumerate() {
+        assign.insert((a, b), if chosen[bi] == Some(true) { 2 } else { 1 });
+    }
+    assign
 }
 
-/// RDKit donor classification -> (lower, upper) electron bounds for Huckel.
-fn donor_bounds(res: i32) -> (i32, i32) {
-    match res {
-        r if r < 0 => (0, 0), // NoElectronDonorType
-        0 => (0, 0),          // Vacant (empty p-orbital)
-        r if r % 2 == 1 => (1, 1),
-        _ => (2, 2),
+pub fn mmff_aromatic_atoms(mol: &Molecule) -> Vec<bool> {
+    let rings = find_rings(mol);
+    let n = mol.atoms.len();
+    let mut aromatic = vec![false; n]; // final aromatic marking
+    if rings.is_empty() {
+        return aromatic;
+    }
+
+    // kekulized view of a bond order for the SDM counting: aromatized ring
+    // bonds count with their recorded pre-aromatization (Kekule) order —
+    // mirrors RDKit kekulizing the molecule before setMMFFAromaticity.
+    // Aromatic bonds without a record are kekulized on the fly.
+    let kek = kekulize_unrecorded(mol);
+    let order = |b: &crate::molecule::Bond| -> i32 {
+        let key = (b.atom1.min(b.atom2), b.atom1.max(b.atom2));
+        if b.bond_type == BondType::Aromatic {
+            if let Some(o) = kek.get(&key) {
+                return *o;
+            }
+        }
+        match b.kekule_type.unwrap_or(b.bond_type) {
+            BondType::Single => 1,
+            BondType::Double => 2,
+            BondType::Triple => 3,
+            BondType::Aromatic => 2, // defensive: kekulizer gave up
+        }
+    };
+    let explicit_valence = |a: usize| -> i32 {
+        mol.bonds
+            .iter()
+            .filter(|b| b.atom1 == a || b.atom2 == a)
+            .map(&order)
+            .sum()
+    };
+    let implicit_h = |a: usize| -> i32 {
+        let dv = default_valence(mol.atoms[a].atomic_number as i32);
+        if dv <= 0 {
+            return 0;
+        }
+        (dv - explicit_valence(a)).max(0)
+    };
+    // sp2-like for the canBeAromatic check: incident multiple bond, hetero
+    // pi-donor, or already marked aromatic
+    let sp2_like = |a: usize, aromatic: &[bool]| -> bool {
+        if aromatic[a] {
+            return true;
+        }
+        let z = mol.atoms[a].atomic_number as i32;
+        if z == 7 || z == 8 || z == 16 {
+            return true;
+        }
+        mol.bonds
+            .iter()
+            .any(|b| (b.atom1 == a || b.atom2 == a) && order(b) >= 2)
+    };
+
+    let ring_members: Vec<std::collections::HashSet<usize>> =
+        rings.iter().map(|r| r.iter().copied().collect()).collect();
+
+    let mut perceived = vec![false; n]; // RDKit aromBitVect
+    let mut old_n: i64 = -1;
+    loop {
+        for (ri, ring) in rings.iter().enumerate() {
+            let len = ring.len();
+            let mut pi_e: i32 = 0;
+            let mut is_nos = false;
+            let mut exo_double = false;
+            let mut defer = false;
+            for j in 0..len {
+                let a = ring[j];
+                let next = ring[(j + 1) % len];
+                let z = mol.atoms[a].atomic_number as i32;
+                if z == 7 || z == 8 || (z == 16 && mol.adjacency[a].len() == 2) {
+                    is_nos = true;
+                }
+                let bond_to_next = mol.bonds.iter().find(|b| {
+                    (b.atom1 == a && b.atom2 == next) || (b.atom2 == a && b.atom1 == next)
+                });
+                if bond_to_next.map(|b| order(b) == 2).unwrap_or(false) {
+                    pi_e += 2;
+                    continue;
+                }
+                // only C, or N with total bond order 4, can bring exocyclic
+                // pi contributions
+                let n_bo4 = z == 7 && (explicit_valence(a) + implicit_h(a)) == 4;
+                if z != 6 && !n_bo4 {
+                    continue;
+                }
+                for &nbr in &mol.adjacency[a] {
+                    if ring_members[ri].contains(&nbr) {
+                        continue; // only exocyclic neighbours
+                    }
+                    let b = mol.bonds.iter().find(|b| {
+                        (b.atom1 == a && b.atom2 == nbr) || (b.atom2 == a && b.atom1 == nbr)
+                    });
+                    if b.map(|b| order(b) == 1).unwrap_or(true) {
+                        continue;
+                    }
+                    // neighbour in an unprocessed ring: defer this ring
+                    let nbr_in_ring = ring_members.iter().any(|rm| rm.contains(&nbr));
+                    if nbr_in_ring && !perceived[nbr] {
+                        defer = true;
+                        break;
+                    }
+                    if b.map(|b| order(b) == 2).unwrap_or(false) {
+                        if aromatic[nbr] {
+                            pi_e += 1;
+                        } else {
+                            exo_double = true;
+                        }
+                    }
+                }
+                if defer {
+                    break;
+                }
+            }
+            if defer {
+                continue;
+            }
+            let mut can_be_aromatic = true;
+            for &a in ring.iter() {
+                perceived[a] = true;
+                let z = mol.atoms[a].atomic_number as i32;
+                if (z == 6 || z == 7) && !sp2_like(a, &aromatic) {
+                    can_be_aromatic = false;
+                }
+            }
+            if !can_be_aromatic {
+                continue;
+            }
+            if is_nos && !exo_double && len % 2 == 1 {
+                pi_e += 2;
+            }
+            if pi_e > 2 && (pi_e - 2) % 4 == 0 {
+                for &a in ring.iter() {
+                    aromatic[a] = true;
+                }
+            }
+        }
+        // RDKit termination: stop when no new atoms were perceived
+        let n_set: i64 = perceived.iter().filter(|p| **p).count() as i64;
+        let all_done = rings.iter().flatten().all(|&a| perceived[a]);
+        if all_done || n_set <= old_n {
+            break;
+        }
+        old_n = n_set;
+    }
+    aromatic
+}
+
+/// Default valence for the organic subset (SDM N-bond-order check).
+fn default_valence(z: i32) -> i32 {
+    match z {
+        5 => 3,
+        6 => 4,
+        7 => 3,
+        8 => 2,
+        14 => 4,
+        15 => 3,
+        16 => 2,
+        33 => 3,
+        34 => 2,
+        _ => -1,
     }
 }
 
@@ -259,50 +489,7 @@ fn donor_bounds(res: i32) -> (i32, i32) {
 /// - Pi electrons are counted per atom based on donor type.
 /// - Huckel's 4n+2 rule is applied to the total.
 pub fn is_aromatic(atom_idx: usize, mol: &Molecule) -> bool {
-    let rings = find_rings(mol);
-
-    for ring in &rings {
-        if !ring.contains(&atom_idx) {
-            continue;
-        }
-
-        // RDKit applyHuckel: sum per-atom electron-donor bounds and accept
-        // the ring if any total in [rlw, rup] satisfies the 4n+2 rule.
-        let mut rlw = 0i32;
-        let mut rup = 0i32;
-        let mut n_any = 0i32;
-        let mut candidates = true;
-        for &a in ring {
-            let res = count_atom_elec(a, mol);
-            if res < 0 {
-                candidates = false;
-                break;
-            }
-            let (lw, up) = donor_bounds(res);
-            rlw += lw;
-            rup += up;
-            if res == 0 {
-                // VacantElectronDonorType: an empty p-orbital donor
-                n_any += 1;
-            }
-        }
-        if !candidates {
-            continue;
-        }
-        if n_any > 1 {
-            continue; // RDKit: at most one vacant-p donor per ring
-        }
-        if rup >= 6 {
-            for rie in rlw..=rup {
-                if (rie - 2) % 4 == 0 {
-                    return true;
-                }
-            }
-        } else if rup == 2 {
-            return true;
-        }
-    }
-    false
+    mmff_aromatic_atoms(mol)[atom_idx]
 }
 
 /// Find smallest set of smallest rings (SSSR) using BFS
@@ -579,14 +766,15 @@ pub struct OutOfPlane {
 pub fn find_out_of_planes(mol: &Molecule) -> Vec<OutOfPlane> {
     let mut oops = Vec::new();
 
-    for atom_idx in 0..mol.atoms.len() {
-        let neighbors = get_neighbors(atom_idx, mol);
+    let aromatic_set = mmff_aromatic_atoms(mol);
+    for (atom_idx, neighbors) in mol.adjacency.iter().enumerate() {
+        let neighbors: Vec<usize> = neighbors.to_vec();
 
         // Only atoms with 3+ neighbors can have out-of-plane bending
         if neighbors.len() >= 3 {
             // Only sp2 and aromatic atoms typically have significant OOP
             let hybrid = determine_hybridization(atom_idx, mol);
-            if hybrid == Hybridization::Sp2 || is_aromatic(atom_idx, mol) {
+            if hybrid == Hybridization::Sp2 || aromatic_set[atom_idx] {
                 // RDKit creates 3 OOP terms per 3-neighbor combination: for each
                 // choice of which neighbor is the "out-of-plane" atom (atom1),
                 // the other two define the reference plane. This gives different
@@ -626,6 +814,46 @@ pub fn find_out_of_planes(mol: &Molecule) -> Vec<OutOfPlane> {
 
 #[cfg(test)]
 mod tests {
+    // --- MMFF SDM aromaticity regression tests (RDKit parity) ---
+
+    fn mol_from_block(block: &str) -> Molecule {
+        crate::molecule::parser::parse_sdf(block).unwrap()
+    }
+
+    const MALEIMIDE: &str = "maleimide\n     RDKit          3D\n\n 10 10  0  0  0  0  0  0  0  0999 V2000\n   -1.1905   -2.0775   -0.0430 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5649   -1.0363   -0.0214 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7738   -0.8719   -0.0146 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0963    0.4376    0.0113 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2047    0.9348    0.0238 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1629    1.1890    0.0223 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1614    0.3031    0.0027 C   0  0  0  0  0  0  0  0  0  0  0  0  0\n    1.4414   -1.6240   -0.0272 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2148    2.2629    0.0427 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2217    0.4823    0.0033 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  1  0\n  4  5  2  0\n  4  6  1  0\n  6  7  2  0\n  7  2  1  0\n  3  8  1  0\n  6  9  1  0\n  7 10  1  0\nM  END\n";
+
+    #[test]
+    fn mmff_aromaticity_maleimide_not_aromatic() {
+        // The imide five-ring has only 4 in-cycle pi electrons (the two C=O
+        // are exocyclic): RDKit's SDM demotes it and types the ring
+        // C_2/N_AM/C_VIN. The old Huckel donor model wrongly aromatized it
+        // (60 kcal/mol single-point error vs RDKit).
+        let mol = mol_from_block(MALEIMIDE);
+        let arom = mmff_aromatic_atoms(&mol);
+        assert!(
+            arom.iter().all(|b| !b),
+            "maleimide ring must not be aromatic"
+        );
+    }
+
+    const THIOUREA: &str = "thiourea\n     RDKit          3D\n\n  8  7  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3354    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.1018    1.1859    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8715   -1.5277    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4847    0.9344    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4847   -0.9344    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    3.1118    1.0145    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.6936    2.1634    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  2  4  2  0\n  1  5  1  0\n  1  6  1  0\n  3  7  1  0\n  3  8  1  0\nM  END\n";
+
+    #[test]
+    fn thioamide_typing_matches_rdkit() {
+        // RDKit: N -> 10 (N_AM), C -> 3 (C_2), S -> 16 (S_2), N-H -> 28 (H_NAM).
+        // The C(=S) partner must count as acyl for both the N and its H's.
+        let mol = mol_from_block(THIOUREA);
+        let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
+        let t = &ff.atom_types;
+        use crate::mmff::MMFFAtomType::*;
+        assert_eq!(t[0], N_AM);
+        assert_eq!(t[1], C_2);
+        assert_eq!(t[2], N_AM);
+        assert_eq!(t[3], S_2);
+        assert_eq!(t[4], H_NAM);
+        assert_eq!(t[6], H_NAM);
+    }
+
     use super::*;
     use crate::molecule::{Atom, Bond};
 

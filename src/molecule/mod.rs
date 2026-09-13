@@ -48,6 +48,10 @@ pub struct Bond {
     pub atom2: usize,
     pub bond_type: BondType,
     pub stereo: BondStereo,
+    /// Kekulé bond order recorded before aromaticity perception converted
+    /// ring bonds to `BondType::Aromatic` (mirrors RDKit kekulizing before
+    /// its MMFF SDM aromaticity). `None` for bonds that were never aromatized.
+    pub kekule_type: Option<BondType>,
 }
 
 impl Default for Bond {
@@ -57,6 +61,7 @@ impl Default for Bond {
             atom2: 0,
             bond_type: BondType::Single,
             stereo: BondStereo::None,
+            kekule_type: None,
         }
     }
 }

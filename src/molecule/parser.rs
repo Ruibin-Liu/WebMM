@@ -160,6 +160,7 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
                 atom2,
                 bond_type,
                 stereo,
+                kekule_type: None,
             });
         }
     }
