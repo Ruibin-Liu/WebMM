@@ -32,7 +32,6 @@
     color: var(--text); text-decoration: none;
   }
   .topnav .brand span { color: var(--accent); }
-  .topnav .nav-sub { color: var(--muted); font-size: 0.85em; }
   .topnav .links { margin-left: auto; display: flex; gap: 4px; }
   .topnav .links a {
     color: var(--muted); text-decoration: none; font-size: 0.88em;
@@ -40,7 +39,6 @@
   }
   .topnav .links a:hover { color: var(--accent); background: rgba(37,99,235,0.08); }
   .topnav .links a.active { color: #1d4ed8; background: rgba(37,99,235,0.14); font-weight: 500; }
-  @media (max-width: 920px) { .topnav .nav-sub { display: none; } }
   main {
     display: grid; grid-template-columns: 1fr 340px; gap: 14px;
     padding: 14px; max-width: 1280px; margin: 0 auto;
@@ -174,7 +172,6 @@
 
 <nav class="topnav">
   <a class="brand" href="app/index.html">Web<span>MM</span></a>
-  <span class="nav-sub">playground — grab an atom &amp; pull, a real MMFF94s force field fights back</span>
   <div class="links">
     <a href="app/index.html">Workbench</a>
     <a href="index.html">Demo</a>
