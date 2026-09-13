@@ -85,7 +85,11 @@ pub fn energy_terms_wasm(sdf_content: &str, engine: String) -> Result<String, Js
                 "torsion": bd.torsion, "oop": bd.oop, "vdw": bd.vdw,
                 "electrostatic": bd.electrostatic,
             });
-            let used = if variant == MMFFVariant::MMFF94 { "MMFF94" } else { "MMFF94s" };
+            let used = if variant == MMFFVariant::MMFF94 {
+                "MMFF94"
+            } else {
+                "MMFF94s"
+            };
             Ok(serde_json::json!({ "E": e, "terms": terms, "engine": used }).to_string())
         }
     }
