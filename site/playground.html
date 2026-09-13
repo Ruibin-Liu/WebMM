@@ -87,6 +87,29 @@
   .legend .fes::before { color: var(--violet); }
   .rail label { display: block; font-size: 0.78em; color: var(--muted); margin: 10px 0 4px; }
   .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  /* Experiments: one-click intuition setups */
+  .experiments { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .xcard {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    background: #fff; color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 10px; cursor: pointer; text-align: left;
+    transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+  }
+  .xcard:hover { border-color: var(--accent); transform: translateY(-1px); box-shadow: 0 2px 6px rgba(37,99,235,0.10); }
+  .xcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .xcard .xicon { font-size: 1.05em; line-height: 1; }
+  .xcard b { font-size: 0.84em; }
+  .xcard small { color: var(--muted); font-size: 0.72em; line-height: 1.35; }
+  .xnote {
+    display: none; margin-top: 8px; padding: 9px 11px; border-radius: 10px;
+    background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+    font-size: 0.78em; line-height: 1.55; position: relative; padding-right: 26px;
+  }
+  .xnote.show { display: block; }
+  .xnote .xclose {
+    position: absolute; top: 6px; right: 8px; border: none; background: none;
+    color: #1e40af; cursor: pointer; font-size: 1em; padding: 2px;
+  }
   .presets button {
     background: #fff; color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 10px; font-size: 0.85rem; cursor: pointer;
@@ -214,14 +237,23 @@
   </div>
 
   <div class="panel rail">
-    <label>Molecules</label>
+    <label>Try an experiment</label>
+    <div class="experiments">
+      <button class="xcard" id="xexp-tug" type="button"><span class="xicon">&#129533;</span><b>Tug of war</b><small>pull an atom, feel the field pull back</small></button>
+      <button class="xcard" id="xexp-heat" type="button"><span class="xicon">&#128293;</span><b>Melt it</b><small>crank to 1200 K, then refreeze</small></button>
+      <button class="xcard" id="xexp-twist" type="button"><span class="xicon">&#127744;</span><b>Twist a bond</b><small>spin it out of its rotamer well</small></button>
+      <button class="xcard" id="xexp-fes" type="button"><span class="xicon">&#9968;</span><b>Map the landscape</b><small>watch metadynamics dig the FES</small></button>
+    </div>
+    <div class="xnote" id="xnote" aria-live="polite"></div>
+
+    <label style="margin-top:14px">Molecules</label>
     <div class="presets" id="presets"></div>
 
     <label style="margin-top:14px">Temperature</label>
     <div class="bigtemp">
       <div class="row">
         <span style="font-size:1.2em">🧊</span>
-        <input type="range" id="temp" min="0" max="1500" step="10" value="300">
+        <input type="range" id="temp" min="0" max="1500" step="10" value="300" aria-label="Temperature (kelvin)">
         <span style="font-size:1.2em">🔥</span>
         <span class="val" id="temp-val">300 K</span>
       </div>
@@ -237,14 +269,14 @@
         <input type="checkbox" id="glow" checked> force glow
       </label>
       <span style="flex:1"></span>
-      <select id="speed" title="Simulation speed">
+      <select id="speed" title="Simulation speed" aria-label="Simulation speed">
         <option value="20">calm</option>
         <option value="100" selected>normal</option>
         <option value="500">wild</option>
       </select>
     </div>
 
-    <details>
+    <details id="metad-details">
       <summary>🔬 Metadynamics — watch a free-energy surface being discovered</summary>
       <div class="opts">
         <div><label>CV type</label><select id="metad-cv-type"><option>dihedral</option><option>distance</option></select></div>
@@ -1600,6 +1632,52 @@ async function init() {
     }
     const molKey = params.get('mol');
     loadMol(MOLS[molKey] ? molKey : 'caffeine', targetT);
+
+    // --- One-click experiments: set the scene, explain the physics ---
+    function xnote(text) {
+      const el = document.getElementById('xnote');
+      el.innerHTML = '<button class="xclose" id="xnote-close" aria-label="Dismiss">&times;</button>' + text;
+      el.classList.add('show');
+      document.getElementById('xnote-close').onclick = () => el.classList.remove('show');
+    }
+    function animateTemp(from, to, ms) {
+      const slider = document.getElementById('temp');
+      const t0 = performance.now();
+      (function tick() {
+        const k = Math.min(1, (performance.now() - t0) / ms);
+        const eased = 1 - Math.pow(1 - k, 2);
+        const t = Math.round(from + (to - from) * eased);
+        slider.value = t;
+        slider.dispatchEvent(new Event('input'));
+        if (k < 1) requestAnimationFrame(tick);
+      })();
+    }
+    const EXPERIMENTS = {
+      tug: () => {
+        setRunning(true);
+        document.getElementById('glow').checked = true;
+        xnote('<b>Tug of war.</b> Press and hold any atom, then pull slowly — the <b>force glow</b> turns red where MMFF94s fights back, hardest along the stretched bonds. Let go: the atom snaps home and the stored strain becomes vibration. Watch the energy trace spike, then drain away as heat.');
+      },
+      heat: () => {
+        setRunning(true);
+        animateTemp(targetT, 1200, 1600);
+        xnote('<b>Melt it.</b> Temperature is just jiggling: at 1200 K the bonds that held firm at 300 K visibly smear — but never break, because every atom is still being pulled back by the same force field. Now drag the slider to the far left (0 K) and hit <b>&#9881; Relax</b> — the molecule refreezes into a neat energy minimum.');
+      },
+      twist: () => {
+        setRunning(true);
+        xnote('<b>Twist a bond.</b> Click right next to a bond <i>not in a ring</i> and drag sideways — you are rotating one side of the molecule against the other. The torsion term resists at the eclipsed angles and welcomes you at the staggered ones. Release mid-twist and watch it settle into the nearest rotamer well: a tiny taste of the free-energy landscape.');
+      },
+      fes: () => {
+        document.getElementById('metad-details').open = true;
+        const cv = MOLS[currentKey] ? MOLS[currentKey].cv : null;
+        if (cv) document.getElementById('metad-cv-atoms').value = cv;
+        runMetad();
+        xnote('<b>Map the landscape.</b> Gaussian hills are being dropped wherever the molecule lingers — each hill pushes it away and forces exploration of conformations it would rarely visit. The purple curve growing underneath is the <b>free-energy surface</b> being excavated in real time, along the chosen torsion.');
+      },
+    };
+    for (const [id, fn] of Object.entries(EXPERIMENTS)) {
+      document.getElementById('xexp-' + id).onclick = fn;
+    }
 
     document.getElementById('btn-run').onclick = () => setRunning(!running);
     document.getElementById('btn-relax').onclick = runRelax;
