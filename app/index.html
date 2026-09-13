@@ -734,6 +734,12 @@ details {
     font-size: 0.8rem;
   }
 
+  .crosslinks {
+    text-align: center; color: var(--muted); font-size: 0.82rem;
+    padding: 18px 14px 0; max-width: 1280px; margin: 0 auto;
+  }
+  .crosslinks a { color: var(--accent); text-decoration: underline; }
+  .crosslinks a:hover { color: #1d4ed8; }
   .copyright {
     text-align: center;
     padding: 2rem;
@@ -759,7 +765,7 @@ details {
  <header>
    <h1>WebMM Workbench</h1>
     <div class="subtitle">
-      A lightweight, ligand-based CADD workbench — draw, inspect, embed 3D, optimize, and enumerate conformers, all locally in your browser
+      Prep ligands for docking — draw or paste a structure, embed 3D (ETKDG), optimize (MMFF94s / GFN-FF), enumerate conformers, and screen in batch. Everything runs locally; nothing is uploaded.
     </div>
    <div class="badges">
      <span class="badge" title="All processing happens in your browser - no data sent anywhere">
@@ -1031,7 +1037,10 @@ details {
      <div class="version" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
    </div>
 
-  <div class="copyright">
+  <div class="crosslinks">
+  Want the validation numbers? <a id="xDemo" href="../index.html">See the Demo</a> · Just exploring? <a id="xPlayground" href="../playground.html">Try the Playground</a>
+</div>
+<div class="copyright">
    © <span id="year"></span> <a href="https://github.com/Ruibin-Liu/WebMM" target="_blank" rel="noopener">WebMM</a> — Rust + WebAssembly · MMFF94s · ETKDG · MD &amp; metadynamics · no server, nothing leaves your browser
  </div>
 
@@ -3087,8 +3096,8 @@ function exportEnsembleSDF() {
 
   async function fixSiteLinks() {
     for (const [id, page] of [
-      ['navDemo', 'index.html'], ['noteDemo', 'index.html'],
-      ['navPlayground', 'playground.html'], ['notePlayground', 'playground.html'],
+      ['navDemo', 'index.html'], ['noteDemo', 'index.html'], ['xDemo', 'index.html'],
+      ['navPlayground', 'playground.html'], ['notePlayground', 'playground.html'], ['xPlayground', 'playground.html'],
     ]) {
       document.getElementById(id).href = await resolveSitePage(page);
     }

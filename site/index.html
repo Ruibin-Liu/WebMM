@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='10' r='6' fill='%232563eb'/%3E%3Ccircle cx='23' cy='14' r='5' fill='%23ef4444'/%3E%3Ccircle cx='15' cy='24' r='5' fill='%2322c55e'/%3E%3Cpath d='M10 10L23 14L15 24L10 10' stroke='%23334155' stroke-width='2' fill='none'/%3E%3C/svg%3E">
-<title>WebMM Demo — In-Browser Molecular Mechanics</title>
+<title>WebMM Demo — Engine Capabilities &amp; Validation</title>
 <meta name="description" content="MMFF94s force field, ETKDG embedding, geometry optimization, and molecular dynamics — compiled from Rust to WebAssembly. No server, no API calls, 100% in-browser.">
 <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"></script>
 <style>
@@ -150,6 +150,12 @@
   .status.info { background: #eff6ff; color: var(--accent); border: 1px solid #bfdbfe; }
   .status.success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
   .status.error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+  .crosslinks {
+    text-align: center; color: var(--muted); font-size: 0.82rem;
+    padding: 18px 14px 0; max-width: 1280px; margin: 0 auto;
+  }
+  .crosslinks a { color: var(--accent); text-decoration: underline; }
+  .crosslinks a:hover { color: #1d4ed8; }
   footer {
     text-align: center; padding: 24px; color: var(--muted); font-size: 0.84em;
     border-top: 1px solid var(--border); margin-top: 10px;
@@ -172,8 +178,8 @@
 </nav>
 
 <header class="hero">
-  <h1>Molecular mechanics, <span>live in your browser</span></h1>
-  <p class="tagline">MMFF94s force field · ETKDG embedding · geometry optimization · MD &amp; metadynamics — compiled from Rust to WebAssembly. No server, no API calls.</p>
+  <h1>Molecular mechanics <span>you can verify</span></h1>
+  <p class="tagline">MMFF94s energies match RDKit to &lt;0.01 kcal/mol on 230/230 validation molecules. Watch embedding, optimization, MD and metadynamics run live — then reproduce every number yourself. Rust → WebAssembly, no server, no API calls.</p>
   <div class="badges">
     <div class="badge"><strong>230/230</strong> match RDKit</div>
     <div class="badge"><strong>~1.4&times;</strong> RDKit speed</div>
@@ -253,6 +259,9 @@
   </div>
 </main>
 
+<div class="crosslinks">
+  Doing real work? <a href="app/index.html">Open the Workbench</a> · Just exploring? <a href="playground.html">Try the Playground</a>
+</div>
 <footer>
   © <span id="year"></span> WebMM — Rust + WebAssembly · MMFF94s · ETKDG · MD &amp; metadynamics · no server, nothing leaves your browser
 </footer>
