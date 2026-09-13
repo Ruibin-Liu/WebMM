@@ -1506,29 +1506,43 @@ impl MMFFForceField {
                         MMFFAtomType::S_O3
                     }
                     (16, _, _, _) if double_o_count == 1 => MMFFAtomType::S_OX,
-                    // CS2 / thiocarbonyl: S double-bonded to a C that is itself
-                    // double-bonded to another S -> MMFF 72 (S2CM).
-                    (16, _, _, _)
-                        if mol.bonds.iter().any(|b| {
-                            if b.bond_type != BondType::Double || (b.atom1 != idx && b.atom2 != idx)
+                    // Terminal sulfur (degree 1) — RDKit case-16 "1 neighbor":
+                    // a thioketone/thioamide S=C whose carbon does NOT carry
+                    // exactly two terminal sulfurs -> S_2 (16); everything
+                    // else (P=S, anionic S-, dithiocarboxylate, thiosulfinate
+                    // terminal S) -> MMFF 72 (S2CM).
+                    (16, _, _, 1) => {
+                        let mut is_c_double = false;
+                        let mut n_term_s_on_partner = 0;
+                        let mut partner = usize::MAX;
+                        for b in &mol.bonds {
+                            let other = if b.atom1 == idx {
+                                b.atom2
+                            } else if b.atom2 == idx {
+                                b.atom1
+                            } else {
+                                continue;
+                            };
+                            partner = other;
+                            if b.bond_type == BondType::Double
+                                && mol.atoms[other].atomic_number == 6
                             {
-                                return false;
+                                is_c_double = true;
                             }
-                            let c = if b.atom1 == idx { b.atom2 } else { b.atom1 };
-                            mol.atoms[c].atomic_number == 6
-                                && mol.bonds.iter().any(|b2| {
-                                    b2.bond_type == BondType::Double
-                                        && b2.atom1 != idx
-                                        && b2.atom2 != idx
-                                        && (b2.atom1 == c || b2.atom2 == c)
-                                        && mol.atoms
-                                            [if b2.atom1 == c { b2.atom2 } else { b2.atom1 }]
-                                        .atomic_number
-                                            == 16
-                                })
-                        }) =>
-                    {
-                        MMFFAtomType::S2CM
+                        }
+                        if partner != usize::MAX {
+                            for &n2 in &mol.adjacency[partner] {
+                                if mol.atoms[n2].atomic_number == 16 && mol.adjacency[n2].len() == 1
+                                {
+                                    n_term_s_on_partner += 1;
+                                }
+                            }
+                        }
+                        if is_c_double && n_term_s_on_partner != 2 {
+                            MMFFAtomType::S_2
+                        } else {
+                            MMFFAtomType::S2CM
+                        }
                     }
                     // Sulfonium S+ (3 bonds, positive charge) → type 17
                     (16, _, _, 3) if charge > 0.5 => MMFFAtomType::S_OX,
