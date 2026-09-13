@@ -39,7 +39,7 @@
     padding: 6px 12px; border-radius: 8px; transition: color 0.15s, background 0.15s;
   }
   .topnav .links a:hover { color: var(--accent); background: rgba(37,99,235,0.08); }
-  .topnav .links a.active { color: var(--accent); background: rgba(37,99,235,0.12); }
+  .topnav .links a.active { color: #1d4ed8; background: rgba(37,99,235,0.12); }
   /* Hero */
   header.hero { text-align: center; padding: 46px 24px 30px; }
   header.hero h1 { font-size: 2.6em; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 10px; }
@@ -103,6 +103,49 @@
   .chart-legend .pe::before { color: var(--accent); }
   .chart-legend .temp::before { color: var(--red); }
   .chart-legend .fes::before { color: var(--violet); }
+  /* Guided validation steps */
+  .steps { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+  .step {
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; background: var(--surface);
+    transition: border-color 0.2s;
+  }
+  .step.done { border-color: #bbf7d0; }
+  .step-head { display: flex; align-items: center; gap: 8px; }
+  .step-n {
+    flex: none; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--accent); color: #fff; font-size: 0.72em; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step.done .step-n { background: var(--green); }
+  .step-title { font-weight: 700; font-size: 0.92em; }
+  .step-claim { color: var(--muted); font-size: 0.8em; margin-top: 3px; line-height: 1.45; }
+  .step-actions { display: flex; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+  button.step-btn {
+    border: 1px solid var(--border); background: #fff; color: var(--text);
+    border-radius: 8px; padding: 8px 14px; font-size: 0.86em; font-weight: 600;
+    cursor: pointer; transition: border-color 0.15s, color 0.15s, transform 0.1s;
+  }
+  button.step-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+  button.step-btn:disabled { opacity: 0.45; cursor: wait; }
+  button.step-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.step-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.step-btn.primary:hover:not(:disabled) { filter: brightness(1.12); color: #fff; }
+  button.step-btn.link {
+    border: none; background: none; padding: 8px 4px; color: var(--accent);
+    text-decoration: underline; font-weight: 600; font-size: 0.82em;
+  }
+  .evidence {
+    display: none; margin-top: 9px; padding: 8px 10px; border-radius: 8px;
+    background: #f8fafc; border: 1px solid var(--border);
+    font-family: ui-monospace, monospace; font-size: 0.74em; line-height: 1.6;
+    color: var(--text); overflow-x: auto; white-space: pre;
+  }
+  .evidence.show { display: block; }
+  .evidence .ok { color: #15803d; font-weight: 700; }
+  .evidence .bad { color: var(--red); font-weight: 700; }
+  .evidence .dim { color: var(--muted); }
+
   /* Controls */
   .controls > label:first-child { margin-top: 0; }
   .controls label { display: block; font-size: 0.78em; color: var(--muted); margin: 10px 0 4px; }
@@ -179,7 +222,7 @@
 
 <header class="hero">
   <h1>Molecular mechanics <span>you can verify</span></h1>
-  <p class="tagline">MMFF94s energies match RDKit to &lt;0.01 kcal/mol on 230/230 validation molecules. Watch embedding, optimization, MD and metadynamics run live — then reproduce every number yourself. Rust → WebAssembly, no server, no API calls.</p>
+  <p class="tagline">MMFF94s energies match RDKit to &lt;0.01 kcal/mol on 230/230 validation molecules. Five checks, in order: embed, verify the energy against a frozen RDKit reference, optimize, then run MD and metadynamics — and copy a Python script to reproduce any number yourself. Rust → WebAssembly, no server, no API calls.</p>
   <div class="badges">
     <div class="badge"><strong>230/230</strong> match RDKit</div>
     <div class="badge"><strong>~1.4&times;</strong> RDKit speed</div>
@@ -221,11 +264,52 @@
     <label>Molecule</label>
     <div class="presets" id="presets"></div>
 
-    <div class="actions">
-      <button class="action btn-md" id="btn-md" disabled>Run Molecular Dynamics</button>
-      <button class="action btn-opt" id="btn-optimize" disabled>Optimize (MMFF94s)</button>
-      <button class="action btn-metad" id="btn-metad" disabled>Run Metadynamics</button>
-      <button class="action btn-embed" id="btn-embed" disabled>Embed 3D (ETKDG)</button>
+    <div class="steps">
+      <div class="step" id="step-embed">
+        <div class="step-head"><div class="step-n">1</div><div class="step-title">Embed 3D — ETKDG</div></div>
+        <div class="step-claim">Distance geometry builds a 3D structure from connectivity alone, preserving wedge-bond stereochemistry.</div>
+        <div class="step-actions">
+          <button class="step-btn" id="btn-embed" disabled>Embed 3D</button>
+        </div>
+        <div class="evidence" id="ev-embed" tabindex="0" role="group" aria-label="embed result"></div>
+      </div>
+
+      <div class="step" id="step-parity">
+        <div class="step-head"><div class="step-n">2</div><div class="step-title">Energy parity vs RDKit</div></div>
+        <div class="step-claim">MMFF94s single-point energies match RDKit to &lt;0.01 kcal/mol on 230/230 validation molecules. Presets carry a frozen RDKit reference — verify it live, then reproduce it yourself with the Python check.</div>
+        <div class="step-actions">
+          <button class="step-btn primary" id="btn-parity" disabled>Check vs RDKit</button>
+          <button class="step-btn link" id="btn-copycheck" disabled title="Copy a self-contained RDKit Python script that recomputes this energy">&#10625; copy Python check</button>
+        </div>
+        <div class="evidence" id="ev-parity" tabindex="0" role="group" aria-label="parity result"></div>
+      </div>
+
+      <div class="step" id="step-opt">
+        <div class="step-head"><div class="step-n">3</div><div class="step-title">Optimize — MMFF94s</div></div>
+        <div class="step-claim">L-BFGS with analytic gradients relaxes the geometry to a local minimum.</div>
+        <div class="step-actions">
+          <button class="step-btn" id="btn-optimize" disabled>Optimize</button>
+        </div>
+        <div class="evidence" id="ev-opt" tabindex="0" role="group" aria-label="opt result"></div>
+      </div>
+
+      <div class="step" id="step-md">
+        <div class="step-head"><div class="step-n">4</div><div class="step-title">Molecular dynamics</div></div>
+        <div class="step-claim">Langevin dynamics at 300 K with a 1 fs timestep — watch the energy and temperature traces stay stable.</div>
+        <div class="step-actions">
+          <button class="step-btn" id="btn-md" disabled>Run MD</button>
+        </div>
+        <div class="evidence" id="ev-md" tabindex="0" role="group" aria-label="md result"></div>
+      </div>
+
+      <div class="step" id="step-metad">
+        <div class="step-head"><div class="step-n">5</div><div class="step-title">Metadynamics</div></div>
+        <div class="step-claim">Well-tempered metadynamics floods a collective variable with Gaussian hills and recovers the free-energy profile underneath.</div>
+        <div class="step-actions">
+          <button class="step-btn" id="btn-metad" disabled>Run MetaD</button>
+        </div>
+        <div class="evidence" id="ev-metad" tabindex="0" role="group" aria-label="metad result"></div>
+      </div>
     </div>
 
     <div class="status" id="status"></div>
@@ -277,6 +361,34 @@ let playTimer = null;
 let currentFrame = 0;
 let runId = 0;         // incremented when a run starts or a preset loads; stale loops stop
 
+// --- RDKit reference energies (MMFF94s single point, frozen) ---
+// Computed with RDKit Python on the exact preset geometries shipped above:
+//   m = MolFromMolBlock(preset_sdf, removeHs=False)
+//   MMFFGetMoleculeForceField(m, MMFFGetMoleculeProperties(m, 'MMFF94s')).CalcEnergy()
+// The parity check recomputes the same single point with this engine and
+// compares. For custom molecules the reference is not known a priori — the
+// copyable Python check lets anyone produce it.
+const RDKIT_REF = {
+  caffeine: -107.3328,
+  ethanol: -1.3368,
+  benzene: 16.2270,
+  cyclohexane: 9.8035,
+  dmso: 14.9028,
+};
+let currentPresetKey = null;
+
+// --- Guided-step helpers ---
+function markStep(id, done) {
+  const el = document.getElementById('step-' + id);
+  if (el) el.classList.toggle('done', done);
+}
+function showEvidence(id, html) {
+  const el = document.getElementById('ev-' + id);
+  if (!el) return;
+  el.innerHTML = html;
+  el.classList.add('show');
+}
+
 // --- Preset molecules (curated subset; full set in repo) ---
 const MOLS = {
   caffeine: {label:'Caffeine', sdf:'caffeine\n     RDKit          3D\n\n 24 25  0  0  0  0  0  0  0  0999 V2000\n   -3.1467    0.3265   -1.1835 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.1053    0.5301   -0.2170 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2966    1.1837    0.9508 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1349    1.2083    1.6347 N   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1914    0.5776    0.9232 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8053    0.1537   -0.2383 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.0843   -0.5348   -1.1842 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6291   -0.9261   -2.2444 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.2166   -0.7901   -0.9692 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8366   -0.3797    0.1694 C   0  0  0  0  0  0  0  0  0  0  0  0\n    3.0459   -0.6252    0.3533 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1188    0.2930    1.0864 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.7486    0.7433    2.3079 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.9500   -1.5253   -1.9992 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.7183    0.1213   -2.1828 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.7643    1.2546   -1.2989 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.8067   -0.5028   -0.8528 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.2283    1.6279    1.3057 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.7467    0.2925    2.4045 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1334    0.3401    3.1586 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.8508    1.8381    2.3249 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.9689   -1.7716   -1.6252 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.0933   -0.8627   -2.8669 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.3843   -2.4217   -2.2647 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  3  4  2  0\n  4  5  1  0\n  5  6  2  0\n  6  7  1  0\n  7  8  2  0\n  7  9  1  0\n  9 10  1  0\n 10 11  2  0\n 10 12  1  0\n 12 13  1  0\n  9 14  1  0\n  6  2  1  0\n 12  5  1  0\n  1 15  1  0\n  1 16  1  0\n  1 17  1  0\n  3 18  1  0\n 13 19  1  0\n 13 20  1  0\n 13 21  1  0\n 14 22  1  0\n 14 23  1  0\n 14 24  1  0\nM  END'},
@@ -301,6 +413,8 @@ async function init() {
     document.getElementById('btn-md').disabled = false;
     document.getElementById('btn-embed').disabled = false;
     document.getElementById('btn-metad').disabled = false;
+    document.getElementById('btn-parity').disabled = false;
+    document.getElementById('btn-copycheck').disabled = false;
     setStatus('Ready', 'info');
     initViewer();
     buildPresets();
@@ -340,9 +454,16 @@ function loadMol(key) {
   const idx = Object.keys(MOLS).indexOf(key);
   if (btns[idx]) btns[idx].classList.add('active');
   currentSdf = mol.sdf;
+  currentPresetKey = key;
   renderSdf(mol.sdf);
   document.getElementById('overlay').innerHTML = `<b>${mol.label}</b>`;
   traj = null; disablePlayback();
+  // fresh molecule: reset the walkthrough evidence
+  ['embed','parity','opt','md','metad'].forEach(k => {
+    markStep(k, false);
+    const ev = document.getElementById('ev-' + k);
+    if (ev) { ev.classList.remove('show'); ev.innerHTML = ''; }
+  });
   setStatus('Loaded ' + mol.label, 'info');
 }
 
@@ -502,6 +623,11 @@ function runOptimize() {
       }
       renderCoords(coords, sdf);
       traj = null; disablePlayback();
+      markStep('opt', true);
+      showEvidence('opt',
+        `E_final   = ${res.final_energy.toFixed(4)} kcal/mol\n` +
+        `iterations = ${res.iterations}\n` +
+        `wall time  = ${dt} s`);
       setStatus(`Optimized: E = ${res.final_energy.toFixed(2)} kcal/mol in ${dt}s (${res.iterations} iterations)`, 'success');
       document.getElementById('overlay').innerHTML = `E = <span>${res.final_energy.toFixed(1)}</span> kcal/mol`;
     } catch (e) { setStatus('Error: ' + e.message, 'error'); console.error(e); }
@@ -566,6 +692,13 @@ function runMD() {
       if (myRun !== runId) return;
       enablePlayback();
       const dt = ((performance.now() - t0) / 1000).toFixed(2);
+      markStep('md', true);
+      showEvidence('md',
+        `steps      = ${nSteps} (${(nSteps * (parseFloat(document.getElementById('md-dt').value) || 1.0) / 1000).toFixed(1)} ps)\n` +
+        `frames     = ${traj.nFrames}\n` +
+        `T range    = ${traj.tMin.toFixed(0)}\u2013${traj.tMax.toFixed(0)} K (target ${(parseFloat(document.getElementById('md-temp').value) || 300).toFixed(0)} K)\n` +
+        `PE range   = ${traj.eMin.toFixed(1)}\u2013${traj.eMax.toFixed(1)} kcal/mol\n` +
+        `thermostat = Langevin, friction ${(parseFloat(document.getElementById('md-friction').value) || 1.0).toFixed(1)}/ps`);
       setStatus(`MD: ${traj.nFrames} frames in ${dt}s. Final T = ${temps[temps.length-1].toFixed(0)}K, E = ${energies[energies.length-1].toFixed(1)}`, 'success');
     } catch (e) { setStatus('MD error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
@@ -581,11 +714,99 @@ function runEmbed() {
       const res = wasm.generate_initial_coordinates_wasm(sdf);
       if (res.get_success()) {
         renderCoords(res.get_coordinates(), sdf);
+        markStep('embed', true);
+        showEvidence('embed',
+          `atoms embedded = ${res.get_n_atoms()}\n` +
+          `method         = ETKDG (distance geometry + triangle bounds)\n` +
+          `stereo         = wedge bonds enforced as chiral constraints`);
         setStatus(`ETKDG embed: ${res.get_n_atoms()} atoms`, 'success');
       } else { setStatus('ETKDG failed: ' + res.get_error(), 'error'); }
     } catch (e) { setStatus('Error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
   }, 20);
+}
+
+// --- Step 2: single-point parity vs a frozen RDKit reference ---
+const TERM_LABELS = {
+  bond: 'bond', angle: 'angle', stretch_bend: 'str-bend',
+  torsion: 'torsion', oop: 'oop', vdw: 'vdW', electrostatic: 'elec',
+};
+function runParity() {
+  const sdf = getSdf(); if (!sdf) return;
+  setStatus('Evaluating MMFF94s single point\u2026', 'info');
+  try {
+    const t0 = performance.now();
+    const d = JSON.parse(wasm.energy_terms_wasm(sdf, 'MMFF94s'));
+    const dt = ((performance.now() - t0) / 1000).toFixed(3);
+    const lines = [];
+    const terms = d.terms || {};
+    for (const [k, label] of Object.entries(TERM_LABELS)) {
+      if (terms[k] != null) {
+        lines.push(`  ${label.padEnd(8)} = ${terms[k].toFixed(4)}`);
+      }
+    }
+    const eWeb = d.E;
+    let deltaHtml;
+    if (currentPresetKey && RDKIT_REF[currentPresetKey] != null) {
+      const eRef = RDKIT_REF[currentPresetKey];
+      const dl = Math.abs(eWeb - eRef);
+      const verdict = dl < 0.01
+        ? `<span class="ok">\u2713 MATCH (\u0394 = ${dl.toFixed(5)} kcal/mol)</span>`
+        : `<span class="bad">\u2717 MISMATCH (\u0394 = ${dl.toFixed(5)} kcal/mol)</span>`;
+      deltaHtml =
+        `  WebMM     = ${eWeb.toFixed(4)} kcal/mol\n` +
+        `  RDKit ref = ${eRef.toFixed(4)} kcal/mol\n` +
+        `  ${verdict}`;
+      markStep('parity', dl < 0.01);
+    } else {
+      deltaHtml =
+        `  WebMM     = ${eWeb.toFixed(4)} kcal/mol\n` +
+        `  <span class="dim">RDKit ref = n/a for custom input \u2014 use the Python check to produce one</span>`;
+      markStep('parity', false);
+    }
+    showEvidence('parity',
+      `${deltaHtml}\n` +
+      `  <span class="dim">term decomposition (kcal/mol):</span>\n` +
+      lines.join('\n') +
+      `\n  <span class="dim">evaluated in ${dt} s \u00b7 engine ${d.engine}</span>`);
+    setStatus(`Single point: E = ${eWeb.toFixed(4)} kcal/mol (${dt}s)`, 'success');
+  } catch (e) {
+    setStatus('Parity error: ' + e.message, 'error');
+    console.error(e);
+  }
+}
+
+function copyCheckScript() {
+  const sdf = getSdf(); if (!sdf) return;
+  let ours = 'n/a';
+  try { ours = JSON.parse(wasm.energy_terms_wasm(sdf, 'MMFF94s')).E.toFixed(4); } catch (e) {}
+  const ver = wasm.webmm_version ? wasm.webmm_version() : 'unknown';
+  const script =
+`# WebMM ${ver} \u2014 MMFF94s single-point parity check
+# Reproduces the "Energy parity vs RDKit" step: evaluates the exact molblock
+# below with RDKit and compares against this engine's number.
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+molblock = r"""${sdf.trim()}"""
+
+webmm_E = ${ours}  # kcal/mol, from the button in the demo
+
+m = Chem.MolFromMolBlock(molblock, removeHs=False)
+assert m is not None, "RDKit failed to parse the molblock"
+props = AllChem.MMFFGetMoleculeProperties(m, mmffVariant="MMFF94s")
+assert props is not None, "MMFF94s typing failed"
+E = AllChem.MMFFGetMoleculeForceField(m, props).CalcEnergy()
+print(f"RDKit MMFF94s E = {E:.4f} kcal/mol")
+print(f"WebMM  MMFF94s E = {webmm_E} kcal/mol")
+print(f"|delta|          = {abs(E - webmm_E):.5f} kcal/mol")
+`;
+  navigator.clipboard.writeText(script).then(() => {
+    setStatus('Python check copied to clipboard \u2014 run it anywhere with RDKit installed', 'success');
+  }).catch(() => {
+    // clipboard may be unavailable (permissions); fall back to a prompt
+    window.prompt('Clipboard blocked \u2014 copy manually:', script);
+  });
 }
 
 // --- Metadynamics ---
@@ -654,6 +875,13 @@ function runMetad() {
       const fesSpan = fesF.length > 0 ? (Math.max(...fesF) - Math.min(...fesF)).toFixed(1) : '—';
       enablePlayback();
       const dt = ((performance.now() - t0) / 1000).toFixed(2);
+      markStep('metad', true);
+      showEvidence('metad',
+        `hills       = ${state.hill_count()}\n` +
+        `CV          = ${cvType} ${document.getElementById('metad-cv-atoms').value}\n` +
+        `bias factor = \u03b3 ${(parseFloat(document.getElementById('metad-bias').value) || 10.0).toFixed(0)}\n` +
+        `FES span    = ${fesSpan} kcal/mol\n` +
+        `wall time   = ${dt} s`);
       setStatus(`MetaD: ${state.hill_count()} hills in ${dt}s. FES span: ${fesSpan} kcal/mol`, 'success');
     } catch (e) { setStatus('MetaD error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
@@ -814,18 +1042,24 @@ function setStatus(msg, kind) {
   el.textContent = msg; el.className = 'status show ' + kind;
 }
 function disableActions(b) {
-  ['btn-optimize','btn-md','btn-embed','btn-metad'].forEach(id => document.getElementById(id).disabled = b);
+  ['btn-optimize','btn-md','btn-embed','btn-metad','btn-parity','btn-copycheck'].forEach(id => document.getElementById(id).disabled = b);
 }
 
 // --- Wire up ---
 document.getElementById('sdf-input').addEventListener('input', () => {
   const s = document.getElementById('sdf-input').value.trim();
-  if (s) { currentSdf = s; renderSdf(s); document.getElementById('overlay').textContent = 'Custom'; }
+  if (s) {
+    currentSdf = s; currentPresetKey = null; renderSdf(s);
+    document.getElementById('overlay').textContent = 'Custom';
+    markStep('parity', false);
+  }
 });
 document.getElementById('btn-optimize').onclick = runOptimize;
 document.getElementById('btn-md').onclick = runMD;
 document.getElementById('btn-embed').onclick = runEmbed;
 document.getElementById('btn-metad').onclick = runMetad;
+document.getElementById('btn-parity').onclick = runParity;
+document.getElementById('btn-copycheck').onclick = copyCheckScript;
 document.getElementById('btn-play').onclick = togglePlay;
 document.getElementById('btn-prev').onclick = () => { if (traj) { currentFrame = Math.max(0, currentFrame-1); sl(); render(); drawChart(); readouts(); } };
 document.getElementById('btn-next').onclick = () => { if (traj) { currentFrame = Math.min(traj.nFrames-1, currentFrame+1); sl(); render(); drawChart(); readouts(); } };
