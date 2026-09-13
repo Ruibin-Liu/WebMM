@@ -337,3 +337,38 @@ pub fn get_mmff_torsion_type(
 
     (torsion_type, second_torsion_type)
 }
+
+/// Element (atomic number) of an MMFF atom type — used by the RDKit
+/// empirical bond rule, which keys on elements rather than MMFF types.
+pub fn element_of(t: MMFFAtomType) -> i32 {
+    use MMFFAtomType::*;
+    match t {
+        // hydrogen
+        H | H_OH | H_ONC | H_COOH | H_OAR | H_N3 | H_NAM | H_NIM | HNRP | HS => 1,
+        // carbon
+        C_3 | C_2 | C_VIN | C_CO2 | C_1 | C_AR | C5A | C5B | C5A_M | C_IM | C_CAT | C_AN | CID
+        | NID | CR4R | CE4R | CR3R => 6,
+        // nitrogen
+        N_3 | N_2 | N_1 | N_AR | NPYL | N_PL3 | N_AM | N_4 | N_2Z | N_1M | N_SOM | N_NO2
+        | N_SO2 | N_NITROSO | N5A | N5B | N5 | N_POX | N_RAD | NPYL_M | N_PYR | N_T3 | N_POX2
+        | N_SO | N_IM | N_GD | N_5OX | N_5POS | N_5OX2 | NCN_PLUS | OXIDE => 7,
+        // oxygen
+        O_3 | O_2 | O_R | OH2 | OFUR | O_CO2 | O_3_Z | O_3P | O_2P => 8,
+        // fluorine
+        F_M => 9,
+        // silicon, phosphorus
+        P_ARM | P_3 | P_4 | P_3D => 15,
+        // sulfur
+        S_3 | S_2 | S_AR | S_OX | S_O2 | S_O3 | S_CSO | S_3D | S_3D2 => 16,
+        // chlorine, bromine (iodine has no dedicated type here)
+        CL4 | CL_M => 17,
+        BR_M => 35,
+        S2CM => 16,
+        HOS => 1,
+        // fluorine (neutral F is its own variant in some paths)
+        MMFFAtomType::F => 9,
+        // hydrogen on oxidized O / anything else exotic (metals, dummies):
+        // no element mapping — callers fall back to the class-based rule
+        _ => -1,
+    }
+}

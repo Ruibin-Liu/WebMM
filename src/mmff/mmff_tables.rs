@@ -2566,7 +2566,7 @@ pub const MMFF_ANGLE_TABLE: [(u8, u8, u8, u8, f64, f64); 2373 + 10 + 23 + 1 + 4 
 ];
 
 #[rustfmt::skip]
-pub const MMFF_STBN_TABLE: [(u8, u8, u8, u8, f64, f64); 309 + 1 + 5 + 13] = [
+pub const MMFF_STBN_TABLE: [(u8, u8, u8, u8, f64, f64); 323] = [
     (0, 1, 1, 1, 0.206, 0.206),
     (0, 1, 1, 2, 0.136, 0.197),
     (0, 1, 1, 3, 0.211, 0.092),
@@ -2857,11 +2857,6 @@ pub const MMFF_STBN_TABLE: [(u8, u8, u8, u8, f64, f64); 309 + 1 + 5 + 13] = [
     (0, 5, 1, 73, 0.05, 0.35),
     (0, 1, 73, 32, 0.3, 0.3),
     (0, 32, 73, 32, 0.3, 0.3),
-    (0, 5, 30, 30, 0.054, 0.267),
-    (0, 5, 20, 30, 0.123, 0.108),
-    (0, 5, 30, 20, 0.007, 0.251),
-    (4, 20, 30, 30, 0.705, 0.413),
-    (4, 20, 20, 30, 0.529, 0.34),
     // O_2P (type 51) stretch-bend
     (0, 5, 3, 51, 0.1, 0.3),
     (0, 5, 30, 51, 0.1, 0.3),
@@ -3007,9 +3002,10 @@ pub fn lookup_angle_params(
         if can_i > can_k {
             std::mem::swap(&mut can_i, &mut can_k);
         }
-        if can_i == 0 && can_k == 0 && iter > 0 {
-            break;
-        }
+        // NOTE: no early break on (0, j, 0): RDKit's level-3/4 iteration
+        // queries the wildcard rows (e.g. (0, 17, 0) with ka = 0 and a
+        // tabulated theta0), which selects the empirical-ka + tabulated-
+        // theta0 path. Breaking here made S-centred angles miss it.
         for &(at, ti, tj, tk, ka, t0) in MMFF_ANGLE_TABLE.iter() {
             if at == angle_type && ti == can_i && tj == type_j && tk == can_k {
                 return Some((ka, t0));
@@ -3203,8 +3199,12 @@ pub fn empirical_angle_params(
     r0_jk: f64,
     ring_size: u8,
 ) -> Option<(f64, f64)> {
+    // get_mmff_prop returns (atno, val, crd, pilp, mltb, arom, linh, sbmb) —
+    // crd and val were previously destructured swapped, which misrouted the
+    // theta0 rules for atoms with val != crd (e.g. sulfoxide S: val 3 / crd 4
+    // fell through to 120 degrees instead of 109.45)
     let (atno_i, _, _, _, _, _, _, _) = get_mmff_prop(type_i)?;
-    let (atno_j, crd_j, val_j, _, mltb_j, _, linh_j, _) = get_mmff_prop(type_j)?;
+    let (atno_j, val_j, crd_j, _, mltb_j, _, linh_j, _) = get_mmff_prop(type_j)?;
     let (atno_k, _, _, _, _, _, _, _) = get_mmff_prop(type_k)?;
 
     let mut theta0: f64 = 120.0;

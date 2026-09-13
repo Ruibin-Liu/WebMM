@@ -102,6 +102,10 @@ fn get_angle_params_from_table(
     let tj = super::params::mmff_type_id(type2);
     let tk = super::params::mmff_type_id(type3);
 
+    // RDKit getMMFFAngleBendParams: when the table row exists but ka == 0
+    // (e.g. the wildcard (0, *, 17, 0) rows reached at eq-level 3), the
+    // empirical rule supplies ka while the TABULATED theta0 is kept.
+    let mut tabulated_theta0: Option<f64> = None;
     if let Some((ka, t0)) = mmff_tables::lookup_angle_params(ti, tj, tk, angle_type) {
         if ka.abs() > 1e-10 {
             return Some(AngleParams {
@@ -109,6 +113,7 @@ fn get_angle_params_from_table(
                 theta0: t0,
             });
         }
+        tabulated_theta0 = Some(t0);
     }
 
     if let Some((ka, theta0)) =
@@ -116,7 +121,7 @@ fn get_angle_params_from_table(
     {
         return Some(AngleParams {
             k_theta: ka,
-            theta0,
+            theta0: tabulated_theta0.unwrap_or(theta0),
         });
     }
 

@@ -50,6 +50,21 @@ pub fn get_bond_params(
             return Some(p);
         }
     }
+    // RDKit's exact empirical rule (Bndk / Herschbach-Laurie) — the same one
+    // RDKit applies for pairs missing from the release table
+    let (z1, z2) = (
+        super::params::element_of(base1),
+        super::params::element_of(base2),
+    );
+    if z1 > 0 && z2 > 0 {
+        if let Some((kb, r0)) = super::estimation::estimate_bond_params_rdkit(z1, z2) {
+            return Some(BondParams {
+                k_bond: kb,
+                r0,
+                cb: 1.0,
+            });
+        }
+    }
     if let Some((kb, r0)) = super::estimation::estimate_bond_params(base1, base2, bond_type) {
         return Some(BondParams {
             k_bond: kb,

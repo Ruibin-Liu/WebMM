@@ -504,6 +504,27 @@ impl MMFFForceField {
                     torsion_types[ti],
                     variant,
                 )
+                .or_else(|| {
+                    // RDKit's empirical torsion rule for untabled central
+                    // bonds (rules a-h, MMFF.V)
+                    let bt = mol
+                        .bonds
+                        .iter()
+                        .find(|b| {
+                            (b.atom1 == t.atom2 && b.atom2 == t.atom3)
+                                || (b.atom1 == t.atom3 && b.atom2 == t.atom2)
+                        })
+                        .map(|b| b.bond_type)
+                        .unwrap_or(BondType::Single);
+                    torsion::estimate_torsion_params_rdkit(
+                        atom_types[t.atom2],
+                        atom_types[t.atom3],
+                        mol.atoms[t.atom2].atomic_number as i32,
+                        mol.atoms[t.atom3].atomic_number as i32,
+                        bt,
+                    )
+                    .filter(|p| p.v1 != 0.0 || p.v2 != 0.0 || p.v3 != 0.0)
+                })
                 .map(|p| (t.atom1, t.atom2, t.atom3, t.atom4, p))
             })
             .collect();
@@ -1330,13 +1351,12 @@ impl MMFFForceField {
                             match mol.atoms[other].atomic_number {
                                 15 | 17 => true, // P=O, Cl=O
                                 16 => {
-                                    // S=O: type 32 unless sulfoxide/sulfinamide
-                                    // Sulfoxide exception: S degree 3, 1 double O,
-                                    // no other O neighbors (all non-=O neighbors are C/N)
-                                    let s_deg = mol.adjacency[other].len();
-                                    let s_has_o_single = mol.adjacency[other]
-                                        .iter()
-                                        .any(|&n| n != idx && mol.atoms[n].atomic_number == 8);
+                                    // S=O oxygen typing (RDKit-verified):
+                                    //   sulfone/sulfonyl S (two double O/N) -> O_CO2 (32)
+                                    //   anionic O- on the S (sulfinate/sulfonate) -> O_CO2 (32)
+                                    //   everything else — sulfoxide, sulfite ester,
+                                    //   sulfinic acid, sulfinamide (one double O/N,
+                                    //   neutral) -> plain O_2 (7)
                                     let s_double_o_total = mol.adjacency[other]
                                         .iter()
                                         .filter(|&&n| {
@@ -1349,9 +1369,12 @@ impl MMFFForceField {
                                             })
                                         })
                                         .count();
-                                    // Sulfone (2+ double O) or sulfite (O single neighbor) → 32
-                                    // Sulfoxide (degree 3, 1 double O, no O single) → 7
-                                    s_double_o_total >= 2 || s_has_o_single
+                                    let s_has_o_minus = mol.adjacency[other].iter().any(|&n| {
+                                        n != idx
+                                            && mol.atoms[n].atomic_number == 8
+                                            && mol.atoms[n].charge < -0.5
+                                    });
+                                    s_double_o_total >= 2 || s_has_o_minus
                                 }
                                 _ => false,
                             }
@@ -1445,17 +1468,40 @@ impl MMFFForceField {
                     }
                     // Oxidized sulfur: SO2 or S(=O)(=N) -> MMFF 18, S=O -> MMFF 17 (RDKit-verified)
                     (16, _, _, _) if double_on_count >= 2 => MMFFAtomType::S_O2,
-                    // Sulfite S (type 73): S with 1 double O + an O single-bond neighbor
+                    // Type 73 (RDKit "SSOM", tricoordinate sulfinate-anion-like S):
+                    // degree-3 S bonded to BOTH a terminal O / secondary N AND
+                    // a terminal S, or to exactly two terminal O/N neighbours
+                    // with no C double bond (e.g. [O-]S(=O)R). Sulfoxide
+                    // esters like O=S(OMe)2 do NOT qualify — their alkoxy
+                    // oxygens are degree-2 — and must fall through to S_OX.
+                    // Mirrors RDKit AtomTyper case-16 "3 or 4 neighbors".
                     (16, _, _, 3)
-                        if double_o_count == 1
-                            && mol.adjacency[idx].iter().any(|&n| {
-                                mol.atoms[n].atomic_number == 8
-                                    && mol.bonds.iter().any(|b| {
-                                        (b.atom1 == idx && b.atom2 == n
-                                            || b.atom1 == n && b.atom2 == idx)
-                                            && b.bond_type == BondType::Single
-                                    })
-                            }) =>
+                        if double_o_count == 1 && {
+                            let mut n_o_or_n = 0;
+                            let mut n_s_term = 0;
+                            let mut c_double = false;
+                            for &n in &mol.adjacency[idx] {
+                                let z = mol.atoms[n].atomic_number;
+                                let deg = mol.adjacency[n].len();
+                                let bond = mol.bonds.iter().find(|b| {
+                                    (b.atom1 == idx && b.atom2 == n)
+                                        || (b.atom1 == n && b.atom2 == idx)
+                                });
+                                let is_double = bond
+                                    .map(|b| matches!(b.bond_type, BondType::Double))
+                                    .unwrap_or(false);
+                                if z == 6 && is_double {
+                                    c_double = true;
+                                }
+                                if (deg == 1 && z == 8) || (deg == 2 && z == 7) {
+                                    n_o_or_n += 1;
+                                }
+                                if deg == 1 && z == 16 {
+                                    n_s_term += 1;
+                                }
+                            }
+                            (n_o_or_n >= 1 && n_s_term >= 1) || (n_o_or_n == 2 && !c_double)
+                        } =>
                     {
                         MMFFAtomType::S_O3
                     }

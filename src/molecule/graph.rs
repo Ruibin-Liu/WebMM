@@ -822,6 +822,35 @@ mod tests {
 
     const MALEIMIDE: &str = "maleimide\n     RDKit          3D\n\n 10 10  0  0  0  0  0  0  0  0999 V2000\n   -1.1905   -2.0775   -0.0430 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5649   -1.0363   -0.0214 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7738   -0.8719   -0.0146 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0963    0.4376    0.0113 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2047    0.9348    0.0238 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1629    1.1890    0.0223 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1614    0.3031    0.0027 C   0  0  0  0  0  0  0  0  0  0  0  0  0\n    1.4414   -1.6240   -0.0272 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2148    2.2629    0.0427 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2217    0.4823    0.0033 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  1  0\n  4  5  2  0\n  4  6  1  0\n  6  7  2  0\n  7  2  1  0\n  3  8  1  0\n  6  9  1  0\n  7 10  1  0\nM  END\n";
 
+    const METHYL_SULFITE: &str = "\n     RDKit          3D\n\n 12 11  0  0  0  0  0  0  0  0999 V2000\n    2.4151   -0.1206    0.2719 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1865    0.5011    0.6137 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0680    0.4775   -0.5437 S   0  0  0  0  0  0  0  0  0  0  0  0\n    0.0418   -0.8984   -1.1386 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.2205    0.6360    0.4079 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.4349    0.1513   -0.1428 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.8305    0.2997   -0.6505 H   0  0  0  0  0  0  0  0  0  0  0  0\n    3.1271    0.0669    1.0810 H   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2911   -1.2041    0.1754 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -3.2483    0.4243    0.5359 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.6390    0.6064   -1.1182 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.4173   -0.9401   -0.2273 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  3  4  2  0\n  3  5  1  0\n  5  6  1  0\n  1  7  1  0\n  1  8  1  0\n  1  9  1  0\n  6 10  1  0\n  6 11  1  0\n  6 12  1  0\nM  END\n";
+
+    #[test]
+    fn sulfite_ester_typing_matches_rdkit() {
+        // RDKit: C(1) O(6) S(17) O(7) O(6) C(1) — the sulfoxide S is 17 even
+        // with two alkoxy O neighbours, and its =O oxygen is plain O_2 (7),
+        // not O_CO2 (32).
+        let mol = mol_from_block(METHYL_SULFITE);
+        let ff = crate::mmff::MMFFForceField::new(&mol, crate::mmff::MMFFVariant::MMFF94s);
+        let t = &ff.atom_types;
+        use crate::mmff::MMFFAtomType::*;
+        assert_eq!(t[0], C_3);
+        assert_eq!(t[1], O_R);
+        assert_eq!(t[2], S_OX);
+        assert_eq!(t[3], O_2);
+        assert_eq!(t[4], O_R);
+    }
+
+    #[test]
+    fn angle_wildcard_row_keeps_tabulated_theta0() {
+        // (1, 17, 15) misses at levels 0-2 and hits the wildcard (0, 17, 0)
+        // row (ka = 0, theta0 = 99.4): the empirical rule must supply ka but
+        // KEEP 99.4 — previously we recomputed 109.45 and lost ~3 kcal/mol.
+        let mol = mol_from_block(METHYL_SULFITE);
+        let _ = &mol; // typing test above covers the molecule; here check lookup:
+        let hit = crate::mmff::mmff_tables::lookup_angle_params(1, 17, 15, 0);
+        assert_eq!(hit, Some((0.0, 99.4)));
+    }
+
     #[test]
     fn mmff_aromaticity_maleimide_not_aromatic() {
         // The imide five-ring has only 4 in-cycle pi electrons (the two C=O

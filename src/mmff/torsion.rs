@@ -6,6 +6,7 @@ use super::get_eq_levels;
 use super::mmff_type_id;
 use super::MMFFAtomType;
 use super::MMFFVariant;
+use crate::molecule::BondType;
 
 /// Torsion parameters
 #[derive(Debug, Clone, Copy)]
@@ -516,7 +517,7 @@ const TOR94_TABLE: &[(u8, u8, u8, u8, u8, f64, f64, f64)] = &[
     (0, 0, 20, 25, 0, 0.0, 0.0, 0.251),
     (0, 0, 20, 26, 0, 0.0, 0.0, 0.376),
     (0, 0, 20, 30, 0, 0.0, 0.0, 0.0),
-    (0, 0, 20, 30, 30, 0.0, 0.0, 0.0),
+    (0, 0, 20, 30, 30, 0.0, 0.0, -0.5),
     (0, 0, 20, 34, 0, 0.0, 0.0, 0.198),
     (0, 0, 20, 37, 0, 0.0, 0.0, 0.0),
     (0, 0, 20, 40, 0, 0.0, 0.0, 0.297),
@@ -1452,7 +1453,7 @@ const TOR94S_TABLE: &[(u8, u8, u8, u8, u8, f64, f64, f64)] = &[
     (0, 0, 20, 25, 0, 0.0, 0.0, 0.251),
     (0, 0, 20, 26, 0, 0.0, 0.0, 0.376),
     (0, 0, 20, 30, 0, 0.0, 0.0, 0.0),
-    (0, 0, 20, 30, 30, 0.0, 0.0, 0.0),
+    (0, 0, 20, 30, 30, 0.0, 0.0, -0.5),
     (0, 0, 20, 34, 0, 0.0, 0.0, 0.198),
     (0, 0, 20, 37, 0, 0.0, 0.0, 0.0),
     (0, 0, 20, 40, 0, 0.0, 0.0, 0.297),
@@ -1938,6 +1939,139 @@ fn tor_lookup(
         }
     }
     None
+}
+
+/// RDKit `getMMFFTorsionEmpiricalRuleParams` (AtomTyper.cpp) — the empirical
+/// torsion rule applied when the release table misses (rules a–h of MMFF.V).
+/// Keys on the two CENTRAL atoms' types and properties.
+pub fn estimate_torsion_params_rdkit(
+    type_j: MMFFAtomType,
+    type_k: MMFFAtomType,
+    z_j: i32,
+    z_k: i32,
+    bond_jk: BondType,
+) -> Option<TorsionParams> {
+    use crate::mmff::mmff_tables::{get_mmff_prop, get_periodic_table_row};
+    // (atno, val, crd, pilp, mltb, arom, linh, sbmb)
+    let (at_j, val_j, crd_j, pilp_j, mltb_j, _, linh_j, _) =
+        get_mmff_prop(super::params::mmff_type_id(type_j))?;
+    let (at_k, val_k, crd_k, pilp_k, mltb_k, _, linh_k, _) =
+        get_mmff_prop(super::params::mmff_type_id(type_k))?;
+    let _ = (at_j, at_k);
+
+    // Table VI analogues: U/V/W per element for the two central atoms
+    let uvw = |z: i32| -> (f64, f64, f64) {
+        match z {
+            6 => (2.0, 2.12, 0.0),
+            7 => (2.0, 1.5, 0.0),
+            8 => (2.0, 0.2, 2.0),
+            14 => (1.25, 1.22, 0.0),
+            15 => (1.25, 2.40, 0.0),
+            16 => (1.25, 0.49, 8.0),
+            _ => (0.0, 0.0, 0.0),
+        }
+    };
+    let (u0, v0, w0) = uvw(z_j);
+    let (u1, v1, w1) = uvw(z_k);
+    let n_jk = ((crd_j as f64 - 1.0) * (crd_k as f64 - 1.0)).max(0.0);
+    let row2 = |z: i32| get_periodic_table_row(z as u8) == 2;
+
+    let v1 = 0.0f64;
+    let mut v2 = 0.0f64;
+    let mut v3 = 0.0f64;
+
+    let is_arom_bond = bond_jk == BondType::Aromatic;
+    let arom_j = super::params::is_arom(super::params::mmff_type_id(type_j));
+    let arom_k = super::params::is_arom(super::params::mmff_type_id(type_k));
+
+    // rule (a): linear central atoms -> no torsion
+    if linh_j != 0 || linh_k != 0 {
+        // all zero
+    }
+    // rule (b): aromatic bond between two aromatic types
+    else if arom_j && arom_k && is_arom_bond {
+        let beta = if (val_j == 3 && val_k == 4) || (val_j == 4 && val_k == 3) {
+            3.0
+        } else {
+            6.0
+        };
+        let pi_jk = if pilp_j == 0 && pilp_k == 0 { 0.5 } else { 0.3 };
+        v2 = beta * pi_jk * (u0 * u1).sqrt();
+    }
+    // rule (c): central double bond
+    else if bond_jk == BondType::Double {
+        let beta = 6.0;
+        let pi_jk = if mltb_j == 2 && mltb_k == 2 { 1.0 } else { 0.4 };
+        v2 = beta * pi_jk * (u0 * u1).sqrt();
+    }
+    // rule (d): both crd 4
+    else if crd_j == 4 && crd_k == 4 {
+        v3 = (v0 * v1).sqrt() / n_jk;
+    }
+    // rule (e): j crd 4, k not
+    else if crd_j == 4 && crd_k != 4 {
+        let zeroed = (crd_k == 3 && (val_k == 4 || val_k == 34 || mltb_k != 0))
+            || (crd_k == 2 && (val_k == 3 || mltb_k != 0));
+        if !zeroed {
+            v3 = (v0 * v1).sqrt() / n_jk;
+        }
+    }
+    // rule (f): k crd 4, j not
+    else if crd_k == 4 && crd_j != 4 {
+        let zeroed = (crd_j == 3 && (val_j == 4 || val_j == 34 || mltb_j != 0))
+            || (crd_j == 2 && (val_j == 3 || mltb_j != 0));
+        if !zeroed {
+            v3 = (v0 * v1).sqrt() / n_jk;
+        }
+    }
+    // rule (g): conjugated single bonds / mixed mltb-pilp
+    else if (bond_jk == BondType::Single && mltb_j != 0 && mltb_k != 0)
+        || (mltb_j != 0 && pilp_k != 0)
+        || (pilp_j != 0 && mltb_k != 0)
+    {
+        if pilp_j != 0 && pilp_k != 0 {
+            // case 1: all zero
+        } else if pilp_j != 0 && mltb_k != 0 {
+            // case 2
+            let beta = 6.0;
+            let pi_jk = if mltb_j == 1 {
+                0.5
+            } else if row2(z_j) && row2(z_k) {
+                0.3
+            } else {
+                0.15
+            };
+            v2 = beta * pi_jk * (u0 * u1).sqrt();
+        } else if pilp_k != 0 && mltb_j != 0 {
+            // case 3
+            let beta = 6.0;
+            let pi_jk = if mltb_k == 1 {
+                0.5
+            } else if row2(z_j) && row2(z_k) {
+                0.3
+            } else {
+                0.15
+            };
+            v2 = beta * pi_jk * (u0 * u1).sqrt();
+        } else if (mltb_j == 1 || mltb_k == 1) && (z_j != 6 || z_k != 6) {
+            // case 4
+            v2 = 6.0 * 0.4 * (u0 * u1).sqrt();
+        } else {
+            // case 5
+            v2 = 6.0 * 0.15 * (u0 * u1).sqrt();
+        }
+    }
+    // rule (h): everything else
+    else {
+        let oo_or_ss = (z_j == 8 || z_j == 16) && (z_k == 8 || z_k == 16);
+        if oo_or_ss {
+            v2 = -(w0 * w1).sqrt();
+        } else {
+            v3 = (v0 * v1).sqrt() / n_jk;
+        }
+    }
+    let _ = is_arom_bond;
+    Some(TorsionParams { v1, v2, v3 })
 }
 
 pub fn get_torsion_params(
