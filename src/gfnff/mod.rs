@@ -525,15 +525,16 @@ impl Gfnff {
         let mut alpeeq = vec![0.0f64; n];
         for i in 0..n {
             let z = at[i];
-            // dgam: qa * ff(gam)
+            // dgam: qa * ff(gam). NOTE: the xtb 6.7.1 gxtb binary applies
+            // ff = -0.14 for EVERY pi N (verified on acetamide and
+            // N-methylformamide via the gfnff_topo restart file: gameeq[N] =
+            // gam + qa*(-0.14) even when amide() = .true. and amideH fires);
+            // the amide -0.16 branch present in the gxtb source tree is not
+            // compiled in, so we match the binary.
             let ff_gam = match z {
                 1 => -0.08, 5 => -0.05,
-                6 => if hyb[i] < 3 { -0.45 } else { -0.27 },
-                7 => {
-                    if is_amide_n(at, &hyb, &nb, &piadr_temp, i) { -0.16 }
-                    else if piadr_temp[i] { -0.14 }
-                    else { -0.13 }
-                },
+                6 => if hyb[i] < 2 { -0.34 } else if hyb[i] < 3 { -0.45 } else { -0.27 },
+                7 => if piadr_temp[i] { -0.14 } else { -0.13 },
                 8 => if hyb[i] < 3 { -0.08 } else { -0.15 },
                 9 => 0.10, 17 => -0.02, 35 => -0.11, 53 => -0.07,
                 z if z > 10 => -0.02,
@@ -545,6 +546,16 @@ impl Gfnff {
                 else if p.group[z-1] == 7 { 0.50 }
                 else { 0.0 };
             chieeq[i] = -p.chi[z-1] + dxi[i];
+            // amideH (ini2 amideH): peptide N-H — a terminal H on an amide N
+            // that carries exactly one sp3 carbon — gets chi -0.02
+            if z == 1 && nb[i].len() == 1 {
+                let nn = nb[i][0];
+                if is_amide_n(at, &hyb, &nb, &piadr_temp, nn) {
+                    let nc_sp3 = nb[nn].iter()
+                        .filter(|&&j| at[j] == 6 && hyb[j] == 3).count();
+                    if nc_sp3 == 1 { chieeq[i] -= 0.02; }
+                }
+            }
             gameeq[i] = p.gam[z-1] + topo_q[i] * ff_gam;
             alpeeq[i] = (p.alp[z-1] + ff_alp * topo_q[i]).powi(2);
         }
@@ -4166,6 +4177,30 @@ mod tests_more3 {
 #[cfg(test)]
 mod tests_pibo_promotion {
     use super::*;
+
+    /// N-methylformamide total energy vs xtb 6.7.1 --gfnff --sp. Locks two
+    /// EEQ details the gfnff_topo restart file proved about the shipped
+    /// binary: (1) dgam ff for a pi N is -0.14 even when amide() is true
+    /// (the -0.16 amide branch in the gxtb source is not compiled in), and
+    /// (2) the amideH correction chi -0.02 applies to a peptide N-H (an H
+    /// on an amide N carrying exactly one sp3 carbon).
+    #[test]
+    fn nmf_total_vs_xtb() {
+        let sdf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/gfnff/n_methylformamide.mol")).unwrap();
+        let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+        let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+        let xyz: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e = g.energy(&xyz);
+        // xtb: total -1.897351927533, es -0.080341624685
+        assert!((e.total() - (-1.897352)).abs() < 2e-5,
+            "NMF total {:+.6} vs xtb -1.897352", e.total());
+        assert!((e.es - (-0.080342)).abs() < 2e-5,
+            "NMF es {:+.6} vs xtb -0.080342", e.es);
+        // the peptide H (atom 8, 1-based) carries the amideH chi shift
+        assert!((g.topo.chieeq[7] - (-1.247054)).abs() < 1e-5,
+            "amideH chieeq {:?} vs -1.247054", g.topo.chieeq[7]);
+    }
 
     /// Thiophene total energy vs xtb 6.7.1 --gfnff --sp (geometry from the
     /// parity suite). Before the pibo > 0.1 -> btyp=2 promotion (xtb ini

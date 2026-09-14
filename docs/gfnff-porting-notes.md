@@ -243,3 +243,12 @@ energy().total() ≡ energy_and_gradient().total() < 1e-12;O-H 拉伸扫描(1.0�
 - `scripts/extract_gfnff_params.py` — 参数提取(从 xtb 源码,重跑需源码快照)
 - `data/gfnff_params.json` — 元素表×103 + 生成器常数 + D4 参考系数据
 - 测试:`cargo test --release --lib gfnff`(水分解验证)
+
+
+## Binary-vs-source divergence (xtb 6.7.1 gxtb)
+- The shipped binary applies dgam ff = -0.14 for EVERY pi N; the amide -0.16 branch in
+  the source tree is not compiled in (proven via gfnff_topo gameeq on acetamide and
+  N-methylformamide). amideH chi -0.02 (peptide N-H) IS active in the binary.
+- gfnff_topo parse recipe: Fortran sequential unformatted records (4-byte length
+  markers); reals record = vangl, vtors, chieeq, gameeq, alpeeq, alphanb, qa,
+  xyze0 [Angstrom], zetac6, qfrag, hbbas, hbaci.
