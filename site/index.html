@@ -362,7 +362,8 @@ let currentFrame = 0;
 let runId = 0;         // incremented when a run starts or a preset loads; stale loops stop
 
 // --- RDKit reference energies (MMFF94s single point, frozen) ---
-// Computed with RDKit Python on the exact preset geometries shipped above:
+// Computed with RDKit Python on the exact preset geometries shipped above
+// (verified bit-identical with RDKit 2025.09.3 and 2026.03.6):
 //   m = MolFromMolBlock(preset_sdf, removeHs=False)
 //   MMFFGetMoleculeForceField(m, MMFFGetMoleculeProperties(m, 'MMFF94s')).CalcEnergy()
 // The parity check recomputes the same single point with this engine and

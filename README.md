@@ -105,8 +105,12 @@ webmm/
 
 ## Validation
 
-The library is validated against RDKit 2025.09.3 (dev-time tooling only; no
-Python runtime dependency in the library):
+The library is validated against RDKit (dev-time tooling only; no Python
+runtime dependency in the library). Reference values are reproduced
+identically by RDKit 2025.09.3 and 2026.03.6 (the full MMFF suite was
+re-verified at 90/90 molecules, 0.00000 kcal/mol, after the 2026.03
+upgrade; the app's vendored RDKit-js was upgraded from 2025.03.4 to
+2026.03.6 in step):
 
 - **MMFF**: `python3 scripts/benchmark_mmff.py --no-speed` — 230/230 molecules
   match RDKit atom types, charges, and energies to <0.01 kcal/mol. This is the
