@@ -17,6 +17,7 @@ MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit
 **ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
 
 ## Recently Completed
++- **金属/带电物种计划排入 v1.0 路线图。** 范围经研究明确:**金属配位复合物**(TM/主族金属中心+配体,单分子,含带电配合物)——GFN-FF 侧是 xtb 金属逻辑移植(数据表 103 元素已全在,逻辑分支全是桩:metal_is() 返回 false、无 mchishift/imetal/η-配位);MMFF 侧是失败模式对拍(金属-配体键无参数,RDKit 返回 NULL,我们必须同样优雅失败而非编造参数)。**明确排除**:金属晶体(PBC,另一层物理)、裸金属团簇(GFN-FF 无 M-M 参数,出口是 GFN1/2-xTB)。计划文档 docs/plans/2026-09-14-metal-charged-typing.md:七个任务组(参数管线→三邻居表制度→hyb/etacoord→EEQ 金属分支→能量项→MMFF 失败模式+带电扩展集→测试集/夹具/CDP)+ 四个里程碑门禁(MG-1 键表一致 → MG-2 原子表+gfnff_topo 逐位 → MG-3 逐项能量 ≤1e-4 Eh → MG-4 常驻回归)。PLAN.md 增设 Roadmap→v1.0:①构象系综端到端对拍(先行)→②金属/带电→③收尾 1.0;Out-of-scope 行同步修正。风险预置:nbf/nb/nbm 三表语义需 spike、二进制 vs 源码分歧以 gfnff_topo 实测为准(amide −0.16 前科)、金属夹具几何依赖 xtb --opt(ETKDG 不支持金属)。
 +- **Release v0.7.0 (minor).** 87 commits since v0.6.1,核心承诺全面兑现并经外部参考引擎逐位验证:
   - **MMFF94s: 90/90 分子单点能 0.00000 kcal/mol 对拍 RDKit**(SDM 芳香性感知、完整参数路径审计——键经验规则 eq.18/19+Bndk/HL、扭转规则 a–h、统一等价级表、MMFFProp 列序 (atno,crd,val)、S/磷族 typing);
   - **GFN-FF: 32/32 分子 <4e-6 Eh 对拍 xtb 6.7.1**(π 集合修正、pibo→btyp 升格、EEQ 三阶项/amideH、gfnff_topo 二进制审计方法学);

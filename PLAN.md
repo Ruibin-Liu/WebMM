@@ -106,12 +106,23 @@ CDP 全链路 + 截图归档。
 RDKit.js/JSME/3Dmol 全部 vendor 进 `app/vendor/`（MC 单文件哲学 → 我们"全 vendor 可
 离线"，不用 CDN，与隐私声明一致）。
 
+## Roadmap → v1.0（2026-09-14 制定；v0.7.0 已发布）
+
+1. **构象系综端到端对拍**（先行）：ETKDG 嵌入 → 双力场优化 → 能量排序 + 几何 RMSD
+   系综整体 vs RDKit（ETKDGv3 + MMFF 优化管线），复用逐位对拍方法学。
+2. **金属配位复合物 + 带电物种 typing**：详见
+   `docs/plans/2026-09-14-metal-charged-typing.md`（GFN-FF 移植 xtb 金属逻辑
+   七个任务组 + MMFF 失败模式对拍 + 带电扩展集；明确排除金属晶体/裸团簇）。
+3. **收尾打磨 → 1.0 tag**：a11y/性能回归、README/文档一致性、发布摘要。
+
 ## Out of scope（v1）
 
 - **交互式 MD 与 MetaD/FES**（归 Playground/Demo；app 只保留互链）；
 - 大规模构象农场（Workers 并行，>500 构象级，v1.5）；
 - WebGPU（Phase 2，触发条件见前期讨论）；
-- 多分子/批量模式、账号/后端、PBC/金属体系、docking。
+- 多分子/批量模式、账号/后端、docking；
+  **PBC/金属晶体/裸金属团簇**（非力场领域，永久排除——金属*配位复合物*在引擎路线图内，
+  见 Roadmap 第 2 条；app UI 形态不变：仍是 SDF/SMILES 输入的配体工作台）。
 
 ## 与 MC 的功能对照表
 
