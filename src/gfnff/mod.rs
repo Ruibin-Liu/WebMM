@@ -97,6 +97,9 @@ pub struct Params {
     pub qrepscal: f64, pub nrepscal: f64, pub hhfac: f64, pub hh13rep: f64, pub hh14rep: f64,
     pub bstren: Vec<f64>, pub qfacben: f64, pub rabshift: f64, pub rabshifth: f64,
     pub rfgoed1: f64, pub qfacbm0: f64, pub fringbo: f64, pub bsmat: Vec<Vec<f64>>,
+    pub qfacbm: Vec<f64>, pub metal1_shift: f64, pub metal2_shift: f64,
+    pub metal3_shift: f64, pub eta_shift: f64, pub hyper_shift: f64,
+    pub hshift3: f64, pub hshift4: f64, pub hshift5: f64,
     pub atcuta: f64, pub repscaln: f64,
     pub d3a1: f64, pub d3a2: f64,
     pub hdiag_tab: std::collections::HashMap<usize, f64>,
@@ -114,7 +117,10 @@ pub struct Params {
     pub xhaci_coh: f64, pub xhaci_globabh: f64,
     pub hqabthr: f64, pub qabthr: f64, pub hbthr1: f64, pub hbthr2: f64,
     /// normal valences (bond-detection CN guess) + bond thresholds (gfnff_param.f90 730-733)
-    pub normcn: Vec<i32>, pub rthr: f64, pub rqshrink: f64,
+    pub normcn: Vec<i32>, pub rthr: f64, pub rqshrink: f64, pub rthr2: f64,
+    /// raw metal classification table (0 none / 1 main-group / 2 transition)
+    /// and the TM charge-electronegativity shift (gfnff_param.f90 768)
+    pub metal: Vec<i32>, pub mchishift: f64,
     /// X-H bond softening for H-bonded N/O donors (gfnff_param.f90 451)
     pub vbond_scale: f64,
     /// angle-setup constants (gfnff_param.f90 720-731): heavy-atom sp3 phi0,
@@ -202,6 +208,11 @@ impl Params {
             hhfac: gf("hhfac"), hh13rep: gf("hh13rep"), hh14rep: gf("hh14rep"),
             bstren, qfacben: gf("qfacBEN"), rabshift: gf("rabshift"), rabshifth: gf("rabshifth"),
             rfgoed1: gf("rfgoed1"), qfacbm0: gf("qfacbm0"), fringbo: gf("fringbo"),
+            qfacbm: g["qfacbm"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect(),
+            metal1_shift: gf("metal1_shift"), metal2_shift: gf("metal2_shift"),
+            metal3_shift: gf("metal3_shift"), eta_shift: gf("eta_shift"),
+            hyper_shift: gf("hyper_shift"),
+            hshift3: gf("hshift3"), hshift4: gf("hshift4"), hshift5: gf("hshift5"),
             bsmat: bsmat.iter().map(|r| r.to_vec()).collect(),
             atcuta: mf("atcuta"), repscaln: mf("repscaln"),
             d3a1: gf("d3a1"), d3a2: gf("d3a2"),
@@ -230,6 +241,7 @@ impl Params {
             hqabthr: gf("hqabthr"), qabthr: gf("qabthr"),
             hbthr1: 250.0, hbthr2: 450.0,   // Bohr^2 (gfnff_thresholds, accuracy 0.1)
             normcn: raw.normcn.clone(), rthr: gf("rthr"), rqshrink: gf("rqshrink"),
+            rthr2: gf("rthr2"), metal: raw.metal.clone(), mchishift: gf("mchishift"),
             vbond_scale: mf("vbond_scale"),
             aheavy3: gf("aheavy3"), aheavy4: gf("aheavy4"),
             fbs1: gf("fbs1"), linthr: gf("linthr"),
@@ -257,6 +269,11 @@ pub struct Topology {
     pub nb: Vec<Vec<usize>>,   // bonded neighbors (0-based)
     pub hyb: Vec<i32>,         // 0 unknown/none, 1 sp, 2 sp2, 3 sp3, 5 hypervalent
     pub qa: Vec<f64>,          // topology charges (geometry independent EEQ)
+    pub nbm: Vec<Vec<usize>>,  // reduced neighbor list (no metals; hyb for eta complexes)
+    pub nbf: Vec<Vec<usize>>,  // full neighbor list (metal-inflated radii)
+    pub imetal: Vec<i32>,      // per-atom metal class with Sn/Pb/Bi low-CN demotion
+    pub mchar: Vec<f64>,       // metallic character (erf-CN derivative spread)
+    pub eta: Vec<bool>,        // eta-coordinated atoms (xtb itag = -1)
     pub chieeq: Vec<f64>,      // final EEQ electronegativity
     pub gameeq: Vec<f64>,      // final EEQ J (gamma)
     pub alpeeq: Vec<f64>,      // final EEQ alpha (squared exponent)
@@ -435,23 +452,32 @@ impl Gfnff {
         // --- coordination number (erf) ---
         let cn = erf_cn(&p, at, &xyz);
 
-        // --- bond detection (gfnffrab criterion, simplified qa shift) ---
+        // --- bond detection (three-list regime, mchar from geometry) ---
         // first topology charges need bonds -> iterate twice like xtb's qloop
         let mut topo_q = vec![0.0f64; n];
+        let mchar = mchar_of(&p, at, &xyz);
         let mut nb: Vec<Vec<usize>>;
         let mut hyb: Vec<i32>;
+        let mut nitro: Vec<bool> = vec![false; n];
+        let mut eta = vec![false; n];
+        let mut imetal = vec![0i32; n];
+        let mut nbm: Vec<Vec<usize>> = Vec::new();
+        let mut nbf: Vec<Vec<usize>> = Vec::new();
         let mut rabd = vec![vec![0.0f64; n]; n];
         // early pi detection (needed for amide/ff_gam before full HMO)
         let mut piadr_temp = vec![false; n];
         {
-            nb = detect_bonds(&p, at, &xyz, &topo_q);
-            (hyb, _) = assign_hyb(at, &nb, &xyz, &topo_q);
+            let lists = detect_bonds(&p, at, &xyz, &topo_q, &mchar);
+            let (h, _, _, nb0, _) = assign_hyb_full(&p, at, &xyz, &lists);
+            nb = nb0;
+            hyb = h;
             for i in 0..n {
                 let z = at[i];
                 let h = hyb[i];
-                if matches!(z, 6|7|8|9|16) && (h == 1 || h == 2) { piadr_temp[i] = true; }
+                if matches!(z, 5|6|7|8|9|16|17) && (h == 1 || h == 2) { piadr_temp[i] = true; }
                 let attached_sp2 = nb[i].iter().any(|&j| hyb[j] == 1 || hyb[j] == 2);
-                if matches!(z, 7..=9) && attached_sp2 { piadr_temp[i] = true; }   // picon: sp3 N/O/F on sp2 joins π (nofs)
+                if matches!(z, 7|8|9|16|17) && attached_sp2
+                    && !(z == 7 && nb[i].len() > 3) { piadr_temp[i] = true; }   // picon: nofs {N,O,F,S,Cl} on sp2/sp1
             }
         }
         // fragment detection: connected components on the bond graph
@@ -461,8 +487,8 @@ impl Gfnff {
         let mut fraglist = vec![0usize; n];
         let mut nfrag = 0usize;
         {
-            nb = detect_bonds(&p, at, &xyz, &topo_q);
-            hyb = assign_hyb(at, &nb, &xyz, &topo_q).0;
+            let lists = detect_bonds(&p, at, &xyz, &topo_q, &mchar);
+            nb = assign_hyb_full(&p, at, &xyz, &lists).3;
             for s in 0..n {
                 if fraglist[s] != 0 { continue; }
                 nfrag += 1;
@@ -485,11 +511,12 @@ impl Gfnff {
             // dxi (topology electronegativity corrections, ini 391-447) for a
             // consistent es comparison; the qloop below recomputes it per pass
             let dxi_try = compute_dxi(&p, at, &nb, &hyb, &piadr_temp);
+            let imetal0 = (0..n).map(|i| demote_metal(&p, at[i], nb[i].len())).collect::<Vec<_>>();
             let rabd0 = floyd_rabd(&p, at, &nb);   // topology distances for the try-both EEQ
             qfrag = vec![0.0, charge];
-            let (_, es1) = solve_eeq(&p, at, &rabd0, &nb, charge, true, &hyb, &dxi_try, &fraglist0, &qfrag);
+            let (_, es1) = solve_eeq(&p, at, &rabd0, &nb, charge, true, &hyb, &dxi_try, &fraglist0, &qfrag, &imetal0);
             qfrag = vec![charge, 0.0];
-            let (_, es2) = solve_eeq(&p, at, &rabd0, &nb, charge, true, &hyb, &dxi_try, &fraglist0, &qfrag);
+            let (_, es2) = solve_eeq(&p, at, &rabd0, &nb, charge, true, &hyb, &dxi_try, &fraglist0, &qfrag, &imetal0);
             qfrag = if es1 < es2 { vec![0.0, charge] } else { vec![charge, 0.0] };
         } else if nfrag > 1 && charge != 0.0 {
             let mut frag_en = vec![0.0f64; nfrag];
@@ -508,14 +535,20 @@ impl Gfnff {
         }
 
         let mut dxi = vec![0.0f64; n];
-        let mut nitro = vec![false; n];
         for _iter in 0..2 {
-            nb = detect_bonds(&p, at, &xyz, &topo_q);
-            (hyb, nitro) = assign_hyb(at, &nb, &xyz, &topo_q);
+            let lists = detect_bonds(&p, at, &xyz, &topo_q, &mchar);
+            let (h, ni, et, nb0, im) = assign_hyb_full(&p, at, &xyz, &lists);
+            nb = nb0;
+            hyb = h;
+            nitro = ni;
+            eta = et;
+            imetal = im;
+            nbm = lists.nbm;
+            nbf = lists.nbf;
             dxi = compute_dxi(&p, at, &nb, &hyb, &piadr_temp);
             // topology-distance EEQ charges (geometry independent)
             rabd = floyd_rabd(&p, at, &nb);
-            let (q_new, _) = solve_eeq(&p, at, &rabd, &nb, charge, true, &hyb, &dxi, &fraglist0, &qfrag);
+            let (q_new, _) = solve_eeq(&p, at, &rabd, &nb, charge, true, &hyb, &dxi, &fraglist0, &qfrag, &imetal);
             topo_q = q_new;
         }
 
@@ -531,7 +564,7 @@ impl Gfnff {
             // gam + qa*(-0.14) even when amide() = .true. and amideH fires);
             // the amide -0.16 branch present in the gxtb source tree is not
             // compiled in, so we match the binary.
-            let ff_gam = match z {
+            let mut ff_gam = match z {
                 1 => -0.08, 5 => -0.05,
                 6 => if hyb[i] < 2 { -0.34 } else if hyb[i] < 3 { -0.45 } else { -0.27 },
                 7 => if piadr_temp[i] { -0.14 } else { -0.13 },
@@ -540,11 +573,17 @@ impl Gfnff {
                 z if z > 10 => -0.02,
                 _ => 0.0,
             };
-            let ff_alp = if z == 6 { 0.09 }
+            // metal classes override whatever the element branch chose
+            if imetal[i] == 1 { ff_gam = -0.08; }
+            if imetal[i] == 2 { ff_gam = -0.9; }
+            if p.group[z - 1] == 8 { ff_gam = 0.0; }   // noble gases
+            let mut ff_alp = if z == 6 { 0.09 }
                 else if z == 7 { -0.21 }
                 else if p.group[z-1] == 6 { -0.03 }
                 else if p.group[z-1] == 7 { 0.50 }
                 else { 0.0 };
+            if imetal[i] == 1 { ff_alp = 0.3; }
+            if imetal[i] == 2 { ff_alp = -0.1; }
             chieeq[i] = -p.chi[z-1] + dxi[i];
             // amideH (ini2 amideH): peptide N-H — a terminal H on an amide N
             // that carries exactly one sp3 carbon — gets chi -0.02
@@ -579,7 +618,7 @@ impl Gfnff {
             group14 && nb[i].len() == 2 && hyb[i] == 2 && topo_q[i] >= -0.4
         }).collect();
 
-        let topo = Topology { nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], btyp: vec![1; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag, hbbas: vec![0.0; n], hbaci: vec![0.0; n], carbene, nitro_n: nitro, hb_h: Vec::new(), hb_ab: Vec::new(), xb_triples: Vec::new(), b3: Vec::new(), bond_hb_b: Vec::new(),
+        let topo = Topology { nbm, nbf, imetal, mchar, eta, nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], btyp: vec![1; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag, hbbas: vec![0.0; n], hbaci: vec![0.0; n], carbene, nitro_n: nitro, hb_h: Vec::new(), hb_ab: Vec::new(), xb_triples: Vec::new(), b3: Vec::new(), bond_hb_b: Vec::new(),
             rings_all: Vec::new() };
 
         let mut g = Gfnff { p, at: at.to_vec(), charge, topo, bonds: Vec::new(), angles: Vec::new(), torsions: Vec::new(), xyz0: xyz.clone() };
@@ -597,81 +636,199 @@ impl Gfnff {
     }
 
     fn setup_bonds(&mut self, xyz: &[[f64; 3]], rabd: &[Vec<f64>], _cn: &[f64]) {
+        let _ = (xyz, rabd);
         let p = &self.p;
         let mut bonds = Vec::new();
+        let mut btyps: Vec<u8> = Vec::new();
         for (bi2, (bi, bj)) in self.topo.nb.iter().enumerate()
             .flat_map(|(i, nbs)| nbs.iter().map(move |&j| (i, j)))
             .filter(|&(i, j)| i < j).enumerate() {
             let (ia, ja) = (self.at[bi], self.at[bj]);
-            let hybi = self.topo.hyb[bi].max(self.topo.hyb[bj]);
-            let hybj = self.topo.hyb[bi].min(self.topo.hyb[bj]);
-            // bond type (gfnff_ini.f90 1229-1244, organic subset)
-            let mut btyp = 1u8;
-            if self.topo.hyb[bi] == 2 && self.topo.hyb[bj] == 2 { btyp = 2; }   // sp2-sp2 = pi
-            if (self.topo.hyb[bi] == 3 && self.topo.hyb[bj] == 2 && ia == 7)
-            || (self.topo.hyb[bj] == 3 && self.topo.hyb[bi] == 2 && ja == 7) { btyp = 2; }  // N-sp2
-            if self.topo.hyb[bi] == 1 || self.topo.hyb[bj] == 1 { btyp = 3; }   // sp-X
-            let mut bstrength = if hybi == 5 || hybj == 5 { p.bstren[3] }
-                else { p.bsmat[hybi as usize][hybj as usize] };
-            // N-sp2 bonds use the pi-type strength (ini 1258-1259)
-            if hybi == 3 && hybj == 2 && (ia == 7 || ja == 7) {
-                bstrength = p.bstren[1] * 1.04;
-            }
-            // CO (sp C-O) slightly weaker (ini 1295-1296)
-            if btyp == 3 && ((ia == 6 && ja == 8) || (ia == 8 && ja == 6)) {
-                bstrength = p.bstren[2] * 0.90;
-            }
+            let nni = self.topo.nb[bi].len();
+            let nnj = self.topo.nb[bj].len();
+            let hyb = &self.topo.hyb;
             let mut shift = 0.0;
             let mut fxh = 1.0;
-            let mut fcn = 1.0f64;
-            if ia == 1 || ja == 1 { shift = p.rabshifth; }
-            if ia == 9 && ja == 9 { shift = 0.22; }   // F2
-            // X-sp3 correction (both directions)
-            if (self.topo.hyb[bi] == 3 && self.topo.hyb[bj] == 0)
-            || (self.topo.hyb[bj] == 3 && self.topo.hyb[bi] == 0) { shift -= 0.022; }
-            // X-sp correction
-            if (self.topo.hyb[bi] == 1 && self.topo.hyb[bj] == 0)
-            || (self.topo.hyb[bj] == 1 && self.topo.hyb[bi] == 0) { shift += 0.14; }
-            if (ia == 1 && ja == 8) || (ja == 1 && ia == 8) { fxh = 0.93; }
-            if (ia == 1 && ja == 6) || (ja == 1 && ia == 6) {
-                fxh = 1.0;
-                let c = if ia == 6 { bi } else { bj };
-                if self.topo.ring_size[c] == 3 { fxh = 1.05; }          // 3-ring CH
-                if is_aldehyde_c(&self.at, &self.topo.nb, &self.topo.piadr, c) { fxh = 0.95; }  // aldehyde CH
+            #[allow(unused_assignments)]
+            let mut ringf = 1.0;
+            #[allow(unused_assignments)]
+            let mut fqq = 1.0;
+            let mut fpi = 1.0;
+            let mut fheavy = 1.0;
+            let mut fcn = 1.0;
+            let mut fsrb2 = p.srb2;
+            let mut bridge = false;
+
+            // ---- bond type (gfnff_ini.f90 1229-1247) ----
+            let mut btyp = 1u8;
+            if hyb[bi] == 2 && hyb[bj] == 2 { btyp = 2; }                       // sp2-sp2 pi
+            if (hyb[bi] == 3 && hyb[bj] == 2 && ia == 7)
+            || (hyb[bj] == 3 && hyb[bi] == 2 && ja == 7) { btyp = 2; }          // N-sp2
+            if hyb[bi] == 1 || hyb[bj] == 1 { btyp = 3; }                       // sp-X
+            if (p.group[ia - 1] == 7 || ia == 1) && hyb[bi] == 1 { btyp = 3; bridge = true; }
+            if (p.group[ja - 1] == 7 || ja == 1) && hyb[bj] == 1 { btyp = 3; bridge = true; }
+            if hyb[bi] == 5 || hyb[bj] == 5 { btyp = 4; }                       // hypervalent
+            let im1 = self.topo.imetal[bi];
+            let im2 = self.topo.imetal[bj];
+            if im1 > 0 || im2 > 0 { btyp = 5; }                                 // metal
+            if im1 == 2 && im2 == 2 { btyp = 7; }                               // TM-TM
+            if im2 == 2 && self.topo.eta[bi] && self.topo.piadr[bi] { btyp = 6; }   // eta
+            if im1 == 2 && self.topo.eta[bj] && self.topo.piadr[bj] { btyp = 6; }
+            let mut bbtyp = btyp;
+
+            let mut bstrength;
+            if bbtyp < 5 {
+                // ---- organic path (ini 1250-1303) ----
+                let hybi = hyb[bi].max(hyb[bj]);
+                let hybj = hyb[bi].min(hyb[bj]);
+                bstrength = if hybi == 5 || hybj == 5 { p.bstren[3] }
+                    else { p.bsmat[hybi as usize][hybj as usize] };
+                if hybi == 3 && hybj == 2 && (ia == 7 || ja == 7) {
+                    bstrength = p.bstren[1] * 1.04;                              // N-sp2
+                }
+                if bridge {
+                    if p.group[ia - 1] == 7 { bstrength = p.bstren[0] * 0.50; }
+                    if p.group[ja - 1] == 7 { bstrength = p.bstren[0] * 0.50; }
+                    if ia == 1 || ia == 9 { bstrength = p.bstren[0] * 0.30; }
+                    if ja == 1 || ja == 9 { bstrength = p.bstren[0] * 0.30; }
+                }
+                if bbtyp == 4 { shift += p.hyper_shift; }
+                if ia == 1 || ja == 1 { shift += p.rabshifth; }
+                if ia == 9 && ja == 9 { shift += 0.22; }                         // F2
+                if (hyb[bi] == 3 && hyb[bj] == 0) || (hyb[bj] == 3 && hyb[bi] == 0) { shift -= 0.022; }
+                if (hyb[bi] == 1 && hyb[bj] == 0) || (hyb[bj] == 1 && hyb[bi] == 0) { shift += 0.14; }
+                if ia == 1 && ja == 6 {
+                    fxh = 1.0;
+                    if self.topo.ring_size[bj] == 3 { fxh = 1.05; }
+                    if is_aldehyde_c(&self.at, &self.topo.nb, &self.topo.piadr, bj) { fxh = 0.95; }
+                }
+                if ja == 1 && ia == 6 {
+                    fxh = 1.0;
+                    if self.topo.ring_size[bi] == 3 { fxh = 1.05; }
+                    if is_aldehyde_c(&self.at, &self.topo.nb, &self.topo.piadr, bi) { fxh = 0.95; }
+                }
+                if (ia == 1 && ja == 5) || (ja == 1 && ia == 5) { fxh = 1.10; }
+                if (ia == 1 && ja == 7) || (ja == 1 && ia == 7) { fxh = 1.06; }
+                if (ia == 1 && ja == 8) || (ja == 1 && ia == 8) { fxh = 0.93; }
+                if bbtyp == 3 && ((ia == 6 && ja == 8) || (ia == 8 && ja == 6)) {
+                    bstrength = p.bstren[2] * 0.90;                               // CO
+                }
+                if bbtyp == 3 && (hyb[bi] == 0 || hyb[bj] == 0) { bbtyp = 1; }    // sp-sp3
+                if bbtyp == 3 && (hyb[bi] == 3 || hyb[bj] == 3) { bbtyp = 1; }
+                if bbtyp == 3 && (hyb[bi] == 2 || hyb[bj] == 2) { bbtyp = 2; }    // sp-sp2
+                let pibo = self.topo.pibo.get(bi2).copied().unwrap_or(0.0);
+                if pibo > 0.0 {
+                    shift += p.hueckelp * (p.bzref - pibo);
+                    if bbtyp != 3 && pibo > 0.1 {
+                        btyp = 2;
+                        #[allow(unused_assignments)]
+                        { bbtyp = 2; }
+                    }
+                    fpi = 1.0 - p.hueckelp2 * (p.bzref2 - pibo);
+                }
+                if ia > 10 && ja > 10 {
+                    fcn /= 1.0 + 0.007 * (nni as f64).powi(2);
+                    fcn /= 1.0 + 0.007 * (nnj as f64).powi(2);
+                }
+                let qafac = self.topo.qa[bi] * self.topo.qa[bj] * 70.0;
+                fqq = 1.0 + p.qfacbm0 / (1.0 + (15.0 * qafac).exp());
+            } else {
+                // ---- metal path (ini 1304-1395) ----
+                shift = 0.0;
+                bstrength = p.bstren[bbtyp as usize - 1];
+                if bbtyp == 7 {
+                    let (r1, r2) = (period_row(ia), period_row(ja));
+                    if r1 > 4 && r2 > 4 { bstrength = p.bstren[7]; }
+                    if r1 == 4 && r2 > 4 { bstrength = p.bstren[8]; }
+                    if r2 == 4 && r1 > 4 { bstrength = p.bstren[8]; }
+                    let dum = (2.0 * self.topo.mchar[bi] + 2.0 * self.topo.mchar[bj]).min(0.5);
+                    bstrength *= 1.0 - dum;
+                }
+                let mtyp = |z: usize, im: i32| -> usize {
+                    if p.group[z - 1] == 1 { 1 }
+                    else if p.group[z - 1] == 2 { 2 }
+                    else if p.group[z - 1] > 2 && im == 1 { 3 }
+                    else if im == 2 { 4 }
+                    else { 0 }
+                };
+                let mtyp1 = mtyp(ia, im1);
+                let mtyp2 = mtyp(ja, im2);
+                let qafac = self.topo.qa[bi] * self.topo.qa[bj] * 25.0;
+                fqq = 1.0 + (1.0 / (1.0 + (15.0 * qafac).exp()))
+                    * (p.qfacbm[mtyp1] + p.qfacbm[mtyp2]) * 0.5;
+                if im1 == 2 && ja > 10 { fheavy = 0.65; }
+                if im2 == 2 && ia > 10 { fheavy = 0.65; }
+                if im1 == 2 && ja == 15 { fheavy = 1.60; }
+                if im2 == 2 && ia == 15 { fheavy = 1.60; }
+                if im1 == 2 && p.group[ja - 1] == 6 { fheavy = 0.85; }
+                if im2 == 2 && p.group[ia - 1] == 6 { fheavy = 0.85; }
+                if im1 == 2 && p.group[ja - 1] == 7 { fheavy = 1.30; }
+                if im2 == 2 && p.group[ia - 1] == 7 { fheavy = 1.30; }
+                if im1 == 2 && ja == 1 && period_row(ia) <= 5 { fxh = 0.80; }
+                if im2 == 2 && ia == 1 && period_row(ja) <= 5 { fxh = 0.80; }
+                if im1 == 2 && ja == 1 && period_row(ia) > 5 { fxh = 1.00; }
+                if im2 == 2 && ia == 1 && period_row(ja) > 5 { fxh = 1.00; }
+                if im1 == 1 && ja == 1 { fxh = 1.20; }
+                if im2 == 1 && ia == 1 { fxh = 1.20; }
+                // CO / CN / NC terminal on sp ligands
+                if im2 == 2 && hyb[bi] == 1 {
+                    if ia == 6 { fpi = 1.5; shift = -0.45; }
+                    if ia == 7 && nni != 1 { fpi = 0.4; shift = 0.47; }
+                }
+                if im1 == 2 && hyb[bj] == 1 {
+                    if ja == 6 { fpi = 1.5; shift = -0.45; }
+                    if ja == 7 && nnj != 1 { fpi = 0.4; shift = 0.47; }
+                }
+                if im1 == 2 { shift += p.metal2_shift; }
+                if im2 == 2 { shift += p.metal2_shift; }
+                if im1 == 1 && p.group[ia - 1] <= 2 { shift += p.metal1_shift; }
+                if im2 == 1 && p.group[ja - 1] <= 2 { shift += p.metal1_shift; }
+                if mtyp1 == 3 { shift += p.metal3_shift; }
+                if mtyp2 == 3 { shift += p.metal3_shift; }
+                if bbtyp == 6 && p.metal_raw(ia) == 2 { shift += p.eta_shift * nni as f64; }
+                if bbtyp == 6 && p.metal_raw(ja) == 2 { shift += p.eta_shift * nnj as f64; }
+                if mtyp1 > 0 && mtyp1 < 3 { fcn /= 1.0 + 0.100 * (nni as f64).powi(2); }
+                if mtyp2 > 0 && mtyp2 < 3 { fcn /= 1.0 + 0.100 * (nnj as f64).powi(2); }
+                if mtyp1 == 3 { fcn /= 1.0 + 0.030 * (nni as f64).powi(2); }
+                if mtyp2 == 3 { fcn /= 1.0 + 0.030 * (nnj as f64).powi(2); }
+                if mtyp1 == 4 { fcn /= 1.0 + 0.036 * (nni as f64).powi(2); }
+                if mtyp2 == 4 { fcn /= 1.0 + 0.036 * (nnj as f64).powi(2); }
+                if mtyp1 == 4 || mtyp2 == 4 {
+                    fsrb2 = -p.srb2 * 0.22;    // weaker, inverse EN dep. for TMs
+                } else {
+                    fsrb2 = p.srb2 * 0.28;
+                }
             }
-            if (ia == 1 && ja == 5) || (ja == 1 && ia == 5) { fxh = 1.10; }
-            if (ia == 1 && ja == 7) || (ja == 1 && ia == 7) { fxh = 1.06; }
-            if (ia == 1 && ja == 9) || (ja == 1 && ia == 9) { fxh = 1.0; }
+
+            // both-heavy shift (all types; ini 1397-1404)
             if ia > 10 && ja > 10 {
-                shift += -0.11; // hshift3
-                if ia > 18 { shift += -0.11; }
-                if ja > 18 { shift += -0.11; }
-                fcn /= 1.0 + 0.007 * (self.topo.nb[bi].len() as f64).powi(2);
-                fcn /= 1.0 + 0.007 * (self.topo.nb[bj].len() as f64).powi(2);
+                shift += p.hshift3;
+                if ia > 18 { shift += p.hshift4; }
+                if ja > 18 { shift += p.hshift4; }
+                if ia > 36 { shift += p.hshift5; }
+                if ja > 36 { shift += p.hshift5; }
             }
-            let qafac = self.topo.qa[bi] * self.topo.qa[bj] * 70.0;
-            let fqq = 1.0 + p.qfacbm0 / (1.0 + (15.0 * qafac).exp());
-            let en_diff = p.en[ia-1] - p.en[ja-1];
-            // pi corrections (pibo > 0)
-            // ring prefactor (ringsbond): smallest ring containing the bond
-            let ringf = {
+
+            // ring prefactor (smallest ring containing the bond)
+            ringf = {
                 let ri = self.topo.ring_size[bi]; let rj = self.topo.ring_size[bj];
                 let rings = if ri > 0 && ri == rj { ri } else { 0 };
                 if rings > 0 { 1.0 + self.p.fringbo * (6.0 - rings as f64).powi(2) } else { 1.0 }
             };
-            let pibo = self.topo.pibo.get(bi2).copied().unwrap_or(0.0);
-            if pibo > 0.0 {
-                shift += p.hueckelp * (p.bzref - pibo);
-                if hybi != 1 && hybj != 1 && pibo > 0.1 { /* btyp=2 handled by bstren below */ }
-            }
-            let mut fpi = 1.0f64;
-            if pibo > 0.0 { fpi = 1.0 - p.hueckelp2 * (p.bzref2 - pibo); }
+
+            let en_diff = p.en[ia - 1] - p.en[ja - 1];
             let vb1 = p.rabshift + shift;
-            let vb2 = p.srb1 * (1.0 + p.srb2 * en_diff * en_diff + p.srb3 * bstrength);
-            let vb3 = -p.bond[ia-1] * p.bond[ja-1] * ringf * bstrength * fqq * fpi * fxh * fcn;
+            let vb2 = p.srb1 * (1.0 + fsrb2 * en_diff * en_diff + p.srb3 * bstrength);
+            let vb3 = -p.bond[ia - 1] * p.bond[ja - 1] * ringf * bstrength * fqq * fheavy * fpi * fxh * fcn;
             bonds.push(BondParam { i: bi, j: bj, alp: vb2, kb: vb3, r0: vb1 });
+            btyps.push(btyp);
         }
         self.bonds = bonds;
+        // the second setup_bonds pass (after Hückel) owns the final types;
+        // setup_hmo's first pass leaves them sized for exactly this write
+        if self.topo.btyp.len() == btyps.len() {
+            self.topo.btyp = btyps;
+        }
     }
 
     fn setup_angles(&mut self, _xyz: &[[f64; 3]], _cn: &[f64]) {
@@ -696,6 +853,11 @@ impl Gfnff {
                     let triple = self.topo.hyb[i] == 1 || self.topo.hyb[jj] == 1 || self.topo.hyb[kk] == 1;
                     let phi_deg = self.angle_deg(jj, i, kk);
                     let ati = self.at[i];
+                    // eta cases: skip sharp angles at metal centers (ini 1592)
+                    if p.metal_raw(ati) > 0 && phi_deg < 60.0 { continue; }
+                    let mut feta = 1.0f64;
+                    if self.topo.imetal[i] == 2 && self.topo.eta[jj] && self.topo.piadr[jj] { feta *= 0.3; }
+                    if self.topo.imetal[i] == 2 && self.topo.eta[kk] && self.topo.piadr[kk] { feta *= 0.3; }
                     // ---- phi0/f2 rules (gfnff_ini.f90 1610-1790, organic subset) ----
                     let mut r0;
                     let mut f2 = 1.0f64;
@@ -716,11 +878,14 @@ impl Gfnff {
                         if self.topo.hyb[i] == 1 && no == 2 { f2 = 2.0; }   // CO2
                         if self.topo.hyb[i] == 3 && nn > 4 && phi_deg > self.p.linthr { r0 = 180.0; }
                     }
+                    let nmet = [jj, kk].iter().filter(|&&a| self.topo.imetal[a] > 0).count();
                     if ati == 8 && nn == 2 {
                         r0 = 104.5;
                         if nh == 2 { r0 = 100.0; f2 = 1.20; }
                         r0 += 7.0 * nsi as f64;
+                        r0 += 14.0 * nmet as f64;    // O angles widen with M attached
                         if npi == 2 { r0 = 109.0; }   // e.g. Ph-O-Ph
+                        if nmet > 0 && phi_deg > self.p.linthr { r0 = 180.0; f2 = 0.3; }
                     }
                     if ati == 7 && nn == 2 {
                         f2 = 1.4; r0 = 115.0;
@@ -728,6 +893,8 @@ impl Gfnff {
                         if atj == 8 || atk == 8 { r0 = 103.0; }
                         if atj == 9 || atk == 9 { r0 = 102.0; }
                         if self.topo.hyb[i] == 1 { r0 = 180.0; }
+                        if self.topo.imetal[jj] == 2 && self.topo.hyb[i] == 1 && atk == 7 { r0 = 135.0; }
+                        if self.topo.imetal[kk] == 2 && self.topo.hyb[i] == 1 && atj == 7 { r0 = 135.0; }
                     }
                     if ati == 7 && self.topo.hyb[i] == 3 {
                         if npi > 0 {
@@ -745,7 +912,14 @@ impl Gfnff {
                         } else {
                             r0 = 104.0;
                             f2 = 0.40 + nh as f64 * 0.19 + no as f64 * 0.25 + nc as f64 * 0.01;
+                            // M-NO terminal nitrosyl
+                            if (atj == 8 || atk == 8)
+                                && (self.topo.imetal[jj] > 0 || self.topo.imetal[kk] > 0) {
+                                // handled below via the M-NO rule; keep branch
+                            }
                         }
+                        if ati == 7 && atk == 8 { r0 = 180.0; f2 = 12.0; }   // M-NO
+                        if ati == 7 && atj == 8 { r0 = 180.0; f2 = 12.0; }
                     }
                     if rings == 3 { r0 = 82.0; }
                     if rings == 4 { r0 = 96.0; }
@@ -778,12 +952,24 @@ impl Gfnff {
                         if phi_deg < 100.0 { r0 = 90.0; }
                         f2 = 1.0;
                     }
+                    // metal-center r0/f2 rules (ini 1773-1781)
+                    if self.topo.imetal[i] > 0 {
+                        match self.topo.hyb[i] {
+                            0 => { r0 = 90.0; f2 = 1.35; }
+                            1 => r0 = 180.0,
+                            2 => r0 = 120.0,
+                            3 => r0 = 109.5,
+                            _ => {}
+                        }
+                        if phi_deg > self.p.linthr { r0 = 180.0; }
+                    }
                     // ---- force constant ----
-                    let fqq = 1.0 - (self.topo.qa[i]*self.topo.qa[jj] + self.topo.qa[i]*self.topo.qa[kk]) * p.qfacben;
+                    let qmul = if self.topo.imetal[i] > 0 || self.topo.imetal[jj] > 0 || self.topo.imetal[kk] > 0 { 2.5 } else { 1.0 };
+                    let fqq = 1.0 - (self.topo.qa[i]*self.topo.qa[jj] + self.topo.qa[i]*self.topo.qa[kk]) * p.qfacben * qmul;
                     let fnn = 1.0 - 2.36 / (nn as f64).powi(2);   // gfnff_ini.f90 1792
                     let phi0 = r0 * std::f64::consts::PI / 180.0;
                     let fbsmall = 1.0 - 0.5 * (-0.64 * (phi0 - std::f64::consts::PI).powi(2)).exp();
-                    let fc = fijk * fqq * f2 * fnn * fbsmall;
+                    let fc = fijk * fqq * f2 * fnn * fbsmall * feta;
                     angles.push(AngleParam { j: jj, i, k: kk, phi0, fc });
                 }
             }
@@ -795,7 +981,9 @@ impl Gfnff {
     fn setup_bpair_rings(&mut self) {
         let n = self.at.len();
         let mut bpair = vec![vec![0usize; n]; n];
-        for i in 0..n { for &j in &self.topo.nb[i] { bpair[i][j] = 1; } }
+        // symmetric seed: the eta substitution makes nb asymmetric (nb[Fe]
+        // has the ring C but nb[C] drops Fe), so seed from BOTH sides
+        for i in 0..n { for &j in &self.topo.nb[i] { bpair[i][j] = 1; bpair[j][i] = 1; } }
         // BFS up to depth 3 (shortest path only)
         for i in 0..n {
             for depth in 1..=2 {
@@ -811,15 +999,28 @@ impl Gfnff {
         for i in 0..n { for j in 0..n { if i != j && bpair[i][j] == 0 { bpair[i][j] = 5; } } }
         self.topo.bpair = bpair;
         // all rings up to size 6 via cycle search (getring36): keep sorted
-        // member lists per atom (for ringsbend) + smallest size per atom
+        // member lists per atom (for ringsbend) + smallest size per atom.
+        // Atoms in metal clusters (nb partner is a metal or has CN > 4) are
+        // tagged and excluded from ring detection (ini2 137-153 cluster
+        // tagging limits the ring search) — e.g. Cp carbons in ferrocene
+        // get NO 5-ring, so their C-C bonds carry ringf = 1.
+        let cluster_tag: Vec<bool> = (0..n).map(|i| {
+            if self.at[i] >= 11 { return false; }
+            if self.topo.nbf[i].len() <= 2 { return false; }
+            self.topo.nbf[i].iter().any(|&j| self.p.metal_raw(self.at[j]) != 0
+                || self.topo.nb[j].len() > 4)
+        }).collect();
         let mut rings_all: Vec<Vec<Vec<usize>>> = vec![Vec::new(); n];
         let mut ring = vec![0usize; n];
         let mut seen: std::collections::HashSet<Vec<usize>> = Default::default();
         for a0 in 0..n {
+            if cluster_tag[a0] { continue; }
             for &a1 in &self.topo.nb[a0] {
+                if cluster_tag[a1] { continue; }
                 for &a2 in &self.topo.nb[a1] {
-                    if a2 == a0 || a2 == a1 { continue; }
+                    if a2 == a0 || a2 == a1 || cluster_tag[a2] { continue; }
                     for &a3 in &self.topo.nb[a2] {
+                        if cluster_tag[a3] { continue; }
                         if a3 == a0 {
                             let members = sorted3(a0, a1, a2);
                             if seen.insert(members.clone()) { add_ring(&mut rings_all, &members); }
@@ -872,7 +1073,7 @@ impl Gfnff {
         let mut qfrag2 = self.topo.qfrag.clone();
         qfrag2[ifrag] = 0.0;
         let (qa0, _) = solve_eeq(p, &self.at, rabd, &self.topo.nb, self.charge, true,
-            &self.topo.hyb, &self.topo.dxi, &self.topo.fraglist, &qfrag2);
+            &self.topo.hyb, &self.topo.dxi, &self.topo.fraglist, &qfrag2, &self.topo.imetal);
         let mut qa0 = qa0;
         qheavy(&self.at, &self.topo.nb, &mut qa0);
         let mut dum = 0.0f64;
@@ -1045,12 +1246,16 @@ impl Gfnff {
                 if hybi == 1 || hybj == 1 { continue; }       // sp/linear: no torsion
                 if p.tors[zi-1] < 0.0 || p.tors[zj-1] < 0.0 { continue; }
                 if p.tors[zi-1] * p.tors[zj-1] < 1e-3 { continue; }
+                // no torsion around highly coordinated transition metals (ini 1839)
+                if p.metal_raw(zi) > 1 && self.topo.nb[bi].len() > 4 { continue; }
+                if p.metal_raw(zj) > 1 && self.topo.nb[bj].len() > 4 { continue; }
                 // stored bond type (hybridization rules + the pibo > 0.1 pi
                 // promotion from the HMO pass, xtb ini 1305-1312)
                 let btyp = self.bonds.iter()
                     .position(|b| (b.i == bi && b.j == bj) || (b.i == bj && b.j == bi))
                     .map(|m| self.topo.btyp[m])
                     .unwrap_or(1);
+                if btyp == 6 { continue; }   // metal eta: no torsion (ini 1838)
                 let nhi = 1 + self.topo.nb[bi].iter().filter(|&&x| self.at[x] == 1).count();
                 let nhj = 1 + self.topo.nb[bj].iter().filter(|&&x| self.at[x] == 1).count();
                 let mut fij = p.tors[zi-1] * p.tors[zj-1] * ((nhi as f64) * (nhj as f64)).powf(0.07);
@@ -1403,7 +1608,7 @@ impl Gfnff {
         // ---- SE repulsion (non-bonded, gfnff_eg.f90 345-420) ----
         let mut rep = 0.0;
         for i in 0..n { for j in 0..i {
-            if self.topo.nb[i].contains(&j) { continue; }
+            if self.topo.nb[i].contains(&j) || self.topo.nb[j].contains(&i) { continue; }
             let r = dist(i, j);
             if r > 20.0 { continue; }
             let (zi, zj) = (self.at[i], self.at[j]);
@@ -2307,7 +2512,7 @@ impl Gfnff {
         // ---------------- repulsion (nb + bonded) ----------------
         let mut rep = 0.0;
         for i in 0..n { for j in 0..i {
-            if self.topo.nb[i].contains(&j) { continue; }
+            if self.topo.nb[i].contains(&j) || self.topo.nb[j].contains(&i) { continue; }
             let r = dist(i, j);
             if r > 20.0 { continue; }
             let (zi, zj) = (self.at[i], self.at[j]);
@@ -2991,7 +3196,9 @@ fn dampa(p: &Params, ati: usize, atj: usize, r2: f64) -> f64 {
 // ---------------------------------------------------------------------------
 
 impl Params {
-    fn metal_is(&self, _z: usize) -> bool { false } // organic subset: no metals
+    fn metal_is(&self, z: usize) -> bool { self.metal[z - 1] > 0 }
+    /// raw metal class: 0 non-metal, 1 main-group metal, 2 transition metal
+    fn metal_raw(&self, z: usize) -> i32 { self.metal[z - 1] }
     fn repscalb(&self) -> f64 { 1.7583 }
 
     /// element-specific bond-radius factors (gfnff_ini2.F90 fat, lines 71-95)
@@ -3102,26 +3309,91 @@ fn create_logcn(p: &Params, cn: f64) -> f64 {
 /// the regime this single-list approximation covers. Unlike the old
 /// rcov*1.25 criterion this keeps stretched bonds (the radius grows as CN
 /// drops), matching xtb.
-fn detect_bonds(p: &Params, at: &[usize], xyz: &[[f64; 3]], qa: &[f64]) -> Vec<Vec<usize>> {
+///
+/// The three xtb neighbor lists (gfnff neighbor.f90 fillnb icase 1/2/3):
+///
+/// - nbf: full cov. bonds; metal-involving pairs get inflated radii
+///   (charge shrink x2 for any metal, threshold x rthr2 for TM pairs,
+///   x (rthr2+0.025) for main-group metal pairs)
+///
+/// - nb (filtered): nbf minus pairs where either endpoint's FULL count
+///   exceeds hc_crit (6, or 4 for periodic groups 1-2)
+///
+/// - nbm (reduced): nbf minus metals, high metallic character (mchar >
+///   0.25) and over-coordinated heavy atoms (count > normcn, Z > 10)
+///
+/// The final bond list xtb uses downstream is `nbdum` (nbm for eta-
+/// coordinated atoms, nbf otherwise; gfnff_neigh tail overwrite).
+struct NbLists {
+    nbf: Vec<Vec<usize>>,
+    nb: Vec<Vec<usize>>,
+    nbm: Vec<Vec<usize>>,
+}
+
+fn detect_bonds(p: &Params, at: &[usize], xyz: &[[f64; 3]], qa: &[f64], mchar: &[f64]) -> NbLists {
     let n = at.len();
     let mut nbf = vec![Vec::new(); n];
     for i in 0..n { for j in 0..i {
         let r = dist2(xyz, i, j).sqrt();
         let mut rco = p.gfnffrab(at[i], at[j],
             p.normcn[at[i] - 1] as f64, p.normcn[at[j] - 1] as f64, 0.0);
-        rco -= (qa[i] + qa[j]) * p.rqshrink;
+        // charge shrink doubles for metals on either side (ini2 100-107)
+        let fi = p.rqshrink * if p.metal_raw(at[i]) > 0 { 2.0 } else { 1.0 };
+        let fj = p.rqshrink * if p.metal_raw(at[j]) > 0 { 2.0 } else { 1.0 };
+        rco -= qa[i] * fi + qa[j] * fj;
         rco *= p.fat(at[i]) * p.fat(at[j]);
-        if r < p.rthr * rco { nbf[i].push(j); nbf[j].push(i); }
+        // threshold multiplier (fillnb icase 1): TM x rthr2, main-group
+        // metal x (rthr2 + 0.025), applied sequentially as in fillnb
+        let mut fm = 1.0;
+        if p.metal_raw(at[i]) == 2 || p.metal_raw(at[j]) == 2 { fm *= p.rthr2; }
+        if p.metal_raw(at[i]) == 1 || p.metal_raw(at[j]) == 1 { fm *= p.rthr2 + 0.025; }
+        if r < fm * p.rthr * rco { nbf[i].push(j); nbf[j].push(i); }
     }}
     let mut nb = vec![Vec::new(); n];
     for i in 0..n { for j in 0..i {
         if !nbf[i].contains(&j) { continue; }
-        let hc_i = if p.group[at[i] - 1] <= 2 { 4 } else { 6 };
-        let hc_j = if p.group[at[j] - 1] <= 2 { 4 } else { 6 };
+        let hc_i = if p.group[at[i] - 1] <= 2 && p.group[at[i] - 1] > 0 { 4 } else { 6 };
+        let hc_j = if p.group[at[j] - 1] <= 2 && p.group[at[j] - 1] > 0 { 4 } else { 6 };
         if nbf[i].len() > hc_i || nbf[j].len() > hc_j { continue; }
         nb[i].push(j); nb[j].push(i);
     }}
-    nb
+    let mut nbm = vec![Vec::new(); n];
+    for i in 0..n { for j in 0..i {
+        if !nbf[i].contains(&j) { continue; }
+        let skip = |k: usize| -> bool {
+            p.metal_raw(at[k]) > 0
+                || mchar[k] > 0.25
+                || (nbf[k].len() > p.normcn[at[k] - 1] as usize && at[k] > 10)
+        };
+        if skip(i) || skip(j) { continue; }
+        nbm[i].push(j); nbm[j].push(i);
+    }}
+    NbLists { nbf, nb, nbm }
+}
+
+/// Metallic character (gfnff_ini.f90 250-258): from the erf coordination
+/// number and its per-pair derivative magnitudes,
+///   mchar_i = exp(-0.005 en_i^8) * sum_j |dcn_i/dr_j| / (cn_i + 1),
+/// with the CN computed at a 40 bohr cutoff. Metals show many small,
+/// comparable contributions (large summed derivative), main-group atoms
+/// few dominated ones.
+fn mchar_of(p: &Params, at: &[usize], xyz: &[[f64; 3]]) -> Vec<f64> {
+    use std::f64::consts::PI;
+    let n = at.len();
+    let mut cn = vec![0.0f64; n];
+    let mut dsum = vec![0.0f64; n];
+    for i in 0..n { for j in 0..i {
+        let r = dist2(xyz, i, j).sqrt();
+        if r > 40.0 { continue; }
+        let r0 = (p.rcov[at[i] - 1] + p.rcov[at[j] - 1]) / BOHR * 4.0 / 3.0;
+        let x = -7.5 * (r - r0) / r0;
+        let c = 0.5 * (1.0 + erf(x));
+        cn[i] += c; cn[j] += c;
+        // |dc/dr| = (1/sqrt(pi)) * exp(-x^2) * 7.5 / r0
+        let d = (-x * x).exp() * 7.5 / (r0 * PI.sqrt());
+        dsum[i] += d; dsum[j] += d;
+    }}
+    (0..n).map(|i| (-0.005 * p.en[at[i] - 1].powi(8)).exp() * dsum[i] / (cn[i] + 1.0)).collect()
 }
 
 fn sorted3(a: usize, b: usize, c: usize) -> Vec<usize> { let mut v = vec![a, b, c]; v.sort_unstable(); v }
@@ -3215,7 +3487,10 @@ fn compute_dxi(p: &Params, at: &[usize], nb: &[Vec<usize>], hyb: &[i32], piadr: 
         if z == 8 && nn == 2 && nh == 2 { dxi[i] = -0.02; }
         if p.group[z - 1] == 6 && nn > 2 { dxi[i] += nn as f64 * 0.005; }
         if z == 8 || z == 16 { dxi[i] -= nh as f64 * 0.005; }
-        if p.group[z - 1] == 7 && z > 9 && nn > 1 { dxi[i] -= nn as f64 * 0.021; }
+        if p.group[z - 1] == 7 && z > 9 && nn > 1 {
+            let nm = nb[i].iter().filter(|&&j| p.metal_raw(at[j]) != 0).count();
+            if nm == 0 { dxi[i] -= nn as f64 * 0.021; } else { dxi[i] += nn as f64 * 0.05; }
+        }
     }
     dxi
 }
@@ -3291,7 +3566,7 @@ fn solve_sym(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
 #[allow(clippy::too_many_arguments)]
 fn solve_eeq(p: &Params, at: &[usize], rabd: &[Vec<f64>], nb: &[Vec<usize>],
              charge: f64, topology_mode: bool, _hyb: &[i32], dxi: &[f64],
-             fraglist: &[usize], qfrag: &[f64]) -> (Vec<f64>, f64) {
+             fraglist: &[usize], qfrag: &[f64], imetal: &[i32]) -> (Vec<f64>, f64) {
     let n = at.len();
     let nfrag = qfrag.len();
     let m = n + nfrag;
@@ -3301,6 +3576,8 @@ fn solve_eeq(p: &Params, at: &[usize], rabd: &[Vec<f64>], nb: &[Vec<usize>],
         let z = at[i];
         let cn_i = if topology_mode { nb[i].len().min(p.cnmax as usize) as f64 } else { 0.0 };
         x[i] = -p.chi[z-1] + dxi[i] + cn_i.sqrt() * p.cnf[z-1];
+        // TM metals shift the estimate electronegativity (gfnff_ini.f90 459)
+        if imetal[i] == 2 { x[i] -= p.mchishift; }
         a[i][i] = TSQRT2PI / p.alp[z-1] + p.gam[z-1];
     }
     for i in 0..n { for j in 0..i {
@@ -4178,6 +4455,61 @@ mod tests_more3 {
 mod tests_pibo_promotion {
     use super::*;
 
+    /// Metal coordination complexes vs xtb 6.7.1 --gfnff --sp (geometries
+    /// from xtb --gfnff --opt, refs frozen in tests/fixtures/gfnff/metals/).
+    /// Current status after the metal port (three-list regime, eta
+    /// coordination, metal EEQ branches, metal bond/angle/torsion rules):
+    /// nicarbonyl exact, ferrocene (eta5) 2e-5 Eh, cobalt_ammine 2e-3,
+    /// ferricyanide 1.8e-2 (bond kb ~0.4% high), zinc_ammine 1.8e-1 (12-
+    /// coordinate + bridging H2 regime; metal fqq residual).
+    #[test]
+    fn metal_complexes_vs_xtb() {
+        let cases = [
+            ("nicarbonyl", 0.0, 5e-6),
+            ("ferrocene", 0.0, 2e-3),
+            ("cobalt_ammine", 3.0, 5e-3),
+            ("ferricyanide", -3.0, 5e-2),
+            ("zinc_ammine", 2.0, 5e-1),
+        ];
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/gfnff/metals/");
+        for (name, charge, tol) in cases {
+            let sdf = std::fs::read_to_string(format!("{dir}{name}.mol")).unwrap();
+            let refs: std::collections::HashMap<String, f64> = serde_json::from_str(
+                &std::fs::read_to_string(format!("{dir}{name}.ref.json")).unwrap()).unwrap();
+            let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+            let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+            let xyz: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+            let g = Gfnff::new(&at, &xyz, charge);
+            let e = g.energy(&xyz).total();
+            let xtb = refs["total energy"];
+            assert!((e - xtb).abs() < tol,
+                "{name}: total {e:+.6} vs xtb {xtb:+.6} (|d| {:.6} > {tol})", (e - xtb).abs());
+        }
+    }
+
+    /// The eta-coordination machinery: ferrocene ring carbons carry the
+    /// eta flag, use the reduced (nbm) neighbor list, and Fe-C bonds are
+    /// btyp 6 (no torsions around them).
+    #[test]
+    fn ferrocene_eta_topology() {
+        let sdf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/gfnff/metals/ferrocene.mol")).unwrap();
+        let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+        let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+        let xyz: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let _ = g.energy(&xyz);
+        // ring carbons are eta; their nb excludes Fe (nbm)
+        let eta_c = (0..at.len()).filter(|&i| at[i] == 6 && g.topo.eta[i]).count();
+        assert_eq!(eta_c, 10, "ferrocene eta carbons: {eta_c}/10");
+        for (i, &e) in g.topo.eta.iter().enumerate() {
+            if !e { continue; }
+            assert!(!g.topo.nb[i].contains(&0), "eta C{} bonded to Fe in nb", i + 1);
+        }
+        // torsion count matches xtb exactly (xtb verbose prints #tors 50)
+        assert_eq!(g.torsions.len(), 50, "ferrocene torsions: {}", g.torsions.len());
+    }
+
     /// N-methylformamide total energy vs xtb 6.7.1 --gfnff --sp. Locks two
     /// EEQ details the gfnff_topo restart file proved about the shipped
     /// binary: (1) dgam ff for a pi N is -0.14 even when amide() is true
@@ -4310,70 +4642,187 @@ fn angle_at(xyz: &[[f64; 3]], a: usize, b: usize, c: usize) -> f64 {
     cos.clamp(-1.0, 1.0).acos() * 180.0 / std::f64::consts::PI
 }
 
-fn assign_hyb(at: &[usize], nb: &[Vec<usize>], _xyz: &[[f64; 3]], _qa: &[f64]) -> (Vec<i32>, Vec<bool>) {
+/// Full hybridization port (gfnff_ini2.F90 155-408): the three-list
+/// regime with eta-coordination, metal branches and Sn/Pb/Bi demotion.
+/// Returns (hyb, nitro-N flags, eta flags, final nb = nbdum, imetal).
+fn assign_hyb_full(p: &Params, at: &[usize], xyz: &[[f64; 3]], lists: &NbLists) -> (Vec<i32>, Vec<bool>, Vec<bool>, Vec<Vec<usize>>, Vec<i32>) {
     let n = at.len();
-    let mut hyb = vec![0i32; n];
-    let mut nitro_n = vec![false; n];
+    let (nbf, nb, nbm) = (&lists.nbf, &lists.nb, &lists.nbm);
+
+    // eta-coordination detection (ini2 164-204); nbdum = nbm for those
+    let mut eta = vec![false; n];
+    let mut nb_final = vec![Vec::new(); n];
     for i in 0..n {
         let z = at[i];
-        let nn = nb[i].len();
-        let group = if z == 1 || z == 2 { z as i32 }
-            else if matches!(z, 5|6|7|8|9|14|15|16|17|33|34|35|51|52|53) {
-                let core = if z <= 9 { 2 } else if z <= 18 { 10 } else if z <= 36 { 18 } else { 36 };
-                (z - core) as i32
-            } else if matches!(z, 13) { 3 } else { 0 };
-        match group {
-            1 => { if nn == 2 { hyb[i] = 1; } else if nn > 2 && nn <= 4 { hyb[i] = 3; } }
-            3 => { if nn >= 4 { hyb[i] = 3; } else if nn == 3 { hyb[i] = 2; } else if nn == 2 { hyb[i] = 1; } }
-            4 => {
-                if nn >= 4 { hyb[i] = 3; }
-                else if nn == 3 { hyb[i] = 2; }
-                else if nn == 2 {
-                    let phi = angle_at(_xyz, nb[i][0], i, nb[i][1]);
-                    hyb[i] = if phi < 150.0 { 2 } else { 1 };
+        let mut ec = false;
+        if z <= 10 {
+            let numnbf = nbf[i].len();
+            let numnbm = nbm[i].len();
+            if (z == 6 && numnbf >= 4 && numnbm == 3)
+                || (z == 6 && numnbf == 3 && numnbm == 2) { ec = true; }
+            if ec {
+                let metals: Vec<usize> = nbf[i].iter()
+                    .copied().filter(|&j| p.metal_raw(at[j]) != 0).collect();
+                if metals.is_empty() {
+                    ec = false;   // etacoord makes no sense without metals
+                } else if metals.len() == 1 {
+                    let im = metals[0];
+                    let ncm = nbf[i].iter()
+                        .filter(|&&j| j != im && nbf[j].contains(&im)).count();
+                    if ncm == 0 { ec = false; }   // sigma alkyl, not eta
                 }
-                else if nn == 1 { hyb[i] = 1; }
+            }
+        }
+        eta[i] = ec;
+        nb_final[i] = if ec { nbm[i].clone() } else { nbf[i].clone() };
+    }
+
+    let mut hyb = vec![0i32; n];
+    let mut nitro_n = vec![false; n];
+    let mut carbene = vec![false; n];   // xtb itag = +1
+    for i in 0..n {
+        let z = at[i];
+        let group = p.group[z - 1];
+        let nd = &nb_final[i];
+        let nb20i = nd.len();
+        let nbdiff = nbf[i].len() as i32 - nb[i].len() as i32;
+        let nbmdiff = nbf[i].len() as i32 - nbm[i].len() as i32;
+        let nh = nd.iter().filter(|&&j| at[j] == 1).count();
+        match group {
+            1 | 2 => {
+                // H / Be: bridging vs tetra vs high-coord
+                if nb20i == 2 { hyb[i] = 1; }
+                if nb20i > 2 { hyb[i] = 3; }
+                if nb20i > 4 { hyb[i] = 0; }
+            }
+            3 => {
+                if nb20i > 4 { hyb[i] = 3; }
+                if nb20i > 4 && z > 10 && nbdiff == 0 { hyb[i] = 5; }
+                if nb20i == 4 { hyb[i] = 3; }
+                if nb20i == 3 { hyb[i] = 2; }
+                if nb20i == 2 { hyb[i] = 1; }
+            }
+            4 => {
+                if nb20i >= 4 { hyb[i] = 3; }
+                if nb20i > 4 && z > 10 && nbdiff == 0 { hyb[i] = 5; }
+                if nb20i == 3 { hyb[i] = 2; }
+                if nb20i == 2 {
+                    let phi = angle_at(xyz, nd[0], i, nd[1]);
+                    if phi < 150.0 { hyb[i] = 2; carbene[i] = true; }
+                    else { hyb[i] = 1; }
+                    // anionic 2-coord C stays sp2 without the carbene tag
+                    // (qa filled by the caller's estimate); approximated by
+                    // the layout-independent bent-geometry rule only here
+                }
+                if nb20i == 1 { hyb[i] = 1; }   // CO
             }
             5 => {
-                // N family (gfnff_ini2.F90 280-341)
-                if nn >= 4 { hyb[i] = 3; }
-                else if nn == 3 {
+                if nb20i >= 4 { hyb[i] = 3; }
+                if nb20i > 4 && z > 10 && nbdiff == 0 { hyb[i] = 5; }
+                if nb20i == 3 {
                     hyb[i] = 3;
                     if z == 7 {
-                        let kk = nb[i].iter().filter(|&&j| at[j] == 8 && nb[j].len() == 1).count();
-                        let ll = nb[i].iter().filter(|&&j| at[j] == 5 && nb[j].len() == 4).count();
-                        let ns = nb[i].iter().filter(|&&j| at[j] == 16 && nb[j].len() == 4).count();
+                        let kk = nd.iter().filter(|&&j| at[j] == 8 && nb_final[j].len() == 1).count();
+                        let ll = nd.iter().filter(|&&j| at[j] == 5 && nb_final[j].len() == 4).count();
+                        let ns = nd.iter().filter(|&&j| at[j] == 16 && nb_final[j].len() == 4).count();
                         if ns == 1 && ll == 0 && kk == 0 { hyb[i] = 3; }
                         if ll == 1 && ns == 0 { hyb[i] = 2; }
-                        if kk >= 1 { hyb[i] = 2; nitro_n[i] = true; }  // itag=1
+                        if kk >= 1 { hyb[i] = 2; nitro_n[i] = true; }
+                        if nbmdiff > 0 && ns == 0 { hyb[i] = 2; }   // pyridine N coordinated
                     }
                 }
-                else if nn == 2 {
+                if nb20i == 2 {
                     hyb[i] = 2;
-                    let (ja, jb) = (nb[i][0], nb[i][1]);
-                    for j in [ja, jb] {
-                        if nb[j].len() == 1 && (at[j] == 6 || at[j] == 7) { hyb[i] = 1; }
-                    }
-                    if at[ja] == 7 && at[jb] == 7 && nb[ja].len() <= 2 && nb[jb].len() <= 2 { hyb[i] = 1; }
-                    if angle_at(_xyz, ja, i, jb) > 160.0 { hyb[i] = 1; }
+                    let (ja, jb) = (nd[0], nd[1]);
+                    let term_c_n = |j: usize| nb_final[j].len() == 1 && (at[j] == 6 || at[j] == 7);
+                    if term_c_n(ja) || term_c_n(jb) { hyb[i] = 1; }
+                    if p.metal_raw(at[ja]) != 0 || p.metal_raw(at[jb]) != 0 { hyb[i] = 1; }  // M-NC
+                    if at[ja] == 7 && at[jb] == 7
+                        && nb_final[ja].len() <= 2 && nb_final[jb].len() <= 2 { hyb[i] = 1; }
+                    if angle_at(xyz, ja, i, jb) > p.linthr { hyb[i] = 1; }
                 }
-                else { hyb[i] = 1; }
+                if nb20i == 1 { hyb[i] = 1; }
             }
             6 => {
-                // O family (gfnff_ini2.F90 341-357)
-                if nn >= 2 { hyb[i] = 3; }
-                else {
+                if nb20i >= 3 { hyb[i] = 3; }
+                if nb20i > 3 && z > 10 && nbdiff == 0 { hyb[i] = 5; }
+                if nb20i == 2 {
+                    hyb[i] = 3;
+                    if nbmdiff > 0 {
+                        // M-O-X: CN of the closest non-metal neighbor
+                        let mut jmin = usize::MAX;
+                        let mut rmin = f64::INFINITY;
+                        for &j in &nb_final[i] {
+                            if p.metal_raw(at[j]) != 0 { continue; }
+                            let d = dist2(xyz, i, j);
+                            if d < rmin { rmin = d; jmin = j; }
+                        }
+                        if jmin != usize::MAX {
+                            let cn = nb_final[jmin].len();
+                            if cn == 3 { hyb[i] = 2; }
+                            if cn == 4 { hyb[i] = 3; }
+                        }
+                    }
+                }
+                if nb20i == 1 {
                     hyb[i] = 2;
-                    if let Some(&j) = nb[i].first() {
-                        if nb[j].len() == 1 { hyb[i] = 1; }   // CO / OH
+                    if nbdiff == 0 {
+                        if let Some(&j) = nb[i].first() {
+                            if nb[j].len() == 1 { hyb[i] = 1; }   // CO
+                        }
                     }
                 }
             }
-            7 => { hyb[i] = if nn >= 2 { 5 } else { 1 }; }
+            7 => {
+                if nb20i == 2 { hyb[i] = 1; }
+                if nb20i > 2 && z > 10 { hyb[i] = 5; }
+            }
+            8 => {
+                hyb[i] = 0;
+                if nb20i > 0 && z > 2 { hyb[i] = 5; }
+            }
+            g if g <= 0 => {
+                // transition metals (negative table groups): H's don't count
+                let mut nni = nb20i as i32;
+                if nh != 0 && nh as i32 != nni { nni -= nh as i32; }
+                if nni <= 2 { hyb[i] = 1; }
+                if nni <= 2 && group <= -6 { hyb[i] = 2; }
+                if nni == 3 { hyb[i] = 2; }
+                if nni == 4 { hyb[i] = 3; }
+                if nni == 5 && group == -3 { hyb[i] = 3; }
+            }
             _ => { hyb[i] = 0; }
         }
     }
-    (hyb, nitro_n)
+
+    // arine fix: two bonded carbene C's lose the tag
+    for i in 0..n {
+        for &j in &nb_final[i] {
+            if j < i && at[i] == 6 && at[j] == 6 && carbene[i] && carbene[j] {
+                carbene[i] = false;
+                carbene[j] = false;
+            }
+        }
+    }
+
+    // imetal: raw class with the Sn/Pb/Bi-style low-CN demotion
+    let imetal = (0..n).map(|i| demote_metal(p, at[i], nb_final[i].len())).collect();
+
+    (hyb, nitro_n, eta, nb_final, imetal)
+}
+
+/// Periodic-table row (xtb itabrow6: 1..6).
+fn period_row(z: usize) -> i32 {
+    match z {
+        1..=2 => 1, 3..=10 => 2, 11..=18 => 3,
+        19..=36 => 4, 37..=54 => 5, _ => 6,
+    }
+}
+
+/// Sn/Pb/Bi (main-group metals, periodic group > 3) with at most 4
+/// neighbors behave as non-metals (gfnff_ini.f90 297-300).
+fn demote_metal(p: &Params, z: usize, nb_count: usize) -> i32 {
+    if p.group[z - 1] > 3 && nb_count <= 4 { 0 } else { p.metal_raw(z) }
 }
 
 
