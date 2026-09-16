@@ -108,8 +108,10 @@ RDKit.js/JSME/3Dmol 全部 vendor 进 `app/vendor/`（MC 单文件哲学 → 我
 
 ## Roadmap → v1.0（2026-09-14 制定；v0.7.0 已发布）
 
-1. **构象系综端到端对拍**（先行）：ETKDG 嵌入 → 双力场优化 → 能量排序 + 几何 RMSD
-   系综整体 vs RDKit（ETKDGv3 + MMFF 优化管线），复用逐位对拍方法学。
+1. **构象系综端到端对拍**（✅ 2026-09-16 完成）：6 分子 × 30 种子，
+   6/6 全局最低能量与 RDKit 逐位一致、4/6 系综统计逐位一致（高柔性分子个别
+   种子局部盆地差异，min 不受影响）；回归 ensemble_stats_vs_rdkit + 夹具
+   tests/fixtures/conformers/。
 2. **金属配位复合物 + 带电物种 typing**：详见
    `docs/plans/2026-09-14-metal-charged-typing.md`（GFN-FF 移植 xtb 金属逻辑
    七个任务组 + MMFF 失败模式对拍 + 带电扩展集；明确排除金属晶体/裸团簇）。

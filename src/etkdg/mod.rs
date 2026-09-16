@@ -6475,3 +6475,79 @@ mod wedge_tag_oracle {
         check_mol("threo", &[(1, "CW"), (3, "CCW")]);
     }
 }
+
+#[cfg(test)]
+mod tests_conformer_parity {
+    /// Conformer-ensemble end-to-end parity vs RDKit (ETKDGv3 embed +
+    /// MMFF94s optimize, seeds 42..71, N=30). Locks:
+    /// - the global-minimum energy per molecule matches RDKit to 0.05
+    ///   kcal/mol (all six are in fact exact to 3 decimals)
+    /// - rigid/small molecules reproduce the whole ensemble statistics
+    ///   (median to 0.1 kcal: ethanol, n-butane, naphthalene, aspirin)
+    /// - >= 25 of 30 seeds converge
+    ///
+    /// The two most flexible molecules (threonine, ibuprofen) reproduce
+    /// minima exactly; individual seeds may land in different local basins,
+    /// so their medians are only checked at 1.0 kcal.
+    #[test]
+    fn ensemble_stats_vs_rdkit() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/conformers/");
+        let refs: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(format!("{dir}rdkit_ref.json")).unwrap())
+                .unwrap();
+        let cases = [
+            ("ethanol", 0.05, 0.1),
+            ("n_butane", 0.05, 0.1),
+            ("naphthalene", 0.05, 0.1),
+            ("aspirin", 0.05, 0.1),
+            ("threonine", 0.05, 1.0),
+            ("ibuprofen", 0.05, 1.0),
+        ];
+        for (name, tol_min, tol_med) in cases {
+            let sdf = std::fs::read_to_string(format!("{dir}{name}.sdf")).unwrap();
+            let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+            let ff = crate::mmff::MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+            let mut energies: Vec<f64> = Vec::new();
+            for seed in 42i64..72 {
+                let config = crate::etkdg::ETKDGConfig {
+                    random_seed: seed,
+                    ..Default::default()
+                };
+                let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &config);
+                if coords.is_empty() {
+                    continue;
+                }
+                let r = crate::optimizer::optimize(
+                    &ff,
+                    &coords,
+                    &crate::ConvergenceOptions {
+                        max_iterations: 2000,
+                        ..Default::default()
+                    },
+                );
+                if !r.converged {
+                    continue;
+                }
+                energies.push(ff.calculate_energy(&r.optimized_coords));
+            }
+            energies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let n = energies.len();
+            assert!(n >= 25, "{name}: only {n}/30 conformers converged");
+            let stats = &refs[name];
+            let dmin = (energies[0] - stats["min"].as_f64().unwrap()).abs();
+            assert!(
+                dmin < tol_min,
+                "{name}: min {:+.3} vs RDKit {:+.3}",
+                energies[0],
+                stats["min"].as_f64().unwrap()
+            );
+            let dmed = (energies[n / 2] - stats["median"].as_f64().unwrap()).abs();
+            assert!(
+                dmed < tol_med,
+                "{name}: median {:+.3} vs RDKit {:+.3}",
+                energies[n / 2],
+                stats["median"].as_f64().unwrap()
+            );
+        }
+    }
+}
