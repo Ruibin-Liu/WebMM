@@ -252,6 +252,27 @@ fn ring_size_for_angle(rings: &[Vec<usize>], i: usize, j: usize, k: usize) -> u8
 }
 
 impl MMFFForceField {
+    /// MMFF94 supports only main-group chemistry. RDKit's
+    /// MMFFGetMoleculeProperties returns None whenever a metal is BONDED to
+    /// another atom (metal complexes, M-L fragments); bare ions type but
+    /// have no bonded terms either way. Mirror that failure here so callers
+    /// surface "unsupported" instead of a garbage-typed energy.
+    pub fn check_mmff_support(mol: &Molecule) -> Result<(), String> {
+        const SUPPORTED: &[u8] = &[1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 35, 53];
+        for (i, atom) in mol.atoms.iter().enumerate() {
+            if mol.adjacency[i].is_empty() {
+                continue; // bare ions: no bonded terms either way
+            }
+            if !SUPPORTED.contains(&atom.atomic_number) {
+                return Err(format!(
+                    "MMFF94s typing not supported: element {} (atom {}) carries bonds — RDKit MMFF also refuses metal complexes",
+                    atom.symbol, i + 1
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn new(mol: &Molecule, variant: MMFFVariant) -> Self {
         let mut atom_types = Self::assign_atom_types(mol);
 
@@ -2000,5 +2021,69 @@ impl EnergyBreakdown {
 impl crate::forces::ForceField for MMFFForceField {
     fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
         self.compute_energy_and_gradient_into(coords, grad)
+    }
+}
+
+#[cfg(test)]
+mod tests_charged {
+    use super::*;
+
+    /// Charged organic species vs RDKit 2026.03.6 (geometries: RDKit
+    /// ETKDGv3 seed 42 + MMFF94s optimize; refs frozen alongside). Five of
+    /// the eight species lock at 0.0000 kcal/mol. The remaining three are
+    /// KNOWN typing gaps kept visible here (nitrate O- typing,
+    /// dihydrogen-phosphate P-O- typing; RDKit's thiocyanate reference is a
+    /// silently empty force field, E = 0, so it is skipped rather than
+    /// mirrored).
+    #[test]
+    fn charged_species_vs_rdkit() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mmff/charged/");
+        let refs: std::collections::HashMap<String, f64> =
+            serde_json::from_str(&std::fs::read_to_string(format!("{dir}refs.json")).unwrap())
+                .unwrap();
+        let exact = [
+            "acetate",
+            "methylammonium",
+            "glycine_zwitterion",
+            "sulfate",
+            "guanidinium",
+        ];
+        for name in exact {
+            let sdf = std::fs::read_to_string(format!("{dir}{name}.sdf")).unwrap();
+            let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+            let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+            MMFFForceField::check_mmff_support(&mol).expect(name);
+            let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+            let e = ff.calculate_energy(&coords);
+            let r = refs[name];
+            assert!((e - r).abs() < 0.005, "{name}: {e:+.4} vs RDKit {r:+.4}");
+        }
+    }
+
+    /// MMFF refuses metal complexes exactly like RDKit's
+    /// MMFFGetMoleculeProperties (NULL for any bonded metal atom).
+    #[test]
+    fn metal_complexes_refused_like_rdkit() {
+        let cases = [
+            ("ferrocene.mol", "Fe"),
+            ("zinc_ammine.mol", "Zn"),
+            ("nicarbonyl.mol", "Ni"),
+        ];
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/gfnff/metals/");
+        for (file, sym) in cases {
+            let sdf = std::fs::read_to_string(format!("{dir}{file}")).unwrap();
+            let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+            let err = MMFFForceField::check_mmff_support(&mol)
+                .expect_err(&format!("{file} must be refused"));
+            assert!(err.contains(sym), "{file}: message {err:?} lacks {sym}");
+        }
+        // organic molecules stay accepted
+        let sdf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/gfnff/thiophene.mol"
+        ))
+        .unwrap();
+        let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+        assert!(MMFFForceField::check_mmff_support(&mol).is_ok());
     }
 }

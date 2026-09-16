@@ -77,6 +77,9 @@ pub fn energy_terms_wasm(sdf_content: &str, engine: String) -> Result<String, Js
                 "MMFF94" => MMFFVariant::MMFF94,
                 _ => MMFFVariant::MMFF94s,
             };
+            if let Err(e) = crate::mmff::MMFFForceField::check_mmff_support(&mol) {
+                return Err(JsValue::from_str(&e));
+            }
             let ff = crate::mmff::MMFFForceField::new(&mol, variant);
             let e = ff.energy_and_gradient(&coords, &mut vec![[0.0; 3]; coords.len()]);
             let bd = ff.calculate_energy_breakdown(&coords);
