@@ -101,7 +101,7 @@ webmm/
 - **GBSA implicit solvation**: Onufriev–Bashford–Case (OBC2) Born radii via exact HCT desolvation integrals, analytical gradient, LCPO surface-area (SA) nonpolar term
 - **WASM API**: Full JavaScript interface — optimization, embedding, MD, and metadynamics with trajectory/FES results
 - **Parameter loading**: MMFF parameters embedded from JSON at compile time with fallback lookup
-- **Testing**: 251 tests including numerical gradient verification, end-to-end optimization, ring detection, V3000 parsing, property-based invariants, atom type assignment, NVE/NVT stability, and edge cases
+- **Testing**: 256 tests including numerical gradient verification, end-to-end optimization, ring detection, V3000 parsing, property-based invariants, atom type assignment, NVE/NVT stability, and edge cases
 
 ## Validation
 
@@ -114,10 +114,22 @@ upgrade; the app's vendored RDKit-js was upgraded from 2025.03.4 to
 
 - **MMFF**: `python3 scripts/benchmark_mmff.py --no-speed` — 230/230 molecules
   match RDKit atom types, charges, and energies to <0.01 kcal/mol. This is the
-  regression gate; exit code 0 required.
+  regression gate; exit code 0 required. A further 97-molecule parity suite
+  locks single-point energies at 0.00000 kcal/mol (90 neutral + 7 charged —
+  acetate, ammonium, glycine zwitterion, sulfate, guanidinium, nitrate,
+  dihydrogen phosphate; thiocyanate skipped: RDKit's own reference there is a
+  silently empty force field). Metal complexes are refused exactly like
+  RDKit's MMFF (typing NULL), never garbage-typed.
+- **GFN-FF**: 32/32 organic molecules within 4e-6 Eh of xtb 6.7.1 (per-term
+  energies, bonds/angles/torsions/rep/es/disp/HB/XB); 5 metal coordination
+  complexes (Ni(CO)4 exact, eta5-ferrocene 7e-4, Co(NH3)6 3+ 2e-3,
+  Fe(CN)6 3- 1.8e-2, Zn(NH3)4 2+ 5.5e-2 Eh).
 - **ETKDG**: `python3 scripts/gen_etkdg_ref.py` + `scripts/validate_etkdg.py` —
-  multi-seed embedding harness vs RDKit conformers.
-- See `docs/atom-type-coverage.md` and `docs/validation-energy-analysis.md`.
+  multi-seed embedding harness vs RDKit conformers. End-to-end ensemble parity
+  (embed + MMFF optimize, 30 seeds x 6 molecules): 6/6 global minima
+  bit-identical to RDKit, 4/6 full ensemble statistics identical.
+- See `docs/atom-type-coverage.md`, `docs/validation-energy-analysis.md` and
+  `docs/gfnff-porting-notes.md`.
 
 ## Build Instructions
 
@@ -216,7 +228,7 @@ above (build → stage → serve).
 ### Test
 
 ```bash
-cargo test          # 251 tests
+cargo test          # 256 tests
 cargo clippy --all-targets   # must stay at 0 warnings
 ```
 

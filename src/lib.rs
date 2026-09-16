@@ -130,7 +130,10 @@ impl Default for ConvergenceOptions {
             max_force: 0.01,
             rms_force: 0.001,
             energy_change: 1e-6,
-            max_iterations: 200,
+            // 200 was short for drug-like molecules under the RDKit protocol
+            // (aspirin-class aromatics need ~600-2000); easy molecules still
+            // exit on the energy/force criteria long before the cap
+            max_iterations: 1000,
         }
     }
 }
