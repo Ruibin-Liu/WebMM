@@ -1019,9 +1019,10 @@ impl MMFFForceField {
                 });
                 let bonded_to_so2_s = so2_s_bond_order.is_some();
 
-                // Nitro N: exactly 2 O neighbors, >=1 double bond to O, no H neighbors
+                // Nitro N: 2 O neighbors (nitro) or 3 (nitrate anion),
+                // >=1 double bond to O, no H neighbors
                 let is_nitro_n = atom.atomic_number == 7
-                    && oxygen_neighbors.len() == 2
+                    && oxygen_neighbors.len() >= 2
                     && h_neighbor_count == 0
                     && double_o_count >= 1
                     && charge > 0.5;
@@ -1035,7 +1036,7 @@ impl MMFFForceField {
                                 .iter()
                                 .filter(|&&m| mol.atoms[m].atomic_number == 8)
                                 .count()
-                                == 2
+                                >= 2
                             && count_double_o(n) >= 1
                     });
 
@@ -1085,6 +1086,9 @@ impl MMFFForceField {
                         if z == 7 {
                             return true;
                         } // N-oxide O⁻
+                        if z == 15 {
+                            return true;
+                        } // phosphate O⁻ (RDKit types P-O- as 32)
                         if z != 16 && z != 17 {
                             return false;
                         }
@@ -2029,12 +2033,12 @@ mod tests_charged {
     use super::*;
 
     /// Charged organic species vs RDKit 2026.03.6 (geometries: RDKit
-    /// ETKDGv3 seed 42 + MMFF94s optimize; refs frozen alongside). Five of
-    /// the eight species lock at 0.0000 kcal/mol. The remaining three are
-    /// KNOWN typing gaps kept visible here (nitrate O- typing,
-    /// dihydrogen-phosphate P-O- typing; RDKit's thiocyanate reference is a
-    /// silently empty force field, E = 0, so it is skipped rather than
-    /// mirrored).
+    /// ETKDGv3 seed 42 + MMFF94s optimize; refs frozen alongside). Seven of
+    /// the eight species lock at 0.0000 kcal/mol (nitrate needed the 3-O
+    /// nitro-N extension, phosphate the P-O(-) -> O_CO2 typing). The one
+    /// exception, thiocyanate, has a degenerate RDKit reference (a silently
+    /// empty force field reporting E = 0) and is skipped rather than
+    /// mirrored.
     #[test]
     fn charged_species_vs_rdkit() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mmff/charged/");
@@ -2047,6 +2051,8 @@ mod tests_charged {
             "glycine_zwitterion",
             "sulfate",
             "guanidinium",
+            "nitrate",
+            "dihydrogen_phosphate",
         ];
         for name in exact {
             let sdf = std::fs::read_to_string(format!("{dir}{name}.sdf")).unwrap();
