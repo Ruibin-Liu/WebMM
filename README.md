@@ -245,7 +245,7 @@ const options = new OptimizationOptions();
 options.convergence.max_force = 0.01;
 options.convergence.rms_force = 0.001;
 options.convergence.energy_change = 1e-6;
-options.convergence.max_iterations = 200;
+options.convergence.max_iterations = 1000;
 options.mmff_variant = 'MMFF94s';
 
 const result = optimize_from_sdf(sdfContent, options);
@@ -325,7 +325,7 @@ evaluation).
 | `convergence.max_force` | `0.01` | Max force component (kcal/mol/A) |
 | `convergence.rms_force` | `0.001` | RMS force |
 | `convergence.energy_change` | `1e-6` | Energy change threshold |
-| `convergence.max_iterations` | `200` | Max iterations |
+| `convergence.max_iterations` | `1000` | Max iterations |
 
 #### `MDOptions` / `MetaDOptions`
 
