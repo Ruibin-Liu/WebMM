@@ -4,7 +4,7 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**Playground + Demo display de-rotation COMPLETE — the whole-molecule tumbling after Relax (and during any run) is removed from the display via EMA-reference Kabsch alignment. Design refresh + v1.1.1 fixes in.**
+**v1.0.0 RELEASED (tag v1.0.0) — 三大奇偶承诺均经外部引擎逐位验证(MMFF94s 97 分子 0.00000 锁值、GFN-FF 37 分子对拍 xtb、构象系综 6/6 全局最低逐位)。发布后评审修复(README 默认值同步/乱码)与仓库卫生清理已入库;无进行中开发流。**
 
 Playground = fun/cool teaching sandbox over the existing WASM engine (decision:
 separate page sharing `pkg/webmm.js`, not a molecule-clipboard extension — that
@@ -17,6 +17,7 @@ MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit
 **ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
 
 ## Recently Completed
++- **仓库清理:过时文档/垃圾文件/.gitignore 卫生。** ①删除 PROJECT_STATUS.md(文件头自证 outdated,内容仅为指向本文件的指针,数据停留在 165 测试时代)与 ETKDG_MMFF_REVIEW.md(RDKit 2025.09 时代一次性审计,本文件历史条目已判其 unreliable——标注 FIXED 实则未修;仅历史条目引用,git 历史保留);②git rm .DS_Store(macOS 垃圾,2026-07 误入库),.gitignore 补 .DS_Store 规则;③.gitignore 删除失效行:GENTS.md 拼写错(无匹配文件)、PLAN.md/CODE_STATUS.md 惰性规则(两文件均 tracked);④Current Focus 刷新为 v1.0.0 后状态(模板各节不变)。未动(待决策):3 个 v0.5.0 时代 stash、10 个无引用诊断 examples、diag 类 scripts、docs/plans 归档、pkg 内本地杂项。纯文档/卫生变更,无代码改动。
 +- **v1.0.0 评审修复:README 默认迭代数同步 + CODE_STATUS 乱码。** 评审 v1.0.0 提交发现:①优化器默认 max_iterations 200→1000 后 README API 参考段未同步(OptimizationOptions 示例与参数默认值表两处仍写 200)——均修为 1000,未跟踪构建副本 pkg/README.md、site/pkg/README.md 按 wasm-pack/staging 拷贝语义一并刷新;②G6 条目"胍!根"含 U+FFFD 乱码,修为"胍根"(全库 U+FFFD 清零)。纯文档变更、无代码改动——256 测试、clippy 0 状态沿用。评审另记 .gitignore 的 GENTS.md 拼写及 PLAN/CODE_STATUS 惰性忽略规则为遗留项,不在本次范围。
 +- **Release v1.0.0。** 收尾打磨:①优化器默认迭代上限 200→1000(易收敛分子仍由能量/力判据提前退出;阿司匹林/药物类在 RDKit 协议下需 ~600-2000 步——app 路径本就自适应传 ≥500,此项保护裸 API 调用方);②README 验证章节全面刷新(256 测试;MMFF 230/230 门禁 + 97 分子 0.00000 锁值 + 失败模式对拍;GFN-FF 32/32 有机 + 5 金属配合物;ETKDG 系综 6/6 全局最低逐位);③版本号同步 Cargo.toml/Cargo.lock/package.json/pkg(wasm 重生成,webmm_version()→"1.0.0",导出元数据自动携带)。1.0 里程碑内容:v0.6.1 以来 160+ 提交,三大承诺全部兑现并经外部引擎逐位验证——MMFF94s 97 分子 0.00000 kcal/mol、GFN-FF 37 分子对拍 xtb(最差 5.5e-2 Eh,有机 4e-6)、构象系综端到端 6/6 全局最低逐位;立体化学布局无关、优化器加固(幻影力/线搜索)、金属配位复合物(η⁵ 二茂铁 7e-4)、三页产品、RDKit 2026.03 双侧对齐。tag v1.0.0。
 +- **路线图第 1 项完成:构象系综端到端对拍(ETKDGv3 嵌入 + MMFF94s 优化,seeds 42..71,N=30/分子)。** 6 分子(乙醇/正丁烷/萘/阿司匹林/苏氨酸/布洛芬):**6/6 全局最低能量与 RDKit 逐位一致**(布洛芬 +23.790、阿司匹林 +18.910、苏氨酸 +40.855 …);**4/6 整个系综统计(min/median/p90)逐位一致**——同种子嵌入 + 优化在刚性与小分子上逐种子复现 RDKit;两个最高柔性分子(苏氨酸、布洛芬)仅个别种子落入不同局部盆地里(min 不受影响,median 差 ≤0.3 kcal)。过程中发现**优化器默认 200 步上限**对芳酯/药物分子不够(RDKit 协议用 2000)——对拍例程与回归测试用 2000 步。回归 ensemble_stats_vs_rdkit:断言 min<0.05、刚性 median<0.1 / 柔性 median<1.0、≥25/30 收敛;夹具(6 SDF + rdkit_ref.json)入 tests/fixtures/conformers/。256 测试、clippy 0。1.0 路线图仅剩收尾打磨。

@@ -1,34 +1,42 @@
-# Plan: v1.0.0 评审修复 — README 默认迭代数同步 + CODE_STATUS 乱码
+# Plan: 仓库清理 — 过时文档/垃圾文件/.gitignore 卫生
 
-## 背景
+## 范围
 
-对 v1.0.0 提交(53e05d7)的代码评审发现两处文档问题:
+评审后续清理。只处理"自证过时 / 纯垃圾 / 失效规则"三类;其余候选项列入
+"明确不动"待用户决策。无 Rust/JS 代码改动,无 API 变更。
 
-1. **README API 参考段陈旧(该提交自身引入的不一致)**:优化器默认
-   `max_iterations` 已在 `src/lib.rs` 改为 1000,但 README 的
-   `OptimizationOptions` 示例(L248)与参数默认值表(L328)仍写 `200`。
-   陈旧值随构建拷贝传播到未跟踪的 `pkg/README.md` 与 `site/pkg/README.md`。
-2. **CODE_STATUS.md 乱码(历史遗留,G6 提交引入)**:L23 "胍!根" 含
-   U+FFFD 替换字符,应为 "胍根"(guanidino,胍基)。
+## 调查结论(清理依据)
 
-纯文档修复:无 Rust/JS 代码改动,无 API 变更,测试数与 clippy 状态不变。
-
-评审发现 3(.gitignore 的 `GENTS.md` 拼写及 PLAN/CODE_STATUS 惰性忽略规则)
-明确不在本次范围。
+| 项 | 依据 |
+|---|---|
+| `.DS_Store` | macOS 垃圾文件,2026-07-24 误入库且 tracked |
+| `PROJECT_STATUS.md` | 文件头自证 outdated("Please see CODE_STATUS.md"),数据停留在 165 测试时代;README/site/app 无引用 |
+| `ETKDG_MMFF_REVIEW.md` | RDKit 2025.09 时代一次性审计;CODE_STATUS 历史条目已判其 "unreliable"(标注 FIXED 实则未修);仅历史条目与旧计划引用;git 历史保留 |
+| `.gitignore` 失效行 | `GENTS.md` 为拼写错(匹配不到任何文件);`PLAN.md`/`CODE_STATUS.md` 规则惰性(两文件均 tracked) |
+| `CODE_STATUS.md` Current Focus | 仍为 de-rotation/Playground v1.1.1 时代描述,v1.0.0 已发布,需刷新(模板各节不动) |
 
 ## 任务
 
-1. `README.md` L248 示例 `options.convergence.max_iterations = 200;` → `1000;`
-2. `README.md` L328 参数表 `` `convergence.max_iterations` | `200` `` → `` `1000` ``
-3. `CODE_STATUS.md` L23 "胍!根"(胍 + U+FFFD + ! + 根)→ "胍根"
-4. 同步未跟踪构建副本:`cp README.md pkg/README.md site/pkg/README.md`
-   (复刻 wasm-pack 构建 + site staging 的 README 拷贝语义)
-5. `CODE_STATUS.md` Recently Completed 顶部按既有 `+- **标题。** …` 格式
-   追加本任务条目
+1. `git rm .DS_Store`;`.gitignore` 增加 `.DS_Store`
+2. `git rm PROJECT_STATUS.md`
+3. `git rm ETKDG_MMFF_REVIEW.md`
+4. `.gitignore`:删除 `GENTS.md` 错拼行与 `PLAN.md`/`CODE_STATUS.md` 惰性规则
+5. `CODE_STATUS.md` Current Focus 刷新为 v1.0.0 后状态;Recently Completed
+   顶部按既有 `+- **标题。** …` 格式追加本任务条目
+
+## 明确不动(待用户决策)
+
+- 3 个 v0.5.0 时代 stash(破坏性操作)
+- examples/ 下 10 个无引用诊断例程(conf_parity/diag_angles/diag_embed/
+  gff_audit/gff_bdump/gff_metals/gff_qdump/gff_rep/mmff_charged/test_nh2)
+  —— AGENTS.md 约定的诊断机制,删除属范围决策
+- scripts/ 下 diag_*/diff_* 等一次性诊断脚本
+- docs/plans/*.md(刻意的 dated 计划归档)
+- pkg/ 内未跟踪本地杂项(index_old.html/caff_check.sdf/server.py,
+  可能是本地 dev 文件)
 
 ## 验收
 
-- `grep -n "max_iterations" README.md`:无默认 200 残留(248/328 两处为 1000)
-- `grep -c $'\xef\xbf\xbd' CODE_STATUS.md` = 0
-- `git status`:仅 README.md / CODE_STATUS.md / PLAN.md 三个跟踪文件变更
-- 不跑全量测试(无代码改动);256 测试 / clippy 0 状态沿用
+- `cargo test` 256 全绿、`cargo clippy --all-targets` 0 警告(验证不回归)
+- grep 确认无 PROJECT_STATUS/ETKDG_MMFF_REVIEW 活引用
+- git status 仅剩本任务变更,提交后干净
