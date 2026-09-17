@@ -1,42 +1,33 @@
-# Plan: 仓库清理 — 过时文档/垃圾文件/.gitignore 卫生
+# Plan: 仓库清理第二轮 — stash/诊断例程/一次性脚本/计划归档全清
 
 ## 范围
 
-评审后续清理。只处理"自证过时 / 纯垃圾 / 失效规则"三类;其余候选项列入
-"明确不动"待用户决策。无 Rust/JS 代码改动,无 API 变更。
+用户批准第一轮报告中的全部保留项清理。另含同类别 decisive 项:旧对拍
+bin 两件套(其唯一驱动脚本 compare_rdkit.py 一并清除)。git 历史均可恢复。
 
-## 调查结论(清理依据)
+## 依赖核查结论(不可删)
 
-| 项 | 依据 |
-|---|---|
-| `.DS_Store` | macOS 垃圾文件,2026-07-24 误入库且 tracked |
-| `PROJECT_STATUS.md` | 文件头自证 outdated("Please see CODE_STATUS.md"),数据停留在 165 测试时代;README/site/app 无引用 |
-| `ETKDG_MMFF_REVIEW.md` | RDKit 2025.09 时代一次性审计;CODE_STATUS 历史条目已判其 "unreliable"(标注 FIXED 实则未修);仅历史条目与旧计划引用;git 历史保留 |
-| `.gitignore` 失效行 | `GENTS.md` 为拼写错(匹配不到任何文件);`PLAN.md`/`CODE_STATUS.md` 规则惰性(两文件均 tracked) |
-| `CODE_STATUS.md` Current Focus | 仍为 de-rotation/Playground v1.1.1 时代描述,v1.0.0 已发布,需刷新(模板各节不动) |
+- `scripts/benchmark_mmff.py`(门禁)依赖 examples `bench_mmff`、`dump_types_energy` → 保留
+- RDKit 2026.03 参考重生成依赖 `parity_2026` → 保留
+- CI(rust.yml)仅跑 fmt/check/clippy/test,不引用任何待删文件
 
 ## 任务
 
-1. `git rm .DS_Store`;`.gitignore` 增加 `.DS_Store`
-2. `git rm PROJECT_STATUS.md`
-3. `git rm ETKDG_MMFF_REVIEW.md`
-4. `.gitignore`:删除 `GENTS.md` 错拼行与 `PLAN.md`/`CODE_STATUS.md` 惰性规则
-5. `CODE_STATUS.md` Current Focus 刷新为 v1.0.0 后状态;Recently Completed
-   顶部按既有 `+- **标题。** …` 格式追加本任务条目
-
-## 明确不动(待用户决策)
-
-- 3 个 v0.5.0 时代 stash(破坏性操作)
-- examples/ 下 10 个无引用诊断例程(conf_parity/diag_angles/diag_embed/
-  gff_audit/gff_bdump/gff_metals/gff_qdump/gff_rep/mmff_charged/test_nh2)
-  —— AGENTS.md 约定的诊断机制,删除属范围决策
-- scripts/ 下 diag_*/diff_* 等一次性诊断脚本
-- docs/plans/*.md(刻意的 dated 计划归档)
-- pkg/ 内未跟踪本地杂项(index_old.html/caff_check.sdf/server.py,
-  可能是本地 dev 文件)
+1. `git stash clear`(3 个 v0.5.0 时代 stash,用户确认不可恢复操作)
+2. `git rm` examples ×10:conf_parity, diag_angles, diag_embed, gff_audit,
+   gff_bdump, gff_metals, gff_qdump, gff_rep, mmff_charged, test_nh2
+3. `git rm` 旧对拍两件套:src/bin/compare_mmff.rs, src/bin/compare_etkdg.rs,
+   scripts/compare_rdkit.py(已被 benchmark_mmff.py 与
+   gen_etkdg_ref.py+validate_etkdg.py 取代)
+4. `git rm` scripts ×5:diag_angle_sb, diag_compare, diag_mmff_divergence,
+   diff_atom_types, diff_detail
+5. `git rm` docs/plans/ ×5(2026-03-21/03-22/03-28/04-19/09-14,均已完成)
+6. `rm` pkg/ 未跟踪杂项 ×3:index_old.html, caff_check.sdf, server.py
+7. CODE_STATUS.md Recently Completed 顶部追加本任务条目
 
 ## 验收
 
-- `cargo test` 256 全绿、`cargo clippy --all-targets` 0 警告(验证不回归)
-- grep 确认无 PROJECT_STATUS/ETKDG_MMFF_REVIEW 活引用
-- git status 仅剩本任务变更,提交后干净
+- `cargo test` 256 全绿(例程减少,测试数不变)、`cargo clippy --all-targets` 0 警告
+- `git stash list` 为空
+- grep 无待删文件的活引用(README/CI/scripts 门禁)
+- 提交后 git status 干净
