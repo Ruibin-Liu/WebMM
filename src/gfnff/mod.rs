@@ -38,7 +38,7 @@
 #![cfg_attr(rustfmt, rustfmt_skip)]
 
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const BOHR: f64 = 0.52917726;
 
@@ -355,15 +355,20 @@ impl GfnffForceField {
 
 impl crate::forces::ForceField for GfnffForceField {
     fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
-        let e = self.inner.energy_and_gradient(coords, grad);   // E in Eh, grad in Eh/Bohr
-        // convert BOTH to kcal/mol and kcal/mol/Å (the previous version scaled
-        // only the energy, leaving the gradient 2.24× too small — L-BFGS then
-        // stalled at the input geometry and "converged" immediately)
-        const SCALE: f64 = 627.5094740631 / BOHR;
-        for g in grad.iter_mut() {
-            for c in g.iter_mut() { *c *= SCALE; }
-        }
-        e.total() * 627.5094740631   // Eh -> kcal/mol
+        let e = self.inner.energy_and_gradient(coords, grad);
+        // E in Eh -> kcal/mol; the inner gradient is ALREADY converted to
+        // kcal/mol/A at its tail (grad_out[a][t] = g * EH_KCAL / BOHR).
+        // History: the M1-era adapter once needed a x(627.51/BOHR) here when
+        // the inner returned Eh/Bohr; the faithful gxtb rewrite then added the
+        // conversion inside, and rescaling here again inflated the gradient
+        // by 1186x — GFN-FF optimizations could never reach force thresholds
+        // and line searches ground to the alpha floor. Found via directional-
+        // derivative FD check (see CODE_STATUS).
+        e.total() * 627.5094740631
+    }
+
+    fn energy(&self, coords: &[[f64; 3]]) -> f64 {
+        self.inner.energy(coords).total() * 627.5094740631
     }
 }
 
@@ -378,6 +383,13 @@ pub struct Gfnff {
     pub angles: Vec<AngleParam>,
     /// per-torsion (l, i, j, k, nrot, phi0_rad, fc)
     pub torsions: Vec<TorsionParam>,
+    /// D4 reference C6 trapezoid sums per element pair (key (z_lo, z_hi)):
+    /// c6ref[(zi,zj)][a][b] = Σ_k tw[k]·alpha_ref(zi,a,k)·alpha_ref(zj,b,k).
+    /// Static per element pair — precomputed once per molecule. Recomputing
+    /// it per pair per energy call was ~77% of the E+G hot path (profiled).
+    /// The raw trapz sum `s` is stored (thopi applied at the use sites) so
+    /// both call sites keep their exact floating-point evaluation order.
+    c6ref: HashMap<(usize, usize), Vec<Vec<f64>>>,
     /// setup geometry (Bohr), used for chktors linearity filters
     xyz0: Vec<[f64; 3]>,
 }
@@ -447,6 +459,36 @@ impl Gfnff {
     pub fn new(at: &[usize], xyz_ang: &[[f64; 3]], charge: f64) -> Self {
         let p = Params::load();
         let n = at.len();
+        // D4 reference-C6 table for the element pairs present (see field doc).
+        // Built with the exact accumulation order of the old per-pair loop so
+        // energies are bit-for-bit unchanged.
+        let tw = trapzd_weights();
+        let zs: Vec<usize> = {
+            let mut s = HashSet::new();
+            s.extend(at.iter().copied());
+            let mut v: Vec<usize> = s.into_iter().collect();
+            v.sort_unstable();
+            v
+        };
+        let mut c6ref: HashMap<(usize, usize), Vec<Vec<f64>>> =
+            HashMap::with_capacity(zs.len() * (zs.len() + 1) / 2);
+        for (pos, &zi) in zs.iter().enumerate() {
+            for &zj in &zs[pos..] {
+                let mut row = Vec::with_capacity(p.d4_refn[zi - 1] as usize);
+                for a in 0..p.d4_refn[zi - 1] as usize {
+                    let mut col = Vec::with_capacity(p.d4_refn[zj - 1] as usize);
+                    for b in 0..p.d4_refn[zj - 1] as usize {
+                        let mut s = 0.0;
+                        for k in 0..23 {
+                            s += tw[k] * alpha_ref(&p, zi, a, k) * alpha_ref(&p, zj, b, k);
+                        }
+                        col.push(s);
+                    }
+                    row.push(col);
+                }
+                c6ref.insert((zi, zj), row);
+            }
+        }
         let xyz: Vec<[f64; 3]> = xyz_ang.iter().map(|r| [r[0]/BOHR, r[1]/BOHR, r[2]/BOHR]).collect();
 
         // --- coordination number (erf) ---
@@ -621,7 +663,7 @@ impl Gfnff {
         let topo = Topology { nbm, nbf, imetal, mchar, eta, nb, hyb, qa: topo_q, chieeq, gameeq, alpeeq, dxi, nb13, nfrag, piadr: vec![false; n], pibo: vec![0.0; 0], btyp: vec![1; 0], bpair: Vec::new(), ring_size: vec![0; n], fraglist: fraglist0, qfrag, hbbas: vec![0.0; n], hbaci: vec![0.0; n], carbene, nitro_n: nitro, hb_h: Vec::new(), hb_ab: Vec::new(), xb_triples: Vec::new(), b3: Vec::new(), bond_hb_b: Vec::new(),
             rings_all: Vec::new() };
 
-        let mut g = Gfnff { p, at: at.to_vec(), charge, topo, bonds: Vec::new(), angles: Vec::new(), torsions: Vec::new(), xyz0: xyz.clone() };
+        let mut g = Gfnff { p, at: at.to_vec(), charge, topo, bonds: Vec::new(), angles: Vec::new(), torsions: Vec::new(), c6ref, xyz0: xyz.clone() };
         g.setup_bonds(&xyz, &rabd, &cn);
         // bond-path matrix (nbondmat_pbc, non-periodic) + smallest rings
         g.setup_bpair_rings();
@@ -2755,7 +2797,6 @@ impl Gfnff {
         let n = self.at.len();
         let p = &self.p;
         let wf = 4.0f64;
-        let tw = trapzd_weights();
         // weights and their cn derivatives
         let mut gw = vec![vec![0.0f64; 8]; n];
         let mut dgw = vec![vec![0.0f64; 8]; n];
@@ -2789,10 +2830,14 @@ impl Gfnff {
             let t8 = 1.0 / (r.powi(8) + r0.powi(4));
             // C6 + dc6/dcn(i), dc6/dcn(j)
             let (mut c6, mut dc6i, mut dc6j) = (0.0, 0.0, 0.0);
+            let tab = &self.c6ref[&(zi.min(zj), zi.max(zj))];
             for a in 0..p.d4_refn[zi-1] as usize {
                 for b in 0..p.d4_refn[zj-1] as usize {
-                    let mut s = 0.0;
-                    for k in 0..23 { s += tw[k] * alpha_ref(p, zi, a, k) * alpha_ref(p, zj, b, k); }
+                    // s == Σ_k tw[k]·alpha_ref(zi,a,k)·alpha_ref(zj,b,k) —
+                    // precomputed in c6ref (see field doc); the (a,b)/(b,a)
+                    // transpose is exact because each term is the same product
+                    // summed in the same k order.
+                    let s = if zi <= zj { tab[a][b] } else { tab[b][a] };
                     let refc6 = thopi * s;
                     c6 += gw[i][a] * gw[j][b] * refc6;
                     dc6i += dgw[i][a] * gw[j][b] * refc6;
@@ -2847,15 +2892,13 @@ impl Gfnff {
             let r0 = a0 * a0; // saved as R0^2, t6 uses r0^3 = (R0^2)^... note: matches Fortran
             let t6 = 1.0 / (r.powi(6) + r0.powi(3));
             let t8 = 1.0 / (r.powi(8) + r0.powi(4));
-            // charge-scaled pair C6 (trapezoid over the non-uniform grid)
-            let tw = trapzd_weights();
+            // charge-scaled pair C6 (trapezoid over the non-uniform grid,
+            // precomputed per element pair in c6ref; see field doc)
+            let tab = &self.c6ref[&(zi.min(zj), zi.max(zj))];
             let mut c6 = 0.0;
             for a in 0..p.d4_refn[zi-1] as usize {
                 for b in 0..p.d4_refn[zj-1] as usize {
-                    let mut s = 0.0;
-                    for k in 0..23 {
-                        s += tw[k] * alpha_ref(p, zi, a, k) * alpha_ref(p, zj, b, k);
-                    }
+                    let s = if zi <= zj { tab[a][b] } else { tab[b][a] };
                     c6 += gw[i][a] * gw[j][b] * thopi * s;
                 }
             }
@@ -3912,6 +3955,96 @@ mod tests_optimize {
         println!("E: {e0:.3} -> {e:.3} kcal/mol, r(OH) = {r1:.4} A");
         assert!(e < e0, "energy did not decrease");
         assert!((r1 - 0.9574).abs() < 0.03, "O-H not optimized: {r1}");
+    }
+
+    /// The adapter's gradient must be the derivative of the adapter's energy
+    /// (kcal/mol per A on both sides). Locks the double-scaling bug: the M1-era
+    /// adapter multiplied the inner gradient by 627.51/BOHR a second time
+    /// after the faithful gxtb port had already converted it to kcal/mol/A at
+    /// its tail — every GFN-FF optimization ran with a 1186x inflated gradient
+    /// (force thresholds unreachable, line searches ground to the alpha floor).
+    #[test]
+    fn adapter_gradient_matches_energy_fd() {
+        let at = [8usize, 1, 1];
+        let xyz = [[0.0, 0.03, 0.1173], [0.05, 0.7572, -0.4692], [-0.02, -0.7572, -0.40]];
+        let ff = GfnffForceField::new(&at, &xyz, 0.0);
+        let mut g = vec![[0.0f64; 3]; 3];
+        ff.energy_and_gradient(&xyz, &mut g);
+        let h = 1e-4f64;
+        let mut maxdiff = 0.0f64;
+        for a in 0..3 {
+            for t in 0..3 {
+                let mut p = xyz.to_vec();
+                p[a][t] += h;
+                let mut m = xyz.to_vec();
+                m[a][t] -= h;
+                let fd = (ff.energy(&p) - ff.energy(&m)) / (2.0 * h);
+                maxdiff = maxdiff.max((fd - g[a][t]).abs());
+            }
+        }
+        // components are O(1-100) kcal/mol/A here; 1e-3 absolute is generous
+        // vs the 8.6e-7 rel measured at h=1e-4 (with the 1186x bug this was ~1e2)
+        assert!(maxdiff < 1e-3, "adapter gradient inconsistent with energy: {maxdiff}");
+    }
+}
+
+#[cfg(test)]
+mod tests_c6ref {
+    use super::*;
+
+    /// The precomputed c6ref table must be bit-identical to the per-pair
+    /// on-the-fly trapz sum it replaced (same accumulation order), in both
+    /// (zi,zj) orientations.
+    #[test]
+    fn c6_ref_table_bitwise() {
+        let cases: Vec<(Vec<usize>, Vec<[f64; 3]>)> = vec![
+            // water (H, O) and benzene (C, H) cover pairs (1,1)(1,6)(6,6)(1,8)(8,8)
+            (
+                vec![8, 1, 1],
+                vec![[0.0, 0.0, 0.1173], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692]],
+            ),
+            (
+                {
+                    let mut at = vec![6usize; 6];
+                    at.extend([1, 1, 1, 1, 1, 1]);
+                    at
+                },
+                {
+                    let r = 1.3970f64;
+                    let rh = 2.4810f64;
+                    let mut xyz = Vec::new();
+                    for k in 0..6 {
+                        let a = k as f64 * std::f64::consts::PI / 3.0;
+                        xyz.push([r * a.cos(), r * a.sin(), 0.0]);
+                    }
+                    for k in 0..6 {
+                        let a = k as f64 * std::f64::consts::PI / 3.0;
+                        xyz.push([rh * a.cos(), rh * a.sin(), 0.0]);
+                    }
+                    xyz
+                },
+            ),
+        ];
+        for (at, xyz) in cases {
+            let g = Gfnff::new(&at, &xyz, 0.0);
+            let tw = trapzd_weights();
+            for ((zi, zj), tab) in &g.c6ref {
+                assert!(zi <= zj, "key must be normalized");
+                for a in 0..tab.len() {
+                    for b in 0..tab[a].len() {
+                        let mut s = 0.0f64;
+                        for k in 0..23 {
+                            s += tw[k] * alpha_ref(&g.p, *zi, a, k) * alpha_ref(&g.p, *zj, b, k);
+                        }
+                        assert!(
+                            s.to_bits() == tab[a][b].to_bits(),
+                            "c6ref[({zi},{zj})][{a}][{b}]: recomputed {s:e} != stored {:e}",
+                            tab[a][b]
+                        );
+                    }
+                }
+            }
+        }
     }
 }
 

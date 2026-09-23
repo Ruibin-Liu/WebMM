@@ -3,6 +3,13 @@
 use crate::forces::ForceField;
 use crate::ConvergenceOptions;
 
+/// Env-gated optimizer trace (OPT_DEBUG=1): per-iteration direction/slope and
+/// per-trial Armijo numbers to stderr. Cached — no per-call env lookup cost.
+fn opt_debug() -> bool {
+    static DBG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DBG.get_or_init(|| std::env::var("OPT_DEBUG").is_ok())
+}
+
 /// Optimization result
 pub struct OptimizationResult {
     pub optimized_coords: Vec<[f64; 3]>,
@@ -84,12 +91,16 @@ pub fn optimize(
             d
         };
 
-        // Line search (Armijo backtracking)
-        // Steepest-descent steps need explicit displacement scaling; a true
-        // L-BFGS direction already carries the inverse-curvature scale, so the
-        // standard unit initial step applies. The old 0.1/0.3 A displacement
-        // caps starved flexible molecules (e.g. Remdesivir was 24 kcal/mol
-        // behind RDKit after 500 iterations).
+        // Line search (Armijo backtracking with quadratic interpolation)
+        // L-BFGS directions from the two-loop recursion carry the inverse-
+        // curvature scaling, so the standard unit initial step applies
+        // (Nocedal-Wright). Only raw steepest-descent steps need explicit
+        // displacement scaling (~0.5 A). Safeguard: when the direction norm
+        // is pathological (force-spike curvature pairs can inflate |d| to
+        // ~1e12, making the unit step a ~1e12 A displacement), fall back to
+        // a 10 A displacement cap so backtracking starts in physical territory
+        // (the old fixed 1.5 A cap for ALL L-BFGS steps overshot ~1000x on
+        // normal directions and burned 10-26 E+G evaluations per iteration).
         let max_component = d
             .iter()
             .map(|di| di.abs())
@@ -98,20 +109,17 @@ pub fn optimize(
         let initial_alpha = if s_history.len() < 3 {
             0.5 / max_component // ~0.5 A max displacement for steepest descent
         } else {
-            1.5 / max_component // ~1.5 A for L-BFGS steps
+            1.0f64.min(10.0 / max_component) // unit step, 10 A displacement cap
         };
-        let alpha = armijo_line_search(
-            ff,
-            &x,
-            &d,
-            n_atoms,
-            energy,
-            &g,
-            initial_alpha,
-            0.5,
-            1e-4,
-            1e-10,
-        );
+        let slope: f64 = g.iter().zip(d.iter()).map(|(gi, di)| gi * di).sum();
+        if opt_debug() {
+            eprintln!(
+                "iter {iter}: hist={} maxd={max_component:.3e} a0={initial_alpha:.3e} slope={slope:.3e} maxf={:.3e}",
+                s_history.len(),
+                g.iter().map(|v| v.abs()).fold(0.0, f64::max)
+            );
+        }
+        let alpha = armijo_line_search(ff, &x, &d, n_atoms, energy, slope, initial_alpha, 1e-10);
 
         // Line-search failure (no Armijo decrease at the floor): reset the
         // L-BFGS memory and retry from steepest descent; after several
@@ -261,7 +269,13 @@ fn compute_lbfgs_direction(
     r.iter().map(|ri| -ri).collect()
 }
 
-/// Armijo line search
+/// Armijo line search with quadratic-interpolation backtracking.
+///
+/// Trial points are evaluated with `ff.energy` only (no gradient); `slope`
+/// is g(x)·d (< 0). Backtracking shrinks alpha by the minimizer of the
+/// one-dimensional quadratic through (0, f0) with slope `slope` and the
+/// last trial, safeguarded to [0.1, 0.5]×alpha (plain halving on
+/// degenerate interpolation). The Armijo constant is c1 = 1e-4.
 #[allow(clippy::too_many_arguments)]
 fn armijo_line_search(
     ff: &dyn ForceField,
@@ -269,12 +283,11 @@ fn armijo_line_search(
     d: &[f64],
     n_atoms: usize,
     f0: f64,
-    g0: &[f64],
+    slope: f64,
     alpha0: f64,
-    rho: f64,
-    c1: f64,
     min_alpha: f64,
 ) -> f64 {
+    const C1: f64 = 1e-4;
     let mut alpha = alpha0;
     let n_coords = n_atoms * 3;
 
@@ -285,19 +298,21 @@ fn armijo_line_search(
             x_new[i] += alpha * d[i];
         }
 
-        // Calculate new energy
+        // Energy at the trial point (gradient not needed for Armijo)
         let coords_2d = flatten_to_2d(&x_new, n_atoms);
-        let mut g_dummy = vec![[0.0f64; 3]; n_atoms];
-        let f_new = ff.energy_and_gradient(&coords_2d, &mut g_dummy);
-
-        // Compute g^T * d
-        let g_dot_d = g0.iter().zip(d.iter()).map(|(gi, di)| gi * di).sum::<f64>();
+        let f_new = ff.energy(&coords_2d);
 
         // Armijo condition: f(x + alpha*d) <= f(x) + c1 * alpha * g(x)^T * d
-        let rhs = f0 + c1 * alpha * g_dot_d;
+        let rhs = f0 + C1 * alpha * slope;
+        if opt_debug() {
+            eprintln!(
+                "   trial a={alpha:.3e} f={f_new:+.10} (f0={f0:+.10} rhs={rhs:+.10} ok={})",
+                f_new <= rhs
+            );
+        }
 
         if f_new <= rhs {
-            break;
+            return alpha;
         }
         if alpha <= min_alpha {
             // The Armijo condition never held. Accept the floor step ONLY if
@@ -307,14 +322,77 @@ fn armijo_line_search(
             // floor step is still macroscopic (~0.1-100 A): caffeine GFN-FF
             // once jumped +248 kcal/mol into a basin it could never leave.
             if f_new.is_finite() && f_new <= f0 {
-                break; // non-increasing: keep the old slither-through
+                return alpha; // non-increasing: keep the old slither-through
             }
             return 0.0;
         }
 
-        // Backtrack
-        alpha *= rho;
+        // Quadratic interpolation: minimize the parabola through
+        // (0, f0) with slope `slope` and (alpha, f_new):
+        // alpha* = slope·alpha² / (2·(f0 + slope·alpha − f_new))
+        let denom = 2.0 * (f0 + slope * alpha - f_new);
+        let a_interp = if denom > 1e-300 {
+            slope * alpha * alpha / denom
+        } else {
+            0.5 * alpha
+        };
+        alpha = a_interp.clamp(0.1 * alpha, 0.5 * alpha);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::forces::ForceField;
+    use crate::mmff::MMFFForceField;
+    use crate::molecule::parser::parse_sdf;
+    use crate::MMFFVariant;
+    use std::cell::Cell;
+
+    /// Regression for the line-search rework (unit initial step for L-BFGS +
+    /// quadratic-interpolation backtracking + energy-only trials): force-field
+    /// evaluations per iteration must stay low. Before the rework the fixed
+    /// 1.5 A initial displacement overshot ~1000x and burned 10-13 E+G calls
+    /// per iteration (25+ on GFN-FF pre-gradient-fix).
+    struct Counting<'a> {
+        inner: &'a MMFFForceField,
+        eg: Cell<usize>,
+        e: Cell<usize>,
+    }
+    impl ForceField for Counting<'_> {
+        fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
+            self.eg.set(self.eg.get() + 1);
+            self.inner.energy_and_gradient(coords, grad)
+        }
+        fn energy(&self, coords: &[[f64; 3]]) -> f64 {
+            self.e.set(self.e.get() + 1);
+            self.inner.energy(coords)
+        }
     }
 
-    alpha
+    #[test]
+    fn line_search_call_budget() {
+        let sdf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/conformers/ethanol.sdf"
+        ))
+        .unwrap();
+        let mol = parse_sdf(&sdf).unwrap();
+        let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let counting = Counting {
+            inner: &ff,
+            eg: Cell::new(0),
+            e: Cell::new(0),
+        };
+        let r = optimize(&counting, &coords, &ConvergenceOptions::default());
+        assert!(r.converged, "did not converge");
+        let calls = counting.eg.get() + counting.e.get();
+        let per_iter = calls as f64 / r.iterations.max(1) as f64;
+        assert!(
+            per_iter <= 5.0,
+            "line search too expensive: {calls} calls over {} iters = {per_iter:.2}/iter",
+            r.iterations
+        );
+    }
 }

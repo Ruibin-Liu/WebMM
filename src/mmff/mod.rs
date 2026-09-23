@@ -1944,7 +1944,42 @@ impl MMFFForceField {
     }
 
     pub fn calculate_energy(&self, coords: &[[f64; 3]]) -> f64 {
-        self.calculate_energy_and_gradient(coords).0
+        // Energy-only path (same term functions and accumulation order as
+        // compute_energy_and_gradient_into, so results are bit-identical while
+        // skipping all gradient work — the line search evaluates this a lot).
+        let mut energy = 0.0;
+        for &(i, j, params) in &self.bond_terms {
+            energy += bond_energy(coords, i, j, &params);
+        }
+        for &(i, j, k, params) in &self.angle_terms {
+            energy += angle_energy(coords, i, j, k, &params);
+        }
+        for &(i, j, k, r0_ij, r0_kj, theta0, params) in &self.stretch_bend_terms {
+            energy += stretch_bend_energy(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
+        }
+        for &(i, j, k, l, params) in &self.torsion_terms {
+            energy += torsion_energy(coords, i, j, k, l, &params);
+        }
+        for &(central, a1, a2, a3, params) in &self.oop_terms {
+            energy += oop_energy(coords, central, a1, a2, a3, &params);
+        }
+        for &(i, j, is_14) in &self.nonbonded_pairs {
+            let (e, _, _) = vdw_energy_and_gradient(
+                coords,
+                i,
+                j,
+                &self.vdw_params[i],
+                &self.vdw_params[j],
+                is_14,
+            );
+            energy += e;
+            if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
+                let (e, _, _) =
+                    electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
+                energy += e;
+            }
+        }
+        energy
     }
 
     pub fn calculate_gradient(&self, coords: &[[f64; 3]]) -> Vec<[f64; 3]> {
@@ -2025,6 +2060,43 @@ impl EnergyBreakdown {
 impl crate::forces::ForceField for MMFFForceField {
     fn energy_and_gradient(&self, coords: &[[f64; 3]], grad: &mut [[f64; 3]]) -> f64 {
         self.compute_energy_and_gradient_into(coords, grad)
+    }
+
+    fn energy(&self, coords: &[[f64; 3]]) -> f64 {
+        self.calculate_energy(coords)
+    }
+}
+
+#[cfg(test)]
+mod tests_energy_path {
+    use super::*;
+
+    /// The energy-only calculate_energy path (and the ForceField::energy
+    /// override used by the line search) must be bit-identical to the total
+    /// from the full energy+gradient path — same term functions, same
+    /// accumulation order. The line search evaluates it thousands of times
+    /// per optimization, so any drift would poison Armijo near convergence.
+    #[test]
+    fn energy_only_bitwise_identical() {
+        let sdf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/conformers/ethanol.sdf"
+        ))
+        .unwrap();
+        let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+        let ff = MMFFForceField::new(&mol, MMFFVariant::MMFF94s);
+        let coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let e_eg = ff.calculate_energy_and_gradient(&coords).0;
+        let e_only = ff.calculate_energy(&coords);
+        assert!(
+            e_eg.to_bits() == e_only.to_bits(),
+            "energy-only path drifted: E+G {e_eg:e} vs E {e_only:e}"
+        );
+        let e_trait = crate::forces::ForceField::energy(&ff, &coords);
+        assert!(
+            e_trait.to_bits() == e_only.to_bits(),
+            "trait energy override drifted: {e_trait:e} vs {e_only:e}"
+        );
     }
 }
 

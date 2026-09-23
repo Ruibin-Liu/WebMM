@@ -101,7 +101,7 @@ webmm/
 - **GBSA implicit solvation**: Onufriev–Bashford–Case (OBC2) Born radii via exact HCT desolvation integrals, analytical gradient, LCPO surface-area (SA) nonpolar term
 - **WASM API**: Full JavaScript interface — optimization, embedding, MD, and metadynamics with trajectory/FES results
 - **Parameter loading**: MMFF parameters embedded from JSON at compile time with fallback lookup
-- **Testing**: 256 tests including numerical gradient verification, end-to-end optimization, ring detection, V3000 parsing, property-based invariants, atom type assignment, NVE/NVT stability, and edge cases
+- **Testing**: 260 tests including numerical gradient verification, end-to-end optimization, ring detection, V3000 parsing, property-based invariants, atom type assignment, NVE/NVT stability, and edge cases
 
 ## Validation
 
@@ -228,7 +228,7 @@ above (build → stage → serve).
 ### Test
 
 ```bash
-cargo test          # 256 tests
+cargo test          # 260 tests
 cargo clippy --all-targets   # must stay at 0 warnings
 ```
 
