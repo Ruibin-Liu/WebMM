@@ -61,7 +61,10 @@ webmm/
 │   ├── solvation/
 │   │   └── mod.rs         # GBSA implicit solvation (OBC2 + LCPO surface area)
 │   ├── optimizer/
-│   │   └── mod.rs         # L-BFGS optimizer with correct two-loop recursion
+│   │   ├── mod.rs         # L-BFGS core (Objective-trait generic), Cartesian objective
+│   │   ├── internal_opt.rs# delocalized internal coordinate optimizer (opt-in)
+│   │   ├── internals.rs   # primitives, Wilson B/G, Baker back-transform
+│   │   └── jacobi.rs      # symmetric eigensolver
 │   └── utils/
 │       └── mod.rs         # Parameter loading from embedded JSON
 ├── site/
@@ -94,14 +97,14 @@ webmm/
   - Electrostatics (Coulomb with dielectric)
 - **MMFF gradients**: All terms with verified analytical gradients (finite-difference-validated)
 - **MMFF validation vs RDKit**: **230/230 molecules match RDKit to <0.01 kcal/mol** (atom types, charges, energies — `scripts/benchmark_mmff.py`, a regression gate)
-- **L-BFGS optimizer**: Correct two-loop recursion, H0 scaling, Armijo line search, energy change convergence
+- **L-BFGS optimizer**: Correct two-loop recursion, H0 scaling, Armijo line search with quadratic-interpolation backtracking and energy-only trials; unit initial steps for L-BFGS directions (Nocedal) with a pathological-direction displacement cap; energy-resolution-floor early stop (f64-limited surfaces report `converged` with an explanatory message). Optional delocalized internal coordinates (`OptimizationOptions.coordinates = "internal"`, Baker/geomeTRIC-style: bond/angle/dihedral/out-of-plane primitives, Wilson G eigendecomposition, Baker back-transform) — fewer iterations on flexible molecules at higher per-iteration cost; Cartesian is the default
 - **ETKDG v3**: Distance bounds (bond + angle 1-3 + torsion 1-4 + ring closure), triangle smoothing, 4D stochastic embedding, eigenvector 4D-to-3D projection, FF-based refinement with L-BFGS, multi-conformer selection; multi-seed validated vs RDKit (`scripts/validate_etkdg.py`)
 - **Molecular dynamics**: Allocation-free force evaluation, velocity-Verlet (NVE) + BAOAB Langevin (NVT) integrators, Maxwell–Boltzmann initialization, deterministic seeded PRNG; live-steppable `MDLive` WASM handle for in-browser trajectory animation
 - **Metadynamics**: Well-tempered Gaussian bias on dihedral/distance collective variables, free-energy surface reconstruction; live-steppable `MetaDLive` WASM handle (CV/hills/FES queried between animation frames)
 - **GBSA implicit solvation**: Onufriev–Bashford–Case (OBC2) Born radii via exact HCT desolvation integrals, analytical gradient, LCPO surface-area (SA) nonpolar term
 - **WASM API**: Full JavaScript interface — optimization, embedding, MD, and metadynamics with trajectory/FES results
 - **Parameter loading**: MMFF parameters embedded from JSON at compile time with fallback lookup
-- **Testing**: 260 tests including numerical gradient verification, end-to-end optimization, ring detection, V3000 parsing, property-based invariants, atom type assignment, NVE/NVT stability, and edge cases
+- **Testing**: 272 tests including numerical gradient verification, end-to-end optimization, ring detection, V3000 parsing, property-based invariants, atom type assignment, NVE/NVT stability, and edge cases
 
 ## Validation
 
@@ -228,7 +231,7 @@ above (build → stage → serve).
 ### Test
 
 ```bash
-cargo test          # 260 tests
+cargo test          # 272 tests
 cargo clippy --all-targets   # must stay at 0 warnings
 ```
 

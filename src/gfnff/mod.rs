@@ -400,20 +400,101 @@ pub struct TorsionParam { pub l: usize, pub i: usize, pub j: usize, pub k: usize
                           pub nrot: i32, pub phi0: f64, pub fc: f64 }
 
 fn erf(x: f64) -> f64 {
-    // Abramowitz-Stegun 7.1.26 insufficient; use high-accuracy series
-    // (matches Fortran erf to ~1e-12 for our range)
-    libm_erf(x)
+    // Split-domain Chebyshev approximation, fixed cost per call (the old
+    // variable-length Taylor <=100 terms / Lentz <=80 iterations made the
+    // erf family ~45-50% of the GFN-FF E+G hot path). Coefficients fitted
+    // offline against math.erf (numpy, see PLAN.md): max abs error <= 3e-15
+    // on [-6,6]; |x|>6 -> +-1 (erfc(6)=2.15e-17). Same accuracy class as the
+    // old implementation; locked by `erf_accuracy` against erf_reference.
+    let a = x.abs();
+    if a > ERF_SPLIT3 {
+        return if x >= 0.0 { 1.0 } else { -1.0 };
+    }
+    if a <= ERF_SPLIT0 {
+        // small |x|: erf = x * P1(t), t = x^2 (erf(x)/x is a power series in t)
+        x * clenshaw(&ERF_P1, a * a, 0.0, ERF_SPLIT0 * ERF_SPLIT0)
+    } else {
+        // erf = s * (1 - exp(-x^2) * Q_i(|x|));  e^{x^2} erfc(x) is entire in x,
+        // so Chebyshev in x (NOT x^2 — the sqrt branch point at t=0 caps the
+        // convergence rate at rho~=1.33 there, measured) on three subintervals
+        let (c, lo, hi): (&[f64], f64, f64) = if a <= ERF_SPLIT1 {
+            (&ERF_Q1, ERF_SPLIT0, ERF_SPLIT1)
+        } else if a <= ERF_SPLIT2 {
+            (&ERF_Q2, ERF_SPLIT1, ERF_SPLIT2)
+        } else {
+            (&ERF_Q3, ERF_SPLIT2, ERF_SPLIT3)
+        };
+        let s = if x >= 0.0 { 1.0 } else { -1.0 };
+        s * (1.0 - (-x * x).exp() * clenshaw(c, a, lo, hi))
+    }
 }
 
-#[inline]
-fn libm_erf(x: f64) -> f64 {
-    // Rust std has no erf; use the W. J. Cody rational approximation (used by libm)
-    // via the incomplete gamma identity would be slow; implement Cody (1970).
+/// Clenshaw evaluation of a Chebyshev series (c from the offline fitter with
+/// the doubled-c0 convention: p = 0.5*c0 + sum c_j T_j(u), u mapped from v).
+fn clenshaw(c: &[f64], v: f64, lo: f64, hi: f64) -> f64 {
+    let u = (2.0 * v - (hi + lo)) / (hi - lo);
+    let mut b1 = 0.0f64;
+    let mut b2 = 0.0f64;
+    for &cj in c.iter().skip(1).rev() {
+        let b = 2.0 * u * b1 - b2 + cj;
+        b2 = b1;
+        b1 = b;
+    }
+    u * b1 - b2 + 0.5 * c[0]
+}
+
+// Offline-fitted Chebyshev coefficients (numpy, math.erf reference).
+// ERF_P1: erf(x) = x * P1(x^2) for |x| <= 0.84375, max |err| 1.9e-15
+#[allow(clippy::excessive_precision)]
+pub(crate) const ERF_P1: [f64; 10] = [
+    2.02648508301007757e+00, -1.09305843576922773e-01, 5.59139997440687500e-03,
+    -2.31269121347033046e-04, 7.88010579413356249e-06, -2.27032385891057231e-07,
+    5.65333562185799176e-09, -1.23817955888227971e-10, 2.41910935727673875e-12,
+    -4.19220214098459135e-14,
+];
+// ERF_Q1/Q2/Q3: erf(x) = 1 - exp(-x^2) * Q(|x|) on [0.84375,1.5]/[1.5,3]/[3,6],
+// max |err| 7.8e-16 / 3.0e-15 / 6.7e-16
+#[allow(clippy::excessive_precision)]
+pub(crate) const ERF_Q1: [f64; 13] = [
+    7.82713330548558961e-01, -7.58659351952921251e-02, 6.58132308865746855e-03,
+    -5.22707381719667019e-04, 3.85797609919319903e-05, -2.67420823879965392e-06,
+    1.75459063124814831e-07, -1.09632758085517974e-08, 6.55530219849909998e-10,
+    -3.76572619241135121e-11, 2.08491770856347519e-12, -1.11146135030646924e-13,
+    5.81906318003050816e-15,
+];
+#[allow(clippy::excessive_precision)]
+pub(crate) const ERF_Q2: [f64; 14] = [
+    4.81069615162517894e-01, -7.00234416607972004e-02, 9.60087867943311239e-03,
+    -1.24989800081926061e-03, 1.55438148904610659e-04, -1.85531355537909297e-05,
+    2.13359230748817128e-06, -2.37140276653542101e-07, 2.55413451896327843e-08,
+    -2.67178223989361641e-09, 2.71967139285424385e-10, -2.69847219965971653e-11,
+    2.61353438890665757e-12, -2.45236370893004639e-13,
+];
+#[allow(clippy::excessive_precision)]
+pub(crate) const ERF_Q3: [f64; 13] = [
+    2.58053799309483356e-01, -4.20426781395117355e-02, 6.69848712109273516e-03,
+    -1.04509167917431743e-03, 1.59858998849434696e-04, -2.39982615872982665e-05,
+    3.53906410494469621e-06, -5.13130319965351786e-07, 7.32026859620380178e-08,
+    -1.02821921788863992e-08, 1.42290124554706353e-09, -1.94052595573564940e-10,
+    2.56633704671831301e-11,
+];
+pub(crate) const ERF_SPLIT0: f64 = 0.84375;
+pub(crate) const ERF_SPLIT1: f64 = 1.5;
+pub(crate) const ERF_SPLIT2: f64 = 3.0;
+pub(crate) const ERF_SPLIT3: f64 = 6.0;
+
+/// The pre-rework erf (Taylor + Lentz), kept as the accuracy reference for
+/// `erf_accuracy` — the only consumer. Do not use in production paths.
+#[cfg(test)]
+fn erf_reference(x: f64) -> f64 {
     let ax = x.abs();
     let (res, _) = erf_cody(ax);
     if x >= 0.0 { res } else { -res }
 }
 
+/// The pre-rework erf core (Taylor series + Lentz continued fraction).
+/// Test-only reference for the Chebyshev rework — see erf_reference.
+#[cfg(test)]
 fn erf_cody(x: f64) -> (f64, f64) {
     // erf via Taylor series (small x) + continued fraction for erfc (large x)
     // accuracy ~1e-15, sufficient to match Fortran libm erf
@@ -1669,7 +1750,7 @@ impl Gfnff {
             if (zi == 1 && zj == 6) || (zj == 1 && zi == 6) { ff = 0.91; }
             if (zi == 1 && zj == 8) || (zj == 1 && zi == 8) { ff = 1.04; }
             let alpha = (di * dj).sqrt() * ff;
-            let t16 = r.powf(1.5);
+            let t16 = r * r.sqrt(); // powf(1.5): 1-ulp-equivalent, avoids the transcendental
             let e = (-alpha * t16).exp() * self.p.repz[zi-1] * self.p.repz[zj-1] * self.p.repscaln;
             rep += e / r;
         }}
@@ -1695,7 +1776,7 @@ impl Gfnff {
             let (zi, zj) = (self.at[b.i], self.at[b.j]);
             let alpha = (self.p.repa[zi-1] * self.p.repa[zj-1]).sqrt();
             let repab = self.p.repz[zi-1] * self.p.repz[zj-1] * self.p.repscalb();
-            let t16 = r.powf(1.5);
+            let t16 = r * r.sqrt(); // powf(1.5): 1-ulp-equivalent, avoids the transcendental
             let e = (-alpha * t16).exp() * repab / r;
             rep += e;
         }
@@ -2515,7 +2596,8 @@ impl Gfnff {
         let dist = |i: usize, j: usize| -> f64 { dist2(&xyz, i, j).sqrt() };
 
         // ---------------- EEQ charges ----------------
-        let cn = erf_cn(&self.p, &self.at, &xyz);
+        // single CN pass: log CN feeds EEQ, raw CN feeds the dcndr chain below
+        let (cn_raw, cn) = erf_cn_both(&self.p, &self.at, &xyz);
         let mut q = vec![0.0f64; n];
         {
             let m = n + 1;
@@ -2572,7 +2654,7 @@ impl Gfnff {
             if (zi == 1 && zj == 6) || (zj == 1 && zi == 6) { ff = 0.91; }
             if (zi == 1 && zj == 8) || (zj == 1 && zi == 8) { ff = 1.04; }
             let alpha = (di * dj).sqrt() * ff;
-            let t16 = r.powf(1.5);
+            let t16 = r * r.sqrt(); // powf(1.5): 1-ulp-equivalent, avoids the transcendental
             let t19 = t16 * t16;
             let t26 = (-alpha * t16).exp() * self.p.repz[zi-1] * self.p.repz[zj-1] * self.p.repscaln;
             rep += t26 / r;
@@ -2586,7 +2668,7 @@ impl Gfnff {
             let (zi, zj) = (self.at[b.i], self.at[b.j]);
             let alpha = (self.p.repa[zi-1] * self.p.repa[zj-1]).sqrt();
             let repab = self.p.repz[zi-1] * self.p.repz[zj-1] * self.p.repscalb();
-            let t16 = r.powf(1.5);
+            let t16 = r * r.sqrt(); // powf(1.5): 1-ulp-equivalent, avoids the transcendental
             let t19 = t16 * t16;
             let t26 = (-alpha * t16).exp() * repab;
             rep_bonded_local += t26 / r;
@@ -2754,7 +2836,8 @@ impl Gfnff {
         // dcndr[atom a][cn owner b] = d cn_b / d R_a
         let mut dcndr = vec![[0.0f64; 3]; n * n];
         let kn = -7.5f64;
-        let cn_raw = erf_cn_raw(&self.p, &self.at, &xyz);
+        // cn_raw comes from the shared erf_cn_both pass at the top of this
+        // function (was a second full O(n^2) erf_cn_raw call)
         for i in 0..n { for j in 0..i {
             let r = dist(i, j);
             if r > 60.0 { continue; }
@@ -3306,21 +3389,19 @@ impl Params {
 /// erf CN then logCN (gfnff_dlogcoord + create_logCN, gfnff_eg.f90 3497)
 /// note: covalentRadD3 values are in Angstrom and carried *aatoau*4/3 in xtb
 pub fn erf_cn_raw(p: &Params, at: &[usize], xyz: &[[f64; 3]]) -> Vec<f64> {
-    let n = at.len();
-    let mut cn = vec![0.0f64; n];
-    for i in 0..n { for j in 0..i {
-        let dx = xyz[i][0]-xyz[j][0]; let dy = xyz[i][1]-xyz[j][1]; let dz = xyz[i][2]-xyz[j][2];
-        let r = (dx*dx+dy*dy+dz*dz).sqrt();
-        if r > 60.0 { continue; }
-        let r0 = (p.rcov[at[i]-1] + p.rcov[at[j]-1]) / BOHR * 4.0 / 3.0;
-        let dr = (r - r0) / r0;
-        let c = 0.5 * (1.0 + erf(-7.5 * dr));
-        cn[i] += c; cn[j] += c;
-    }}
-    cn
+    erf_cn_both(p, at, xyz).0
 }
 
 pub fn erf_cn(p: &Params, at: &[usize], xyz: &[[f64; 3]]) -> Vec<f64> {
+    erf_cn_both(p, at, xyz).1
+}
+
+/// One O(n^2) pass producing BOTH the raw erf CN and its logCN form. The
+/// energy+gradient path needs both (EEQ charges take logCN, the dcndr chain
+/// takes raw); calling erf_cn + erf_cn_raw separately doubled the pass and
+/// its erf cost (~10-15% of E+G). Accumulation order identical to the two
+/// original functions — results are bit-for-bit the same.
+pub fn erf_cn_both(p: &Params, at: &[usize], xyz: &[[f64; 3]]) -> (Vec<f64>, Vec<f64>) {
     let n = at.len();
     let mut cn = vec![0.0f64; n];
     for i in 0..n { for j in 0..i {
@@ -3332,7 +3413,8 @@ pub fn erf_cn(p: &Params, at: &[usize], xyz: &[[f64; 3]]) -> Vec<f64> {
         let c = 0.5 * (1.0 + erf(-7.5 * dr));
         cn[i] += c; cn[j] += c;
     }}
-    cn.iter().map(|&c| create_logcn(p, c)).collect()
+    let log: Vec<f64> = cn.iter().map(|&c| create_logcn(p, c)).collect();
+    (cn, log)
 }
 
 fn create_logcn(p: &Params, cn: f64) -> f64 {
@@ -3677,6 +3759,25 @@ mod tests {
         assert!((erf(0.5) - 0.5204998778130465).abs() < 1e-14);
         assert!((erf(3.0) - 0.9999779095030014).abs() < 1e-12);
         assert!((erf(5.0) - 0.9999999999984626).abs() < 1e-12);
+        // dense grid vs the pre-rework Taylor/Lentz reference. The Chebyshev
+        // fit is <=3e-15 vs math.erf; the reference itself carries ~1e-15+,
+        // so combined drift ~6e-15 is expected. 1e-14 is still 100x tighter
+        // than the strictest consumer assertion (1e-12).
+        let mut maxdiff = 0.0f64;
+        let mut x = 1e-6f64;
+        while x < 7.0 {
+            let d = (erf(x) - erf_reference(x)).abs().max((erf(-x) - erf_reference(-x)).abs());
+            maxdiff = maxdiff.max(d);
+            x *= 1.0008;
+        }
+        // linear sweep across the interval seams (0.84375, 1.5, 3, 6)
+        for i in 0..20000 {
+            let a = i as f64 * 7.0 / 19999.0;
+            maxdiff = maxdiff.max((erf(a) - erf_reference(a)).abs());
+        }
+        assert!(maxdiff < 1e-14, "erf rework drift: {maxdiff:e}");
+        assert_eq!(erf(6.5), 1.0);
+        assert_eq!(erf(-6.5), -1.0);
     }
 
     #[test]

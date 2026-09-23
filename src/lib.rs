@@ -148,6 +148,12 @@ pub struct OptimizationOptions {
     /// Empty falls back to the legacy mmff_variant field.
     #[wasm_bindgen(getter_with_clone)]
     pub engine: String,
+    /// Optimization coordinate system: "cartesian" (default, fastest per
+    /// iteration) or "internal" (delocalized internal coordinates — fewer
+    /// iterations on flexible molecules, but per-iteration transform
+    /// overhead; see README "Optimizer").
+    #[wasm_bindgen(getter_with_clone)]
+    pub coordinates: String,
     #[wasm_bindgen(skip)]
     pub convergence: ConvergenceOptions,
 }
@@ -185,6 +191,7 @@ impl Default for OptimizationOptions {
         Self {
             mmff_variant: "MMFF94s".to_string(),
             engine: String::new(),
+            coordinates: "cartesian".to_string(),
             convergence: ConvergenceOptions::default(),
         }
     }
@@ -501,7 +508,11 @@ fn optimize_dispatch(
             let mut conv = options.convergence.clone();
             conv.max_force = conv.max_force.max(0.05);
             conv.rms_force = conv.rms_force.max(0.005);
-            let r = crate::optimizer::optimize(&ff, initial_coords, &conv);
+            let r = if options.coordinates.eq_ignore_ascii_case("internal") {
+                crate::optimizer::internal_opt::optimize_internal(&ff, initial_coords, &at, &conv)
+            } else {
+                crate::optimizer::optimize(&ff, initial_coords, &conv)
+            };
             let ec = ff.components_at(&r.optimized_coords);
             let terms = serde_json::json!({
                 "bond": ec.bond * EH_KCAL, "angle": ec.angle * EH_KCAL,
@@ -519,7 +530,17 @@ fn optimize_dispatch(
                 _ => MMFFVariant::MMFF94s,
             };
             let ff = crate::mmff::MMFFForceField::new(mol, variant);
-            let r = crate::optimizer::optimize(&ff, initial_coords, &options.convergence);
+            let r = if options.coordinates.eq_ignore_ascii_case("internal") {
+                let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+                crate::optimizer::internal_opt::optimize_internal(
+                    &ff,
+                    initial_coords,
+                    &at,
+                    &options.convergence,
+                )
+            } else {
+                crate::optimizer::optimize(&ff, initial_coords, &options.convergence)
+            };
             let bd = ff.calculate_energy_breakdown(&r.optimized_coords);
             let terms = serde_json::json!({
                 "bond": bd.bond, "angle": bd.angle, "stretch_bend": bd.stretch_bend,
@@ -581,9 +602,15 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
     OptimizationResult {
         n_atoms: optimizer_result.optimized_coords.len(),
         final_energy: optimizer_result.final_energy,
-        converged: optimizer_result.converged,
+        converged: optimizer_result.converged || optimizer_result.energy_converged,
         iterations: optimizer_result.iterations,
-        message: "Optimization completed".to_string(),
+        message: if optimizer_result.energy_converged && !optimizer_result.converged {
+            "Energy-resolution floor reached (f64 limit of the force-field \
+             surface); residual forces live in soft torsional modes"
+                .to_string()
+        } else {
+            "Optimization completed".to_string()
+        },
         coordinates: flat_coords,
         energy_terms_json: terms_json,
         engine_used,
@@ -629,9 +656,15 @@ pub fn optimize_from_sdf_direct(
     OptimizationResult {
         n_atoms: optimizer_result.optimized_coords.len(),
         final_energy: optimizer_result.final_energy,
-        converged: optimizer_result.converged,
+        converged: optimizer_result.converged || optimizer_result.energy_converged,
         iterations: optimizer_result.iterations,
-        message: "Optimization completed".to_string(),
+        message: if optimizer_result.energy_converged && !optimizer_result.converged {
+            "Energy-resolution floor reached (f64 limit of the force-field \
+             surface); residual forces live in soft torsional modes"
+                .to_string()
+        } else {
+            "Optimization completed".to_string()
+        },
         coordinates: flat_coords,
         energy_terms_json: terms_json,
         engine_used,
@@ -7105,5 +7138,42 @@ mod regression_tests {
             "purine energy {} vs RDKit 27.34",
             e
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_internal_coordinates_wasm {
+    use super::*;
+    use crate::molecule::parser::parse_sdf;
+
+    /// End-to-end: coordinates="internal" runs the DIC path through the WASM
+    /// entry point and lands on the same MMFF94s minimum as Cartesian.
+    #[test]
+    fn optimize_from_sdf_internal_coordinates() {
+        let sdf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/conformers/ethanol.sdf"
+        ))
+        .unwrap();
+        let cart_opts = OptimizationOptions {
+            engine: "MMFF94s".to_string(),
+            ..Default::default()
+        };
+        let cart = optimize_from_sdf_direct(&sdf, cart_opts.clone());
+        let int_opts = OptimizationOptions {
+            coordinates: "internal".to_string(),
+            ..cart_opts
+        };
+        let int = optimize_from_sdf_direct(&sdf, int_opts);
+        assert!(int.converged);
+        assert!(
+            (int.final_energy - cart.final_energy).abs() < 0.01,
+            "internal {} vs cartesian {}",
+            int.final_energy,
+            cart.final_energy
+        );
+        // parse actually used the ethanol fixture
+        assert_eq!(cart.n_atoms, 9);
+        let _ = parse_sdf(&sdf).unwrap().atoms.len();
     }
 }
