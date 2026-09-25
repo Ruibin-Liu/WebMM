@@ -1859,7 +1859,10 @@ where
     let dim = cpa * n_atoms;
     let mut f = energy_at(x);
     let mut g = gradient_at(x);
-    const M: usize = 8;
+    // m=20 (v1.2.4): matches the main optimizer's history; RDKit uses
+    // full-memory BFGS and at drug-like sizes a longer history is nearly
+    // free (O(m*dim) vector work per iteration) while converging faster.
+    const M: usize = 20;
     let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut rho_hist: Vec<f64> = Vec::with_capacity(M);
@@ -5056,7 +5059,7 @@ fn minimize_etkdg(
     let mut g: Vec<f64> = vec![0.0; dim];
     gradient_at(&x, &mut g, &mut c_scratch, &mut g3_scratch);
     let mut f = energy_at(&x, &mut c_scratch);
-    const M: usize = 8;
+    const M: usize = 20;
     let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut rho_hist: Vec<f64> = Vec::with_capacity(M);
