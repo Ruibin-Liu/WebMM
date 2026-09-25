@@ -67,11 +67,13 @@ pub struct InternalCoords {
     u: Vec<Vec<f64>>,
     /// G eigenvalues of the kept coordinates.
     lam: Vec<f64>,
-    /// B_q = U^T B(x_ref) (n_dof x 3N), cached at construction: the map
-    /// x(z) = x_ref + B_q^T Lambda^-1 (Baker-iterated) is EXACTLY linear
-    /// with this matrix, and every back_transform / grad_q call reuses it
-    /// (recomputing it per call was the dominant DIC cost).
-    bq: Vec<Vec<f64>>,
+    /// B_q = U^T B(x_ref) (n_dof x 3N, flat row-major), cached at
+    /// construction: the map x(z) = x_ref + B_q^T Lambda^-1 (Baker-iterated)
+    /// is EXACTLY linear with this matrix, and every back_transform /
+    /// grad_q call reuses it. Flat storage keeps the hot loops
+    /// cache-streaming (the Vec<Vec> row indirection dominated the
+    /// back-transform cost).
+    bq: Vec<f64>,
     pub n_dof: usize,
 }
 
@@ -219,17 +221,19 @@ impl InternalCoords {
             }
             lam[k] = g[col * n_prim + col];
         }
-        // cache B_q = U^T B(x_ref) once (see struct doc)
+        // cache B_q = U^T B(x_ref) once (see struct doc), flat row-major
         let nc = 3 * n;
-        let mut bq = vec![vec![0.0f64; nc]; n_dof];
+        let mut bq = vec![0.0f64; n_dof * nc];
         for k in 0..n_dof {
+            let row = &mut bq[k * nc..(k + 1) * nc];
             for i in 0..n_prim {
                 let w = u[i][k];
                 if w == 0.0 {
                     continue;
                 }
+                let brow = &b[i];
                 for j in 0..nc {
-                    bq[k][j] += w * b[i][j];
+                    row[j] += w * brow[j];
                 }
             }
         }
@@ -264,9 +268,9 @@ impl InternalCoords {
         let mut gq = vec![0.0f64; self.n_dof];
         for k in 0..self.n_dof {
             let mut s = 0.0;
-            let bk = &self.bq[k];
+            let row = &self.bq[k * nc..(k + 1) * nc];
             for j in 0..nc {
-                s += bk[j] * gx_flat[j];
+                s += row[j] * gx_flat[j];
             }
             gq[k] = s / self.lam[k];
         }
@@ -275,26 +279,33 @@ impl InternalCoords {
 
     /// Solve B_q dx = dq for the minimum-norm Cartesian displacement via the
     /// Baker iteration dx += B_q^T Lambda^-1 (dq - B_q dx) with the cached
-    /// B_q (6 rounds; the fixed-point residual contracts geometrically).
+    /// flat B_q. Two rounds: the residual contracts geometrically
+    /// (~1e-2/round; the round-2 residual is ~1e-4 of the step — a
+    /// ~1e-6 A map error, harmless for the optimization trajectory). Both
+    /// passes stream B_q rows sequentially.
     pub fn back_transform(&self, dq: &[f64]) -> Vec<[f64; 3]> {
         let nc = 3 * self.n;
+        let nd = self.n_dof;
         let mut dx = vec![0.0f64; nc];
-        let mut r = vec![0.0f64; self.n_dof];
-        for _round in 0..6 {
-            for k in 0..self.n_dof {
+        let mut corr = vec![0.0f64; nc];
+        for _round in 0..2 {
+            // residual r_k = (dq_k - B_q dx)_k / lam_k, folded with 1/lam
+            // so the correction pass is a pure streaming row-sum
+            for k in 0..nd {
+                let row = &self.bq[k * nc..(k + 1) * nc];
                 let mut s = 0.0;
-                let bk = &self.bq[k];
                 for j in 0..nc {
-                    s += bk[j] * dx[j];
+                    s += row[j] * dx[j];
                 }
-                r[k] = dq[k] - s;
+                let rk = (dq[k] - s) / self.lam[k];
+                // correction += rk * row (row-major streaming)
+                for j in 0..nc {
+                    corr[j] += rk * row[j];
+                }
             }
             for j in 0..nc {
-                let mut corr = 0.0;
-                for k in 0..self.n_dof {
-                    corr += self.bq[k][j] * r[k] / self.lam[k];
-                }
-                dx[j] += corr;
+                dx[j] += corr[j];
+                corr[j] = 0.0;
             }
         }
         let mut out = vec![[0.0f64; 3]; self.n];

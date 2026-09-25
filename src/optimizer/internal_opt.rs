@@ -31,6 +31,9 @@ struct InternalObjective<'a> {
     x_ref: Vec<[f64; 3]>,
     /// Last mapped geometry (accepted point) for stats/final coords.
     x_last: Vec<[f64; 3]>,
+    /// map cache: (z, x(z)) of the last mapping (see map_cached).
+    z_mapped: Option<Vec<f64>>,
+    x_mapped: Option<Vec<[f64; 3]>>,
     last_max: f64,
     last_rms: f64,
     reset_flag: bool,
@@ -44,6 +47,8 @@ impl<'a> InternalObjective<'a> {
             ic,
             x_ref: x.to_vec(),
             x_last: x.to_vec(),
+            z_mapped: None,
+            x_mapped: None,
             last_max: 0.0,
             last_rms: 0.0,
             reset_flag: false,
@@ -51,8 +56,14 @@ impl<'a> InternalObjective<'a> {
     }
 
     /// x(z) = x_ref + BackTransform(z) — the well-defined (exactly linear)
-    /// map of this basis, using the B_q cached at build (line-search safe).
-    fn map(&self, z: &[f64]) -> Vec<[f64; 3]> {
+    /// map of this basis, using the B_q cached at build. The line search's
+    /// successful trial point becomes the next f_and_g's z, so the last
+    /// mapped geometry is cached and reused when z is unchanged — one
+    /// back-transform saved per iteration.
+    fn map_cached(&mut self, z: &[f64]) -> Vec<[f64; 3]> {
+        if self.z_mapped.as_deref() == Some(z) {
+            return self.x_mapped.clone().unwrap();
+        }
         let dx = self.ic.back_transform(z);
         let mut x = self.x_ref.clone();
         for i in 0..x.len() {
@@ -60,6 +71,8 @@ impl<'a> InternalObjective<'a> {
                 x[i][t] += dx[i][t];
             }
         }
+        self.z_mapped = Some(z.to_vec());
+        self.x_mapped = Some(x.clone());
         x
     }
 }
@@ -70,7 +83,7 @@ impl Objective for InternalObjective<'_> {
     }
 
     fn f_and_g(&mut self, z: &[f64]) -> (f64, Vec<f64>) {
-        let x_new = self.map(z);
+        let x_new = self.map_cached(z);
         self.x_last = x_new.clone();
 
         // E + Cartesian gradient at the mapped geometry
@@ -96,22 +109,30 @@ impl Objective for InternalObjective<'_> {
         project_out_tr(&x_new, &mut gx);
         let gq = self.ic.grad_q(&gx);
 
-        // linearization drift: true q of the mapped geometry vs the target z
-        let q_true = self.ic.q(&x_new);
-        let drift_bad = q_true
-            .iter()
-            .zip(z.iter())
-            .any(|(a, b)| (a - b).abs() > DRIFT_REBUILD);
+        // linearization drift: true q of the mapped geometry vs the target z.
+        // With DRIFT_REBUILD effectively infinite (v1.1.1 policy: the map is
+        // exactly linear at any drift, rebuilds only degraded conditioning)
+        // the check — and its O(n_prim) primitive reevaluation — is compiled
+        // out.
+        let drift_bad = if DRIFT_REBUILD < 1e8 {
+            self.ic
+                .q(&x_new)
+                .iter()
+                .zip(z.iter())
+                .any(|(a, b)| (a - b).abs() > DRIFT_REBUILD)
+        } else {
+            false
+        };
         if drift_bad {
             if std::env::var("DIC_DEBUG").is_ok() {
-                eprintln!(
-                    "REBUILD at iter, maxdrift {:.3}",
-                    q_true
-                        .iter()
-                        .zip(z.iter())
-                        .map(|(a, b)| (a - b).abs())
-                        .fold(0.0f64, f64::max)
-                );
+                let md = self
+                    .ic
+                    .q(&x_new)
+                    .iter()
+                    .zip(z.iter())
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0f64, f64::max);
+                eprintln!("REBUILD at iter, maxdrift {md:.3}");
             }
             if let Some(ic2) = InternalCoords::build(&x_new, &self.znums) {
                 let gq2 = ic2.grad_q(&gx);
@@ -127,7 +148,9 @@ impl Objective for InternalObjective<'_> {
     }
 
     fn energy(&mut self, z: &[f64]) -> f64 {
-        let x = self.map(z);
+        // populate the map cache: the SUCCESSFUL trial's z is exactly the
+        // next f_and_g's z, which then maps for free
+        let x = self.map_cached(z);
         self.ff.energy(&x)
     }
 
