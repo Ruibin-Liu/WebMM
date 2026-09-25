@@ -2116,7 +2116,12 @@ fn minimize_4d_first(
     let n = coords_4d.len();
     let mut best_energy = f64::INFINITY;
     let mut best_coords = coords_4d.to_vec();
-    for _ in 0..max_iter {
+    // Convergence break (v1.2.2): the old blind fixed-step loop always ran
+    // all iterations regardless of whether the energy had settled. Break
+    // when the best energy stops improving for 15 consecutive sweeps.
+    let mut stagnant = 0usize;
+    let mut prev_best = f64::INFINITY;
+    for _iter in 0..max_iter {
         let mut grad = vec![[0.0f64; 4]; n];
         let mut energy = 0.0;
         for i in 0..n {
@@ -2170,6 +2175,15 @@ fn minimize_4d_first(
                 coords_4d[i][dim] -= step * grad[i][dim];
             }
         }
+        if best_energy > prev_best - 1e-12 {
+            stagnant += 1;
+            if stagnant >= 15 {
+                break;
+            }
+        } else {
+            stagnant = 0;
+        }
+        prev_best = best_energy;
     }
     coords_4d.copy_from_slice(&best_coords);
     best_energy
@@ -2245,7 +2259,10 @@ fn minimize_4d_collapse(
         return;
     }
     let n = coords_4d.len();
-    for _ in 0..max_iter {
+    // same convergence break as minimize_4d_first (see comment there)
+    let mut stagnant = 0usize;
+    let mut prev_max_g = f64::INFINITY;
+    for _iter in 0..max_iter {
         let mut grad = vec![[0.0f64; 4]; n];
         for i in 0..n {
             for j in (i + 1)..n {
@@ -2291,9 +2308,19 @@ fn minimize_4d_collapse(
                 coords_4d[i][dim] -= step * grad[i][dim];
             }
         }
+        // gradient-based stagnation: when the max force stops decreasing
+        // (the loop has no energy tracking; max_g is already computed)
+        if max_g > prev_max_g * 0.999 {
+            stagnant += 1;
+            if stagnant >= 15 {
+                break;
+            }
+        } else {
+            stagnant = 0;
+        }
+        prev_max_g = max_g;
     }
 }
-
 fn chiral_4d_penalty(coords_4d: &[[f64; 4]], chiral_centers: &[ChiralCenter], weight: f64) -> f64 {
     let mut energy = 0.0;
     for cc in chiral_centers {
