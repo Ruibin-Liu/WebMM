@@ -332,6 +332,44 @@ impl EnergyComponents {
 
 /// Adapter: GFN-FF as a composable force source (kcal/mol + kcal/mol/A),
 /// drop-in for the WebMM optimizer/MD pipeline.
+/// Per-term analytic gradients (kcal/mol/A), see energy_and_gradient_detailed.
+pub struct TermGradients {
+    pub bond: Vec<[f64; 3]>,
+    pub angle: Vec<[f64; 3]>,
+    pub torsion: Vec<[f64; 3]>,
+    pub rep: Vec<[f64; 3]>,
+    pub es: Vec<[f64; 3]>,
+    pub disp: Vec<[f64; 3]>,
+    pub hb: Vec<[f64; 3]>,
+    pub xb: Vec<[f64; 3]>,
+    pub batm: Vec<[f64; 3]>,
+    /// shared CN-chain gradients by source (bond r0 / EEQ RHS / D3),
+    /// kcal/mol/A — FD of the bond/es/disp energy components matches
+    /// term + its cn channel.
+    pub cn_bond: Vec<[f64; 3]>,
+    pub cn_es: Vec<[f64; 3]>,
+    pub cn_disp: Vec<[f64; 3]>,
+}
+
+impl TermGradients {
+    pub fn zeros(n: usize) -> Self {
+        TermGradients {
+            bond: vec![[0.0; 3]; n],
+            angle: vec![[0.0; 3]; n],
+            torsion: vec![[0.0; 3]; n],
+            rep: vec![[0.0; 3]; n],
+            es: vec![[0.0; 3]; n],
+            disp: vec![[0.0; 3]; n],
+            hb: vec![[0.0; 3]; n],
+            xb: vec![[0.0; 3]; n],
+            batm: vec![[0.0; 3]; n],
+            cn_bond: vec![[0.0; 3]; n],
+            cn_es: vec![[0.0; 3]; n],
+            cn_disp: vec![[0.0; 3]; n],
+        }
+    }
+}
+
 pub struct GfnffForceField {
     inner: std::rc::Rc<Gfnff>,
 }
@@ -2581,6 +2619,27 @@ impl Gfnff {
         xyz_ang: &[[f64; 3]],
         grad_out: &mut [[f64; 3]],
     ) -> EnergyComponents {
+        self.eg_core(xyz_ang, grad_out, None)
+    }
+
+    /// E + gradient with per-term analytic gradients (kcal/mol/A, same
+    /// conversion as the total). Diagnostic/validation use: FD-isolating a
+    /// term is how gradient-chain bugs are localized.
+    pub fn energy_and_gradient_detailed(
+        &self,
+        xyz_ang: &[[f64; 3]],
+        grad_out: &mut [[f64; 3]],
+        terms: &mut TermGradients,
+    ) -> EnergyComponents {
+        self.eg_core(xyz_ang, grad_out, Some(terms))
+    }
+
+    fn eg_core(
+        &self,
+        xyz_ang: &[[f64; 3]],
+        grad_out: &mut [[f64; 3]],
+        mut terms_out: Option<&mut TermGradients>,
+    ) -> EnergyComponents {
         let n = self.at.len();
         let xyz: Vec<[f64; 3]> = xyz_ang.iter().map(|r| [r[0]/BOHR, r[1]/BOHR, r[2]/BOHR]).collect();
         for g in grad_out.iter_mut() { *g = [0.0; 3]; }
@@ -2591,7 +2650,16 @@ impl Gfnff {
         let mut g_tors = vec![[0.0f64; 3]; n];
         let mut g_es = vec![[0.0f64; 3]; n];
         let mut g_disp = vec![[0.0f64; 3]; n];
-        let mut d_ed_cn = vec![0.0f64; n];
+        // CN-chain accumulators split by source (bond r0 / EEQ RHS / D3);
+        // summed elementwise in the same order as the original single buffer
+        // accumulated (bond, then es, then disp) — bit-identical totals, but
+        // separable for per-term FD diagnostics.
+        let mut d_cn_bond = vec![0.0f64; n];
+        let mut d_cn_es = vec![0.0f64; n];
+        let mut d_cn_disp = vec![0.0f64; n];
+        let d_ed_cn_sum = |b: usize, bond: &[f64], es: &[f64], disp: &[f64]| -> f64 {
+            (bond[b] + es[b]) + disp[b]
+        };
 
         let dist = |i: usize, j: usize| -> f64 { dist2(&xyz, i, j).sqrt() };
 
@@ -2706,15 +2774,25 @@ impl Gfnff {
                     let dtmp = -0.28209479177387814 * 27.5
                         * (-(27.5 * 27.5) * (rr - rc) * (rr - rc) / (rc * rc)).exp() / rc;
                     let u = [rij[0] / rr, rij[1] / rr, rij[2] / rr];
-                    for t in 0..3 { dcn_hh[t] -= dtmp * u[t]; }   // d cn_H/dR_H
-                    b_terms.push((bb, [dtmp * u[0], dtmp * u[1], dtmp * u[2]])); // d cn_H/dR_B
+                    // d(hb_cn)/dr of 0.5(1+erf(-arg)) is -kn·exp(-arg²)/(sqrt(pi)·rc)
+                    // = 2× the xtb dncoord_erf `dtmp` (which carries an extra
+                    // 1/2 — an upstream quirk; see the hb-chain fix note below)
+                    let dtmp_full = 2.0 * dtmp;
+                    for t in 0..3 { dcn_hh[t] -= dtmp_full * u[t]; }   // d cn_H/dR_H = -dtmp·u
+                    b_terms.push((bb, [dtmp_full * u[0], dtmp_full * u[1], dtmp_full * u[2]])); // d cn_H/dR_B = +dtmp·u
                 }
                 alp = (1.0 - t1 * hb_cn) * b.alp;
                 let dum_hb = b.kb * (-alp * dr * dr).exp();
                 let zz = dum_hb * b.alp * dr * dr * t1;
+                // dE/dR = dE/dhb_cn · d hb_cn/dR:
+                //   H atom: (-dtmp·u)·zz,  B partner: (+dtmp·u)·zz
+                // (the old port subtracted the B-side term AND used the
+                // half-sized xtb dtmp, giving -1/2× the true contribution —
+                // FD-inconsistent wherever the steep HB gaussian is alive,
+                // e.g. aspirin's COOH intramolecular H-bond at r≈rc)
                 for t in 0..3 { g_bond[h][t] += dcn_hh[t] * zz; }
                 for (bb, dcn_bh) in &b_terms {
-                    for t in 0..3 { g_bond[*bb][t] -= dcn_bh[t] * zz; }
+                    for t in 0..3 { g_bond[*bb][t] += dcn_bh[t] * zz; }
                 }
             }
             let dum = b.kb * (-alp * dr * dr).exp();
@@ -2725,8 +2803,8 @@ impl Gfnff {
                 g_bond[b.i][k] += -yy * d[k] / r;
                 g_bond[b.j][k] += yy * d[k] / r;
             }
-            d_ed_cn[b.i] += yy * rabdcn.0;
-            d_ed_cn[b.j] += yy * rabdcn.1;
+            d_cn_bond[b.i] += yy * rabdcn.0;
+            d_cn_bond[b.j] += yy * rabdcn.1;
         }
 
         // ---------------- angles ----------------
@@ -2818,11 +2896,11 @@ impl Gfnff {
         // cn chain from EEQ RHS:  dE/dR -= sum_b q_b * cnf_b/(2 sqrt(cn_b)) * dcn_b/dR
         for b in 0..n {
             let f = q[b] * self.p.cnf[self.at[b]-1] / (2.0 * cn[b].sqrt() + 1e-16);
-            d_ed_cn[b] -= f;
+            d_cn_es[b] -= f;
         }
 
         // ---------------- D3 dispersion (+ cn chain) ----------------
-        let disp = self.d4_dispersion_grad(&xyz, &dist, &cn, &q, &mut g_disp, &mut d_ed_cn);
+        let disp = self.d4_dispersion_grad(&xyz, &dist, &cn, &q, &mut g_disp, &mut d_cn_disp);
 
         // ---------------- HB / XB / bATM (energy + gradient, one path) ----------------
         let mut g_hb = vec![[0.0f64; 3]; n];
@@ -2855,10 +2933,27 @@ impl Gfnff {
             }
         }}
         for a in 0..n { for b in 0..n {
-            if d_ed_cn[b] != 0.0 {
-                for t in 0..3 { g[a][t] += dcndr[a*n+b][t] * d_ed_cn[b]; }
+            let ded_cn_b = d_ed_cn_sum(b, &d_cn_bond, &d_cn_es, &d_cn_disp);
+            if ded_cn_b != 0.0 {
+                for t in 0..3 { g[a][t] += dcndr[a*n+b][t] * ded_cn_b; }
             }
         }}
+        if let Some(ref mut tg) = terms_out {
+            const EH_KCAL2: f64 = 627.5094740631;
+            let chain = |src: &[f64], dst: &mut Vec<[f64; 3]>| {
+                for a in 0..n { for b in 0..n {
+                    let v = src[b];
+                    if v != 0.0 {
+                        for t in 0..3 {
+                            dst[a][t] += dcndr[a*n+b][t] * v * EH_KCAL2 / BOHR;
+                        }
+                    }
+                }}
+            };
+            chain(&d_cn_bond, &mut tg.cn_bond);
+            chain(&d_cn_es, &mut tg.cn_es);
+            chain(&d_cn_disp, &mut tg.cn_disp);
+        }
 
         // sum per-term + shared cn chain
         for a in 0..n { for t in 0..3 {
@@ -2868,6 +2963,20 @@ impl Gfnff {
         // convert to kcal/mol / Angstrom
         const EH_KCAL: f64 = 627.5094740631;
         for a in 0..n { for t in 0..3 { grad_out[a][t] = g[a][t] * EH_KCAL / BOHR; } }
+        if let Some(tg) = terms_out {
+            let copy = |src: &[[f64; 3]], dst: &mut Vec<[f64; 3]>| {
+                for a in 0..n { for t in 0..3 { dst[a][t] = src[a][t] * EH_KCAL / BOHR; } }
+            };
+            copy(&g_bond, &mut tg.bond);
+            copy(&g_angle, &mut tg.angle);
+            copy(&g_tors, &mut tg.torsion);
+            copy(&g_rep, &mut tg.rep);
+            copy(&g_es, &mut tg.es);
+            copy(&g_disp, &mut tg.disp);
+            copy(&g_hb, &mut tg.hb);
+            copy(&g_xb, &mut tg.xb);
+            copy(&g_batm, &mut tg.batm);
+        }
 
         EnergyComponents { bond: ebond, angle: eangl, torsion: etors,
             rep, es, disp, hb: ehb, xb: exb, batm: ebatm }
@@ -3050,6 +3159,8 @@ fn dampt2(p: &Params, ati: usize, atj: usize, r2: f64) -> (f64, f64) {
 /// (caller passes the RAW cn; no inversion needed - the previous version
 /// inverted algebraically AND was fed cn_raw, off by 3-50x, which was the
 /// source of the ~0.1 kcal/mol/A gradient residual vs xtb)
+pub fn erf_pub(x: f64) -> f64 { erf(x) }
+
 fn create_dlogcn(p: &Params, cn: f64) -> f64 {
     let cm = p.cnmax;
     cm.exp() / (cm.exp() + cn.exp())
@@ -5062,3 +5173,53 @@ fn demote_metal(p: &Params, z: usize, nb_count: usize) -> i32 {
 
 
 
+
+#[cfg(test)]
+mod tests_hb_chain {
+    use super::*;
+    use crate::forces::ForceField;
+
+    /// Regression (v1.1.1): the egbond_hb gradient chain used xtb's
+    /// dncoord_erf `dtmp` (half the true derivative of 0.5(1+erf)) and
+    /// subtracted the B-partner term — a net -1/2× the true contribution.
+    /// Wherever the steep HB gaussian (kn=27.5) is alive this made the
+    /// analytic gradient inconsistent with the energy (found via DIC: aspirin
+    /// COOH intramolecular H-bond, O/H atoms off by ~1.9 kcal/mol/A; xtb's
+    /// own binary shows the same upstream half-derivative quirk). This
+    /// geometry is the captured DIC stall point where the gaussian is at its
+    /// knee (r ≈ rc): the full-gradient FD scan must be clean.
+    #[test]
+    fn aspirin_hb_stall_gradient_fd_consistency() {
+        let txt = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/gfnff/aspirin_hb_stall.xyz"
+        ))
+        .unwrap();
+        let mut lines = txt.lines();
+        let n: usize = lines.next().unwrap().trim().parse().unwrap();
+        lines.next();
+        let mut z = Vec::new();
+        let mut x = Vec::new();
+        for line in lines.take(n) {
+            let p: Vec<&str> = line.split_whitespace().collect();
+            z.push(p[0].parse::<usize>().unwrap());
+            x.push([p[1].parse().unwrap(), p[2].parse().unwrap(), p[3].parse().unwrap()]);
+        }
+        let ff = GfnffForceField::new(&z, &x, 0.0);
+        let mut g = vec![[0.0f64; 3]; n];
+        ff.energy_and_gradient(&x, &mut g);
+        let h = 1e-4f64;
+        let mut maxerr = 0.0f64;
+        for i in 0..n {
+            for t in 0..3 {
+                let mut xp = x.clone();
+                xp[i][t] += h;
+                let mut xm = x.clone();
+                xm[i][t] -= h;
+                let fd = (ff.energy(&xp) - ff.energy(&xm)) / (2.0 * h);
+                maxerr = maxerr.max((fd - g[i][t]).abs());
+            }
+        }
+        assert!(maxerr < 1e-3, "gradient/energy inconsistency: {maxerr}");
+    }
+}

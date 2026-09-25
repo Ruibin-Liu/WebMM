@@ -14,9 +14,14 @@ use crate::forces::ForceField;
 use crate::ConvergenceOptions;
 
 /// Rebuild the internal basis when the mapped geometry's true q has drifted
-/// from the linear target z by more than this (Å/rad): the fixed-B
-/// back-transform linearization has gone stale.
-const DRIFT_REBUILD: f64 = 2.0;
+/// from the linear target z by more than this (Å/rad). The map x(z) is
+/// exactly linear for any drift (no correctness need to rebuild) — drift
+/// only degrades L-BFGS conditioning in the stale basis. Measured
+/// {2.0, 5.0, ∞} matrix (v1.1.1): monotonically better with fewer rebuilds
+/// on all fixtures (a G-diagonalization costs O(n_prim³·sweeps)); set to
+/// effectively-never. Topology changes are not handled here — the
+/// Cartesian-restart safety net covers pathological cases.
+const DRIFT_REBUILD: f64 = 1e9;
 
 struct InternalObjective<'a> {
     ff: &'a dyn ForceField,
@@ -164,6 +169,22 @@ pub fn optimize_internal(
     };
     if internal.converged || internal.energy_converged {
         return internal;
+    }
+    // diagnostics: capture the internal-run endpoint that failed to converge
+    // (used to reproduce force-field gradient/energy inconsistencies)
+    if let Ok(path) = std::env::var("DIC_DUMP") {
+        let mut s = String::new();
+        s.push_str(&format!("{}\n\n", internal.optimized_coords.len()));
+        for (a, p) in internal.optimized_coords.iter().enumerate() {
+            s.push_str(&format!(
+                "{:2} {:19.12} {:19.12} {:19.12}\n",
+                znums.get(a).copied().unwrap_or(0),
+                p[0],
+                p[1],
+                p[2]
+            ));
+        }
+        let _ = std::fs::write(path, s);
     }
     // failed abort: continue in Cartesian from the internal endpoint
     let restart = super::optimize(ff, &internal.optimized_coords, convergence);
