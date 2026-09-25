@@ -438,11 +438,14 @@ pub fn oop_gradient(
     // eps=1e-8 minimizes truncation error (O(eps^2) ~ 1e-16) at the cost of
     // higher roundoff (O(machine_eps/eps) ~ 2e-8). Matches the torsion gradient
     // step size for consistency across all angle-based terms.
+    // v1.2.5: the perturbation buffer is cloned once per term and restored in
+    // place (was a full coords clone per dim — 12 allocations/term).
     let eps = 1e-8;
     let mut gc = [0.0; 3];
     let mut g1 = [0.0; 3];
     let mut g2 = [0.0; 3];
     let mut g3 = [0.0; 3];
+    let mut cp = coords.to_vec();
 
     for (atom_idx, grad) in [
         (central, &mut gc),
@@ -451,11 +454,12 @@ pub fn oop_gradient(
         (atom3, &mut g3),
     ] {
         for dim in 0..3 {
-            let mut cp = coords.to_vec();
-            cp[atom_idx][dim] += eps;
+            let orig = cp[atom_idx][dim];
+            cp[atom_idx][dim] = orig + eps;
             let ep = oop_energy(&cp, central, atom1, atom2, atom3, params);
-            cp[atom_idx][dim] -= 2.0 * eps;
+            cp[atom_idx][dim] = orig - eps;
             let em = oop_energy(&cp, central, atom1, atom2, atom3, params);
+            cp[atom_idx][dim] = orig;
             grad[dim] = (ep - em) / (2.0 * eps);
         }
     }

@@ -2258,32 +2258,92 @@ pub fn torsion_gradient(
     atom4: usize,
     params: &TorsionParams,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    // Numerical finite-difference gradient of torsion_energy.
-    // Guarantees energy/gradient consistency regardless of the dihedral
-    // convention (RDKit r3=j-k sign). Central atoms j,k carry opposite-sign
-    // gradients by construction (translational invariance).
+    // Analytic gradient (v1.2.5): exact chain-rule derivative of
+    // torsion_energy through cos(phi) = (cp0·cp1)/(|cp0||cp1|).
+    // E = 0.5(v1(1+c) + v2(1-c2) + v3(1+c3)), c2 = 2c²-1, c3 = 4c³-3c
+    //   dE/dc = 0.5(v1 - 4c·v2 + (12c²-3)·v3)
+    // With J0 = ∂cp0/∂x, J1 = ∂cp1/∂x (per-atom/dim Jacobians below):
+    //   dc/dx = (J0·cp1 + cp0·J1)/(n0 n1) - c·(J0·cp0/n0² + J1·cp1/n1²)
+    // (replaces 12 forward-FD energy evaluations + a coords clone per term;
+    // energy/gradient consistency is exact, not eps-truncated)
     // Degenerate reference geometry (collinear triple): the dihedral is
-    // undefined and torsion_energy conventionally returns 0. A finite
-    // difference there measures the 0 -> E(eps) JUMP (~1 kcal over 1e-7 A
-    // = 1e7 kcal/A) — a phantom force that stalls L-BFGS on exactly-planar
-    // 2D starts. The gradient is genuinely undefined here; report zero and
-    // let the other terms pull the geometry off the degeneracy.
+    // undefined and torsion_energy conventionally returns 0 — report zero
+    // gradient and let the other terms pull the geometry off the degeneracy.
     if degenerate_torsion(coords, atom1, atom2, atom3, atom4) {
         return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
     }
 
-    let eps = 1e-7;
-    let e0 = torsion_energy(coords, atom1, atom2, atom3, atom4, params);
+    let (i, j, k, l) = (atom1, atom2, atom3, atom4);
+    let v0 = [
+        coords[i][0] - coords[j][0],
+        coords[i][1] - coords[j][1],
+        coords[i][2] - coords[j][2],
+    ];
+    let v1 = [
+        coords[k][0] - coords[j][0],
+        coords[k][1] - coords[j][1],
+        coords[k][2] - coords[j][2],
+    ];
+    let v2 = [
+        coords[l][0] - coords[k][0],
+        coords[l][1] - coords[k][1],
+        coords[l][2] - coords[k][2],
+    ];
+    // same cross products as torsion_energy (cp1 = -v1×v2 = r3×r4)
+    let cp0 = [
+        v0[1] * v1[2] - v0[2] * v1[1],
+        v0[2] * v1[0] - v0[0] * v1[2],
+        v0[0] * v1[1] - v0[1] * v1[0],
+    ];
+    let cp1 = [
+        v1[2] * v2[1] - v1[1] * v2[2],
+        v1[0] * v2[2] - v1[2] * v2[0],
+        v1[1] * v2[0] - v1[0] * v2[1],
+    ];
+    let n0 = (cp0[0] * cp0[0] + cp0[1] * cp0[1] + cp0[2] * cp0[2]).sqrt();
+    let n1 = (cp1[0] * cp1[0] + cp1[1] * cp1[1] + cp1[2] * cp1[2]).sqrt();
+    if n0 < DEGENERATE_CROSS_NORM || n1 < DEGENERATE_CROSS_NORM {
+        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let cos_phi = (cp0[0] * cp1[0] + cp0[1] * cp1[1] + cp0[2] * cp1[2]) / (n0 * n1);
+    let cos_phi = cos_phi.clamp(-1.0, 1.0);
+    let c = cos_phi;
+
+    let de_dc = 0.5 * (params.v1 - 4.0 * c * params.v2 + (12.0 * c * c - 3.0) * params.v3);
+    let n0n1 = n0 * n1;
+    let n0sq = n0 * n0;
+    let n1sq = n1 * n1;
+
+    // e_d × v for each basis dim (used in the per-atom Jacobians)
+    let cross_basis = |d: usize, v: [f64; 3]| -> [f64; 3] {
+        match d {
+            0 => [0.0, -v[2], v[1]],
+            1 => [v[2], 0.0, -v[0]],
+            _ => [-v[1], v[0], 0.0],
+        }
+    };
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let neg = |v: [f64; 3]| [-v[0], -v[1], -v[2]];
+    let add = |a: [f64; 3], b: [f64; 3]| [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+
+    // v0 = i-j, v1 = k-j, v2 = l-k; cp0 = v0×v1, cp1 = -v1×v2
+    let atoms = [i, j, k, l];
     let mut g = [[0.0f64; 3]; 4];
-    let atoms = [atom1, atom2, atom3, atom4];
-    let mut c = coords.to_vec();
     for (idx, &a) in atoms.iter().enumerate() {
-        for d in 0..3 {
-            let orig = c[a][d];
-            c[a][d] = orig + eps;
-            let e_plus = torsion_energy(&c, atom1, atom2, atom3, atom4, params);
-            c[a][d] = orig;
-            g[idx][d] = (e_plus - e0) / eps;
+        for (d, gslot) in g[idx].iter_mut().enumerate() {
+            // (J0, J1) = (∂cp0/∂x_a[d], ∂cp1/∂x_a[d])
+            let (jj0, jj1) = if a == i {
+                (cross_basis(d, v1), [0.0; 3])
+            } else if a == j {
+                (cross_basis(d, add(v0, neg(v1))), cross_basis(d, v2))
+            } else if a == k {
+                (neg(cross_basis(d, v0)), neg(cross_basis(d, add(v1, v2))))
+            } else {
+                ([0.0; 3], cross_basis(d, v1))
+            };
+            let dc = (dot(jj0, cp1) + dot(cp0, jj1)) / n0n1
+                - c * (dot(jj0, cp0) / n0sq + dot(jj1, cp1) / n1sq);
+            *gslot = de_dc * dc;
         }
     }
     (g[0], g[1], g[2], g[3])
@@ -2292,6 +2352,41 @@ pub fn torsion_gradient(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_torsion_gradient_matches_fd() {
+        // The analytic gradient (v1.2.5) must match forward-FD of
+        // torsion_energy within FD truncation error.
+        let params = TorsionParams {
+            v1: 0.2,
+            v2: -0.15,
+            v3: 0.05,
+        };
+        let coords = vec![
+            [1.526, 0.1, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.4, 1.43, 0.2],
+            [1.9, 1.3, -0.6],
+        ];
+        let (g0, g1, g2, g3) = torsion_gradient(&coords, 0, 1, 2, 3, &params);
+        let slots = [g0, g1, g2, g3];
+        let eps = 1e-7;
+        let e0 = torsion_energy(&coords, 0, 1, 2, 3, &params);
+        for a in 0..4usize {
+            for d in 0..3 {
+                let mut cp = coords.clone();
+                cp[a][d] += eps;
+                let ep = torsion_energy(&cp, 0, 1, 2, 3, &params);
+                let num = (ep - e0) / eps;
+                let slot = slots[a][d];
+                let dd = (slot - num).abs();
+                assert!(
+                    dd < 3e-4 || dd / slot.abs().max(num.abs()).max(1e-9) < 1e-3,
+                    "atom {a} dim {d}: analytic {slot} vs fd {num}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_torsion_energy() {

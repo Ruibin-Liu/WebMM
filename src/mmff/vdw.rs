@@ -233,39 +233,30 @@ pub fn vdw_energy_and_gradient(
 
     let energy = calc_vdw_energy(r, r_star_ij, well_depth);
 
-    let eps = 1e-7;
-    let mut grad_i = [0.0; 3];
-    let mut grad_j = [0.0; 3];
-    for dim in 0..3 {
-        let mut cp: Vec<[f64; 3]> = coords.to_vec();
-        cp[i][dim] += eps;
-        let e_plus = calc_vdw_energy_for(&cp, i, j, r_star_ij, well_depth);
-        let e0 = calc_vdw_energy_for(coords, i, j, r_star_ij, well_depth);
-        let num = (e_plus - e0) / eps;
-        grad_i[dim] = num;
-        grad_j[dim] = -num;
-    }
+    // Analytic gradient (v1.2.5): exact derivative of calc_vdw_energy.
+    //   E = eps * a^7 * b, a = c1*R/(d + c1m*R), b = c2*R^7/(d^7 + c2m*R^7) - 2
+    //   dE/dd = -7*eps*a^7 * ( b/(d + c1m*R) + c2*R^7*d^6/(d^7 + c2m*R^7)^2 )
+    //   grad_i = dE/dd * (x_i - x_j)/d = -(dE/dd)/d * r_vec; grad_j = -grad_i
+    // (replaces forward-FD: 3 full coords clones + 6 energy evaluations
+    // per pair — the dominant single-point E+G cost at drug-like sizes)
+    let d = r;
+    let dist2 = d * d;
+    let dist6 = dist2 * dist2 * dist2;
+    let dist7 = dist6 * d;
+    let r2 = r_star_ij * r_star_ij;
+    let r7 = r2 * r2 * r2 * r_star_ij;
+    let denom_a = d + 0.07 * r_star_ij;
+    let u = dist7 + 0.12 * r7;
+    let a_term = 1.07 * r_star_ij / denom_a;
+    let a2 = a_term * a_term;
+    let a7 = a2 * a2 * a2 * a_term;
+    let b_term = 1.12 * r7 / u - 2.0;
+    let de_dd = -7.0 * well_depth * a7 * (b_term / denom_a + 1.12 * r7 * dist6 / (u * u));
+    let f = de_dd / d;
+    let grad_i = [-f * r_vec[0], -f * r_vec[1], -f * r_vec[2]];
+    let grad_j = [f * r_vec[0], f * r_vec[1], f * r_vec[2]];
 
     (energy, grad_i, grad_j)
-}
-
-fn calc_vdw_energy_for(
-    coords: &[[f64; 3]],
-    i: usize,
-    j: usize,
-    r_star_ij: f64,
-    well_depth: f64,
-) -> f64 {
-    let dx = coords[j][0] - coords[i][0];
-    let dy = coords[j][1] - coords[i][1];
-    let dz = coords[j][2] - coords[i][2];
-    let r = (dx * dx + dy * dy + dz * dz).sqrt();
-
-    if r < 1e-10 {
-        return 0.0;
-    }
-
-    calc_vdw_energy(r, r_star_ij, well_depth)
 }
 
 #[cfg(test)]
@@ -280,6 +271,52 @@ mod tests {
             n_i: v.n_i,
             g_i: v.g_i,
             da: v.da,
+        }
+    }
+
+    #[test]
+    fn test_vdw_gradient_matches_fd() {
+        // The analytic gradient (v1.2.5) must match forward-FD of
+        // calc_vdw_energy to FD truncation error (~1e-5 relative).
+        let pi = make_params(1);
+        let pj = make_params(6);
+        let geoms = [
+            [[0.0, 0.0, 0.0], [3.0, 0.5, 0.0]],
+            [[0.0, 0.0, 0.0], [2.0, 1.0, 1.0]],
+            [[1.0, 2.0, 3.0], [4.0, 2.0, 1.5]],
+        ];
+        for coords in geoms {
+            let (e0, gi, gj) = vdw_energy_and_gradient(&coords, 0, 1, &pi, &pj, false);
+            let eps = 1e-7;
+            for (atom_idx, grad) in [(0usize, gi), (1usize, gj)] {
+                for dim in 0..3 {
+                    let mut cp = coords;
+                    cp[atom_idx][dim] += eps;
+                    let r_vec = [
+                        cp[1][0] - cp[0][0],
+                        cp[1][1] - cp[0][1],
+                        cp[1][2] - cp[0][2],
+                    ];
+                    let d =
+                        (r_vec[0] * r_vec[0] + r_vec[1] * r_vec[1] + r_vec[2] * r_vec[2]).sqrt();
+                    let e_plus = calc_vdw_energy(
+                        d,
+                        calc_r_star_ij(&pi, &pj),
+                        calc_well_depth(calc_r_star_ij(&pi, &pj), &pi, &pj),
+                    );
+                    // note: da-scaling is identity for C..C pairs (both neutral non-H)
+                    let num = (e_plus - e0) / eps;
+                    // FD has O(eps*|E''|) truncation (~1e-5 abs) plus a
+                    // ~1e-8 roundoff floor on zero components
+                    let diff = (grad[dim] - num).abs();
+                    assert!(
+                        diff < 3e-5 || diff / grad[dim].abs().max(num.abs()).max(1e-9) < 1e-4,
+                        "analytic {} vs fd {} diff {diff} (e0={e0})",
+                        grad[dim],
+                        num
+                    );
+                }
+            }
         }
     }
 
