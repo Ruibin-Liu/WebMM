@@ -68,6 +68,48 @@ const PLANARITY_ENERGY_TOL: f64 = 0.7;
 // it true. Faithfulness is the goal — r-regression during the migration is
 // expected and accepted, not a gate.
 static EXP_RDKIT_ALL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+// ---- v1.2.6 instrumentation: per-stage eval counts (ETKDG_ITERS gated) ----
+mod instr {
+    use std::cell::RefCell;
+    thread_local! {
+        pub static LOG: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+    pub fn enabled() -> bool {
+        LOG.with(|l| l.borrow().is_some())
+    }
+    pub fn begin() {
+        if std::env::var("ETKDG_ITERS").is_ok() {
+            LOG.with(|l| {
+                if l.borrow().is_none() {
+                    *l.borrow_mut() = Some(Vec::new());
+                }
+            });
+        }
+    }
+    pub fn line(msg: String) {
+        if !enabled() {
+            return;
+        }
+        LOG.with(|l| {
+            if let Some(log) = l.borrow_mut().as_mut() {
+                log.push(msg);
+            }
+        });
+    }
+    pub fn flush() {
+        if !enabled() {
+            return;
+        }
+        LOG.with(|l| {
+            if let Some(log) = l.borrow_mut().as_mut() {
+                for m in log.drain(..) {
+                    eprintln!("{m}");
+                }
+            }
+        });
+    }
+}
+
 fn rdkit_all() -> bool {
     EXP_RDKIT_ALL.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -4979,6 +5021,9 @@ fn minimize_etkdg(
     // E~282 vs min ~6; 2000 iters didn't help). L-BFGS uses curvature history to
     // take well-scaled steps and actually reach the force tolerance.
     let dim = 3 * n;
+    let instr_on = instr::enabled();
+    let t_stage = std::time::Instant::now();
+    let (mut n_e, mut n_g, mut n_it) = (0usize, 0usize, 0usize);
     let mut x = vec![0.0f64; dim];
     for i in 0..n {
         x[3 * i] = coords[i][0];
@@ -5058,7 +5103,9 @@ fn minimize_etkdg(
 
     let mut g: Vec<f64> = vec![0.0; dim];
     gradient_at(&x, &mut g, &mut c_scratch, &mut g3_scratch);
+    n_g += 1;
     let mut f = energy_at(&x, &mut c_scratch);
+    n_e += 1;
     const M: usize = 20;
     let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
@@ -5071,6 +5118,7 @@ fn minimize_etkdg(
     let mut g_new: Vec<f64> = vec![0.0; dim];
     let mut stall = 0usize;
     for _iter in 0..max_iter {
+        n_it += 1;
         // convergence: max per-atom force (excluding fixed atoms)
         let mut max_g = 0.0f64;
         for i in 0..n {
@@ -5149,8 +5197,10 @@ fn minimize_etkdg(
                 x_new[d] = x[d] + step * dir[d];
             }
             let f_new = energy_at(&x_new, &mut c_scratch);
+            n_e += 1;
             if f_new.is_finite() && f_new <= f + c_armijo * step * dg {
                 gradient_at(&x_new, &mut g_new, &mut c_scratch, &mut g3_scratch);
+                n_g += 1;
                 let s: Vec<f64> = {
                     let mut v = Vec::with_capacity(dim);
                     for d in 0..dim {
@@ -5201,6 +5251,18 @@ fn minimize_etkdg(
         }
     }
 
+    if instr_on {
+        let tag = std::env::var("ETKDG_STAGE").unwrap_or_default();
+        let tag = if tag.is_empty() {
+            "min3d".to_string()
+        } else {
+            tag
+        };
+        instr::line(format!(
+            "  {tag:<14} it={n_it:3} e={n_e:4} g={n_g:3} {:6}",
+            t_stage.elapsed().as_micros()
+        ));
+    }
     for i in 0..n {
         coords[i][0] = x[3 * i];
         coords[i][1] = x[3 * i + 1];
@@ -5777,7 +5839,9 @@ pub fn generate_initial_coords_with_config(mol: &Molecule, config: &ETKDGConfig)
 
 fn generate_initial_coords_default(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
     EXP_RDKIT_ALL.store(false, std::sync::atomic::Ordering::Relaxed);
-    embed_impl(mol, config)
+    let c = embed_impl(mol, config);
+    instr::flush();
+    c
 }
 
 fn generate_initial_coords_rdkit(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
@@ -5841,6 +5905,7 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
     };
 
     let start_time = Instant::now();
+    instr::begin();
     let timeout_duration = if config.timeout_ms > 0 {
         Some(std::time::Duration::from_millis(config.timeout_ms))
     } else {
@@ -5865,7 +5930,9 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
         }
 
         // Step 1: First 4D minimization — distance bounds + chirality + light 4th-dim penalty
+        let t4 = Instant::now();
         let first_e = minimize_4d_first(&mut coords_4d, &bounds, &chiral_centers, 400);
+        instr::line(format!("  4d_first        {:6}", t4.elapsed().as_micros()));
         let e_per_atom_4d = first_e / n_atoms as f64;
         if e_per_atom_4d >= MAX_MINIMIZED_E_PER_ATOM {
             if std::env::var("ETKDG_DEBUG").is_ok() {
@@ -5891,12 +5958,16 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
         // center_in_volume_tol + planarity + clashes + energy) judge the result.
 
         // Step 4: Minimize 4th dimension — strong 4th-dim weight, relaxed chirality
+        let t4 = Instant::now();
         minimize_4d_collapse(&mut coords_4d, &bounds, &chiral_centers, 200);
+        instr::line(format!("  4d_collapse     {:6}", t4.elapsed().as_micros()));
 
         // Step 5: Flatten aromatic rings before torsion minimization
         let mut coords_3d: Vec<[f64; 3]> = coords_4d.iter().map(|c| [c[0], c[1], c[2]]).collect();
         if !pc.aromatic_atoms.is_empty() {
+            let t4 = Instant::now();
             flatten_aromatic_rings(&mut coords_3d, mol, &pc);
+            instr::line(format!("  flatten_arom    {:6}", t4.elapsed().as_micros()));
         }
 
         // Re-apply coord_map after projection to 3D
@@ -5959,7 +6030,13 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
                     &torsion_prefs,
                     &bonds_12,
                     &angles_13,
-                    300,
+                    // v1.2.6: the snap's job is local relaxation after ONE
+                    // torsion rotation; the audit showed ~95/300 iterations
+                    // per snap (43% of embed wall time across 3 snaps) — the
+                    // full-landscape convergence belongs to the main minimize
+                    // above and the acceptance gates. 25 iterations is enough
+                    // for the rotated fragment to settle.
+                    25,
                     1e-3,
                     &config.coord_map,
                     mol,
@@ -6008,7 +6085,9 @@ fn embed_impl(mol: &Molecule, config: &ETKDGConfig) -> Vec<[f64; 3]> {
             // H trilateration: analytically place misplaced H atoms via 3-sphere
             // intersection from their ETKDG 1-2/1-3 distance bounds. Gives the
             // H-only relaxation below a good starting point.
+            let t4 = Instant::now();
             trilaterate_hydrogens(&mut coords_3d, mol, &bounds);
+            instr::line(format!("  trilaterate_H   {:6}", t4.elapsed().as_micros()));
 
             // H-only relaxation: fix all non-H atoms, re-minimize to let H atoms
             // settle into their ideal positions (satisfying 1-2/1-3 bounds) without
