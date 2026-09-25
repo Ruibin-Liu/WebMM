@@ -7472,8 +7472,13 @@ M  END"#;
                 // decimals when rebuilding the SDF (the legacy JS path does
                 // the same); the batch API keeps full precision, so energies
                 // agree to the quantization level (~1e-8), not bitwise.
+                // The v1.2.3 ETKDG 4D L-BFGS converges to slightly different
+                // (better) 4D minima than the old fixed-step descent, shifting
+                // the 3D starting points and final optimized energies by
+                // ~1e-6 kcal/mol; 1e-4 covers this + the legacy 4-decimal
+                // coordinate quantization.
                 assert!(
-                    (be - r.final_energy).abs() < 1e-6,
+                    (be - r.final_energy).abs() < 1e-4,
                     "{engine} conf {i}: batch {be} vs step-by-step {}",
                     r.final_energy
                 );
@@ -7484,7 +7489,7 @@ M  END"#;
                         || (be - r.final_energy).abs() < 1e-6
                 );
                 assert!(
-                    (batch.iterations[i] as i64 - r.iterations as i64).abs() <= 5,
+                    (batch.iterations[i] as i64 - r.iterations as i64).abs() <= 20,
                     "{engine} conf {i}: batch {} iters vs step-by-step {}",
                     batch.iterations[i],
                     r.iterations

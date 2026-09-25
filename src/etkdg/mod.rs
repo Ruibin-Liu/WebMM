@@ -2042,283 +2042,148 @@ fn gradient_4d(
     grad
 }
 
+/// First 4D minimization: distance bounds + chirality + light 4th-dim penalty.
+/// Uses the shared L-BFGS (v1.2.3: was a fixed-step gradient descent that
+/// needed ~60-90 iterations to stagnate; L-BFGS converges in ~10-30 with
+/// the same force tolerance, cutting the O(n²) gradient evaluations
+/// proportionally). The energy surface is the same (energy_4d with the
+/// FIRST_MIN weights) — only the optimizer path changed.
 fn minimize_4d_first(
     coords_4d: &mut [[f64; 4]],
     bounds: &DistanceBounds,
     chiral_centers: &[ChiralCenter],
     max_iter: usize,
 ) -> f64 {
-    if rdkit_all() {
-        // D7: RDKit uses BFGS for the 4D stages (with while-needMore). Use the
-        // shared L-BFGS here; ignore the return convergence flag for now.
-        const CPA: usize = 4;
-        let n = coords_4d.len();
-        let dim = CPA * n;
-        let mut x = vec![0.0f64; dim];
-        for i in 0..n {
-            for d in 0..CPA {
-                x[CPA * i + d] = coords_4d[i][d];
-            }
-        }
-        let energy_at = |xx: &[f64]| {
-            let c: Vec<[f64; 4]> = (0..n)
-                .map(|i| {
-                    [
-                        xx[CPA * i],
-                        xx[CPA * i + 1],
-                        xx[CPA * i + 2],
-                        xx[CPA * i + 3],
-                    ]
-                })
-                .collect();
-            energy_4d(
-                &c,
-                bounds,
-                chiral_centers,
-                FIRST_MIN_WEIGHT_CHIRAL,
-                FIRST_MIN_WEIGHT_FOURTH,
-            )
-        };
-        let gradient_at = |xx: &[f64]| {
-            let c: Vec<[f64; 4]> = (0..n)
-                .map(|i| {
-                    [
-                        xx[CPA * i],
-                        xx[CPA * i + 1],
-                        xx[CPA * i + 2],
-                        xx[CPA * i + 3],
-                    ]
-                })
-                .collect();
-            let g = gradient_4d(
-                &c,
-                bounds,
-                chiral_centers,
-                FIRST_MIN_WEIGHT_CHIRAL,
-                FIRST_MIN_WEIGHT_FOURTH,
-            );
-            let mut gx = vec![0.0f64; dim];
-            for i in 0..n {
-                for d in 0..CPA {
-                    gx[CPA * i + d] = g[i][d];
-                }
-            }
-            gx
-        };
-        let (f, _) = lbfgs_minimize(&mut x, n, CPA, &energy_at, &gradient_at, max_iter, 1e-3);
-        for i in 0..n {
-            for d in 0..CPA {
-                coords_4d[i][d] = x[CPA * i + d];
-            }
-        }
-        return f;
-    }
+    const CPA: usize = 4;
     let n = coords_4d.len();
-    let mut best_energy = f64::INFINITY;
-    let mut best_coords = coords_4d.to_vec();
-    // Convergence break (v1.2.2): the old blind fixed-step loop always ran
-    // all iterations regardless of whether the energy had settled. Break
-    // when the best energy stops improving for 15 consecutive sweeps.
-    let mut stagnant = 0usize;
-    let mut prev_best = f64::INFINITY;
-    for _iter in 0..max_iter {
-        let mut grad = vec![[0.0f64; 4]; n];
-        let mut energy = 0.0;
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let lo = bounds.lower[i][j];
-                let hi = bounds.upper[i][j];
-                if hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH {
-                    continue;
-                }
-                let dx = coords_4d[i][0] - coords_4d[j][0];
-                let dy = coords_4d[i][1] - coords_4d[j][1];
-                let dz = coords_4d[i][2] - coords_4d[j][2];
-                let dw = coords_4d[i][3] - coords_4d[j][3];
-                let d4 = (dx * dx + dy * dy + dz * dz + dw * dw).sqrt().max(1e-10);
-                let lo_viol = (lo - d4).max(0.0);
-                let hi_viol = (d4 - hi).max(0.0);
-                energy += lo_viol * lo_viol + hi_viol * hi_viol;
-                let f = -2.0 * (lo_viol - hi_viol) / d4;
-                for dim in 0..4 {
-                    let diff = coords_4d[i][dim] - coords_4d[j][dim];
-                    grad[i][dim] += f * diff;
-                    grad[j][dim] -= f * diff;
-                }
-            }
+    let dim = CPA * n;
+    let mut x = vec![0.0f64; dim];
+    for i in 0..n {
+        for d in 0..CPA {
+            x[CPA * i + d] = coords_4d[i][d];
         }
-        energy += chiral_4d_penalty(coords_4d, chiral_centers, FIRST_MIN_WEIGHT_CHIRAL);
-        chiral_4d_gradient(
-            coords_4d,
+    }
+    let energy_at = |xx: &[f64]| {
+        let c: Vec<[f64; 4]> = (0..n)
+            .map(|i| {
+                [
+                    xx[CPA * i],
+                    xx[CPA * i + 1],
+                    xx[CPA * i + 2],
+                    xx[CPA * i + 3],
+                ]
+            })
+            .collect();
+        energy_4d(
+            &c,
+            bounds,
             chiral_centers,
             FIRST_MIN_WEIGHT_CHIRAL,
-            &mut grad,
+            FIRST_MIN_WEIGHT_FOURTH,
+        )
+    };
+    let gradient_at = |xx: &[f64]| {
+        let c: Vec<[f64; 4]> = (0..n)
+            .map(|i| {
+                [
+                    xx[CPA * i],
+                    xx[CPA * i + 1],
+                    xx[CPA * i + 2],
+                    xx[CPA * i + 3],
+                ]
+            })
+            .collect();
+        let g = gradient_4d(
+            &c,
+            bounds,
+            chiral_centers,
+            FIRST_MIN_WEIGHT_CHIRAL,
+            FIRST_MIN_WEIGHT_FOURTH,
         );
+        let mut gx = vec![0.0f64; dim];
         for i in 0..n {
-            energy += FIRST_MIN_WEIGHT_FOURTH * coords_4d[i][3] * coords_4d[i][3];
-            grad[i][3] += 2.0 * FIRST_MIN_WEIGHT_FOURTH * coords_4d[i][3];
-        }
-        if energy < best_energy {
-            best_energy = energy;
-            best_coords = coords_4d.to_vec();
-        }
-        let max_g = grad
-            .iter()
-            .map(|g| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2] + g[3] * g[3]).sqrt())
-            .fold(0.0f64, f64::max);
-        if max_g < 1e-3 {
-            break;
-        }
-        let step = 0.1 / max_g.max(1e-10);
-        for i in 0..n {
-            for dim in 0..4 {
-                coords_4d[i][dim] -= step * grad[i][dim];
+            for d in 0..CPA {
+                gx[CPA * i + d] = g[i][d];
             }
         }
-        if best_energy > prev_best - 1e-12 {
-            stagnant += 1;
-            if stagnant >= 15 {
-                break;
-            }
-        } else {
-            stagnant = 0;
+        gx
+    };
+    let (f, _) = lbfgs_minimize(&mut x, n, CPA, &energy_at, &gradient_at, max_iter, 1e-3);
+    for i in 0..n {
+        for d in 0..CPA {
+            coords_4d[i][d] = x[CPA * i + d];
         }
-        prev_best = best_energy;
     }
-    coords_4d.copy_from_slice(&best_coords);
-    best_energy
+    f
 }
 
+/// Second 4D minimization: strong 4th-dim collapse weight. Uses the shared
+/// L-BFGS (v1.2.3, same rationale as minimize_4d_first).
 fn minimize_4d_collapse(
     coords_4d: &mut [[f64; 4]],
     bounds: &DistanceBounds,
     chiral_centers: &[ChiralCenter],
     max_iter: usize,
 ) {
-    if rdkit_all() {
-        const CPA: usize = 4;
-        let n = coords_4d.len();
-        let dim = CPA * n;
-        let mut x = vec![0.0f64; dim];
-        for i in 0..n {
-            for d in 0..CPA {
-                x[CPA * i + d] = coords_4d[i][d];
-            }
-        }
-        let energy_at = |xx: &[f64]| {
-            let c: Vec<[f64; 4]> = (0..n)
-                .map(|i| {
-                    [
-                        xx[CPA * i],
-                        xx[CPA * i + 1],
-                        xx[CPA * i + 2],
-                        xx[CPA * i + 3],
-                    ]
-                })
-                .collect();
-            energy_4d(
-                &c,
-                bounds,
-                chiral_centers,
-                FOURTH_MIN_WEIGHT_CHIRAL,
-                FOURTH_MIN_WEIGHT_FOURTH,
-            )
-        };
-        let gradient_at = |xx: &[f64]| {
-            let c: Vec<[f64; 4]> = (0..n)
-                .map(|i| {
-                    [
-                        xx[CPA * i],
-                        xx[CPA * i + 1],
-                        xx[CPA * i + 2],
-                        xx[CPA * i + 3],
-                    ]
-                })
-                .collect();
-            let g = gradient_4d(
-                &c,
-                bounds,
-                chiral_centers,
-                FOURTH_MIN_WEIGHT_CHIRAL,
-                FOURTH_MIN_WEIGHT_FOURTH,
-            );
-            let mut gx = vec![0.0f64; dim];
-            for i in 0..n {
-                for d in 0..CPA {
-                    gx[CPA * i + d] = g[i][d];
-                }
-            }
-            gx
-        };
-        let _ = lbfgs_minimize(&mut x, n, CPA, &energy_at, &gradient_at, max_iter, 1e-3);
-        for i in 0..n {
-            for d in 0..CPA {
-                coords_4d[i][d] = x[CPA * i + d];
-            }
-        }
-        return;
-    }
+    const CPA: usize = 4;
     let n = coords_4d.len();
-    // same convergence break as minimize_4d_first (see comment there)
-    let mut stagnant = 0usize;
-    let mut prev_max_g = f64::INFINITY;
-    for _iter in 0..max_iter {
-        let mut grad = vec![[0.0f64; 4]; n];
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let lo = bounds.lower[i][j];
-                let hi = bounds.upper[i][j];
-                if hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH {
-                    continue;
-                }
-                let dx = coords_4d[i][0] - coords_4d[j][0];
-                let dy = coords_4d[i][1] - coords_4d[j][1];
-                let dz = coords_4d[i][2] - coords_4d[j][2];
-                let dw = coords_4d[i][3] - coords_4d[j][3];
-                let d4 = (dx * dx + dy * dy + dz * dz + dw * dw).sqrt().max(1e-10);
-                let lo_viol = (lo - d4).max(0.0);
-                let hi_viol = (d4 - hi).max(0.0);
-                let f = -2.0 * (lo_viol - hi_viol) / d4;
-                for dim in 0..4 {
-                    let diff = coords_4d[i][dim] - coords_4d[j][dim];
-                    grad[i][dim] += f * diff;
-                    grad[j][dim] -= f * diff;
-                }
-            }
+    let dim = CPA * n;
+    let mut x = vec![0.0f64; dim];
+    for i in 0..n {
+        for d in 0..CPA {
+            x[CPA * i + d] = coords_4d[i][d];
         }
-        chiral_4d_gradient(
-            coords_4d,
+    }
+    let energy_at = |xx: &[f64]| {
+        let c: Vec<[f64; 4]> = (0..n)
+            .map(|i| {
+                [
+                    xx[CPA * i],
+                    xx[CPA * i + 1],
+                    xx[CPA * i + 2],
+                    xx[CPA * i + 3],
+                ]
+            })
+            .collect();
+        energy_4d(
+            &c,
+            bounds,
             chiral_centers,
             FOURTH_MIN_WEIGHT_CHIRAL,
-            &mut grad,
+            FOURTH_MIN_WEIGHT_FOURTH,
+        )
+    };
+    let gradient_at = |xx: &[f64]| {
+        let c: Vec<[f64; 4]> = (0..n)
+            .map(|i| {
+                [
+                    xx[CPA * i],
+                    xx[CPA * i + 1],
+                    xx[CPA * i + 2],
+                    xx[CPA * i + 3],
+                ]
+            })
+            .collect();
+        let g = gradient_4d(
+            &c,
+            bounds,
+            chiral_centers,
+            FOURTH_MIN_WEIGHT_CHIRAL,
+            FOURTH_MIN_WEIGHT_FOURTH,
         );
+        let mut gx = vec![0.0f64; dim];
         for i in 0..n {
-            grad[i][3] += 2.0 * FOURTH_MIN_WEIGHT_FOURTH * coords_4d[i][3];
-        }
-        let max_g = grad
-            .iter()
-            .map(|g| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2] + g[3] * g[3]).sqrt())
-            .fold(0.0f64, f64::max);
-        if max_g < 1e-3 {
-            break;
-        }
-        let step = 0.1 / max_g.max(1e-10);
-        for i in 0..n {
-            for dim in 0..4 {
-                coords_4d[i][dim] -= step * grad[i][dim];
+            for d in 0..CPA {
+                gx[CPA * i + d] = g[i][d];
             }
         }
-        // gradient-based stagnation: when the max force stops decreasing
-        // (the loop has no energy tracking; max_g is already computed)
-        if max_g > prev_max_g * 0.999 {
-            stagnant += 1;
-            if stagnant >= 15 {
-                break;
-            }
-        } else {
-            stagnant = 0;
+        gx
+    };
+    let _ = lbfgs_minimize(&mut x, n, CPA, &energy_at, &gradient_at, max_iter, 1e-3);
+    for i in 0..n {
+        for d in 0..CPA {
+            coords_4d[i][d] = x[CPA * i + d];
         }
-        prev_max_g = max_g;
     }
 }
 fn chiral_4d_penalty(coords_4d: &[[f64; 4]], chiral_centers: &[ChiralCenter], weight: f64) -> f64 {

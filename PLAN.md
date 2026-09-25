@@ -1,44 +1,43 @@
-# Plan: 构象管线第四轮 — ETKDG 嵌入迭代预算削减(收敛审计驱动的 4D/3D/snap 预算裁剪)→ v1.2.2
+# Plan: ETKDG 4D 阶段换真 L-BFGS — 替换固定步长梯度下降 → v1.2.3
 
 ## 背景
 
-嵌入是管线最大单项(~40%,41–89 ms/构象)。单次嵌入的迭代预算:
-- minimize_4d_first: **400** 迭代(4D 距离边界 + 手性)
-- minimize_4d_collapse: **200** 迭代(第 4 维压缩)
-- minimize_etkdg 主: **300** 迭代(3D 精修)
-- 扭转 snap 最多 3 次 × minimize_etkdg **300** 迭代
-- H-only 松弛: minimize_etkdg **300** 迭代
-最坏情形 = 400+200+300+900+300 = **2100 L-BFGS 迭代/构象**。
-
-关键问题:这些上限是不是实际消耗?还是提前收敛(force_tol 触发)
-退出?如果大部分迭代在已收敛坐标上空转,削预算是免费收益;
-如果确实用满,则需看削了多少会伤害嵌入质量(ensemble 门禁)。
+minimize_4d_first(400 迭代)与 minimize_4d_collapse(200 迭代)的
+默认路径使用**固定步长梯度下降**(step = 0.1/max_g)——收敛效率低
+(审计:4D 需要 ~60-90 次迭代才停滞)。而 rdkit_all() 分支已用
+`lbfgs_minimize`(共享 L-BFGS);3D 的 minimize_etkdg 也是 L-BFGS
+(1-46/300 收敛)。**把默认路径的 4D 从固定步长换成同一个
+lbfgs_minimize**,预计迭代数从 ~60-90 降到 ~10-30(与 3D 的收敛
+率一致),每次迭代的 O(n²) 梯度/能量求值次数同比下降。
 
 ## 任务
 
-1. **收敛审计**:对 aspirin/ibuprofen/threonite 各 30 个种子,统计
-   minimize_4d_first(400)、collapse(200)、主 3D(300)、每次
-   snap(300)、H-only(300)的实际迭代数(收敛退出 vs 撞 cap),
-   确定"浪费"在哪里。
-2. **依审计结果削预算**:只对实际提前收敛的阶段收紧(如 4D first
-   400→200,若 95% 在 <200 收敛);对确实用满的阶段不动或轻调。
-   能量序列会变化(迭代数变了)——由 ensemble 门禁与嵌入质量
-   (验收通过率)裁决。
-3. **snap 重最小化预算降**:每个 snap 的 re-minimize 300→100(只需
-   评估快照后能量是否下降,不需要完全收敛;最终主最小化已收尾)。
-4. **审计工具沉淀**:minimize_etkdg / minimize_4d_first / collapse
-   返回实际迭代数(env 门控打印或返回值)。
-5. **发布**:1.2.1→1.2.2;CODE_STATUS/PLAN;wasm 构建;commit +
-   tag(推送另请示)。
+1. **minimize_4d_first 默认路径重写**:删除手动固定步长循环 +
+   best_coords 追踪,改为与 rdkit_all 分支相同的
+   `lbfgs_minimize(&mut x, n, 4, &energy_at, &gradient_at, max_iter,
+   force_tol)` 调用(用 energy_4d/gradient_4d + 阶段权重)。
+   两个分支合并为一个(不再需要 rdkit_all 分支区分)。
+2. **minimize_4d_collapse 同理**:合并为单一 lbfgs_minimize 调用
+   (权重 FOURTH_MIN_WEIGHT_CHIRAL / FOURTH_MIN_WEIGHT_FOURTH)。
+3. **保留 stagnation 中断**:lbfgs_minimize 已有 force_tol 收敛;
+   外层 max_iter 不变(400/200),但 L-BFGS 会提前退出。
+4. **嵌入质量裁决**:ensemble_stats_vs_rdkit 6/6 门禁(min/median
+   不回归)+ ETKDG 既有种子回归测试;能量序列**会变**(收敛到
+   不同精度的 4D 起点)——不是 bug,是更收敛的起点,下游 3D
+   精修兜底。
+5. **发布**:1.2.2→1.2.3;CODE_STATUS/PLAN;wasm;commit+tag。
 
 ## 验收(实施后实测记录)
 
-- `cargo test` 275/275 全绿;ensemble 6/6;benchmark 230/230;clippy 0;
-  fmt;wasm(node 冒烟 1.2.2);API 零变化
-- **诚实结论:4D 收敛中断在药物分子尺度无可测收益**(交错 A/B:
-  54.8-64.8 vs 56.3-73.4 ms/embed,噪声级)。审计发现 4D 从 400
-  降到 ~58-91 迭代,但时间瓶颈不在迭代数而在单次迭代成本(梯度/
-  能量/线搜索 30%、snap 重最小化 15%、h_bond 5%……成本分散,
-  无单一 >2× 杠杆)。进一步提速需结构性改动(4D 换真 L-BFGS /
-  SIMD / 减阶段数)——另立项。已交付:停滞中断(正确、无害、
-  对大分子可能受益)。
+- `cargo test` 275/275 全绿;ensemble 6/6;benchmark 230/230 逐位一致;
+  clippy 0;fmt;wasm(node 冒烟 1.2.3);API 零变化
+- **诚实速度结论:4D 换 L-BFGS 在药物分子尺度无可测墙钟收益**
+  (交错 A/B:55-57 vs 53-61 ms/embed,噪声级)。原因:L-BFGS 每迭代
+  收敛更快但线搜索需要更多函数评估,总 O(n²) 求值次数相当。
+- **结构收益**(非速度):统一优化器(所有阶段同一个 lbfgs_minimize,
+  消除固定步长分支与 rdkit_all 双路径);4D 最小更收敛(更高质量的
+  3D 起点);代码减少 ~120 行。
+- 嵌入速度的诚实总结(五轮迭代后):**55-60 ms/embed @33 原子是
+  当前架构的本质成本**,由分散的 O(n²) 梯度/能量/检查项构成,
+  无单一 >1.5× 杠杆;进一步提速需 SIMD(受逐位对拍约束)或算法
+  层重设计。
