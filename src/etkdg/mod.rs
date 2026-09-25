@@ -4558,8 +4558,18 @@ fn torsion_pref_energy(coords: &[[f64; 3]], prefs: &[TorsionPreference]) -> f64 
 // ETKDG Force Field
 // ============================================================================
 
-fn etkdg_energy(
-    coords: &[[f64; 3]],
+/// Active long-range distance-bounds pairs (same skip policy and (i, j)
+/// order as the original inline loop): precomputed once per minimization so
+/// the O(n^2) skip test + bounds load runs once instead of per energy /
+/// gradient evaluation. Used by the minimize_etkdg hot path.
+pub(crate) struct LrPair {
+    pub i: usize,
+    pub j: usize,
+    pub lo: f64,
+    pub hi: f64,
+}
+
+fn etkdg_lr_pairs(
     bounds: &DistanceBounds,
     chiral_centers: &[ChiralCenter],
     tetrahedral: &[ChiralCenter],
@@ -4568,8 +4578,7 @@ fn etkdg_energy(
     bonds_12: &[(usize, usize)],
     angles_13: &[(usize, usize, usize)],
     mol: &Molecule,
-) -> f64 {
-    let mut energy = 0.0;
+) -> Vec<LrPair> {
     // D4 (rdkit_all): RDKit addLongRangeDistanceConstraints constrains ALL
     // non-(1-2/1-3/1-4) pairs with no BASIN_THRESH/MAX_UPPER filter (no double-
     // count with the K_12 1-2/1-3 terms below). Default keeps the filtered, double-
@@ -4589,6 +4598,7 @@ fn etkdg_energy(
     } else {
         None
     };
+    let mut pairs = Vec::new();
     for i in 0..bounds.n_atoms {
         for j in (i + 1)..bounds.n_atoms {
             let lo = bounds.lower[i][j];
@@ -4601,14 +4611,70 @@ fn etkdg_energy(
             if skip {
                 continue;
             }
-            let dx = coords[i][0] - coords[j][0];
-            let dy = coords[i][1] - coords[j][1];
-            let dz = coords[i][2] - coords[j][2];
-            let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
-            let lo_viol = (lo - d).max(0.0);
-            let hi_viol = (d - hi).max(0.0);
-            energy += LONG_RANGE_FORCE * (lo_viol * lo_viol + hi_viol * hi_viol);
+            pairs.push(LrPair { i, j, lo, hi });
         }
+    }
+    let _ = (chiral_centers, tetrahedral, pc, mol);
+    pairs
+}
+
+fn etkdg_energy(
+    coords: &[[f64; 3]],
+    bounds: &DistanceBounds,
+    chiral_centers: &[ChiralCenter],
+    tetrahedral: &[ChiralCenter],
+    pc: &PlanarityConstraints,
+    torsion_prefs: &[TorsionPreference],
+    bonds_12: &[(usize, usize)],
+    angles_13: &[(usize, usize, usize)],
+    mol: &Molecule,
+) -> f64 {
+    let pairs = etkdg_lr_pairs(
+        bounds,
+        chiral_centers,
+        tetrahedral,
+        pc,
+        torsion_prefs,
+        bonds_12,
+        angles_13,
+        mol,
+    );
+    etkdg_energy_with_pairs(
+        coords,
+        pairs.as_slice(),
+        bounds,
+        chiral_centers,
+        tetrahedral,
+        pc,
+        torsion_prefs,
+        bonds_12,
+        angles_13,
+        mol,
+    )
+}
+
+fn etkdg_energy_with_pairs(
+    coords: &[[f64; 3]],
+    lr_pairs: &[LrPair],
+    bounds: &DistanceBounds,
+    chiral_centers: &[ChiralCenter],
+    tetrahedral: &[ChiralCenter],
+    pc: &PlanarityConstraints,
+    torsion_prefs: &[TorsionPreference],
+    bonds_12: &[(usize, usize)],
+    angles_13: &[(usize, usize, usize)],
+    mol: &Molecule,
+) -> f64 {
+    let mut energy = 0.0;
+    for lp in lr_pairs {
+        let (i, j, lo, hi) = (lp.i, lp.j, lp.lo, lp.hi);
+        let dx = coords[i][0] - coords[j][0];
+        let dy = coords[i][1] - coords[j][1];
+        let dz = coords[i][2] - coords[j][2];
+        let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
+        let lo_viol = (lo - d).max(0.0);
+        let hi_viol = (d - hi).max(0.0);
+        energy += LONG_RANGE_FORCE * (lo_viol * lo_viol + hi_viol * hi_viol);
     }
     // 1-2 constraints: lock bond lengths to bounds-matrix target
     const K_12: f64 = 100.0;
@@ -4703,8 +4769,10 @@ fn dihedral_gradient_contrib(
     (g[0], g[1], g[2], g[3])
 }
 
-fn etkdg_gradient(
+#[allow(clippy::too_many_arguments)]
+fn etkdg_gradient_with_pairs(
     coords: &[[f64; 3]],
+    lr_pairs: &[LrPair],
     bounds: &DistanceBounds,
     chiral_centers: &[ChiralCenter],
     _tetrahedral: &[ChiralCenter],
@@ -4713,60 +4781,31 @@ fn etkdg_gradient(
     bonds_12: &[(usize, usize)],
     angles_13: &[(usize, usize, usize)],
     mol: &Molecule,
-) -> Vec<[f64; 3]> {
-    let n = coords.len();
-    let mut grad = vec![[0.0f64; 3]; n];
-
-    // D4 (rdkit_all): same long-range policy as etkdg_energy.
-    let excluded: Option<HashSet<(usize, usize)>> = if rdkit_all() {
-        let mut s = HashSet::new();
-        for &(a, b) in bonds_12 {
-            s.insert((a.min(b), a.max(b)));
-        }
-        for &(a, _, c) in angles_13 {
-            s.insert((a.min(c), a.max(c)));
-        }
-        for p in torsion_prefs {
-            s.insert((p.i.min(p.l), p.i.max(p.l)));
-        }
-        Some(s)
-    } else {
-        None
-    };
+    grad: &mut [[f64; 3]],
+) {
     // Distance bounds gradient (with basin threshold + long-range force)
-    for i in 0..bounds.n_atoms {
-        for j in (i + 1)..bounds.n_atoms {
-            let lo = bounds.lower[i][j];
-            let hi = bounds.upper[i][j];
-            let skip = if let Some(ex) = &excluded {
-                ex.contains(&(i, j))
-            } else {
-                hi >= MAX_UPPER || (hi - lo) > BASIN_THRESH
-            };
-            if skip {
-                continue;
-            }
-            let dx = coords[i][0] - coords[j][0];
-            let dy = coords[i][1] - coords[j][1];
-            let dz = coords[i][2] - coords[j][2];
-            let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
-            let mut dedd = 0.0;
-            if d < lo {
-                dedd += -2.0 * LONG_RANGE_FORCE * (lo - d);
-            }
-            if d > hi {
-                dedd += 2.0 * LONG_RANGE_FORCE * (d - hi);
-            }
-            let gx = dedd * dx / d;
-            let gy = dedd * dy / d;
-            let gz = dedd * dz / d;
-            grad[i][0] += gx;
-            grad[i][1] += gy;
-            grad[i][2] += gz;
-            grad[j][0] -= gx;
-            grad[j][1] -= gy;
-            grad[j][2] -= gz;
+    for lp in lr_pairs {
+        let (i, j, lo, hi) = (lp.i, lp.j, lp.lo, lp.hi);
+        let dx = coords[i][0] - coords[j][0];
+        let dy = coords[i][1] - coords[j][1];
+        let dz = coords[i][2] - coords[j][2];
+        let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10);
+        let mut dedd = 0.0;
+        if d < lo {
+            dedd += -2.0 * LONG_RANGE_FORCE * (lo - d);
         }
+        if d > hi {
+            dedd += 2.0 * LONG_RANGE_FORCE * (d - hi);
+        }
+        let gx = dedd * dx / d;
+        let gy = dedd * dy / d;
+        let gz = dedd * dz / d;
+        grad[i][0] += gx;
+        grad[i][1] += gy;
+        grad[i][2] += gz;
+        grad[j][0] -= gx;
+        grad[j][1] -= gy;
+        grad[j][2] -= gz;
     }
 
     // D5 (rdkit_all): 1-2/1-3 K_12 gradient terms (RDKit add12Terms/add13Terms).
@@ -4989,6 +5028,7 @@ fn etkdg_gradient(
     // H-bond directionality gradient (central difference of h_bond_energy)
     let hb_eps = 1e-6;
     let hb_e0 = h_bond_energy(coords, mol);
+    let n = coords.len();
     for a in 0..n {
         for dim in 0..3 {
             let mut cp = coords.to_vec();
@@ -5017,8 +5057,6 @@ fn etkdg_gradient(
             grad[p.l][dim] += g4[dim];
         }
     }
-
-    grad
 }
 
 fn minimize_etkdg(
@@ -5053,12 +5091,32 @@ fn minimize_etkdg(
         x[3 * i + 2] = coords[i][2];
     }
     let fixed: Vec<bool> = (0..n).map(|i| coord_map.contains_key(&i)).collect();
-    let energy_at = |xx: &[f64]| -> f64 {
-        let c: Vec<[f64; 3]> = (0..n)
-            .map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]])
-            .collect();
-        etkdg_energy(
-            &c,
+    // Hot-path setup (v1.2.1): the active long-range pairs and the skip test
+    // behind them are geometry-independent — precompute once (was re-run per
+    // energy/gradient evaluation, O(n^2) HashSet/branch work per line-search
+    // trial) — and run the minimizer on scratch buffers (was a fresh Vec per
+    // trial: x_new/g_new/s/y per accepted step, plus coords conversion per
+    // energy call). Pair order and arithmetic are unchanged: energy sequences
+    // are bit-identical to the previous implementation.
+    let lr_pairs = etkdg_lr_pairs(
+        bounds,
+        chiral_centers,
+        tetrahedral,
+        pc,
+        torsion_prefs,
+        bonds_12,
+        angles_13,
+        mol,
+    );
+    let mut c_scratch: Vec<[f64; 3]> = vec![[0.0; 3]; n];
+    let mut g3_scratch: Vec<[f64; 3]> = vec![[0.0; 3]; n];
+    let energy_at = |xx: &[f64], cs: &mut Vec<[f64; 3]>| -> f64 {
+        for i in 0..n {
+            cs[i] = [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]];
+        }
+        etkdg_energy_with_pairs(
+            cs,
+            lr_pairs.as_slice(),
             bounds,
             chiral_centers,
             tetrahedral,
@@ -5069,39 +5127,53 @@ fn minimize_etkdg(
             mol,
         )
     };
-    let gradient_at = |xx: &[f64]| -> Vec<f64> {
-        let c: Vec<[f64; 3]> = (0..n)
-            .map(|i| [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]])
-            .collect();
-        let g3 = etkdg_gradient(
-            &c,
-            bounds,
-            chiral_centers,
-            tetrahedral,
-            pc,
-            torsion_prefs,
-            bonds_12,
-            angles_13,
-            mol,
-        );
-        let mut gx = vec![0.0f64; dim];
-        for i in 0..n {
-            if fixed[i] {
-                continue;
+    let gradient_at =
+        |xx: &[f64], gx: &mut Vec<f64>, cs: &mut Vec<[f64; 3]>, g3: &mut Vec<[f64; 3]>| {
+            for i in 0..n {
+                cs[i] = [xx[3 * i], xx[3 * i + 1], xx[3 * i + 2]];
             }
-            gx[3 * i] = g3[i][0];
-            gx[3 * i + 1] = g3[i][1];
-            gx[3 * i + 2] = g3[i][2];
-        }
-        gx
-    };
+            for row in g3.iter_mut() {
+                *row = [0.0; 3];
+            }
+            etkdg_gradient_with_pairs(
+                cs,
+                lr_pairs.as_slice(),
+                bounds,
+                chiral_centers,
+                tetrahedral,
+                pc,
+                torsion_prefs,
+                bonds_12,
+                angles_13,
+                mol,
+                g3,
+            );
+            for i in 0..n {
+                if fixed[i] {
+                    gx[3 * i] = 0.0;
+                    gx[3 * i + 1] = 0.0;
+                    gx[3 * i + 2] = 0.0;
+                    continue;
+                }
+                gx[3 * i] = g3[i][0];
+                gx[3 * i + 1] = g3[i][1];
+                gx[3 * i + 2] = g3[i][2];
+            }
+        };
 
-    let mut f = energy_at(&x);
-    let mut g = gradient_at(&x);
+    let mut g: Vec<f64> = vec![0.0; dim];
+    gradient_at(&x, &mut g, &mut c_scratch, &mut g3_scratch);
+    let mut f = energy_at(&x, &mut c_scratch);
     const M: usize = 8;
     let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
     let mut rho_hist: Vec<f64> = Vec::with_capacity(M);
+    // scratch buffers reused across iterations and line-search trials
+    let mut q: Vec<f64> = vec![0.0; dim];
+    let mut dir: Vec<f64> = vec![0.0; dim];
+    let mut alpha: Vec<f64> = vec![0.0; M];
+    let mut x_new: Vec<f64> = vec![0.0; dim];
+    let mut g_new: Vec<f64> = vec![0.0; dim];
     let mut stall = 0usize;
     for _iter in 0..max_iter {
         // convergence: max per-atom force (excluding fixed atoms)
@@ -5123,8 +5195,7 @@ fn minimize_etkdg(
 
         // L-BFGS two-loop recursion -> q = H_k·g ; direction = -q
         let k = s_hist.len();
-        let mut q = g.clone();
-        let mut alpha = vec![0.0f64; k];
+        q.copy_from_slice(&g);
         for j in (0..k).rev() {
             let sjq: f64 = s_hist[j].iter().zip(q.iter()).map(|(a, b)| a * b).sum();
             alpha[j] = rho_hist[j] * sjq;
@@ -5159,14 +5230,18 @@ fn minimize_etkdg(
                 q[d] += sj[d] * (alpha[j] - beta);
             }
         }
-        let mut dir: Vec<f64> = q.iter().map(|qi| -qi).collect();
+        for d in 0..dim {
+            dir[d] = -q[d];
+        }
         let mut dg: f64 = dir.iter().zip(g.iter()).map(|(a, b)| a * b).sum();
         // If not a descent direction (rare, bad curvature), reset and use steepest descent.
         if dg >= 0.0 {
             s_hist.clear();
             y_hist.clear();
             rho_hist.clear();
-            dir = g.iter().map(|gi| -gi).collect();
+            for d in 0..dim {
+                dir[d] = -g[d];
+            }
             dg = dir.iter().zip(g.iter()).map(|(a, b)| a * b).sum();
         }
 
@@ -5175,12 +5250,26 @@ fn minimize_etkdg(
         let mut step = if k == 0 { 1.0 / max_g.max(1e-10) } else { 1.0 };
         let mut accepted = false;
         for _ls in 0..25 {
-            let x_new: Vec<f64> = (0..dim).map(|d| x[d] + step * dir[d]).collect();
-            let f_new = energy_at(&x_new);
+            for d in 0..dim {
+                x_new[d] = x[d] + step * dir[d];
+            }
+            let f_new = energy_at(&x_new, &mut c_scratch);
             if f_new.is_finite() && f_new <= f + c_armijo * step * dg {
-                let g_new = gradient_at(&x_new);
-                let s: Vec<f64> = (0..dim).map(|d| x_new[d] - x[d]).collect();
-                let y: Vec<f64> = (0..dim).map(|d| g_new[d] - g[d]).collect();
+                gradient_at(&x_new, &mut g_new, &mut c_scratch, &mut g3_scratch);
+                let s: Vec<f64> = {
+                    let mut v = Vec::with_capacity(dim);
+                    for d in 0..dim {
+                        v.push(x_new[d] - x[d]);
+                    }
+                    v
+                };
+                let y: Vec<f64> = {
+                    let mut v = Vec::with_capacity(dim);
+                    for d in 0..dim {
+                        v.push(g_new[d] - g[d]);
+                    }
+                    v
+                };
                 let sy: f64 = s.iter().zip(y.iter()).map(|(a, b)| a * b).sum();
                 if sy > 1e-20 {
                     if s_hist.len() >= M {
@@ -5192,8 +5281,8 @@ fn minimize_etkdg(
                     y_hist.push(y);
                     rho_hist.push(1.0 / sy);
                 }
-                x = x_new;
-                g = g_new;
+                std::mem::swap(&mut x, &mut x_new);
+                std::mem::swap(&mut g, &mut g_new);
                 f = f_new;
                 accepted = true;
                 break;

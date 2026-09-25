@@ -2803,7 +2803,10 @@ function runConformers() {
     const engine = document.getElementById('engineSel').value;
     confEngine = engine;
     const mb = currentMolblock();
-    const maxIter = 250;  // RDKit-like per-conformer relaxation
+    const maxIter = 100;  // first-pass relaxation (v1.2.1: was 250, but the
+      // 250-iter cap — not the force threshold — determined the exit: 30/30
+      // conformers hit the cap at 0/30 converged. 100 iters suffice for
+      // ranking; the dE-window reoptimization fully converges the survivors.)
 
     // worker farm: one seed share per worker (hardware-bound, ≤4)
     const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 12, n));
