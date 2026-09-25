@@ -88,35 +88,35 @@ self.onmessage = async (e) => {
     await initPromise;   // 'run' waits for init (async handlers don't queue)
     const { sdfHeavy, seedBase, count, engine, maxIter } = msg;
     const t0 = Date.now();
-    // Embed in chunks of <=500 (the Rust batch validates 1..=500 per call);
-    // seeds stay continuous across chunks, so any requested count works.
+    // Native batch pipeline (v1.2.0): embed -> attach H -> optimize runs
+    // entirely inside one WASM call per chunk — flat arrays cross the
+    // boundary instead of two SDF string round-trips per conformer, and the
+    // MMFF force field is built once and reused across all conformers.
+    // Chunks keep seeds continuous (Rust validates 1..=500 per call) and
+    // preserve the streaming progress updates.
     const CHUNK = 500;
-    const na = wasm.generate_conformers_wasm(sdfHeavy, 1, BigInt(seedBase)).get_n_atoms();
-    let doneEmbed = 0;
+    let template = null;
     for (let off = 0; off < count; off += CHUNK) {
       const c = Math.min(CHUNK, count - off);
-      const batch = wasm.generate_conformers_wasm(sdfHeavy, c, BigInt(seedBase + off));
+      const batch = wasm.generate_optimized_conformers_wasm(
+        sdfHeavy, c, BigInt(seedBase + off), engine, maxIter);
       if (!batch.get_success()) throw new Error(batch.get_error());
-      const flat = batch.get_coordinates();
       const nc = batch.get_n_confs();
-      doneEmbed += nc;
-      self.postMessage({ type: 'meta', seedBase, nConfs: doneEmbed });
+      if (!template && nc > 0) template = batch.get_template_sdf();
+      self.postMessage({ type: 'meta', seedBase, nConfs: off + nc, template });
+      const flat = batch.get_coordinates();
+      const na = batch.get_n_atoms();
+      const energies = batch.get_energies();
+      const conv = batch.get_converged();
+      const iters = batch.get_iterations();
+      const seeds = batch.get_seeds();
       for (let i = 0; i < nc; i++) {
         const coords = Array.from(flat.slice(i * na * 3, (i + 1) * na * 3));
-        const sdfHeavyI = buildSdfFromCoords(coords, sdfHeavy);
-        const sdfAll = wasm.attach_hydrogens_3d_wasm(sdfHeavyI);
-        const opts = new wasm.OptimizationOptions();
-        opts.engine = engine;
-        opts.set_max_iterations(maxIter);
-        const res = wasm.optimize_from_sdf(sdfAll, opts);
-        const optCoords = [];
-        for (let a = 0; a < res.n_atoms; a++)
-          for (let d = 0; d < 3; d++) optCoords.push(res.get_coord(a, d));
         self.postMessage({
-          type: 'conf', seed: seedBase + off + i, E: res.final_energy,
-          converged: res.get_converged(), iterations: res.iterations,
-          termsJson: res.get_energy_terms_json(),
-          sdf: buildSdfFromCoords(optCoords, sdfAll), coords: optCoords,
+          type: 'conf', seed: seeds[i], E: energies[i],
+          converged: !!conv[i], iterations: iters[i],
+          termsJson: null,
+          sdf: buildSdfFromCoords(coords, template), coords,
         });
       }
     }
