@@ -2719,6 +2719,10 @@ impl Gfnff {
                 if bp == 2 { ff *= self.p.hh13rep; }
                 if bp == 3 { ff *= self.p.hh14rep; }
             }
+            // H-metal 0.85 (was missing here — present in the energy path;
+            // found by the v1.3.0 gradient audit: metal complexes WITH
+            // hydrogen failed FD while Ni(CO)4 / ferricyanide passed)
+            if (zi == 1 && self.p.metal_is(zj)) || (zj == 1 && self.p.metal_is(zi)) { ff = 0.85; }
             if (zi == 1 && zj == 6) || (zj == 1 && zi == 6) { ff = 0.91; }
             if (zi == 1 && zj == 8) || (zj == 1 && zi == 8) { ff = 1.04; }
             let alpha = (di * dj).sqrt() * ff;
@@ -4807,6 +4811,63 @@ mod tests_pibo_promotion {
     /// nicarbonyl exact, ferrocene (eta5) 2e-5 Eh, cobalt_ammine 2e-3,
     /// ferricyanide 1.8e-2 (bond kb ~0.4% high), zinc_ammine 1.8e-1 (12-
     /// coordinate + bridging H2 regime; metal fqq residual).
+    /// v1.3.0 gradient audit regression: the rep-gradient path was missing
+    /// the H-metal ff=0.85 rule present in the energy path — every metal
+    /// complex WITH hydrogen failed FD on the metal atom (Ni(CO)4 and
+    /// ferricyanide, no H, passed). Locks FD-vs-analytic at a perturbed
+    /// geometry so the two paths can never diverge again.
+    #[test]
+    fn metal_gradient_fd_consistency() {
+        use crate::molecule::parser::parse_sdf;
+        for name in ["cobalt_ammine", "ferrocene", "zinc_ammine"] {
+            let path = format!(
+                "{}/tests/fixtures/gfnff/metals/{name}.mol",
+                env!("CARGO_MANIFEST_DIR")
+            );
+            let mol = parse_sdf(&std::fs::read_to_string(path).unwrap()).unwrap();
+            let at: Vec<usize> = mol.atoms.iter().map(|a| a.atomic_number as usize).collect();
+            let base: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+            let charge = mol.atoms.iter().map(|a| a.charge).sum::<f64>().round();
+            let ff = Gfnff::new(&at, &base, charge);
+            // deterministic perturbation (audit recipe, trial 0)
+            let mut rng = 0x9E3779B97F4A7C15u64 ^ (name.len() as u64);
+            let coords: Vec<[f64; 3]> = base
+                .iter()
+                .map(|c| {
+                    let mut n = || {
+                        rng = rng
+                            .wrapping_mul(6364136223846793005)
+                            .wrapping_add(1442695040888963407);
+                        (rng >> 11) as f64 / (1u64 << 53) as f64
+                    };
+                    [c[0] + (n() - 0.5) * 0.35, c[1] + (n() - 0.5) * 0.35, c[2] + (n() - 0.5) * 0.35]
+                })
+                .collect();
+            let n = coords.len();
+            let mut g = vec![[0.0f64; 3]; n];
+            let _ = ff.energy_and_gradient(&coords, &mut g);
+            let eps = 1e-6;
+            // audit every atom of the metal + its H neighbors
+            for a in 0..n {
+                for d in 0..3 {
+                    let mut cp = coords.clone();
+                    cp[a][d] += eps;
+                    let ep = ff.energy(&cp).total();
+                    cp[a][d] -= 2.0 * eps;
+                    let em = ff.energy(&cp).total();
+                    let fd = (ep - em) / (2.0 * eps) * 627.5094740631; // kcal/mol/A
+                    let an = g[a][d];
+                    let diff = (an - fd).abs();
+                    let scale = an.abs().max(fd.abs()).max(1e-3);
+                    assert!(
+                        diff / scale < 1e-4 || diff < 1e-6,
+                        "{name} atom {a} dim {d}: analytic {an:+.6} fd {fd:+.6}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn metal_complexes_vs_xtb() {
         let cases = [

@@ -1,6 +1,6 @@
 {
   "name": "webmm",
-  "version": "1.2.10",
+  "version": "1.3.0",
   "description": "Molecular Geometry Optimization in WebAssembly",
   "main": "pkg/index.js",
   "scripts": {

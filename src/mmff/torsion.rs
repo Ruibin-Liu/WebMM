@@ -1920,25 +1920,13 @@ fn tor_lookup(
     can_k: u8,
     can_l: u8,
 ) -> Option<(f64, f64, f64)> {
-    if let Some(r) = tor_binary_search(table, tor_type, can_i, can_j, can_k, can_l) {
-        return Some(r);
-    }
-    if can_i != 0 {
-        if let Some(r) = tor_binary_search(table, tor_type, 0, can_j, can_k, can_l) {
-            return Some(r);
-        }
-    }
-    if can_l != 0 {
-        if let Some(r) = tor_binary_search(table, tor_type, can_i, can_j, can_k, 0) {
-            return Some(r);
-        }
-    }
-    if can_i != 0 && can_l != 0 {
-        if let Some(r) = tor_binary_search(table, tor_type, 0, can_j, can_k, 0) {
-            return Some(r);
-        }
-    }
-    None
+    // RDKit's MMFFTorCollection::getMMFFTorParams does an EXACT keyed lookup
+    // per stage — the wildcard 0 enters only via the eq-level arrays (the
+    // stage walk in get_torsion_params), never as an ad-hoc substitution.
+    // (v1.3.0: the extra in-stage fallbacks once matched the l-specific row
+    // (0, i=0, j=20, k=30, l=30, v3=-0.5) for cyclobutene's H-C(sp2)-C(sp3)-H
+    // torsions where RDKit's stage walk finds nothing -> estimation.)
+    tor_binary_search(table, tor_type, can_i, can_j, can_k, can_l)
 }
 
 /// RDKit `getMMFFTorsionEmpiricalRuleParams` (AtomTyper.cpp) — the empirical
@@ -1972,8 +1960,12 @@ pub fn estimate_torsion_params_rdkit(
             _ => (0.0, 0.0, 0.0),
         }
     };
+    // NOTE: Table VI names are U/V/W; the local torsion params below are
+    // v1/v2/v3 — destructuring as (u, table_v, w) avoids the shadowing bug
+    // that once zeroed every (v0 * v1).sqrt() rule computation (found by the
+    // v1.3.0 audit: phosphirane/cyclobutene torsions)
     let (u0, v0, w0) = uvw(z_j);
-    let (u1, v1, w1) = uvw(z_k);
+    let (u1, tab_v1, w1) = uvw(z_k);
     let n_jk = ((crd_j as f64 - 1.0) * (crd_k as f64 - 1.0)).max(0.0);
     let row2 = |z: i32| get_periodic_table_row(z as u8) == 2;
 
@@ -2007,14 +1999,14 @@ pub fn estimate_torsion_params_rdkit(
     }
     // rule (d): both crd 4
     else if crd_j == 4 && crd_k == 4 {
-        v3 = (v0 * v1).sqrt() / n_jk;
+        v3 = (v0 * tab_v1).sqrt() / n_jk;
     }
     // rule (e): j crd 4, k not
     else if crd_j == 4 && crd_k != 4 {
         let zeroed = (crd_k == 3 && (val_k == 4 || val_k == 34 || mltb_k != 0))
             || (crd_k == 2 && (val_k == 3 || mltb_k != 0));
         if !zeroed {
-            v3 = (v0 * v1).sqrt() / n_jk;
+            v3 = (v0 * tab_v1).sqrt() / n_jk;
         }
     }
     // rule (f): k crd 4, j not
@@ -2022,7 +2014,7 @@ pub fn estimate_torsion_params_rdkit(
         let zeroed = (crd_j == 3 && (val_j == 4 || val_j == 34 || mltb_j != 0))
             || (crd_j == 2 && (val_j == 3 || mltb_j != 0));
         if !zeroed {
-            v3 = (v0 * v1).sqrt() / n_jk;
+            v3 = (v0 * tab_v1).sqrt() / n_jk;
         }
     }
     // rule (g): conjugated single bonds / mixed mltb-pilp
@@ -2068,7 +2060,7 @@ pub fn estimate_torsion_params_rdkit(
         if oo_or_ss {
             v2 = -(w0 * w1).sqrt();
         } else {
-            v3 = (v0 * v1).sqrt() / n_jk;
+            v3 = (v0 * tab_v1).sqrt() / n_jk;
         }
     }
     let _ = is_arom_bond;

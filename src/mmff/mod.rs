@@ -2051,6 +2051,19 @@ impl MMFFForceField {
         bd
     }
 
+    /// Per-torsion diagnostic: atoms + assigned V1/V2/V3.
+    pub fn torsion_terms_preview(
+        &self,
+    ) -> &[(
+        usize,
+        usize,
+        usize,
+        usize,
+        crate::mmff::torsion::TorsionParams,
+    )] {
+        &self.torsion_terms
+    }
+
     /// Per-angle diagnostic: (atom_i, atom_j, atom_k, equilibrium_angle_theta0_radians).
     /// For identifying strained angles in ETKDG embeddings.
     pub fn per_angle_theta0(&self) -> Vec<(usize, usize, usize, f64)> {

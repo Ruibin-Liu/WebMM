@@ -1,44 +1,52 @@
-# Plan: 优化器小分子全内存 BFGS(RDKit 同款)→ 目标 v1.2.10
+# Plan: 准确性与正确性加强 → 目标 v1.3.0
 
 ## 背景
 
-aspirin 管线 2.24× vs RDKit 的主因:我们 L-BFGS 收敛 ~177 迭代,
-RDKit 全内存 BFGS ~30–50(管线优化段 4.58 vs 0.86 ms/构象)。
-dim ≤ ~128(≤42 原子)时稠密逆 Hessian(dim² ≈ 16k 双精度)完全
-可行,每迭代 O(dim²) matvec 远低于多出的 ~100 次迭代 × O(项数)。
+性能目标已达(RDKit 持平/反超)。本会话引入大量新解析梯度(MMFF
+vdW/torsion/oop/融合键合、ETKDG hb/dihedral/improper/linear)+
+优化器变更(dense BFGS/暖启动)——每个改动有针对性 FD 测试,但
+缺**全语料系统性审计**。另有已知精度缺口未根因。
 
 ## 任务
 
-1. **原型**:optimizer/mod.rs 增加 dense-BFGS 路径(dim ≤ DENSE_MAX,
-   按问题规模切换;L-BFGS 保留给大分子)。线搜索复用现有。
-2. **A/B**:迭代数 + 墙钟(ethanol/aspirin/ibuprofen,含 100-iter
-   管线协议)
-3. **全门禁**(尤其 GFN-FF xtb 奇偶锁、MMFF 97 锁值、benchmark
-   230/230、ensemble 6/6——优化器轨迹变化由容差门禁裁决)
-4. 若迭代数显著降且门禁全绿 → 发布 1.2.10;否则诚实回退
-5. (次要候选)ETKDG lbfgs 线搜索加二次插值——若预算允许
+1. **全语料梯度审计**(最高优先):examples/grad_audit.rs——
+   MMFF 230 分子语料 + GFN-FF 32 分子集,每分子 3 个随机扰动
+   几何,逐原子中心差分 vs 解析梯度;容差:相对 1e-5(FD 截断
+   ~1e-6 起步,按数据定);报告最差分子/原子/项。
+   附加不变性检查:平移/旋转能量不变(~1e-10 相对)。
+2. **MMFF 既有离群根因**:phosphirane、cyclobutene(benchmark
+   2 个 >0.01 偏差)——逐项能量分解 vs RDKit 定位差异项,
+   修 typing/参数或定性为上游分歧。
+3. **GFN-FF ferricyanide kb/pibo**(+0.4% 键项,Hückel pibo
+   0.971 vs 0.959)——定位 pibo 来源差异。
+4. **门禁**:发现即修 + 回归锁值;cargo test、benchmark、
+   ensemble、clippy、fmt;无性能回归(E+G 微基准抽查)
+5. **发布**:1.2.10→1.3.0;CODE_STATUS/PLAN;commit+tag;冒烟
+   必须命中引擎输出行
 
 ## 验收(实施后实测记录)
 
-- `cargo test` 280/280 全绿;benchmark 230/230 逐字节一致;clippy 0;
-  fmt;wasm(node 冒烟 1.2.10);API 零变化
-- **审计发现**:aspirin 管线 2.24× 的主因是优化迭代数(L-BFGS
-  ~177-300 vs RDKit 全内存 BFGS ~30-50);线搜索每迭代 ~6 次
-  Armijo 回溯(E-only 775 vs E+G 117 @ibuprofen)
-- **实施**:
-  1. dense BFGS(dim ≤ 128 且 max_iterations ≥ 150;迭代 aspirin
-     177→74、ibuprofen 300→119;终能量与 L-BFGS 一致)
-  2. 线搜索暖启动 α₀=2×上次接受值(E-only 775→213,3.6×)
-- **交错 A/B(原生,3 轮)**:opt aspirin 3.7-4.0→1.7-2.3 ms
-  (**~2×**);ibuprofen 9.7-10.6→5.6-6.3 ms(**~2×**);E+G 单点
-  不变
-- **管线路径(100-iter sprint)保持 L-BFGS**:dense 在截断协议下
-  中性偏差(matvec 开销 + 收敛优势被截断),预算门控隔离
-- **wasm opt1(200-iter,同窗对照)**:aspirin 2.75 vs 2.67 ms
-  (**1.03× 持平**);ibuprofen 7.70 vs 9.86(**wasm 快 1.28×**);
-  ethanol 持平
-- **门禁变更(论证)**:threonine ensemble tol_med 1.0→1.5——
-  中位-30 是盆地彩票敏感量(我们自己的 L-BFGS vs dense 就差
-  0.8;min/max 构象逐位相同,仅中段落盆不同)
-- **诚实记录**:暖启动初版因变量遮蔽无效(修出);dense 首版
-  无条件启用致 threonine 门禁失败(定位为盆地彩票后加预算门控)
+- `cargo test` 281/281 全绿(+1 金属梯度 FD 回归锁);**benchmark
+  首次 230/230 全过且 0 能量差 > 0.01**(原 228/230 带 2 离群);
+  clippy 0;fmt;wasm(node 冒烟 1.3.0,引擎输出行确认);API 零变化
+- **新常驻审计工具**(examples/grad_audit.rs):MMFF 230 分子语料 ×
+  3 扰动几何 + GFN-FF 夹具 × 2,逐原子 FD vs 解析梯度
+  - MMFF:0 失败,最差 2.1e-5(FD 截断噪声内)——v1.2.5–v1.2.9
+    的全部梯度工作经全语料验证
+  - GFN-FF:初测 6 失败(最差 7.7e-2)→ 修复后 0 失败(1.0e-5)
+- **修复 1(GFN-FF)**:rep 梯度路径漏 H-金属 ff=0.85 规则(能量
+  路径有)——失败集恰好全是含氢金属配合物(Co 氨、二茂铁、锌氨;
+  Ni(CO)₄/铁氰化物无氢故过)。含氢金属配合物的 GFN-FF 优化此前
+  受到微妙错误的力
+- **修复 2(MMFF 扭转估计遮蔽 bug)**:`let v1 = 0.0`(扭转参数
+  V1)遮蔽 Table VI 元素 V 值 → 规则 d/e/f/h 的 (v0·v1).sqrt()
+  全为 0 → phosphirane 的 C-P 扭转族(V3=0.3759)被整体丢弃
+- **修复 3(MMFF 扭转表查找过度通配)**:阶段内额外的 i/l→0 回退
+  替换命中 l 特异行 (0,i=0,j=20,k=30,l=30,v3=−0.5),而 RDKit
+  只做阶段精确查键 → cyclobutene 的 H-C(sp2)-C(sp3)-H 扭转多出
+  −0.5×2。移除回退后逐阶段精确查找
+- **逐项根因法**:SetMMFF*Term(bool) 差分得 RDKit 逐项能量 →
+  两离群 100% 是扭转项;GetMMFFTorsionParams 逐四元组对照定位
+  参数来源;数值复现(sqrt(2.12·2.40)/6 = 0.3759 精确命中)
+- phosphirane 残差 +0.0074(键/角/StBn 打印级参数漂移,容差内,
+  文档化);ferricyanide kb/pibo 项未展开(遗留)
