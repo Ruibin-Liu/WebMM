@@ -1,52 +1,51 @@
-# Plan: xtb setup-qloop 精确移植(ferricyanide pibo 修复)→ 目标 v1.3.1
+# Plan: MD/Metadynamics 性能审计 → 定刀实施 → 目标 v1.3.1
 
 ## 背景
 
-ferricyanide 链路已映射:我们 setup EEQ(键数-CN + Floyd,对称)
-vs xtb gfnff_charges(逐配体几何响应)→ Hückel 对角 → pibo
-(0.971 vs 0.959)→ kb → bond −0.019。naive 重解触发反馈环破坏
-21 测试。需精确移植 xtb gfnff_ini 的 setup-qloop 语义。
+E+G 优化(~24× MMFF)后 MD 是免费受益者但从未量化;metad
+的偏置力随山丘数无界增长(若全求和无截断,长模拟二次方恶化)。
+GFN-FF MD 每步 EEQ 重解未受益于本轮优化。
 
 ## 任务
 
-1. **源码定位**:找到 gxtb/xtb 的 gfnff_ini.f90(或其重写源)——
-   setup 的电荷迭代循环(qloop):迭代次数、每轮的求解参数
-   (一程/二程)、CN 来源(键数 vs erf)、距离矩阵(Floyd vs 几何)、
-   最终 qa 落点。
-2. **逐行对照我们的 setup 流**(Gfnff::new 605-810 区):标出每处
-   语义差异;解释 Fe +0.32 vs +0.19 与剩余 runtime ~1e-3 差。
-3. **实施移植**(保持 32/32 有机锁 4e-6 不回归 + 金属锁全绿为
-   硬门禁;nicarbonyl 必须保持 0.000000)
-4. **验收**:ferricyanide 逐项对拍(bond/es/total 收敛至参考)、
-   全门禁、grad_audit
-5. **发布**:1.3.0→1.3.1(若移植成功);失败则文档化精确差异清单
+1. **审计**(插桩先行):
+   - MD 微基准:steps/ms × {ethanol, aspirin, ibuprofen} ×
+     {MMFF94s, GFN-FF},固定种子 NVE 短跑
+   - 单步剖析:E+G / 积分器 / (metad)偏置力占比;积分器每步
+     分配检查
+   - metad 退化曲线:固定步数下 hill 数增长 → 每步偏置耗时;
+     现有实现是否有截断/网格
+2. **按数据实施**(候选优先级:metad 山丘截断+网格 > GFN-FF
+   EEQ 热启动 > 积分器分配清理 > MMFF MD(若已够快则诚实关))
+3. **正确性门禁**:每项改动带 NVE 能量漂移回归(能量守恒
+   ~1e-3 相对/短程)+ 既有测试;GFN-FF MD 对拍 xtb --md 轨迹
+   统计(若可行)
+4. **发布**:1.3.0→1.3.1;CODE_STATUS/PLAN;commit+tag;冒烟
+   必须命中引擎输出行
 
 ## 验收(实施后实测记录)
 
-**结论:qloop 语义对照完成,setup 侧无分歧;残差定位到 Hückel
-重试矩阵的二进制-vs-源码漂移,不可再分(无 5 月构建树),文档化
-关闭。零行为变更。**
-
-- **qloop 对照**(xtb 源 gfnff_ini.f90 400-705 vs 我们 Gfnff::new):
-  - xtb 最终 topo%qa 也是 Floyd 拓扑求解(qloop 2 轮,末轮
-    goedeckera(rtmp))——**与我们一致**;gfnff_topo 重启文件解析
-    证实:xtb topo qa Fe +0.3177/C −0.0137/N −0.5393(对称),
-    我们 +0.3208/−0.0141/−0.5394(Δ≤3e-3)——此前"setup 电荷
-    分歧"假设被推翻(gfnff_charges 是 runtime q,非 setup qa)
-  - gfnff_charges = chk%nlist%q(calculator.f90 315)= 逐几何求
-    解的 runtime 电荷——其不对称性与 setup 无关
-- **残差真身**(verbose 键表):0.959 是 **C≡N** pibo(Fe-C
-  piBO=0,Fe 不入 π 系;6 个 C≡N 是独立 2 轨道 π 系统)
-- **逐数值追踪**:每系统 ipis=−1 → nel=3 → HOMO>0.4 → nel−1=2
-  重试 → 重试矩阵 B:我们 0.6631(Pold=0.4855,收敛定点)vs
-  二进制 0.595(隐含 Pold≈0.39)→ pibo 0.971 vs 0.959
-- **我们与 9 月源码逐行一致**(occu 奇电子 na=⌈nel/2⌉ 同、
-  fermismear 4000K kT=0.3447 eV 同、迭代/断点同);二进制为
-  5 月构建(30c6303),参考树 9 月浅克隆(fa035bc)无该提交
-  ——Pold 轨迹差异疑似版本漂移(候选:htriple 1.45 vs 注释
-  "1.4"、Pold 初始化),无源树不可裁决
-- **旁证**:nicarbonyl(电中性,C≡N nel=2 偶)精确 0.000000
-  ——偶 nel 路径两实现逐位同;有机 32/32 同理;唯奇 nel
-  (荷电 CN⁻ 络合物)触雷——解释了为何只有 ferricyanide 残差
-- 残差量级:total −0.018 Eh(0.28%),测试容差 5e-2 内;按
-  "不可裁决上游分歧"惯例文档化,拒绝单夹具魔法常数
+- `cargo test` 281/281 全绿;clippy 0;fmt;wasm(node 冒烟 1.3.1);
+  API 零变化
+- **审计结果**:
+  - MD 吞吐:MMFF ethanol 3.5 / aspirin 15 / ibuprofen 27 μs/步
+    (E+G 束缚——24× 免费 rider 确认,积分器无分配);GFN-FF
+    27/112/227 μs/步(EEQ 重解主导,~8-10× 慢于 MMFF)
+  - **metad 退化确认并修复**:原 36→160 μs/步(200→2000 山丘,
+    线性恶化)→ 修后 33–44 μs/步**平坦**(2000 山丘时 4.1×)
+- **实施三项**(metad):
+  1. **CV 梯度解析化**:DihedralCV 复用 ETKDG v1.2.7 验证过的
+     雅可比(角与梯度逐位同约定,探测几何验证)——原 FD 24 次
+     二面角求值/步;DistanceCV 平凡解析。逐分量 FD 锁值测试
+  2. **山丘散射稀疏化**:只触 CV 的 ~4 原子(原全原子)
+  3. **4σ 高斯截断**:|ds|>4σ 跳过(贡献 <3.4e-4 相对,≤1e-4
+     kcal/mol)——每步成本变为 O(4σ 内山丘),长模拟不再退化
+- **正确性**:NVE 窗口守恒——纯 MMFF 4.4e-4/5000 步;metad
+  5.2e-3/20 步窗口(沉积窗口内守恒,与 FD 版物理等价;跨窗口
+  注入是 metad 设计使然)
+- 途中修正:初版手推 Praxeolitic 约定雅可比符号错(cv_check
+  FD 对拍抓出)→ 复用 ETKDG 验证实现;原 cv 梯度测试几何是
+  共线退化构型(旧 FD 通过是噪声假象),修为正常几何 + FD 锁值
+- **GFN-FF MD(EEQ 重解)**:未立项——按审计,其 MD 用例占比
+  与 EEQ 热启动的复杂度不匹配;若未来需要长时 GFN-FF MD 再
+  立项(候选:前步电荷初值的迭代精化)

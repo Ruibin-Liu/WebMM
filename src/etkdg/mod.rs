@@ -3137,7 +3137,7 @@ fn find_stereo_bonds(
     (double_bond_ends, stereo_db, atropisomers)
 }
 
-fn dihedral_angle4(p0: [f64; 3], p1: [f64; 3], p2: [f64; 3], p3: [f64; 3]) -> f64 {
+pub fn dihedral_angle4(p0: [f64; 3], p1: [f64; 3], p2: [f64; 3], p3: [f64; 3]) -> f64 {
     let b1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
     let b2 = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
     let b3 = [p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2]];
@@ -4788,7 +4788,7 @@ fn etkdg_energy_with_pairs(
     energy
 }
 
-fn dihedral_gradient_contrib(
+pub fn dihedral_gradient_contrib(
     coords: &[[f64; 3]],
     i: usize,
     j: usize,

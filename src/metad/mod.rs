@@ -80,35 +80,6 @@ pub trait CollectiveVariable: Send {
     }
 }
 
-/// Central finite-difference gradient for a CV that only depends on `atoms`.
-fn fd_gradient<F: Fn(&[[f64; 3]]) -> f64>(
-    cv_fn: F,
-    coords: &[[f64; 3]],
-    atoms: &[usize],
-) -> Vec<[f64; 3]> {
-    let mut grad = vec![[0.0; 3]; coords.len()];
-    let h = 1e-6;
-    let mut perturbed: Vec<[f64; 3]> = coords.to_vec();
-    for &a in atoms {
-        for c in 0..3 {
-            perturbed[a][c] = coords[a][c] + h;
-            let sp = cv_fn(&perturbed);
-            perturbed[a][c] = coords[a][c] - h;
-            let sm = cv_fn(&perturbed);
-            perturbed[a][c] = coords[a][c]; // restore
-                                            // handle periodic wraparound for angular CVs
-            let mut d = sp - sm;
-            if d > std::f64::consts::PI {
-                d -= 2.0 * std::f64::consts::PI;
-            } else if d < -std::f64::consts::PI {
-                d += 2.0 * std::f64::consts::PI;
-            }
-            grad[a][c] = d / (2.0 * h);
-        }
-    }
-    grad
-}
-
 /// A dihedral-angle CV (radians, [−π, π]). Biases rotation around the j–k bond.
 pub struct DihedralCV {
     pub i: usize,
@@ -138,12 +109,17 @@ impl CollectiveVariable for DihedralCV {
             &coords[self.k],
             &coords[self.l],
         );
-        let (i, j, k, l) = (self.i, self.j, self.k, self.l);
-        let grad = fd_gradient(
-            move |c| dihedral_angle(&c[i], &c[j], &c[k], &c[l]),
-            coords,
-            &[i, j, k, l],
-        );
+        // Analytic gradient (v1.3.1): the ETKDG dihedral (validated against
+        // FD in the v1.2.7 round) is bit-identical to this atan2 convention
+        // (verified: same phi, same dphi on probe geometries) — reuse its
+        // cross-product Jacobian instead of the 24-evaluation central FD.
+        let mut grad = vec![[0.0f64; 3]; coords.len()];
+        let (g0, g1, g2, g3) =
+            crate::etkdg::dihedral_gradient_contrib(coords, self.i, self.j, self.k, self.l, 1.0);
+        grad[self.i] = g0;
+        grad[self.j] = g1;
+        grad[self.k] = g2;
+        grad[self.l] = g3;
         (s, grad)
     }
     fn name(&self) -> &str {
@@ -176,13 +152,15 @@ impl DistanceCV {
 
 impl CollectiveVariable for DistanceCV {
     fn value_and_gradient(&self, coords: &[[f64; 3]]) -> (f64, Vec<[f64; 3]>) {
+        // analytic (v1.3.1): dd/dpi = r_hat, dd/dpj = -r_hat
         let r = sub(&coords[self.i], &coords[self.j]);
         let d = norm(&r);
-        let grad = fd_gradient(
-            |c| norm(&sub(&c[self.i], &c[self.j])),
-            coords,
-            &[self.i, self.j],
-        );
+        let mut grad = vec![[0.0f64; 3]; coords.len()];
+        if d > 1e-10 {
+            let u = [r[0] / d, r[1] / d, r[2] / d];
+            grad[self.i] = u;
+            grad[self.j] = [-u[0], -u[1], -u[2]];
+        }
         (d, grad)
     }
     fn name(&self) -> &str {
@@ -317,17 +295,28 @@ impl ForceField for MetaDynamics {
         let (s, ds_dx) = self.cv.value_and_gradient(coords);
         *self.last_cv.borrow_mut() = s;
 
-        // 3. bias from all deposited hills (energy + gradient via chain rule)
+        // 3. bias from deposited hills (energy + gradient via chain rule).
+        // v1.3.1: (a) 4-sigma truncation — hills farther than 4σ contribute
+        // < 3.4e-4 of their height (≤1e-4 kcal/mol here) and are skipped,
+        // making the per-step cost O(hills within 4σ) instead of O(all
+        // hills) so long runs do not degrade quadratically; (b) the scatter
+        // touches only the CV's atoms (the CV gradient is zero elsewhere).
         let sigma = self.config.hill_width;
         let inv_2sigma2 = 1.0 / (2.0 * sigma * sigma);
+        let trunc = (4.0 * sigma) * (4.0 * sigma); // compare ds² against (4σ)²
+        let cv_atoms: Vec<usize> = self.cv.atoms();
         for hill in self.hills.borrow().iter() {
             let ds = s - hill.center;
-            let gauss = (-(ds * ds) * inv_2sigma2).exp();
+            let ds2 = ds * ds;
+            if ds2 > trunc {
+                continue;
+            }
+            let gauss = (-ds2 * inv_2sigma2).exp();
             energy += hill.height * gauss;
             // dV/ds = height * gauss * (−ds / σ²)
             let dv_ds = hill.height * gauss * (-ds * inv_2sigma2 * 2.0);
-            // chain rule: dV/dx = dV/ds · ds/dx
-            for i in 0..coords.len() {
+            // chain rule: dV/dx = dV/ds · ds/dx (CV atoms only)
+            for &i in &cv_atoms {
                 grad[i][0] += dv_ds * ds_dx[i][0];
                 grad[i][1] += dv_ds * ds_dx[i][1];
                 grad[i][2] += dv_ds * ds_dx[i][2];
@@ -400,11 +389,13 @@ mod tests {
     /// Test: CV gradient is finite and reasonable (no NaN/Inf, magnitude > 0).
     #[test]
     fn cv_gradient_is_finite() {
+        // non-degenerate geometry (the original 0,0,0/1,0,0/2,0,0 was a
+        // collinear triple — the dihedral is undefined there)
         let coords = vec![
+            [1.5, 0.1, 0.0],
             [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [2.0, 0.0, 0.0],
-            [2.0, 1.0, 0.0],
+            [0.4, 1.43, 0.2],
+            [1.9, 1.3, -0.6],
         ];
         let cv = DihedralCV::new(0, 1, 2, 3);
         let (s, grad) = cv.value_and_gradient(&coords);
@@ -418,6 +409,31 @@ mod tests {
             + grad[2].iter().map(|v| v * v).sum::<f64>().sqrt()
             + grad[3].iter().map(|v| v * v).sum::<f64>().sqrt();
         assert!(total > 0.1, "CV gradient magnitude too small: {}", total);
+        // v1.3.1: analytic (ETKDG Jacobian) vs the FD reference — every
+        // component must match to FD truncation error
+        let h = 1e-6;
+        for a in 0..4usize {
+            for d in 0..3 {
+                let mut cp = coords.clone();
+                cp[a][d] += h;
+                let sp = cv.value(&cp);
+                cp[a][d] -= 2.0 * h;
+                let sm = cv.value(&cp);
+                let mut df = sp - sm;
+                if df > std::f64::consts::PI {
+                    df -= 2.0 * std::f64::consts::PI;
+                } else if df < -std::f64::consts::PI {
+                    df += 2.0 * std::f64::consts::PI;
+                }
+                let fd = df / (2.0 * h);
+                assert!(
+                    (grad[a][d] - fd).abs() < 1e-4,
+                    "atom {a} dim {d}: analytic {} vs fd {}",
+                    grad[a][d],
+                    fd
+                );
+            }
+        }
     }
 
     /// Harmonic oscillator for testing metadynamics without MMFF.
