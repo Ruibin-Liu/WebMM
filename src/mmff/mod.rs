@@ -236,8 +236,11 @@ pub struct MMFFForceField {
     stretch_bend_terms: Vec<(usize, usize, usize, f64, f64, f64, StretchBendParams)>,
     torsion_terms: Vec<(usize, usize, usize, usize, TorsionParams)>,
     oop_terms: Vec<(usize, usize, usize, usize, OOPParams)>,
-    vdw_params: Vec<VDWParams>,
-    nonbonded_pairs: Vec<(usize, usize, bool)>,
+    /// (i, j, is_14, r_star_ij, well_depth, qq_scale) — the per-pair vdW
+    /// combining params and Coulomb prefactor are build-time constants
+    /// (v1.2.8: were recomputed per pair per evaluation — an exp + 2 sqrt
+    /// each — dominating single-point E+G cost).
+    nonbonded_pairs: Vec<(usize, usize, bool, f64, f64, f64)>,
 }
 
 /// Smallest 3- or 4-membered ring containing all of {i, j, k}, else 0.
@@ -566,13 +569,28 @@ impl MMFFForceField {
 
         let vdw_params: Vec<VDWParams> = atom_types.iter().map(|&at| get_vdw_params(at)).collect();
 
-        let nonbonded_pairs: Vec<(usize, usize, bool)> = {
+        let vdw_pairs_src: Vec<VDWParams> =
+            atom_types.iter().map(|&at| get_vdw_params(at)).collect();
+        let nonbonded_pairs: Vec<(usize, usize, bool, f64, f64, f64)> = {
             let nbat = mol.atoms.len();
             let mut pairs = Vec::new();
             for i in 0..nbat {
                 for j in (i + 1)..nbat {
                     if !excluded_pairs.contains(&(i, j)) {
-                        pairs.push((i, j, one_four_pairs.contains(&(i, j))));
+                        let is_14 = one_four_pairs.contains(&(i, j));
+                        // same combining functions as vdw_energy_and_gradient —
+                        // bit-identical values, computed once
+                        let mut r_star_ij = calc_r_star_ij(&vdw_pairs_src[i], &vdw_pairs_src[j]);
+                        let mut well_depth =
+                            calc_well_depth(r_star_ij, &vdw_pairs_src[i], &vdw_pairs_src[j]);
+                        apply_da_scaling(
+                            &mut r_star_ij,
+                            &mut well_depth,
+                            &vdw_pairs_src[i],
+                            &vdw_pairs_src[j],
+                        );
+                        let qq_scale = if is_14 { 0.75 } else { 1.0 } * charges[i] * charges[j];
+                        pairs.push((i, j, is_14, r_star_ij, well_depth, qq_scale));
                     }
                 }
             }
@@ -598,7 +616,6 @@ impl MMFFForceField {
             stretch_bend_terms,
             torsion_terms,
             oop_terms,
-            vdw_params,
             nonbonded_pairs,
         }
     }
@@ -1909,35 +1926,51 @@ impl MMFFForceField {
             grad[a3][2] += g3[2];
         }
 
-        // Van der Waals + electrostatics (one pass over precomputed
-        // non-excluded pairs; 1-4 pairs scaled by 0.75)
-        for &(i, j, is_14) in &self.nonbonded_pairs {
-            let (e, grad_i, grad_j) = vdw_energy_and_gradient(
-                coords,
-                i,
-                j,
-                &self.vdw_params[i],
-                &self.vdw_params[j],
-                is_14,
-            );
-            energy += e;
-            grad[i][0] += grad_i[0];
-            grad[i][1] += grad_i[1];
-            grad[i][2] += grad_i[2];
-            grad[j][0] += grad_j[0];
-            grad[j][1] += grad_j[1];
-            grad[j][2] += grad_j[2];
-            if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
-                let (e, grad_i, grad_j) =
-                    electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
-                energy += e;
-                grad[i][0] += grad_i[0];
-                grad[i][1] += grad_i[1];
-                grad[i][2] += grad_i[2];
-                grad[j][0] += grad_j[0];
-                grad[j][1] += grad_j[1];
-                grad[j][2] += grad_j[2];
+        // Van der Waals + electrostatics (one pass over precomputed pairs,
+        // distance computed once; per-pair combining params are build-time
+        // constants carried in the pair list — v1.2.8). Arithmetic replicates
+        // vdw_energy_and_gradient / electrostatic_energy_and_gradient exactly
+        // (bit-identical energies and gradients).
+        for &(i, j, _is_14, r_star_ij, well_depth, qq_scale) in &self.nonbonded_pairs {
+            let r_vec = [
+                coords[j][0] - coords[i][0],
+                coords[j][1] - coords[i][1],
+                coords[j][2] - coords[i][2],
+            ];
+            let r_sq = r_vec[0] * r_vec[0] + r_vec[1] * r_vec[1] + r_vec[2] * r_vec[2];
+            let r = r_sq.sqrt();
+            if r < 1e-10 {
+                continue;
             }
+            // vdW energy (calc_vdw_energy, same op order)
+            let dist2 = r * r;
+            let dist6 = dist2 * dist2 * dist2;
+            let dist7 = dist6 * r;
+            let r2 = r_star_ij * r_star_ij;
+            let r7 = r2 * r2 * r2 * r_star_ij;
+            let denom_a = r + 0.07 * r_star_ij;
+            let a_term = 1.07 * r_star_ij / denom_a;
+            let a2 = a_term * a_term;
+            let a7 = a2 * a2 * a2 * a_term;
+            let u = dist7 + 0.12 * r7;
+            let b_term = 1.12 * r7 / u - 2.0;
+            let e_vdw = well_depth * a7 * b_term;
+            energy += e_vdw;
+            // vdW analytic gradient (same formula as vdw_energy_and_gradient)
+            let de_dd = -7.0 * well_depth * a7 * (b_term / denom_a + 1.12 * r7 * dist6 / (u * u));
+            // electrostatics (electrostatic_energy_and_gradient, same op order)
+            let corr = r + 0.05;
+            let k_qq = COULOMB_CONST * qq_scale;
+            let e_es = k_qq / corr;
+            energy += e_es;
+            let de_dd_total = de_dd - k_qq / (corr * corr);
+            let f = de_dd_total / r;
+            grad[i][0] -= f * r_vec[0];
+            grad[i][1] -= f * r_vec[1];
+            grad[i][2] -= f * r_vec[2];
+            grad[j][0] += f * r_vec[0];
+            grad[j][1] += f * r_vec[1];
+            grad[j][2] += f * r_vec[2];
         }
 
         energy
@@ -1963,20 +1996,17 @@ impl MMFFForceField {
         for &(central, a1, a2, a3, params) in &self.oop_terms {
             energy += oop_energy(coords, central, a1, a2, a3, &params);
         }
-        for &(i, j, is_14) in &self.nonbonded_pairs {
-            let (e, _, _) = vdw_energy_and_gradient(
-                coords,
-                i,
-                j,
-                &self.vdw_params[i],
-                &self.vdw_params[j],
-                is_14,
-            );
+        for &(i, j, _is_14, r_star_ij, well_depth, qq) in &self.nonbonded_pairs {
+            let e = vdw_energy_from_params(coords, i, j, r_star_ij, well_depth);
             energy += e;
-            if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
-                let (e, _, _) =
-                    electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
-                energy += e;
+            if qq != 0.0 {
+                let dx = coords[j][0] - coords[i][0];
+                let dy = coords[j][1] - coords[i][1];
+                let dz = coords[j][2] - coords[i][2];
+                let r = (dx * dx + dy * dy + dz * dz).sqrt();
+                if r >= 1e-10 {
+                    energy += COULOMB_CONST * qq / (r + 0.05);
+                }
             }
         }
         energy
@@ -2004,20 +2034,16 @@ impl MMFFForceField {
         for &(central, a1, a2, a3, params) in &self.oop_terms {
             bd.oop += oop_energy(coords, central, a1, a2, a3, &params);
         }
-        for &(i, j, is_14) in &self.nonbonded_pairs {
-            let (e, _, _) = vdw_energy_and_gradient(
-                coords,
-                i,
-                j,
-                &self.vdw_params[i],
-                &self.vdw_params[j],
-                is_14,
-            );
-            bd.vdw += e;
-            if self.charges[i].abs() > 1e-6 || self.charges[j].abs() > 1e-6 {
-                let (e, _, _) =
-                    electrostatic_energy_and_gradient(coords, &self.charges, i, j, 1.0, is_14);
-                bd.electrostatic += e;
+        for &(i, j, _is_14, r_star_ij, well_depth, qq) in &self.nonbonded_pairs {
+            bd.vdw += vdw_energy_from_params(coords, i, j, r_star_ij, well_depth);
+            if qq != 0.0 {
+                let dx = coords[j][0] - coords[i][0];
+                let dy = coords[j][1] - coords[i][1];
+                let dz = coords[j][2] - coords[i][2];
+                let r = (dx * dx + dy * dy + dz * dz).sqrt();
+                if r >= 1e-10 {
+                    bd.electrostatic += COULOMB_CONST * qq / (r + 0.05);
+                }
             }
         }
 

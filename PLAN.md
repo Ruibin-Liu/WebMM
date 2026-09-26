@@ -1,50 +1,48 @@
-# Plan: 嵌入 E+G 内核逐项计时 → 定刀并实施 → v1.2.7
+# Plan: MMFF 优化 opt1 差距审计(3× vs RDKit)→ 目标 v1.2.8
 
 ## 背景
 
-工作守恒确立后,嵌入的唯一杠杆是**单次求值成本**。主 3D 300 迭代
-= 47% 嵌入时间,其中 lr 对循环理论只需 ~3-6ms(16k flops × 300 ×
-2)但实测 16.8ms——~60% 在其它项(K12/chiral/planarity/h_bond/
-torsion_pref 的 FD dihedral)。先逐项计时定刀,再实施。
+嵌入与管线已达 RDKit 持平;剩余差距集中在纯 MMFF94s 单分子优化
+(opt1:aspirin 3.4×、ibuprofen 3.0×)。v1.2.5 已把单点 E+G 提速
+5×(解析梯度),需重新审计剩余 3× 的构成。
 
 ## 任务
 
-1. **逐项计时**(ETKDG_ITERS 门控,etkdg_gradient_with_pairs /
-   etkdg_energy_with_pairs 内):lr_pairs / K12 bonds / K13 angles /
-   chiral / planarity / h_bond / torsion_pref 各项累计 μs/次与占比
-2. **按数据实施 1–2 项**(候选:torsion_pref 的 dihedral FD 12×
-   atan2/项 → 解析梯度(v1.2.5 同型已验证);h_bond 邻接优化;
-   其它)
-3. **门禁**:cargo test、ensemble 6/6、benchmark 230/230、
-   clippy 0、fmt;原生 + wasm 交错 A/B
-4. **发布**:1.2.6→1.2.7;CODE_STATUS/PLAN;commit+tag;冒烟
+1. **分解审计**(插桩,OPT_ITERS 门控):
+   - opt1 时间 = FF 构建 + L-BFGS 循环(能量求值次数 / 梯度求值
+     次数 / 迭代数 / 线搜索拒绝率)
+   - 剖析 compute_energy_and_gradient_into 内部:键合项
+     (X_energy + X_gradient 分离调用 = 几何量算两遍)、非键循环、
+     分配
+2. **与 RDKit 求值次数对照**(其总时间 / 单点成本估计)
+3. **按数据实施 1–2 项**(候选:键合项 E+G 融合——bond 的 r、
+   angle 的 θ 等几何量只算一次;线搜索参数;优化器内分配)
+4. **门禁**:cargo test、benchmark 230/230(能量逐位不变——只动
+   梯度/调用结构)、ensemble 6/6、clippy 0、fmt;原生 + wasm
+   交错 A/B
+5. **发布**:1.2.7→1.2.8;CODE_STATUS/PLAN;commit+tag;冒烟
    必须命中引擎输出行
 
 ## 验收(实施后实测记录)
 
-- `cargo test` 279/279 全绿(+2 解析-FD 一致性测试);ensemble 6/6;
-  benchmark 230/230 与基线逐字节一致;clippy 0;fmt;wasm(node 冒烟
-  1.2.7,引擎输出行确认);API 零变化
-- **逐项计时地图(修复前,ibuprofen 单次嵌入)**:
-  - H-bond 梯度 FD:51.1%(分子级中心差分:99 次全坐标克隆 +
-    198 次 h_bond_energy 拓扑扫描/梯度调用)
-  - planarity 梯度 FD:27.2%(ring/exocyclic 二面角 FD 每次 12 个
-    atan2 + impropers/sp1 中心差分)
-  - torsion_pref 梯度 FD:11.7%(同型二面角 FD)
-  - lr 对循环(此前以为的瓶颈)合计仅 ~5%
-- **实施**(能量函数逐位未动,仅梯度路径):
-  1. H-bond:三元组预计算(几何无关拓扑)+ 解析梯度 → 51%→0.1%
-  2. dihedral_gradient_contrib 解析化(cos φ 雅可比 + −dedphi/sinφ,
-     sinφ<1e-12 跳过——Fourier 能量在该处 dedphi 同阶为零)→
-     torsion_pref 11.7%→~2%
-  3. impropers 解析化(χ=asin|q| 链式,q=(v1·N)/|N| 未除 |v1|,
-     饱和区梯度零)与 sp1 线性解析化 → planarity 27.2%→~4%
-  4. **修出两处真 bug**:角链式导数分母误用 |u||v|(正确为 |u|²)
-     ——H-bond 与 linear 初版均有;FD 一致性测试抓出
-- **严格交错 A/B(5 轮,load ~25)**:
-  - 原生:aspirin 中位 24.4→8.8 ms(**2.8×**);ibuprofen
-    62.3→17.8 ms(**3.5×**)
-  - wasm(5×2 轮中位):aspirin 34.9→10.9(**3.2×**);ibuprofen
-    49.7→17.6(**2.8×**)
-  - 叠加 v1.2.6 snap 修复,对 v1.2.5:嵌入累计 ~4×
-- 逐项计时改为 Option 门控(clock() 关闭时热循环只付一次分支)
+- `cargo test` 280/280 全绿(+1 oop 解析-FD 测试);benchmark 230/230
+  与基线逐字节一致(能量算式逐位未动);ensemble 6/6;clippy 0;
+  fmt;wasm(node 冒烟 1.2.8,引擎输出行确认);API 零变化
+- **审计发现**:vdW 组合参数(R* 的 exp、ε 的 2 sqrt)与静电
+  qq·scale 每对每次求值重算(构建期常量!);vdW 与静电各自独立
+  计算距离(2× sqrt/pair);oop 仍是中心 FD(24 求值/项)
+- **实施**:
+  1. 对列表携带预计算 (r*, ε, qq·scale)(构建期用同一函数→
+     逐位一致);非键循环距离单算 + vdw/静电力合并单系数
+  2. MMFF oop 解析梯度(归一化版 asin 链式,与 ETKDG 版不同:
+     此处 χ=asin(clamp(û·n̂)) 带符号;|s|=1 饱和区零梯度);
+     修正过程中抓出自身初版 bug(atom2/atom3 的 dn 必须分离)
+- **严格交错 A/B(3 轮,load ~8–15)**:
+  - E+G:aspirin 20.7–24.1→8.8–12.8 μs(**~2.2×**);ibuprofen
+    31.5–32.3→14.7–15.0 μs(**~2.1×**)
+  - opt:aspirin 5.3→2.8 ms(**1.9×**);ibuprofen 14.7–15.2→7.6
+    ms(**1.95×**——与 RDKit 原生 7.1–7.5 ms 持平)
+  - E-only:ibuprofen 11.7→4.9 μs(2.4×)
+- **wasm vs RDKit 原生(同窗口)**:opt1 ibuprofen 21.95→9.82 ms
+  (3.0×→**1.38×**);aspirin 7.15→3.23(3.4×→1.52×);ethanol
+  1.08× 近持平;**pipe30 ibuprofen 14.48 vs 14.78——wasm 反超**

@@ -5,7 +5,7 @@
 //! 1-4 interactions are scaled by 0.75
 
 /// Coulomb conversion constant ( kcal·Å/(mol·e²) )
-const COULOMB_CONST: f64 = 332.0716;
+pub const COULOMB_CONST: f64 = 332.0716;
 
 /// Electrostatic energy between two charged atoms
 /// RDKit-compatible buffered distance: corr_dist = r + 0.05

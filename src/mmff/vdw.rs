@@ -158,7 +158,7 @@ pub fn get_vdw_params(atom_type: MMFFAtomType) -> VDWParams {
     }
 }
 
-fn calc_r_star_ij(pi: &VDWParams, pj: &VDWParams) -> f64 {
+pub fn calc_r_star_ij(pi: &VDWParams, pj: &VDWParams) -> f64 {
     let gamma = if (pi.r_star + pj.r_star) > 1e-10 {
         (pi.r_star - pj.r_star) / (pi.r_star + pj.r_star)
     } else {
@@ -172,7 +172,7 @@ fn calc_r_star_ij(pi: &VDWParams, pj: &VDWParams) -> f64 {
     0.5 * (pi.r_star + pj.r_star) * (1.0 + b_factor)
 }
 
-fn calc_well_depth(r_star_ij: f64, pi: &VDWParams, pj: &VDWParams) -> f64 {
+pub fn calc_well_depth(r_star_ij: f64, pi: &VDWParams, pj: &VDWParams) -> f64 {
     let c4 = 181.16;
     let r2 = r_star_ij * r_star_ij;
     let r6 = r2 * r2 * r2;
@@ -181,7 +181,7 @@ fn calc_well_depth(r_star_ij: f64, pi: &VDWParams, pj: &VDWParams) -> f64 {
         / r6
 }
 
-fn apply_da_scaling(r_star_ij: &mut f64, well_depth: &mut f64, pi: &VDWParams, pj: &VDWParams) {
+pub fn apply_da_scaling(r_star_ij: &mut f64, well_depth: &mut f64, pi: &VDWParams, pj: &VDWParams) {
     if (pi.da == 2 && pj.da == 1) || (pi.da == 1 && pj.da == 2) {
         *r_star_ij *= VDW_DARAD;
         *well_depth *= VDW_DAEPS;
@@ -205,6 +205,25 @@ fn calc_vdw_energy(dist: f64, r_star_ij: f64, well_depth: f64) -> f64 {
     let b_term = vdw2 * r7 / (dist7 + vdw2m1 * r7) - 2.0;
 
     well_depth * a7 * b_term
+}
+
+/// Energy-only from precomputed combining params (v1.2.8 fast path;
+/// same arithmetic as calc_vdw_energy — bit-identical).
+pub fn vdw_energy_from_params(
+    coords: &[[f64; 3]],
+    i: usize,
+    j: usize,
+    r_star_ij: f64,
+    well_depth: f64,
+) -> f64 {
+    let dx = coords[j][0] - coords[i][0];
+    let dy = coords[j][1] - coords[i][1];
+    let dz = coords[j][2] - coords[i][2];
+    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+    if dist < 1e-10 {
+        return 0.0;
+    }
+    calc_vdw_energy(dist, r_star_ij, well_depth)
 }
 
 pub fn vdw_energy_and_gradient(

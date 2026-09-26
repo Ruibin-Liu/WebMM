@@ -434,41 +434,145 @@ pub fn oop_gradient(
     atom3: usize,
     params: &OOPParams,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    // Central-difference numerical gradient: (E(+eps) - E(-eps)) / (2*eps).
-    // eps=1e-8 minimizes truncation error (O(eps^2) ~ 1e-16) at the cost of
-    // higher roundoff (O(machine_eps/eps) ~ 2e-8). Matches the torsion gradient
-    // step size for consistency across all angle-based terms.
-    // v1.2.5: the perturbation buffer is cloned once per term and restored in
-    // place (was a full coords clone per dim — 12 allocations/term).
-    let eps = 1e-8;
-    let mut gc = [0.0; 3];
-    let mut g1 = [0.0; 3];
-    let mut g2 = [0.0; 3];
-    let mut g3 = [0.0; 3];
-    let mut cp = coords.to_vec();
-
-    for (atom_idx, grad) in [
-        (central, &mut gc),
-        (atom1, &mut g1),
-        (atom2, &mut g2),
-        (atom3, &mut g3),
-    ] {
-        for dim in 0..3 {
-            let orig = cp[atom_idx][dim];
-            cp[atom_idx][dim] = orig + eps;
-            let ep = oop_energy(&cp, central, atom1, atom2, atom3, params);
-            cp[atom_idx][dim] = orig - eps;
-            let em = oop_energy(&cp, central, atom1, atom2, atom3, params);
-            cp[atom_idx][dim] = orig;
-            grad[dim] = (ep - em) / (2.0 * eps);
-        }
+    // Analytic gradient (v1.2.8): exact chain rule through
+    // calculate_oop_angle's s = u_ci·n̂ (u_* = unit vectors from central,
+    // n̂ = normalized u_cj × u_ck), chi = asin(clamp(s)),
+    // E = 0.5*C*k*chi^2. Replaces the central FD (24 oop_energy
+    // evaluations per term; the v1.2.5 pass kept the FD with a single
+    // clone).
+    let v1 = [
+        coords[atom1][0] - coords[central][0],
+        coords[atom1][1] - coords[central][1],
+        coords[atom1][2] - coords[central][2],
+    ];
+    let v2 = [
+        coords[atom2][0] - coords[central][0],
+        coords[atom2][1] - coords[central][1],
+        coords[atom2][2] - coords[central][2],
+    ];
+    let v3 = [
+        coords[atom3][0] - coords[central][0],
+        coords[atom3][1] - coords[central][1],
+        coords[atom3][2] - coords[central][2],
+    ];
+    let n1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt();
+    let n2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]).sqrt();
+    let n3 = (v3[0] * v3[0] + v3[1] * v3[1] + v3[2] * v3[2]).sqrt();
+    if n1 < 1e-10 || n2 < 1e-10 || n3 < 1e-10 {
+        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
     }
-
-    (gc, g1, g2, g3)
+    let u1 = [v1[0] / n1, v1[1] / n1, v1[2] / n1];
+    let u2 = [v2[0] / n2, v2[1] / n2, v2[2] / n2];
+    let u3 = [v3[0] / n3, v3[1] / n3, v3[2] / n3];
+    // normal = u2 × u3 (same as calculate_oop_angle)
+    let nrm = [
+        u2[1] * u3[2] - u2[2] * u3[1],
+        u2[2] * u3[0] - u2[0] * u3[2],
+        u2[0] * u3[1] - u2[1] * u3[0],
+    ];
+    let nn = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();
+    if nn < 1e-10 {
+        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let nh = [nrm[0] / nn, nrm[1] / nn, nrm[2] / nn];
+    let s = (u1[0] * nh[0] + u1[1] * nh[1] + u1[2] * nh[2]).clamp(-1.0, 1.0);
+    let chi = s.asin();
+    // E = 0.5*C*k*chi^2 -> dE/ds = C*k*chi/sqrt(1-s^2); zero at |s| = 1 clamp
+    let c = 143.9325;
+    let coef = if 1.0 - s * s > 1e-12 {
+        c * params.k_oop * chi / (1.0 - s * s).sqrt()
+    } else {
+        0.0
+    };
+    // ds = du1·n̂ + u1·dn̂ ; du = (dv - u*(u·dv))/|v| for u = v/|v| ;
+    // dn̂ = (dn - n̂(n̂·dn))/nn with dn = du2×u3 + u2×du3
+    let dot = |x: [f64; 3], y: [f64; 3]| x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+    let du_of = |u: [f64; 3], d: usize, nv: f64, sign: f64| -> [f64; 3] {
+        let ud = u[d];
+        let mut out = [0.0f64; 3];
+        for (kk, o) in out.iter_mut().enumerate() {
+            let e = if kk == d { 1.0 } else { 0.0 };
+            *o = sign * (e - ud * u[kk]) / nv;
+        }
+        out
+    };
+    let mut g = [[0.0f64; 3]; 4]; // [central, atom1, atom2, atom3]
+                                  // (indexed loop: d is a basis-vector selector used throughout, not just
+                                  // an array index)
+    #[allow(clippy::needless_range_loop)]
+    for d in 0..3 {
+        let du1p = du_of(u1, d, n1, 1.0);
+        let du2p = du_of(u2, d, n2, 1.0);
+        let du3p = du_of(u3, d, n3, 1.0);
+        let du1m = du_of(u1, d, n1, -1.0);
+        let du2m = du_of(u2, d, n2, -1.0);
+        let du3m = du_of(u3, d, n3, -1.0);
+        let cross_add = |a: [f64; 3], b: [f64; 3], c1: [f64; 3], c2: [f64; 3]| -> [f64; 3] {
+            [
+                a[1] * b[2] - a[2] * b[1] + c1[1] * c2[2] - c1[2] * c2[1],
+                a[2] * b[0] - a[0] * b[2] + c1[2] * c2[0] - c1[0] * c2[2],
+                a[0] * b[1] - a[1] * b[0] + c1[0] * c2[1] - c1[1] * c2[0],
+            ]
+        };
+        // atom2-only, atom3-only, and central (all three -e_d) normal deltas
+        let dn2 = cross_add(du2p, u3, [0.0; 3], [0.0; 3]);
+        let dn3 = cross_add([0.0; 3], [0.0; 3], u2, du3p);
+        let dnm = cross_add(du2m, u3, u2, du3m);
+        let dnh = |dn: [f64; 3]| -> [f64; 3] {
+            let p = dot(nh, dn);
+            [
+                (dn[0] - nh[0] * p) / nn,
+                (dn[1] - nh[1] * p) / nn,
+                (dn[2] - nh[2] * p) / nn,
+            ]
+        };
+        let dnh2 = dnh(dn2);
+        let dnh3 = dnh(dn3);
+        let dnh_m = dnh(dnm);
+        g[0][d] = coef * (dot(du1m, nh) + dot(u1, dnh_m));
+        g[1][d] = coef * dot(du1p, nh);
+        g[2][d] = coef * dot(u1, dnh2);
+        g[3][d] = coef * dot(u1, dnh3);
+    }
+    (g[0], g[1], g[2], g[3])
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_oop_gradient_analytic_matches_fd() {
+        use super::*;
+        // v1.2.8: analytic vs central FD of oop_energy on generic geometry
+        let params = OOPParams { k_oop: 0.05 };
+        let coords = vec![
+            [0.1, -0.2, 0.05],
+            [1.02, 0.1, 0.4],
+            [-0.5, 1.1, -0.3],
+            [-0.2, -0.9, 0.5],
+        ];
+        let (gc, g1, g2, g3) = oop_gradient(&coords, 0, 1, 2, 3, &params);
+        let slots = [gc, g1, g2, g3];
+        let eps = 1e-7;
+        for a in 0..4usize {
+            for d in 0..3 {
+                let mut cp = coords.clone();
+                cp[a][d] += eps;
+                let ep = oop_energy(&cp, 0, 1, 2, 3, &params);
+                cp[a][d] -= 2.0 * eps;
+                let em = oop_energy(&cp, 0, 1, 2, 3, &params);
+                let fd = (ep - em) / (2.0 * eps);
+                let diff = (slots[a][d] - fd).abs();
+                let scale = slots[a][d].abs().max(fd.abs()).max(1e-6);
+                assert!(
+                    diff / scale < 1e-4,
+                    "atom {a} dim {d}: analytic {} vs fd {}",
+                    slots[a][d],
+                    fd
+                );
+            }
+        }
+    }
+
     use super::*;
 
     #[test]
