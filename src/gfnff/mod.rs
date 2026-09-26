@@ -385,6 +385,11 @@ impl GfnffForceField {
         self.inner.energy(coords)
     }
 
+    /// Setup Hückel bond orders per bond list index.
+    pub fn pibo(&self) -> Vec<f64> {
+        self.inner.topo.pibo.clone()
+    }
+
     /// Topology EEQ charges (qa) from setup — for charge coloring/exports.
     pub fn charges(&self) -> Vec<f64> {
         self.inner.topo.qa.clone()
