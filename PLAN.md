@@ -1,47 +1,42 @@
-# Plan: ETKDG 嵌入求值次数削减 → 目标 v1.2.6
+# Plan: 主 3D 最小化收敛判据审计 → 目标 v1.2.7
 
 ## 背景
 
-SIMD 已诚实关闭;嵌入(55–60 ms/构象 @33 原子)的杠杆是减少
-求值次数/阶段成本。此前剖析行级归因粗糙(~40% 在内联黑洞),
-需要先拿到**每阶段的迭代数 × 能量/梯度求值次数 × 墙钟**的
-精确地图,再定刀。
+插桩显示主 3D minimize_etkdg 每次跑满 300/300 迭代(嵌入的 47%),
+force_tol=1e-3 从未触达。需查明残差梯度来源:哪个能量项在"最优
+点"仍有不可归零的梯度,还是判据过紧导致的无谓精磨。
 
 ## 任务
 
-1. **插桩**:ETKDG_ITERS 环境变量门控,在 embed_impl 各阶段
-   (4d_first / 4d_collapse / flatten / 3d 主最小化 / 每个 snap
-   重最小化 / H-only / trilaterate / 验收检查)打印
-   [迭代数, 能量求值次数, 梯度求值次数, μs]。
-   minimize_etkdg/lbfgs_minimize 返回或累计求值计数。
-2. **定刀**(按实测地图,候选):
-   - snap 重最小化预算/触发条件(占 17% 墙钟)
-   - 线搜索试验次数分布(过多次 Armijo 拒绝?)
-   - h_bond / torsion_pref / dihedral FD 等小项的每求值成本
-   - 设置复用(lr_pairs/scratch 跨 minimize_etkdg 调用)
-3. **实施 1–2 项**,逐项交错 A/B + 门禁(ensemble 6/6 裁决质量)
-4. **发布**:1.2.5→1.2.6;CODE_STATUS/PLAN;commit+tag
+1. **诊断**:迭代 300 次退出时打印 max_g 终值 + 各能量项的梯度
+   贡献(lr_pairs / K12 bonds / K13 angles / chiral / planarity /
+   h_bond / torsion_pref)——定位主导残差项。
+2. **按发现定刀**(候选,由数据决定):
+   - 残差项可修(如某项梯度与能量不一致)→ 修一致
+   - 判据过紧 → 加能量停滞判据(如连续 N 迭代 ΔE < 1e-10 提前
+     退出)或放宽 force_tol;ensemble 6/6 裁决
+   - L-BFGS 在该landscape振荡 → 审视 stall 逻辑
+3. **门禁**:cargo test、ensemble 6/6、benchmark 230/230、
+   clippy 0、fmt;原生 + wasm 交错 A/B
+4. **发布**:1.2.6→1.2.7;CODE_STATUS/PLAN;commit+tag;冒烟
+   必须命中引擎输出行
 
 ## 验收(实施后实测记录)
 
-- `cargo test` 277/277 全绿;ensemble 6/6 通过;clippy 0;fmt;
-  wasm(node 冒烟 1.2.6);API 零变化
-- **求值地图(新插桩工具,ETKDG_ITERS 门控,ibuprofen seed 42)**:
-  主 3D 最小化 300/300 跑满(37ms,47%)+ 3 个 snap 各 ~95 迭代
-  (34ms,43%)——90% 在 4 次 minimize_etkdg;4D 阶段仅 1.6ms;
-  H-only 1 迭代;trilaterate 2μs。
-- **实施**:snap 重最小化预算 300→25(局部弛豫职责,全场景收敛
-  属主最小化与验收门禁);**主 3D 300→150 试验失败回退**——工作
-  转嫁给 H-only(1→50 迭代,总时间反升),300 承重。
-- **收益(严格交错 A/B 已补,安静机器 load ~4-8)**:
-  - 原生 8 轮:aspirin 中位 15.5→12.6 ms(**1.23×**);
-    ibuprofen 38.0→26.3 ms(**1.44×**)
-  - wasm 5×2 轮:aspirin 17.5→15.2(**1.15×**);
-    ibuprofen 50.9→33.3(**1.53×**)
-  - 插桩迭代总数 900+→339
-- **事后修复(诚实披露)**:v1.2.6 首次提交的 wasm 实际 panic
-  (插桩误用 std::time::Instant,wasm32 不支持;冒烟只 grep
-  "version" 漏检管线 panic)。已改用模块既有的 web_time::Instant
-  重建;冒烟检查升级为必须命中 MMFF94s/GFN-FF 输出行。
-- 新增结构化插桩(阶段 × 迭代/能量/梯度计数 × μs)保留为
-  ETKDG_ITERS 门控的常驻审计工具(后续轮次的地图生成器)。
+**结论:收敛判据审计完成,能量停滞停止被否决(工作守恒),零代码变更。**
+
+- **审计发现**(插桩轨迹,ibuprofen seed 42):
+  - 主 3D 主下降在前 ~100 迭代完成(f 2463→1.15);100–300 迭代
+    仅买 Δf=0.085(0.003%),max_g 在 0.15–0.26 振荡不收敛——
+    软模式(扭转偏好)谷底爬行,force_tol 1e-3 无法触达
+  - 300 迭代后 max_g≈0.019(19× 容差),残差集中在 sp³ 碳
+- **能量停滞停止实验(50 迭代窗 Δf<0.02→break,最少 100)**:
+  ibuprofen ~10% 快(交错 5 轮),但 aspirin 一致 ~6% 慢——主退出
+  点改变 snap 触发模式(4 个 snap vs 2),工作转嫁;更保守阈值
+  0.005 同样模式(ibuprofen +5% / aspirin -6%)。净收益 ~0 → 否决
+- **工作守恒定律**(两轮实验证实):主 3D、snap、H-only 三个阶段
+  共享同一 landscape 的收敛需求;任何单阶段裁剪都被其它阶段
+  (或更多 snap 触发)吸收。v1.2.6 的 snap 300→25 是唯一例外
+  (snap 本质是重复劳动)
+- **剩余杠杆**:每次求值的成本(E+G 内核)或算法级重设计
+  (如 bounds 增量更新、扭转偏好解析梯度替代 FD dihedral)
