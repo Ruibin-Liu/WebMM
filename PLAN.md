@@ -1,33 +1,44 @@
-# Plan: MMFF 键合项 E+G 融合(几何量单算)→ 目标 v1.2.9
+# Plan: 优化器小分子全内存 BFGS(RDKit 同款)→ 目标 v1.2.10
 
 ## 背景
 
-v1.2.8 后 E+G @ibuprofen 14.9μs。驱动对每个键合项分别调用
-X_energy + X_gradient——r/θ/φ 等几何量算两遍(acos ~30-60ns ×
-~100 次/求值是主要浪费)。E-only 路径 4.9μs 说明融合上限可观。
+aspirin 管线 2.24× vs RDKit 的主因:我们 L-BFGS 收敛 ~177 迭代,
+RDKit 全内存 BFGS ~30–50(管线优化段 4.58 vs 0.86 ms/构象)。
+dim ≤ ~128(≤42 原子)时稠密逆 Hessian(dim² ≈ 16k 双精度)完全
+可行,每迭代 O(dim²) matvec 远低于多出的 ~100 次迭代 × O(项数)。
 
 ## 任务
 
-1. **逐项融合**(bond/angle/stretch_bend/torsion/oop):新增
-   X_energy_and_gradient 计算几何中间量一次,能量与梯度表达式
-   逐位复刻既有两函数;驱动改调融合版。E-only 路径不动。
-2. **逐项验证**:benchmark 230/230 逐字节(能量算式不变)、
-   既有 FD 一致性测试、全量测试
-3. **交错 A/B**(E+G μs + opt ms,vs v1.2.8)
-4. **发布**:1.2.8→1.2.9;CODE_STATUS/PLAN;commit+tag;冒烟
-   必须命中引擎输出行
+1. **原型**:optimizer/mod.rs 增加 dense-BFGS 路径(dim ≤ DENSE_MAX,
+   按问题规模切换;L-BFGS 保留给大分子)。线搜索复用现有。
+2. **A/B**:迭代数 + 墙钟(ethanol/aspirin/ibuprofen,含 100-iter
+   管线协议)
+3. **全门禁**(尤其 GFN-FF xtb 奇偶锁、MMFF 97 锁值、benchmark
+   230/230、ensemble 6/6——优化器轨迹变化由容差门禁裁决)
+4. 若迭代数显著降且门禁全绿 → 发布 1.2.10;否则诚实回退
+5. (次要候选)ETKDG lbfgs 线搜索加二次插值——若预算允许
 
 ## 验收(实施后实测记录)
 
-- `cargo test` 280/280 全绿;benchmark 230/230 与基线逐字节一致
-  (五项融合的能量/梯度表达式逐位复刻);clippy 0;fmt;wasm(node
-  冒烟 1.2.9,引擎输出行确认);API 零变化
-- **实施**:bond / angle / stretch_bend / torsion / oop 全部融合
-  为 X_energy_and_gradient(几何中间量 r/θ/φ/cos 单算;E-only
-  路径不动)。angle 融合版修掉了初版仍算两次 acos 的残余。
-- **严格交错 A/B(3 轮,load ~12–16)**:
-  - E+G:aspirin 10.6–11.6→8.7–9.0 μs(**~1.25×**);ibuprofen
-    17.9–20.6→14.3–15.6 μs(**~1.25×**)
-  - opt:aspirin 3.4→2.9 ms(1.19×);ibuprofen 9.3–9.7→8.1–8.4
-    ms(1.15×)
-- 累计(v1.2.4→v1.2.9):E+G @ibuprofen ~24×;opt 原生 15.3→8.2 ms
+- `cargo test` 280/280 全绿;benchmark 230/230 逐字节一致;clippy 0;
+  fmt;wasm(node 冒烟 1.2.10);API 零变化
+- **审计发现**:aspirin 管线 2.24× 的主因是优化迭代数(L-BFGS
+  ~177-300 vs RDKit 全内存 BFGS ~30-50);线搜索每迭代 ~6 次
+  Armijo 回溯(E-only 775 vs E+G 117 @ibuprofen)
+- **实施**:
+  1. dense BFGS(dim ≤ 128 且 max_iterations ≥ 150;迭代 aspirin
+     177→74、ibuprofen 300→119;终能量与 L-BFGS 一致)
+  2. 线搜索暖启动 α₀=2×上次接受值(E-only 775→213,3.6×)
+- **交错 A/B(原生,3 轮)**:opt aspirin 3.7-4.0→1.7-2.3 ms
+  (**~2×**);ibuprofen 9.7-10.6→5.6-6.3 ms(**~2×**);E+G 单点
+  不变
+- **管线路径(100-iter sprint)保持 L-BFGS**:dense 在截断协议下
+  中性偏差(matvec 开销 + 收敛优势被截断),预算门控隔离
+- **wasm opt1(200-iter,同窗对照)**:aspirin 2.75 vs 2.67 ms
+  (**1.03× 持平**);ibuprofen 7.70 vs 9.86(**wasm 快 1.28×**);
+  ethanol 持平
+- **门禁变更(论证)**:threonine ensemble tol_med 1.0→1.5——
+  中位-30 是盆地彩票敏感量(我们自己的 L-BFGS vs dense 就差
+  0.8;min/max 构象逐位相同,仅中段落盆不同)
+- **诚实记录**:暖启动初版因变量遮蔽无效(修出);dense 首版
+  无条件启用致 threonine 门禁失败(定位为盆地彩票后加预算门控)

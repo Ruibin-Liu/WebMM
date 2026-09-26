@@ -132,7 +132,227 @@ pub fn optimize(
 /// trials with quadratic-interpolation backtracking, unit initial step for
 /// L-BFGS directions). `initial_z` is the starting point in the objective's
 /// variable space.
+/// Below this dimension the dense (full-memory) BFGS inverse-Hessian is
+/// used — RDKit's optimizer structure. At <= 42 atoms (dim <= 126) the
+/// dim^2 matrix costs ~128 KB and two matvecs/iteration, far below the
+/// extra iterations the limited-memory approximation needs on MMFF
+/// landscapes (~177 vs RDKit's ~30-50 at aspirin).
+pub const DENSE_BFGS_MAX_DIM: usize = 128;
+
 pub fn lbfgs_core(
+    obj: &mut dyn Objective,
+    initial_z: Vec<f64>,
+    convergence: &ConvergenceOptions,
+) -> OptimizationResult {
+    // Dense for convergence-driven runs (budget >= 150 lets its fewer
+    // iterations materialize: aspirin 74 vs 184, ibuprofen 119 vs 300);
+    // short capped sprints (e.g. the 100-iteration first-pass conformer
+    // protocol) keep the limited-memory loop — measured neutral-to-negative
+    // for dense there (per-iteration matvec overhead, convergence advantage
+    // truncated by the cap).
+    if initial_z.len() <= DENSE_BFGS_MAX_DIM && convergence.max_iterations >= 150 {
+        return dense_bfgs_core(obj, initial_z, convergence);
+    }
+    lbfgs_core_limited(obj, initial_z, convergence)
+}
+
+/// Dense full-memory BFGS (v1.2.10): same line search, convergence
+/// criteria, reset semantics and energy-floor detection as the L-BFGS
+/// loop; only the direction computation (d = -H·g) and the curvature
+/// update (rank-2) differ.
+fn dense_bfgs_core(
+    obj: &mut dyn Objective,
+    initial_z: Vec<f64>,
+    convergence: &ConvergenceOptions,
+) -> OptimizationResult {
+    let mut z = initial_z;
+    let n = z.len();
+
+    let mut h: Vec<f64> = vec![0.0; n * n]; // dense inverse Hessian, row-major
+    for i in 0..n {
+        h[i * n + i] = 1.0;
+    }
+    let h_reset = |h: &mut Vec<f64>| {
+        h.iter_mut().for_each(|v| *v = 0.0);
+        for i in 0..n {
+            h[i * n + i] = 1.0;
+        }
+    };
+
+    let mut converged = false;
+    let mut energy_converged = false;
+    let mut final_energy = 0.0;
+    let mut final_iter = 0;
+    let mut fail_count = 0usize;
+    let mut total_failures = 0usize;
+    let mut energy_trace: Vec<f64> = Vec::new();
+    let mut tiny_step_count = 0usize;
+    // warm-start the line search from the previous accepted step (Armijo-only
+    // searches shrink monotonically; restarting at 1.0 every iteration costs
+    // ~6 backtracks/iter when accepted steps sit around 0.01-0.1)
+    let mut prev_alpha: f64 = 1.0;
+
+    let (mut energy, mut g) = obj.f_and_g(&z);
+
+    for iter in 0..convergence.max_iterations {
+        let (max_f, rms_f) = obj.force_stats();
+        if max_f < convergence.max_force && rms_f < convergence.rms_force {
+            converged = true;
+            final_energy = energy;
+            final_iter = iter;
+            break;
+        }
+
+        // direction d = -H·g
+        let mut d = vec![0.0f64; n];
+        for i in 0..n {
+            let mut acc = 0.0;
+            let row = &h[i * n..(i + 1) * n];
+            for (j, &hij) in row.iter().enumerate() {
+                acc += hij * g[j];
+            }
+            d[i] = -acc;
+        }
+
+        let gt_dot_d: f64 = g.iter().zip(d.iter()).map(|(gi, di)| gi * di).sum();
+        let mut dir_reset = false;
+        if gt_dot_d >= 0.0 {
+            h_reset(&mut h);
+            d = g.iter().map(|&gi| -gi).collect();
+            dir_reset = true;
+        }
+
+        let max_component = d
+            .iter()
+            .map(|di| di.abs())
+            .fold(0.0f64, f64::max)
+            .max(1e-10);
+        // first steps have H = I (steepest descent): displacement scaling;
+        // afterwards unit steps (BFGS directions carry the curvature scale)
+        let h_is_identity = iter == 0 || fail_count > 0 || dir_reset;
+        let mut initial_alpha = if h_is_identity {
+            0.5 / max_component
+        } else {
+            (2.0 * prev_alpha).min(1.0).min(10.0 / max_component)
+        };
+        initial_alpha = initial_alpha.max(1e-12);
+        let slope: f64 = g.iter().zip(d.iter()).map(|(gi, di)| gi * di).sum();
+        let (alpha, _floor_accept) =
+            armijo_line_search(obj, &z, &d, energy, slope, initial_alpha, 1e-10);
+
+        if alpha == 0.0 {
+            fail_count += 1;
+            total_failures += 1;
+            h_reset(&mut h);
+            if fail_count >= 5 {
+                final_energy = energy;
+                final_iter = iter;
+                if energy_trace.len() >= 6
+                    && energy_trace
+                        .windows(2)
+                        .rev()
+                        .take(5)
+                        .map(|w| (w[1] - w[0]).abs())
+                        .fold(0.0f64, f64::max)
+                        < 1e-8
+                {
+                    energy_converged = true;
+                }
+                break;
+            }
+            continue;
+        }
+        fail_count = 0;
+        prev_alpha = alpha;
+
+        if alpha * max_component < 1e-8 {
+            h_reset(&mut h);
+            tiny_step_count += 1;
+        } else {
+            tiny_step_count = 0;
+        }
+
+        for i in 0..n {
+            z[i] += alpha * d[i];
+        }
+
+        let g_new: Vec<f64>;
+        {
+            let (e, gn) = obj.f_and_g(&z);
+            energy = e;
+            g_new = gn;
+        }
+        final_energy = energy;
+
+        if obj.take_reset() {
+            z = vec![0.0f64; obj.dim()];
+            h_reset(&mut h);
+            g = g_new;
+            continue;
+        }
+
+        energy_trace.push(energy);
+        if energy_trace.len() > 11 {
+            energy_trace.remove(0);
+        }
+        if total_failures >= 3 && energy_trace.len() == 11 {
+            let stationary = energy_trace
+                .windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0f64, f64::max)
+                < 1e-9;
+            if stationary {
+                energy_converged = true;
+                final_iter = iter + 1;
+                break;
+            }
+        }
+        if tiny_step_count >= 3 {
+            energy_converged = true;
+            final_iter = iter + 1;
+            break;
+        }
+
+        // BFGS rank-2 update: H <- H + (rho^2*yHy + rho)*s s^T - rho*(s (Hy)^T + (Hy) s^T)
+        let s: Vec<f64> = d.iter().map(|di| alpha * di).collect();
+        let y: Vec<f64> = g_new.iter().zip(g.iter()).map(|(gn, go)| gn - go).collect();
+        let y_dot_s: f64 = y.iter().zip(s.iter()).map(|(yi, si)| yi * si).sum();
+        if y_dot_s > 1e-10 {
+            let rho = 1.0 / y_dot_s;
+            // Hy = H·y
+            let mut hy = vec![0.0f64; n];
+            for i in 0..n {
+                let row = &h[i * n..(i + 1) * n];
+                let mut acc = 0.0;
+                for (j, &hij) in row.iter().enumerate() {
+                    acc += hij * y[j];
+                }
+                hy[i] = acc;
+            }
+            let y_hy: f64 = y.iter().zip(hy.iter()).map(|(yi, hi)| yi * hi).sum();
+            let c1 = rho * rho * y_hy + rho;
+            for i in 0..n {
+                for j in 0..n {
+                    h[i * n + j] += c1 * s[i] * s[j] - rho * (s[i] * hy[j] + hy[i] * s[j]);
+                }
+            }
+        }
+
+        g = g_new;
+        final_iter = iter + 1;
+    }
+
+    OptimizationResult {
+        optimized_coords: obj.final_coords(),
+        final_energy,
+        converged,
+        energy_converged,
+        iterations: final_iter,
+    }
+}
+
+/// The limited-memory loop (renamed from the original lbfgs_core body).
+fn lbfgs_core_limited(
     obj: &mut dyn Objective,
     initial_z: Vec<f64>,
     convergence: &ConvergenceOptions,
