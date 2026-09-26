@@ -258,9 +258,4 @@ MMFF code changes.)
 
 ## License
 
-<!-- TODO: DECISION NEEDED — no license currently means all rights reserved;
-     nobody can legally use, modify, or redistribute the code. MIT or
-     Apache-2.0 are the usual choices for Rust/WASM projects. -->
-
-Not yet specified. Until a license is added, all rights are reserved by the
-author.
+[MIT](LICENSE) © 2026 Ruibin Liu
