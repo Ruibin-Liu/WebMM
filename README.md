@@ -1,371 +1,266 @@
-# WebMM — MMFF94/MMFF94s Geometry Optimizer
+# WebMM
 
-WASM-based molecular modeling toolkit for drug-like compounds: ETKDG v3
-conformer embedding, MMFF94/MMFF94s force field with L-BFGS optimization,
-gas-phase molecular dynamics, well-tempered metadynamics, and GBSA implicit
-solvation. Runs fully in the browser via WebAssembly.
+**Molecular mechanics in the browser — no server, no install.**
 
-## WebMM Workbench (`app/`)
+WebMM is a Rust molecular-modeling engine compiled to WebAssembly. It embeds
+3D conformers (ETKDG v3), optimizes geometries (MMFF94/MMFF94s, GFN-FF), and
+runs molecular dynamics and well-tempered metadynamics entirely client-side.
+Structures never leave the user's machine.
 
-A lightweight, ligand-based CADD web app built on top of this engine, with the
-interface aligned with [Molecule Clipboard](https://ruibin-liu.github.io/molecule-clipboard/):
-draw (JSME), inspect (RDKit descriptors, drug rules), then **embed 3D (ETKDG),
-optimize (MMFF94/MMFF94s/GFN-FF), enumerate + rank + RMSD-prune conformers**,
-and export SDF/XYZ/PNG — all locally, no uploads, offline-capable (all deps
-vendored). Interactive MD & metadynamics live in the Playground/Demo pages.
+<!-- TODO: replace with a real GIF of the playground (drag atoms → optimize → MD → metad FES) -->
+<!-- ![WebMM demo](docs/assets/demo.gif) -->
 
-Batch mode: switch the input panel to **Batch**, paste one SMILES per line
-(or a multi-record SDF), optionally embed + optimize each in 3D (MMFF94s,
-parallel workers), and export the descriptor/drug-rule table as CSV plus a
-multi-record 3D SDF.
+🔗 **Live demo:** <https://ruibin-liu.github.io/WebMM/>
 
-```bash
-npm run build   # wasm-pack -> pkg/ (served as ../pkg from app/)
-python3 -m http.server 8000   # from the repo root, then open /app/index.html
+---
+
+## What it does
+
+| Task | Method | Scope & notes |
+|---|---|---|
+| 3D embedding | ETKDG v3 distance geometry | From SDF/MOL connectivity; stereo-aware, seeded |
+| Conformer ensembles | Embed + optimize + RMSD prune | Batch single-call pipeline (30 conformers of a 33-atom drug in ~2 s in-browser) |
+| Geometry optimization | MMFF94/MMFF94s + L-BFGS/BFGS | Validated 230/230 vs RDKit to <0.01 kcal/mol |
+| Broad-coverage force field | GFN-FF | For elements/patterns MMFF94 does not parameterize (incl. metal coordination complexes); validated vs xtb |
+| Molecular dynamics | Velocity-Verlet (NVE) / BAOAB Langevin (NVT) | Live-steppable for in-browser trajectory animation |
+| Enhanced sampling | Well-tempered metadynamics | Dihedral and distance collective variables, FES reconstruction |
+| Implicit solvation | GBSA (OBC2 + LCPO) | Optional add-on; gas phase by default |
+| Ligand workbench | `app/` | Draw (JSME) → descriptors (RDKit-js) → embed/optimize/rank conformers → export; offline-capable |
+
+**Not covered:** proteins, periodic systems, QM beyond GFN-FF, explicit
+solvent. MMFF typing refuses metal-bonded systems exactly like RDKit's MMFF
+(NULL, never garbage-typed).
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│  app/   ligand CADD workbench (JSME + RDKit-js)
+│  site/  engine demo + interactive playground
+├──────────────────────────────────────────────┤
+│  pkg/   WASM bindings (wasm-bindgen, --target web)
+├──────────────────────────────────────────────┤
+│  src/   Rust core: parsing, graph analysis, typing,
+│         MMFF + GFN-FF, ETKDG, optimizers, MD/metad
+└──────────────────────────────────────────────┘
 ```
 
-## Project Structure
+`pkg/` is generated (gitignored). Python appears only in dev-time validation
+scripts (`scripts/`); the shipped library has no Python dependency.
 
-```
-webmm/
-├── Cargo.toml                 # Rust project configuration
-├── data/
-│   └── mmff94_sample_parameters.json  # MMFF94 parameters (embedded at compile time)
-├── src/
-│   ├── lib.rs              # WASM entry point & public API
-│   ├── forces.rs           # ForceField trait (composable force sources)
-│   ├── molecule/
-│   │   ├── mod.rs         # Molecule types with cached adjacency
-│   │   ├── parser.rs      # SDF/MOL V2000 file parser
-│   │   └── graph.rs       # Molecular graph analysis (hybridization, angles, torsions, OOP)
-│   ├── etkdg/
-│   │   └── mod.rs         # ETKDG v3 3D coordinate embedding
-│   ├── mmff/
-│   │   ├── mod.rs         # MMFF force field orchestrator (cached term params)
-│   │   ├── atom_types.rs  # Atom typing (ring/aromaticity/charge-aware)
-│   │   ├── bond.rs        # Bond stretching (energy + gradient)
-│   │   ├── angle.rs       # Angle bending (energy + gradient)
-│   │   ├── torsion.rs     # Torsion (energy + gradient)
-│   │   ├── oop.rs         # Out-of-plane (energy + gradient)
-│   │   ├── stretch_bend.rs# Stretch-bend (energy + gradient)
-│   │   ├── vdw.rs         # van der Waals buffered 14-7 (energy + gradient)
-│   │   ├── electrostatics.rs  # Electrostatics (energy + gradient)
-│   │   ├── charges.rs     # MMFF eq. 15 partial charges (BCI)
-│   │   ├── estimation.rs  # Parameter estimation fallbacks
-│   │   ├── params.rs      # Resolved parameter cache
-│   │   └── mmff_tables.rs # Primary parameter tables
-│   ├── md/
-│   │   └── mod.rs         # Molecular dynamics (velocity-Verlet NVE / BAOAB Langevin NVT)
-│   ├── metad/
-│   │   └── mod.rs         # Well-tempered metadynamics + FES reconstruction
-│   ├── solvation/
-│   │   └── mod.rs         # GBSA implicit solvation (OBC2 + LCPO surface area)
-│   ├── optimizer/
-│   │   ├── mod.rs         # L-BFGS core (Objective-trait generic), Cartesian objective
-│   │   ├── internal_opt.rs# delocalized internal coordinate optimizer (opt-in)
-│   │   ├── internals.rs   # primitives, Wilson B/G, Baker back-transform
-│   │   └── jacobi.rs      # symmetric eigensolver
-│   └── utils/
-│       └── mod.rs         # Parameter loading from embedded JSON
-├── site/
-│   └── index.html         # Committed demo landing page (staged into pkg/ at build)
-├── pkg/                   # Gitignored WASM build output (wasm-pack + staged index.html)
-├── scripts/               # Python validation/benchmark tooling (RDKit only in scripts)
-│   ├── benchmark_mmff.py  # 230-molecule MMFF validation gate vs RDKit
-│   ├── validate_etkdg.py  # Multi-seed ETKDG harness vs RDKit
-│   ├── val_set*/          # Validation SDF sets + RDKit reference JSONs
-│   └── ...                # parameter extraction / audit / diagnostics
-├── examples/              # Native diagnostic & benchmark examples
-└── docs/                  # Validation and coverage notes
-```
+---
 
-## Progress
+## Quick start
 
-### Completed
-- **Molecule parsing**: Full SDF/MOL V2000 parser with correct column layout, V2000 charge encoding, multi-element support
-- **Graph analysis**: Cached adjacency lists, bond-order-aware hybridization, aromaticity, angle/torsion/OOP detection
-- **SSSR ring detection**: BFS-based smallest set of smallest rings with canonical deduplication
-- **MMFF atom typing**: Context-sensitive assignment using ring membership, aromaticity, formal charge, neighbor C=O/ether context (C_3, C_2, C_1, C_AR, C_CAT, C_AN, N_3, N_2, N_1, N_AR, N_PL3, N_AM, N_4, O_3, O_2, O_R, O_CO2, S_3, S_2, S_AR, P_3, P_4, halogens)
-- **Atom type property table**: Full Halgren 1996 Table II properties (cr, phi, Z, anc)
-- **MMFF energy terms**: All MMFF terms with correct energy formulas:
-  - Bond stretching (harmonic)
-  - Angle bending (harmonic with cubic/quartic corrections)
-  - Torsion (Fourier series)
-  - Out-of-plane bending (Wilson Fourier)
-  - Stretch-bend coupling
-  - Van der Waals (buffered 14-7 potential with attractive well)
-  - Electrostatics (Coulomb with dielectric)
-- **MMFF gradients**: All terms with verified analytical gradients (finite-difference-validated)
-- **MMFF validation vs RDKit**: **230/230 molecules match RDKit to <0.01 kcal/mol** (atom types, charges, energies — `scripts/benchmark_mmff.py`, a regression gate)
-- **L-BFGS optimizer**: Correct two-loop recursion, H0 scaling, Armijo line search with quadratic-interpolation backtracking and energy-only trials; unit initial steps for L-BFGS directions (Nocedal) with a pathological-direction displacement cap; energy-resolution-floor early stop (f64-limited surfaces report `converged` with an explanatory message). Optional delocalized internal coordinates (`OptimizationOptions.coordinates = "internal"`, Baker/geomeTRIC-style: bond/angle/dihedral/out-of-plane primitives, Wilson G eigendecomposition, Baker back-transform) — fewer iterations on flexible molecules at higher per-iteration cost; Cartesian is the default
-- **ETKDG v3**: Distance bounds (bond + angle 1-3 + torsion 1-4 + ring closure), triangle smoothing, 4D stochastic embedding, eigenvector 4D-to-3D projection, FF-based refinement with L-BFGS, multi-conformer selection; multi-seed validated vs RDKit (`scripts/validate_etkdg.py`)
-- **Molecular dynamics**: Allocation-free force evaluation, velocity-Verlet (NVE) + BAOAB Langevin (NVT) integrators, Maxwell–Boltzmann initialization, deterministic seeded PRNG; live-steppable `MDLive` WASM handle for in-browser trajectory animation
-- **Metadynamics**: Well-tempered Gaussian bias on dihedral/distance collective variables, free-energy surface reconstruction; live-steppable `MetaDLive` WASM handle (CV/hills/FES queried between animation frames)
-- **GBSA implicit solvation**: Onufriev–Bashford–Case (OBC2) Born radii via exact HCT desolvation integrals, analytical gradient, LCPO surface-area (SA) nonpolar term
-- **WASM API**: Full JavaScript interface — optimization, embedding, MD, and metadynamics with trajectory/FES results
-- **Parameter loading**: MMFF parameters embedded from JSON at compile time with fallback lookup
-- **Testing**: 275 tests including numerical gradient verification, end-to-end optimization, ring detection, V3000 parsing, property-based invariants, atom type assignment, NVE/NVT stability, and edge cases
+### Browser support
 
-## Validation
-
-The library is validated against RDKit (dev-time tooling only; no Python
-runtime dependency in the library). Reference values are reproduced
-identically by RDKit 2025.09.3 and 2026.03.6 (the full MMFF suite was
-re-verified at 90/90 molecules, 0.00000 kcal/mol, after the 2026.03
-upgrade; the app's vendored RDKit-js was upgraded from 2025.03.4 to
-2026.03.6 in step):
-
-- **MMFF**: `python3 scripts/benchmark_mmff.py --no-speed` — 230/230 molecules
-  match RDKit atom types, charges, and energies to <0.01 kcal/mol. This is the
-  regression gate; exit code 0 required. A further 97-molecule parity suite
-  locks single-point energies at 0.00000 kcal/mol (90 neutral + 7 charged —
-  acetate, ammonium, glycine zwitterion, sulfate, guanidinium, nitrate,
-  dihydrogen phosphate; thiocyanate skipped: RDKit's own reference there is a
-  silently empty force field). Metal complexes are refused exactly like
-  RDKit's MMFF (typing NULL), never garbage-typed.
-- **GFN-FF**: 32/32 organic molecules within 4e-6 Eh of xtb 6.7.1 (per-term
-  energies, bonds/angles/torsions/rep/es/disp/HB/XB); 5 metal coordination
-  complexes (Ni(CO)4 exact, eta5-ferrocene 7e-4, Co(NH3)6 3+ 2e-3,
-  Fe(CN)6 3- 1.8e-2, Zn(NH3)4 2+ 5.5e-2 Eh).
-- **ETKDG**: `python3 scripts/gen_etkdg_ref.py` + `scripts/validate_etkdg.py` —
-  multi-seed embedding harness vs RDKit conformers. End-to-end ensemble parity
-  (embed + MMFF optimize, 30 seeds x 6 molecules): 6/6 global minima
-  bit-identical to RDKit, 4/6 full ensemble statistics identical.
-- See `docs/atom-type-coverage.md`, `docs/validation-energy-analysis.md` and
-  `docs/gfnff-porting-notes.md`.
-
-## Build Instructions
+WebAssembly with `simd128`: **Safari 16.4+, Chrome 91+, Firefox 89+.**
 
 ### Prerequisites
 
-1. **Install Rust**:
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-
-2. **Add WASM target and install wasm-pack**:
-   ```bash
-   rustup target add wasm32-unknown-unknown
-   npm install    # installs the pinned wasm-pack devDependency (see package.json)
-   ```
-
-### Build
-
-**Option 1: npm + wasm-pack (recommended)**
+- [Rust](https://rustup.rs/) stable + `wasm32-unknown-unknown` target
+- [wasm-pack] — pinned via `npm install` (devDependency)
+- Node.js ≥ 18 (only for the pinned toolchain)
+- Python 3 (only as a static file server)
 
 ```bash
-npm run build   # wasm-pack build --target web --out-dir pkg
+git clone https://github.com/Ruibin-Liu/WebMM.git
+cd WebMM
+rustup target add wasm32-unknown-unknown
+npm install
 ```
 
-**Option 2: Manual (uses wasm-bindgen-cli, must match the wasm-bindgen version in Cargo.toml)**
+### Option A — the workbench app
 
 ```bash
-# Build native library
+npm run build                      # wasm-pack -> pkg/
+python3 -m http.server 8000        # from the repo root
+# open http://localhost:8000/app/index.html
+```
+
+Draw a molecule or paste SMILES / a multi-record SDF; the batch mode
+enumerates, embeds, optimizes and exports 3D SDF + CSV.
+
+### Option B — the engine demo / playground
+
+```bash
+npm run build
+cp site/index.html site/playground.html pkg/
+python3 -m http.server 8000 --directory pkg
+# open http://localhost:8000/        (demo)
+#      http://localhost:8000/playground.html   (interactive physics toy)
+```
+
+The playground adds live MD with atom dragging, dihedral twisting, force
+visualization, and metadynamics with a live FES.
+
+> Serve over HTTP — browsers block WASM from `file://` URLs. The 3D viewer
+> (3Dmol.js) loads from a CDN; the engine itself makes no network calls.
+
+### Option C — native Rust library
+
+```bash
 cargo build --release
-
-# Build WASM library
-cargo build --release --target wasm32-unknown-unknown
-wasm-bindgen --out-dir pkg --target web target/wasm32-unknown-unknown/release/webmm.wasm
+cargo test --release        # 281 tests
 ```
 
-The WASM release profile enables `wasm32-simd128` via `.cargo/config.toml`
-(scoped to the wasm target — native builds/tests are unaffected). Safari
-16.4+ / Chrome 91+ / Firefox 89+ required.
+---
 
-### Serve the demo locally
+## Usage (JavaScript)
 
-The WASM bindings are written to the gitignored `pkg/` directory, while the
-demo landing page is the committed `site/index.html`. To serve the demo,
-build the WASM, stage the landing page into `pkg/`, then serve `pkg/`:
+Real exports from `pkg/webmm.d.ts` — all molecule input is SDF/MOL text
+(V2000; SMILES input is an app-layer concern via JSME + RDKit-js):
 
-```bash
-npm run build                              # wasm-pack build --target web --out-dir pkg
-cp site/index.html pkg/index.html          # stage the landing page
-cp site/playground.html pkg/playground.html  # stage the playground page
-python3 -m http.server 8000 --directory pkg   # serve on http://localhost:8000
+```js
+import init, {
+  OptimizationOptions, optimize_from_sdf,
+  generate_optimized_conformers_wasm,   // batch: embed -> attachH -> optimize
+  run_md_from_sdf, run_metadynamics_from_sdf,
+  energy_terms_wasm,
+} from "./pkg/webmm.js";
+
+await init();
+
+// 1. Optimize (MMFF94s; the engine ETKDG-embeds 2D input first)
+const opt = new OptimizationOptions();
+opt.mmff_variant = "MMFF94s";
+opt.convergence.max_iterations = 1000;
+const r = optimize_from_sdf(sdfText, opt);
+if (r.get_converged()) console.log(r.get_final_energy(), r.get_iterations());
+
+// 2. Conformer ensemble in one call (30 conformers, MMFF94s, 100-iter protocol)
+const batch = generate_optimized_conformers_wasm(sdfText, 30, 42n, "MMFF94s", 100);
+const energies = batch.get_energies();       // Float64Array, kcal/mol
+const coords   = batch.get_coordinates();    // flat [conf][atom][xyz]
+
+// 3. MD (BAOAB Langevin NVT when friction_per_ps > 0, else NVE)
+const md = run_md_from_sdf(sdfText, mdOptions /* see below */);
+// 4. Metadynamics (dihedral CV over 4 atoms, well-tempered)
+const meta = run_metadynamics_from_sdf(sdfText, metaOptions /* see below */);
 ```
 
-Then open **http://localhost:8000** in your browser. (This mirrors what the
-GitHub Pages workflow does — see `.github/workflows/pages.yml`.)
+Key option tables (`MDOptions` / `MetaDOptions`): `dt_fs`, `n_steps`,
+`temperature_k`, `friction_per_ps`, `seed`, `snapshot_interval`; metad adds
+`cv_type` (`"dihedral"` | `"distance"`), `cv_atoms`, `hill_height`,
+`hill_width`, `deposit_interval`, `bias_factor`, `fes_grid_points`.
 
-The **playground** (`/playground.html`) is an interactive physics toy on top of
-the live MD engine: drag atoms with the pointer (the force field fights back),
-twist bonds to rotate dihedrals, crank the temperature, watch per-atom force
-glow, and run metadynamics with a live free-energy surface. It uses the
-`MDLive` perturbation exports (`set_atom_position` / `rescale_temperature` /
+**Live handles** for animation: `new MDLive(sdf, opts)` / `new MetaDLive(...)`
+— `step(n)` between frames, read `coords()`, `temperature()`, and (metad)
+`last_cv()`, `hill_count()`, `fes_s(n)`. `MDLive` also supports interactive
+perturbation (`set_atom_position`, `rescale_temperature`,
 `force_magnitudes`).
 
-> **Note:** the demo loads `3Dmol.js` (the 3D viewer) from a CDN, so you need
-> internet access for the viewer. The MMFF/ETKDG/MD/metadynamics engines run
-> fully in-browser via WASM — no network calls.
+Full field-level API reference: see `pkg/webmm.d.ts` after a build.
 
-#### Using the demo
+---
 
-- **Molecule buttons** — load any built-in RDKit-generated 3D structure
-  (caffeine, aspirin, benzene, …) into the viewer.
-- **Render from input** — re-render whatever SDF is in the textarea.
-- **🌐 Embed 3D (ETKDG)** — regenerate coordinates from scratch using the
-  ETKDG v3 embedding algorithm.
-- **⚙ Optimize (MMFF94s)** — run the full MMFF94s minimization. The readout
-  panel shows final energy (kcal/mol), iteration count, atom count, and time.
-- **🔥 Run Molecular Dynamics** — gas-phase MMFF MD; NVT (BAOAB Langevin) with
-  the thermostat on, NVE otherwise. Trajectory playback with energy/temperature
-  charts.
-- **🔬 Run Metadynamics** — well-tempered metadynamics on a dihedral or
-  distance collective variable, with a free-energy surface (FES) plot plus
-  deposited-hill markers and CV-over-time overlay.
-- **Viewer style buttons** — switch between Stick / Ball+Stick / Space Fill /
-  Wireframe.
+## Validation
 
-#### Stopping the server
+All references reproduced identically by RDKit 2025.09.3 / 2026.03.6 and
+xtb 6.7.1 (dev-time tooling only).
+
+| Check | Reference | Result |
+|---|---|---|
+| MMFF94s atom typing, charges, energies | RDKit | **230/230 molecules < 0.01 kcal/mol** (regression gate: `scripts/benchmark_mmff.py`) |
+| MMFF94s single-point locks | RDKit | 97 molecules at 0.00000 kcal/mol (90 neutral + 7 charged) |
+| GFN-FF per-term energies | xtb | 32/32 organics **< 4×10⁻⁶ Eh**; 5 metal complexes (Ni(CO)₄ exact … Zn(NH₃)₄²⁺ 5.5×10⁻² Eh) |
+| ETKDG + MMFF ensembles (30 seeds × 6 molecules) | RDKit | 6/6 global minima bit-identical |
+| Gradient audit (analytic vs FD, perturbed geometries) | internal | 230-molecule corpus + GFN-FF fixtures: 0 failures (worst 2×10⁻⁵ rel) |
 
 ```bash
-lsof -ti tcp:8000 | xargs kill
+cargo test --release            # the full suite
+python3 scripts/benchmark_mmff.py --no-speed    # the RDKit gate (needs RDKit)
 ```
 
-#### Rebuilding after edits
+Details: `docs/atom-type-coverage.md`, `docs/validation-energy-analysis.md`,
+`docs/gfnff-porting-notes.md`.
 
-After changing Rust source or `site/index.html`, re-run the three commands
-above (build → stage → serve).
+## Performance (measured, in-browser)
 
-### Test
+WASM vs **native** RDKit C++ / xtb on an M-series laptop (2026-09):
+
+| Task (ibuprofen, 33 atoms) | WebMM WASM | Reference (native) |
+|---|---|---|
+| MMFF optimization | 7.7 ms | RDKit 9.9 ms |
+| Conformer pipeline (per conformer) | ~14 ms | RDKit ~17 ms |
+| ETKDG embedding | ~11 ms | RDKit ~12 ms |
+| MD step (MMFF, NVT) | ~27 µs (≈ 37k steps/s) | — |
+
+Metadynamics per-step cost is flat in the number of deposited hills
+(4σ-truncated bias); long runs do not degrade.
+
+## Limitations
+
+- **Size.** MD is practical for small molecules (tens of atoms; ~37k steps/s
+  at 33 atoms MMFF, ~4k steps/s GFN-FF). Not for proteins or production
+  sampling.
+- **Force-field coverage.** MMFF94 parameterizes main-group organic
+  chemistry; unusual bonding is out of scope. GFN-FF extends coverage
+  (including many metal complexes) with reduced accuracy — treat results
+  with caution.
+- **Implicit solvent only.** GBSA is an approximation, not a substitute for
+  explicit solvent.
+- **Physics scope.** Classical force fields; no QM, no PBC, no reactions.
+- **Maturity.** Aimed at education, quick exploration, and prototyping.
+  Validate important results with established packages.
+
+---
+
+<details>
+<summary><b>Project structure</b></summary>
+
+```
+WebMM/
+├── src/         Rust core (molecule/, mmff/, gfnff/, etkdg/, optimizer/, md/, metad/, solvation/)
+├── pkg/         wasm-pack output (generated, gitignored)
+├── site/        demo + playground pages
+├── app/         ligand workbench
+├── tests/       fixtures + reference data
+├── scripts/     Python validation tooling (RDKit/xtb refs; dev-time only)
+├── examples/    native benchmarks & audits (bench_mmff, grad_audit, md_audit, …)
+└── docs/        validation & porting notes
+```
+
+</details>
+
+## Contributing
+
+Issues and pull requests welcome. Before submitting:
 
 ```bash
-cargo test          # 275 tests
-cargo clippy --all-targets   # must stay at 0 warnings
+cargo fmt && cargo clippy --all-targets && cargo test
 ```
 
-## WASM API
+(`clippy` must stay at 0 warnings; the RDKit benchmark gate must pass when
+MMFF code changes.)
 
-### Browser Usage
+## References
 
-```javascript
-import { optimize_from_sdf, run_md_from_sdf, run_metadynamics_from_sdf,
-         OptimizationOptions, MDOptions, MetaDOptions, MMFFVariant } from './webmm.js';
+1. Halgren, T. A. Merck molecular force field. I–V. *J. Comput. Chem.* **1996**, *17*, 490–641.
+2. Halgren, T. A. MMFF VI. *J. Comput. Chem.* **1999**, *20*, 720–729.
+3. Wang, W. et al. ETKDGv3. *J. Chem. Inf. Model.* **2020**, *61*, 6598–6607.
+4. Spicher, S.; Grimme, S. Robust atomistic modeling of materials, organometallic, and biochemical systems. *Angew. Chem. Int. Ed.* **2020**, *59*, 15665–15673. (GFN-FF)
+5. Onufriev, A.; Bashford, D.; Case, D. A. *Proteins* **2004**, *55*, 383–394. (GBSA OBC)
+6. Leimkuhler, B.; Matthews, C. *Appl. Math. Res. Express* **2013**, 34–56. (BAOAB)
+7. Laio, A.; Parrinello, M. *PNAS* **2002**, *99*, 12562–12566. (Metadynamics)
+8. Liu, D. C.; Nocedal, J. *Math. Program.* **1989**, *45*, 503–528. (L-BFGS)
 
-// Optimize a molecule (MMFF94s minimization)
-const options = new OptimizationOptions();
-options.convergence.max_force = 0.01;
-options.convergence.rms_force = 0.001;
-options.convergence.energy_change = 1e-6;
-options.convergence.max_iterations = 1000;
-options.mmff_variant = 'MMFF94s';
+## Citation
 
-const result = optimize_from_sdf(sdfContent, options);
-
-if (result.get_converged()) {
-    console.log('Final energy:', result.get_final_energy());
-    console.log('Iterations:', result.get_iterations());
-
-    // Access optimized coordinates
-    for (let i = 0; i < result.n_atoms; i++) {
-        const x = result.get_coord(i, 0);
-        const y = result.get_coord(i, 1);
-        const z = result.get_coord(i, 2);
-    }
+```bibtex
+@software{webmm,
+  author = {Liu, Ruibin},
+  title  = {WebMM: Molecular mechanics in the browser},
+  url    = {https://github.com/Ruibin-Liu/WebMM},
+  year   = {2026}
 }
 ```
 
-### API Reference
-
-#### `optimize_from_sdf(sdfContent, options) -> OptimizationResult`
-
-Optimizes a 3D molecular structure from SDF/MOL file content. Uses the SDF
-coordinates directly when they are already 3D, otherwise ETKDG-embeds (seed 42)
-first.
-`optimize_from_sdf_direct(sdfContent, options)` skips ETKDG entirely and
-optimizes the SDF coordinates as-is (2D SDFs are optimized from the flat
-z=0 plane). `generate_initial_coordinates_wasm(sdfContent) -> ETKDGResult` runs
-ETKDG v3 embedding only (returns coordinates without MMFF minimization).
-
-#### `run_md_from_sdf(sdfContent, options) -> MDResult`
-
-Runs gas-phase MMFF molecular dynamics and returns a sampled trajectory
-(NVT BAOAB Langevin if `friction_per_ps > 0`, else NVE).
-
-#### `run_metadynamics_from_sdf(sdfContent, options) -> MetaDResult`
-
-Runs well-tempered metadynamics and returns the trajectory, CV trace, hill
-centers, and a reconstructed free-energy surface.
-
-#### Live handles: `MDLive` / `MetaDLive` (stateful stepping)
-
-For live trajectory animation (the demo's MD / metadynamics buttons), construct
-`new MDLive(sdf, options)` / `new MetaDLive(sdf, options)`, then advance the
-simulation in small chunks — `step(nSteps)` — and read
-`coords()`, `potential_energy()`, `temperature()`, `time_fs()` between
-animation frames. `MetaDLive` additionally exposes `last_cv()`, `hill_count()`,
-`hill_centers()`, and `fes_s(gridPoints)` / `fes_f(gridPoints)` for the
-free-energy surface. Stepping is deterministic and identical to the
-corresponding batch API.
-
-`MDLive` also exposes interactive-perturbation methods (for the playground
-page): `set_atom_position(i, x, y, z)` (kinematic dragging — sets the
-position, zeroes the atom's velocity, and refreshes the cached energy/forces),
-`rescale_temperature(t)` (exact instantaneous velocity rescale + thermostat
-retarget; re-initializes from Maxwell–Boltzmann at ~0 K; `t <= 0` freezes),
-and `force_magnitudes()` (per-atom |F| in kcal/mol/Å from the last force
-evaluation).
-
-#### `OptimizationResult`
-
-| Field / Method | Type | Description |
-|---|---|---|
-| `n_atoms` | `usize` | Number of atoms |
-| `final_energy` | `f64` | Final MMFF energy (kcal/mol) |
-| `get_converged()` | `bool` | Whether optimization converged |
-| `get_iterations()` | `usize` | Number of iterations |
-| `get_message()` | `String` | Status message |
-| `get_coord(atom, dim)` | `f64` | Coordinate (atom 0-based, dim: 0=x, 1=y, 2=z) |
-| `get_coordinates()` | `Vec<f64>` | Flat coordinate array [x0,y0,z0,x1,...] |
-| `get_success()` / `get_error()` | `bool` / `String` | Failure reporting |
-
-#### `OptimizationOptions`
-
-| Field | Default | Description |
-|---|---|---|
-| `mmff_variant` | `"MMFF94s"` | `"MMFF94"` or `"MMFF94s"` |
-| `convergence.max_force` | `0.01` | Max force component (kcal/mol/A) |
-| `convergence.rms_force` | `0.001` | RMS force |
-| `convergence.energy_change` | `1e-6` | Energy change threshold |
-| `convergence.max_iterations` | `1000` | Max iterations |
-
-#### `MDOptions` / `MetaDOptions`
-
-| Field | Description |
-|---|---|
-| `mmff_variant` | `"MMFF94"` or `"MMFF94s"` |
-| `dt_fs` | Integration timestep in fs |
-| `n_steps` | Total integration steps |
-| `temperature_k` | Target temperature (K) |
-| `friction_per_ps` | Langevin friction (1/ps); 0 → NVE |
-| `seed` | PRNG seed (deterministic trajectories) |
-| `snapshot_interval` | Frames per recorded snapshot |
-| `cv_type` / `cv_atoms` (metad) | `"dihedral"` or `"distance"` CV over atom indices |
-| `hill_height` / `hill_width` / `deposit_interval` / `bias_factor` (metad) | Well-tempered hill parameters |
-| `fes_grid_points` (metad) | FES grid resolution |
-
-#### `MDResult`
-
-| Field / Method | Type | Description |
-|---|---|---|
-| `n_atoms` / `n_frames` | `usize` | Trajectory shape |
-| `coordinates()` | `Vec<f64>` | Flattened frames [frame, atom, xyz] |
-| `energies()` / `temperatures()` / `times_fs()` | `Vec<f64>` | Per-frame properties |
-| `final_energy()` / `final_temperature()` | `f64` | Final state |
-| `get_coord(frame, atom, axis)` | `f64` | Single coordinate access |
-| `success()` / `error()` | `bool` / `String` | Failure reporting |
-
-`MetaDResult` additionally exposes `cv_values()`, `n_hills()`, `fes_s()`,
-and `fes_f()` (CV trace and reconstructed free-energy surface).
-
-## Resources
-
-- **MMFF94 paper**: Halgren, T.A. J. Comput. Chem. 17, 490-519 (1996)
-- **ETKDG v3 paper**: Wang et al. J. Chem. Inf. Model. 61, 6598-6607 (2020)
-- **RDKit MMFF**: https://github.com/rdkit/rdkit/tree/master/Code/GraphMol/ForceFieldHelpers/MMFF
-- **Validation notes**: `docs/atom-type-coverage.md`, `docs/validation-energy-analysis.md`
-
 ## License
 
-TBD
+<!-- TODO: DECISION NEEDED — no license currently means all rights reserved;
+     nobody can legally use, modify, or redistribute the code. MIT or
+     Apache-2.0 are the usual choices for Rust/WASM projects. -->
+
+Not yet specified. Until a license is added, all rights are reserved by the
+author.
