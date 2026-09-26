@@ -2051,6 +2051,22 @@ impl MMFFForceField {
         bd
     }
 
+    /// Per-bond diagnostic: atoms + (kb, r0).
+    pub fn bond_terms_preview(&self) -> Vec<(usize, usize, f64, f64)> {
+        self.bond_terms
+            .iter()
+            .map(|&(i, j, p)| (i, j, p.k_bond, p.r0))
+            .collect()
+    }
+
+    /// Per-angle diagnostic: atoms + (ka, theta0_deg).
+    pub fn angle_terms_preview(&self) -> Vec<(usize, usize, usize, f64, f64)> {
+        self.angle_terms
+            .iter()
+            .map(|&(i, j, k, p)| (i, j, k, p.k_theta, p.theta0))
+            .collect()
+    }
+
     /// Per-torsion diagnostic: atoms + assigned V1/V2/V3.
     pub fn torsion_terms_preview(
         &self,

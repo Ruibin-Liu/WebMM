@@ -684,8 +684,11 @@ fn lookup_bond_params_exact(
         // RDKit's 3-ring-specific value. Found via full-precision param audit.
         (MMFFAtomType::CR3R, MMFFAtomType::P_3, BondType::Single)
         | (MMFFAtomType::P_3, MMFFAtomType::CR3R, BondType::Single) => Some(BondParams {
-            k_bond: 2.7618,
-            r0: 1.8331,
+            // RDKit full-precision rule values (was truncated to 4 decimals —
+            // the truncation fed the angle-ka chain and left phosphirane
+            // +0.0074 kcal/mol; v1.3.0 audit)
+            k_bond: 2.7618357176982307,
+            r0: 1.8330689880385966,
             cb: 1.0,
         }),
         (MMFFAtomType::C_2, MMFFAtomType::CR3R, BondType::Single)

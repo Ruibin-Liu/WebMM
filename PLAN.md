@@ -48,5 +48,20 @@ vdW/torsion/oop/融合键合、ETKDG hb/dihedral/improper/linear)+
 - **逐项根因法**:SetMMFF*Term(bool) 差分得 RDKit 逐项能量 →
   两离群 100% 是扭转项;GetMMFFTorsionParams 逐四元组对照定位
   参数来源;数值复现(sqrt(2.12·2.40)/6 = 0.3759 精确命中)
-- phosphirane 残差 +0.0074(键/角/StBn 打印级参数漂移,容差内,
-  文档化);ferricyanide kb/pibo 项未展开(遗留)
+- **phosphirane 精确修复(追加)**:根因两层——①手工 C-P 键行被
+  截断到 4 位小数(2.7618/1.8331 vs RDKit 全精度 2.7618357/
+  1.8330689),r0 顺带污染角 ka 链;②四个 P 角表行(环×2 + 非
+  环×2)ka 为 3 位小数表值,而 RDKit 表缺这些行→经验规则全精度
+  计算(ka=0 标记走既有"规则 ka + 表 θ0"路径)。修后逐参数
+  逐位一致(ka 0.144579/0.142591/0.660651/0.426428 = RDKit 精确),
+  **phosphirane 28.39248 = RDKit 28.3925,cyclobutene 9.31478 =
+  9.3148,benchmark 最差残差降至 +0.0011(thietane,既有)**
+- **ferricyanide kb/pibo(链路完全映射,修复延期)**:xtb 的
+  gfnff_charges 逐配体响应几何不对称(Fe-C 1.8617/1.8631);
+  我们 setup EEQ(键数 CN + Floyd 拓扑距离)完全对称(Fe +0.32
+  vs xtb +0.19)→ Hückel 对角线偏差 → pibo 0.971 vs 0.959 →
+  kb → bond −0.019;es +0.001 同源。数值验证:xtb setup qa ≈
+  我们 runtime 式求解(二程参数 + erf-CN + 实际距离,0.1908 ≈
+  0.1899)。但 setup 重解触发反馈环(topo_q → 键检测 → 二程
+  参数 → qa)破坏 21 个测试(nicarbonyl 0.000000→0.0044)——
+  正确修复需移植 xtb setup-qloop 的精确语义,独立立项
