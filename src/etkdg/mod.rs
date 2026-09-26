@@ -96,6 +96,32 @@ mod instr {
             }
         });
     }
+    // v1.2.7 per-term E+G timing accumulators (ns)
+    thread_local! {
+        pub static TERMS: RefCell<std::collections::BTreeMap<&'static str, (u64, u128)>> =
+            const { RefCell::new(std::collections::BTreeMap::new()) };
+    }
+    /// None when instrumentation is off — the hot-loop call sites pay one
+    /// branch, not a clock read.
+    pub fn clock() -> Option<std::time::Instant> {
+        if enabled() {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        }
+    }
+    pub fn tick(name: &'static str, t0: Option<std::time::Instant>) {
+        if let Some(t0) = t0 {
+            TERMS.with(|m| {
+                m.borrow_mut().entry(name).or_insert((0, 0)).1 += t0.elapsed().as_nanos();
+            });
+        }
+    }
+    pub fn count(name: &'static str) {
+        TERMS.with(|m| {
+            m.borrow_mut().entry(name).or_insert((0, 0)).0 += 1;
+        });
+    }
     pub fn flush() {
         if !enabled() {
             return;
@@ -107,6 +133,18 @@ mod instr {
                 }
             }
         });
+        let total: u128 = TERMS.with(|m| m.borrow().values().map(|(_, t)| *t).sum());
+        if total > 0 {
+            eprintln!("  [terms]");
+            TERMS.with(|m| {
+                for (k, (c, t)) in m.borrow().iter() {
+                    eprintln!(
+                        "    {k:<16} n={c:6} total={t:>10} us  ({:4.1}%)",
+                        100.0 * (*t as f64) / total as f64
+                    );
+                }
+            });
+        }
     }
 }
 
@@ -3544,24 +3582,24 @@ fn bond_angle(coords: &[[f64; 3]], a: usize, b: usize, c: usize) -> f64 {
 /// from the C=O acceptors): e.g. xanthine's N-H...O=C angles ~23 deg instead
 /// of ~160 deg, and the MMFF electrostatics/H-bonding pattern is wrong
 /// (RDKit's conformers have the N-H's pointing at the acceptors).
-fn h_bond_energy(coords: &[[f64; 3]], mol: &Molecule) -> f64 {
-    const K_HB: f64 = 4.0;
-    let mut energy = 0.0;
+/// Precomputed geometry-independent H-bond triples (donor, H, acceptor).
+/// The topology scan (donor/acceptor typing, carbonyl checks, 1-2/1-3
+/// exclusions) dominated the H-bond gradient: the old FD re-ran it 199x
+/// per gradient call (v1.2.7 audit: 51% of embed time).
+fn precompute_hb_triples(mol: &Molecule) -> Vec<(usize, usize, usize)> {
+    let mut triples = Vec::new();
     for (d_idx, d) in mol.atoms.iter().enumerate() {
         if d.symbol != "N" && d.symbol != "O" {
             continue;
         }
-        let mut donors: Vec<usize> = Vec::new();
-        for &h in &mol.adjacency[d_idx] {
-            if mol.atoms[h].symbol == "H" {
-                donors.push(h);
-            }
-        }
+        let donors: Vec<usize> = mol.adjacency[d_idx]
+            .iter()
+            .filter(|&&h| mol.atoms[h].symbol == "H")
+            .copied()
+            .collect();
         if donors.is_empty() {
             continue;
         }
-        // Acceptors: O double-bonded to C, or N with no H. Skip 1-2/1-3
-        // neighbors of the donor (those are not H-bond contacts).
         for (a_idx, a) in mol.atoms.iter().enumerate() {
             let is_carbonyl_o = a.symbol == "O"
                 && mol.adjacency[a_idx].iter().any(|&n| {
@@ -3590,17 +3628,83 @@ fn h_bond_energy(coords: &[[f64; 3]], mol: &Molecule) -> f64 {
                 continue;
             }
             for &h in &donors {
-                let dx = coords[h][0] - coords[a_idx][0];
-                let dy = coords[h][1] - coords[a_idx][1];
-                let dz = coords[h][2] - coords[a_idx][2];
-                let d = (dx * dx + dy * dy + dz * dz).sqrt();
-                if !(0.8..=4.0).contains(&d) {
-                    continue;
-                }
-                let theta = bond_angle(coords, d_idx, h, a_idx);
-                let ang = 1.0 + theta.cos();
-                let w = (-((d - 2.1) * (d - 2.1) / 1.0)).exp();
-                energy += K_HB * ang * w;
+                triples.push((d_idx, h, a_idx));
+            }
+        }
+    }
+    triples
+}
+
+/// E+G over precomputed triples. d = |r_h - r_a|, theta = angle donor-H-acceptor,
+/// E = K*(1+cos(theta))*exp(-(d-2.1)^2). Analytic gradient (v1.2.7).
+fn h_bond_energy_and_gradient(
+    coords: &[[f64; 3]],
+    triples: &[(usize, usize, usize)],
+    grad: Option<&mut [[f64; 3]]>,
+) -> f64 {
+    const K_HB: f64 = 4.0;
+    let mut energy = 0.0;
+    let mut grad = grad;
+    for &(d_idx, h, a_idx) in triples {
+        let dx = coords[h][0] - coords[a_idx][0];
+        let dy = coords[h][1] - coords[a_idx][1];
+        let dz = coords[h][2] - coords[a_idx][2];
+        let d2 = dx * dx + dy * dy + dz * dz;
+        let d = d2.sqrt();
+        if !(0.8..=4.0).contains(&d) {
+            continue;
+        }
+        // theta at vertex h: u = r_d - r_h, v = r_a - r_h
+        let u = [
+            coords[d_idx][0] - coords[h][0],
+            coords[d_idx][1] - coords[h][1],
+            coords[d_idx][2] - coords[h][2],
+        ];
+        let v = [
+            coords[a_idx][0] - coords[h][0],
+            coords[a_idx][1] - coords[h][1],
+            coords[a_idx][2] - coords[h][2],
+        ];
+        let m = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
+        let nv = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        if m < 1e-10 || nv < 1e-10 {
+            continue;
+        }
+        let c = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (m * nv); // cos(theta)
+        let dm = d - 2.1;
+        let w = (-(dm * dm)).exp();
+        let one_pc = 1.0 + c;
+        energy += K_HB * one_pc * w;
+        if let Some(g) = grad.as_deref_mut() {
+            // dE/dd = K*(1+c)*w' , w' = -2*dm*w
+            let ded_dd = K_HB * one_pc * (-2.0 * dm * w);
+            // unit vector a->h for d-derivative: dd/dx_h = (r_h - r_a)/d
+            let ux = dx / d;
+            let uy = dy / d;
+            let uz = dz / d;
+            // dcos/d_u = v/(m*nv) - (c/m²)·u ; dcos/d_v = u/(m*nv) - (c/nv²)·v
+            // (the u-term divides by |u|², NOT |u||v| — classic chain slip)
+            let mn_inv = 1.0 / (m * nv);
+            let m_inv2 = 1.0 / (m * m);
+            let nv_inv2 = 1.0 / (nv * nv);
+            let dcu = [
+                v[0] * mn_inv - c * u[0] * m_inv2,
+                v[1] * mn_inv - c * u[1] * m_inv2,
+                v[2] * mn_inv - c * u[2] * m_inv2,
+            ];
+            let dcv = [
+                u[0] * mn_inv - c * v[0] * nv_inv2,
+                u[1] * mn_inv - c * v[1] * nv_inv2,
+                u[2] * mn_inv - c * v[2] * nv_inv2,
+            ];
+            // dE/dcos = K*w
+            let k_w = K_HB * w;
+            // r_d: +dcu ; r_a: +dcv - ded_dd*u_hat ; r_h: -(dcu+dcv) + ded_dd*u_hat
+            for dim in 0..3 {
+                let ud = [ux, uy, uz][dim];
+                g[d_idx][dim] += k_w * dcu[dim];
+                g[a_idx][dim] += k_w * dcv[dim] - ded_dd * ud;
+                g[h][dim] += -k_w * (dcu[dim] + dcv[dim]) + ded_dd * ud;
             }
         }
     }
@@ -4576,6 +4680,7 @@ fn etkdg_energy(
         angles_13,
         mol,
     );
+    let triples = precompute_hb_triples(mol);
     etkdg_energy_with_pairs(
         coords,
         pairs.as_slice(),
@@ -4587,6 +4692,7 @@ fn etkdg_energy(
         bonds_12,
         angles_13,
         mol,
+        triples.as_slice(),
     )
 }
 
@@ -4601,7 +4707,9 @@ fn etkdg_energy_with_pairs(
     bonds_12: &[(usize, usize)],
     angles_13: &[(usize, usize, usize)],
     mol: &Molecule,
+    hb_triples: &[(usize, usize, usize)],
 ) -> f64 {
+    let t_e = instr::clock();
     let mut energy = 0.0;
     for lp in lr_pairs {
         let (i, j, lo, hi) = (lp.i, lp.j, lp.lo, lp.hi);
@@ -4613,6 +4721,8 @@ fn etkdg_energy_with_pairs(
         let hi_viol = (d - hi).max(0.0);
         energy += LONG_RANGE_FORCE * (lo_viol * lo_viol + hi_viol * hi_viol);
     }
+    instr::tick("e_lr", t_e);
+    let t_e = instr::clock();
     // 1-2 constraints: lock bond lengths to bounds-matrix target
     const K_12: f64 = 100.0;
     for &(i, j) in bonds_12 {
@@ -4644,6 +4754,8 @@ fn etkdg_energy_with_pairs(
         let hi_viol = (d - hi).max(0.0);
         energy += K_12 * (lo_viol * lo_viol + hi_viol * hi_viol);
     }
+    instr::tick("e_k12", t_e);
+    let t_e = instr::clock();
     for cc in chiral_centers {
         let vol = chiral_volume(
             coords,
@@ -4663,9 +4775,16 @@ fn etkdg_energy_with_pairs(
             energy += 10.0;
         }
     }
+    instr::tick("e_chiral", t_e);
+    let t_e = instr::clock();
     energy += planarity_energy(coords, pc);
-    energy += h_bond_energy(coords, mol);
+    instr::tick("e_planar", t_e);
+    let t_e = instr::clock();
+    energy += h_bond_energy_and_gradient(coords, hb_triples, None);
+    instr::tick("e_hb", t_e);
+    let t_e = instr::clock();
     energy += torsion_pref_energy(coords, torsion_prefs);
+    instr::tick("e_tp", t_e);
     energy
 }
 
@@ -4677,30 +4796,73 @@ fn dihedral_gradient_contrib(
     l: usize,
     dedphi: f64,
 ) -> ([f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
-    // Central-difference gradient of dihedral_angle. The previous closed-form had
-    // a sign/convention mismatch vs dihedral_angle (see dbg_dihedral_grad_fd);
-    // numerical is correct and cheap (dihedral is O(1), only the 4 atoms involved).
-    let mut q = [coords[i], coords[j], coords[k], coords[l]];
-    let phi_of = |p: &[[f64; 3]; 4]| dihedral_angle4(p[0], p[1], p[2], p[3]);
-    let eps = 1e-6;
-    let two_pi = 2.0 * std::f64::consts::PI;
+    // Analytic gradient (v1.2.7): exact chain rule through dihedral_angle's
+    // cos(phi) = (n1·n2)/(|n1||n2|) (n1 = b1×b2, n2 = b2×b3 with b1 = p1-p0,
+    // b2 = p2-p1, b3 = p3-p2), then dphi = -dc/sin(phi). Replaces 12
+    // central-difference dihedral evaluations (2 atan2 each) per call — the
+    // audit showed the FD blocks at 80% of embed gradient time.
+    // At sin(phi) -> 0 all the ETKDG torsion energies have dedphi -> 0 in
+    // proportion (Fourier forms: sin(m*phi)), so the combined coefficient
+    // (-dedphi/sin(phi)) stays finite; below 1e-12 the term is numerically
+    // dead and skipped.
+    let b1 = [
+        coords[j][0] - coords[i][0],
+        coords[j][1] - coords[i][1],
+        coords[j][2] - coords[i][2],
+    ];
+    let b2 = [
+        coords[k][0] - coords[j][0],
+        coords[k][1] - coords[j][1],
+        coords[k][2] - coords[j][2],
+    ];
+    let b3 = [
+        coords[l][0] - coords[k][0],
+        coords[l][1] - coords[k][1],
+        coords[l][2] - coords[k][2],
+    ];
+    let n1 = cross_product(b1, b2);
+    let n2 = cross_product(b2, b3);
+    let n1n = (n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2]).sqrt();
+    let n2n = (n2[0] * n2[0] + n2[1] * n2[1] + n2[2] * n2[2]).sqrt();
+    if n1n < 1e-10 || n2n < 1e-10 {
+        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let phi = dihedral_angle4(coords[i], coords[j], coords[k], coords[l]);
+    let s = phi.sin();
+    if s.abs() < 1e-12 {
+        return ([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let coef = -dedphi / s;
+    let c = phi.cos(); // = (n1·n2)/(n1n*n2n) by construction of atan2(x=n1·n2)
+    let n1n_sq = n1n * n1n;
+    let n2n_sq = n2n * n2n;
+    let inv_nn = 1.0 / (n1n * n2n);
+    // e_d × v helper
+    let cb = |d: usize, v: [f64; 3]| -> [f64; 3] {
+        match d {
+            0 => [0.0, -v[2], v[1]],
+            1 => [v[2], 0.0, -v[0]],
+            _ => [-v[1], v[0], 0.0],
+        }
+    };
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let neg = |v: [f64; 3]| [-v[0], -v[1], -v[2]];
+    let add = |a: [f64; 3], b: [f64; 3]| [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    // per-atom Jacobians (J1 = dn1/dx, J2 = dn2/dx):
+    //   p0: (-cb(b2), 0)  p1: (cb(b2+b1), -cb(b3))  p2: (-cb(b1), cb(b3+b2))  p3: (0, -cb(b2))
     let mut g = [[0.0f64; 3]; 4];
-    for a in 0..4 {
+    let atoms = [i, j, k, l];
+    for (idx, _) in atoms.iter().enumerate() {
         for d in 0..3 {
-            let orig = q[a][d];
-            q[a][d] = orig + eps;
-            let pp = phi_of(&q);
-            q[a][d] = orig - eps;
-            let pm = phi_of(&q);
-            q[a][d] = orig;
-            // unwrap atan2 branch cut near +/-pi
-            let mut diff = pp - pm;
-            if diff > std::f64::consts::PI {
-                diff -= two_pi;
-            } else if diff < -std::f64::consts::PI {
-                diff += two_pi;
-            }
-            g[a][d] = dedphi * diff / (2.0 * eps);
+            let (j1, j2) = match idx {
+                0 => (neg(cb(d, b2)), [0.0f64; 3]),
+                1 => (cb(d, add(b2, b1)), neg(cb(d, b3))),
+                2 => (neg(cb(d, b1)), cb(d, add(b3, b2))),
+                _ => ([0.0f64; 3], neg(cb(d, b2))),
+            };
+            let dc = (dot(j1, n2) + dot(n1, j2)) * inv_nn
+                - c * (dot(j1, n1) / n1n_sq + dot(j2, n2) / n2n_sq);
+            g[idx][d] = coef * dc;
         }
     }
     (g[0], g[1], g[2], g[3])
@@ -4718,8 +4880,11 @@ fn etkdg_gradient_with_pairs(
     bonds_12: &[(usize, usize)],
     angles_13: &[(usize, usize, usize)],
     mol: &Molecule,
+    hb_triples: &[(usize, usize, usize)],
     grad: &mut [[f64; 3]],
 ) {
+    let t_term = instr::clock();
+    let t_term = instr::clock();
     // Distance bounds gradient (with basin threshold + long-range force)
     for lp in lr_pairs {
         let (i, j, lo, hi) = (lp.i, lp.j, lp.lo, lp.hi);
@@ -4745,6 +4910,12 @@ fn etkdg_gradient_with_pairs(
         grad[j][2] -= gz;
     }
 
+    instr::tick("grad_lr", t_term);
+    instr::count("grad_lr");
+    let t_term = instr::clock();
+    instr::tick("grad_lr", t_term);
+    instr::count("grad_lr");
+    let t_term = instr::clock();
     // D5 (rdkit_all): 1-2/1-3 K_12 gradient terms (RDKit add12Terms/add13Terms).
     // The default long-range gradient already covers 1-2/1-3 (force 10); the
     // faithful path excludes them from long-range (D4), so add the K_12 (100)
@@ -4817,6 +4988,12 @@ fn etkdg_gradient_with_pairs(
         }
     }
 
+    instr::tick("grad_k12", t_term);
+    instr::count("grad_k12");
+    let t_term = instr::clock();
+    instr::tick("grad_k12", t_term);
+    instr::count("grad_k12");
+    let t_term = instr::clock();
     // Chiral volume gradient
     for cc in chiral_centers {
         let c = cc.neighbors[3]; // volume origin: 4th ligand (central for 3-neighbor sets, RDKit calcChiralVolume)
@@ -4866,6 +5043,9 @@ fn etkdg_gradient_with_pairs(
     }
 
     // Planarity gradient: ring torsions
+    instr::tick("grad_chiral", t_term);
+    instr::count("grad_chiral");
+    let t_term = instr::clock();
     const K_RING_TOR: f64 = 10.0;
     for &(i, j, k, l) in &pc.ring_torsions {
         let phi = dihedral_angle(coords, i, j, k, l);
@@ -4900,7 +5080,12 @@ fn etkdg_gradient_with_pairs(
         }
     }
 
-    // Planarity gradient: impropers (small-angle approx)
+    // Planarity gradient: impropers — analytic (v1.2.7; was per-atom central
+    // FD with a coords clone per dim). chi = asin(s) with
+    // s = (N·v1)/(|N||v1|), N = (v1-v2)×(v1-v3). E = k*chi^2.
+    // ds/dx via N's Jacobian: dN/dn1 = cb(b) - cb(a), dN/dn2 = -cb(b),
+    // dN/dn3 = cb(a) (cb = e_d × v); d(1/|N|) folded via projection of v1
+    // off n̂ (w = v1 - s*n̂*|v1|... see derivation in PLAN).
     for &(central, n1, n2, n3, k_imp) in &pc.impropers {
         let v1 = [
             coords[n1][0] - coords[central][0],
@@ -4919,65 +5104,120 @@ fn etkdg_gradient_with_pairs(
         ];
         let a = [v1[0] - v2[0], v1[1] - v2[1], v1[2] - v2[2]];
         let b = [v1[0] - v3[0], v1[1] - v3[1], v1[2] - v3[2]];
-        let normal = cross_product(a, b);
-        let n_norm = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+        let nrm = cross_product(a, b);
+        let n_norm = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();
         let v1_norm = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt();
         if n_norm < 1e-10 || v1_norm < 1e-10 {
             continue;
         }
-        let sin_oop =
-            (normal[0] * v1[0] + normal[1] * v1[1] + normal[2] * v1[2]) / (n_norm * v1_norm);
-        let chi = sin_oop.clamp(-1.0, 1.0).asin();
-        let dchi = 2.0 * k_imp * chi / (1.0 - sin_oop * sin_oop).max(1e-10).sqrt();
-        // Gradient of sin_oop w.r.t. v1, v2, v3 (central atom affects all three)
-        // For simplicity and robustness, use central-difference for improper gradients
-        // (typically very few impropers, so cost is negligible)
-        let eps = 1e-7;
-        for atom in [central, n1, n2, n3] {
-            for dim in 0..3 {
-                let mut cp = coords.to_vec();
-                cp[atom][dim] += eps;
-                let ep = out_of_plane_angle(&cp, central, n1, n2, n3);
-                let em = out_of_plane_angle(coords, central, n1, n2, n3);
-                grad[atom][dim] += k_imp * (ep * ep - em * em) / eps;
+        // NOTE: out_of_plane_angle computes chi = asin(|q|) with
+        // q = (v1·N)/|N| — |v1| is NOT divided out (dimensional, saturating
+        // at |q| >= 1). The gradient chain must follow exactly that.
+        let q = (nrm[0] * v1[0] + nrm[1] * v1[1] + nrm[2] * v1[2]) / n_norm;
+        let q = q.clamp(-1.0, 1.0);
+        let chi = q.abs().asin();
+        // E = k*chi^2; dE/dq = 2k*chi/sqrt(1-q^2)*sign(q) (zero at the
+        // |q| = 1 clamp, matching the old clamped FD)
+        let ds_coef = if 1.0 - q * q > 1e-12 {
+            2.0 * k_imp * chi / (1.0 - q * q).sqrt() * q.signum()
+        } else {
+            0.0
+        };
+        let nh = [nrm[0] / n_norm, nrm[1] / n_norm, nrm[2] / n_norm];
+        // q = v1·n̂; dq = dv1·n̂ + v1·d(n̂); v1·d(n̂) = (w'·dN)/|N| with
+        // w' = v1 - q*n̂ (v1 projected off n̂)
+        let w = [v1[0] - q * nh[0], v1[1] - q * nh[1], v1[2] - q * nh[2]];
+        let cb = |d: usize, v: [f64; 3]| -> [f64; 3] {
+            match d {
+                0 => [0.0, -v[2], v[1]],
+                1 => [v[2], 0.0, -v[0]],
+                _ => [-v[1], v[0], 0.0],
             }
+        };
+        let dot = |x: [f64; 3], y: [f64; 3]| x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+        let neg = |v: [f64; 3]| [-v[0], -v[1], -v[2]];
+        let sub = |x: [f64; 3], y: [f64; 3]| [x[0] - y[0], x[1] - y[1], x[2] - y[2]];
+        for d in 0..3 {
+            // J_N per atom: n1: cb(b)-cb(a); n2: -cb(b); n3: cb(a)
+            let jn1 = sub(cb(d, b), cb(d, a));
+            let jn2 = neg(cb(d, b));
+            let jn3 = cb(d, a);
+            // dq contributions: (J·w')/|N| + dv1·n̂ (dv1 = ±e_d)
+            let t_n1 = dot(jn1, w) / n_norm;
+            let t_n2 = dot(jn2, w) / n_norm;
+            let t_n3 = dot(jn3, w) / n_norm;
+            let dv1_n = nh[d];
+            grad[n1][d] += ds_coef * (t_n1 + dv1_n);
+            grad[n2][d] += ds_coef * t_n2;
+            grad[n3][d] += ds_coef * t_n3;
+            grad[central][d] += ds_coef * (-(t_n1 + t_n2 + t_n3) - dv1_n);
         }
     }
 
-    // Planarity gradient: sp1 linearity (central-difference on K_LIN*(theta-pi)^2)
+    // Planarity gradient: sp1 linearity — analytic (v1.2.7; was central FD).
+    // E = K*(theta-pi)^2, theta = acos(c), c = (u·v)/(|u||v|) with
+    // u = r_n1 - r_c, v = r_n2 - r_c. dE/dx = 2K(theta-pi)*(-1/sinθ)*∇c;
+    // the (pi-theta)/sin(theta) ratio has finite limit 1 as theta -> pi.
     const K_LIN: f64 = 50.0;
     for &(central, n1, n2) in &pc.linear_centers {
-        let eps = 1e-7;
-        for atom in [central, n1, n2] {
-            for dim in 0..3 {
-                let mut cp = coords.to_vec();
-                cp[atom][dim] += eps;
-                let t_p = bond_angle(&cp, n1, central, n2);
-                cp[atom][dim] -= 2.0 * eps;
-                let t_m = bond_angle(&cp, n1, central, n2);
-                let e_p = K_LIN * (t_p - std::f64::consts::PI) * (t_p - std::f64::consts::PI);
-                let e_m = K_LIN * (t_m - std::f64::consts::PI) * (t_m - std::f64::consts::PI);
-                grad[atom][dim] += (e_p - e_m) / (2.0 * eps);
+        let u = [
+            coords[n1][0] - coords[central][0],
+            coords[n1][1] - coords[central][1],
+            coords[n1][2] - coords[central][2],
+        ];
+        let v = [
+            coords[n2][0] - coords[central][0],
+            coords[n2][1] - coords[central][1],
+            coords[n2][2] - coords[central][2],
+        ];
+        let un = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt().max(1e-12);
+        let vn = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
+        let c = ((u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (un * vn)).clamp(-1.0, 1.0);
+        let theta = c.acos();
+        let sin_t = (1.0 - c * c).sqrt();
+        let coef = if sin_t > 1e-10 {
+            2.0 * K_LIN * (theta - std::f64::consts::PI) / (-sin_t)
+        } else {
+            // theta -> pi (desired linear): limit coef = 2K; theta -> 0: coef -> 0
+            if (theta - std::f64::consts::PI).abs() < 1e-6 {
+                2.0 * K_LIN
+            } else {
+                0.0
             }
-        }
-    }
-
-    // H-bond directionality gradient (central difference of h_bond_energy)
-    let hb_eps = 1e-6;
-    let hb_e0 = h_bond_energy(coords, mol);
-    let n = coords.len();
-    for a in 0..n {
+        };
+        // ∇c: du -> v/(un*vn) - (c/un²)·u ; dv -> u/(un*vn) - (c/vn²)·v ;
+        // central -> -(du+dv)
+        let inv = 1.0 / (un * vn);
+        let u_inv2 = 1.0 / (un * un);
+        let v_inv2 = 1.0 / (vn * vn);
+        let dcu = [
+            v[0] * inv - c * u[0] * u_inv2,
+            v[1] * inv - c * u[1] * u_inv2,
+            v[2] * inv - c * u[2] * u_inv2,
+        ];
+        let dcv = [
+            u[0] * inv - c * v[0] * v_inv2,
+            u[1] * inv - c * v[1] * v_inv2,
+            u[2] * inv - c * v[2] * v_inv2,
+        ];
         for dim in 0..3 {
-            let mut cp = coords.to_vec();
-            cp[a][dim] += hb_eps;
-            let ep = h_bond_energy(&cp, mol);
-            cp[a][dim] -= 2.0 * hb_eps;
-            let em = h_bond_energy(&cp, mol);
-            grad[a][dim] += (ep - em) / (2.0 * hb_eps);
+            grad[n1][dim] += coef * dcu[dim];
+            grad[n2][dim] += coef * dcv[dim];
+            grad[central][dim] -= coef * (dcu[dim] + dcv[dim]);
         }
     }
-    let _ = hb_e0;
 
+    instr::tick("grad_planar", t_term);
+    instr::count("grad_planar");
+    let t_term = instr::clock();
+    // H-bond gradient: analytic over precomputed triples (v1.2.7; was
+    // molecule-wide central FD — 99 coords clones + 198 h_bond_energy
+    // topology scans per gradient call, 51% of embed time)
+    h_bond_energy_and_gradient(coords, hb_triples, Some(grad));
+
+    instr::tick("grad_hbond_fd", t_term);
+    instr::count("grad_hbond_fd");
+    let t_term = instr::clock();
     // Torsion preferences gradient
     for p in torsion_prefs {
         let phi = dihedral_angle(coords, p.i, p.j, p.k, p.l);
@@ -4994,6 +5234,8 @@ fn etkdg_gradient_with_pairs(
             grad[p.l][dim] += g4[dim];
         }
     }
+    instr::tick("grad_torsion_pref", t_term);
+    instr::count("grad_torsion_pref");
 }
 
 fn minimize_etkdg(
@@ -5048,6 +5290,9 @@ fn minimize_etkdg(
         angles_13,
         mol,
     );
+    // v1.2.7: geometry-independent H-bond triples, precomputed once (the
+    // old per-eval topology scan ran 199x per gradient call via FD)
+    let hb_triples = precompute_hb_triples(mol);
     let mut c_scratch: Vec<[f64; 3]> = vec![[0.0; 3]; n];
     let mut g3_scratch: Vec<[f64; 3]> = vec![[0.0; 3]; n];
     let energy_at = |xx: &[f64], cs: &mut Vec<[f64; 3]>| -> f64 {
@@ -5065,6 +5310,7 @@ fn minimize_etkdg(
             bonds_12,
             angles_13,
             mol,
+            hb_triples.as_slice(),
         )
     };
     let gradient_at =
@@ -5086,6 +5332,7 @@ fn minimize_etkdg(
                 bonds_12,
                 angles_13,
                 mol,
+                hb_triples.as_slice(),
                 g3,
             );
             for i in 0..n {
@@ -6287,6 +6534,146 @@ mod tests {
         );
         assert!(max_err < 1e-3 && sign_mismatch == 0,
             "dihedral_gradient_contrib vs finite-difference mismatch: max_err={max_err:.2e} sign_mismatch={sign_mismatch}");
+    }
+
+    #[test]
+    fn test_improper_and_linear_gradients_match_fd() {
+        // v1.2.7 analytic improper (chi = asin(s)) and sp1-linearity
+        // (theta-pi)^2 gradients vs central FD of planarity_energy slices.
+        // Build a PlanarityConstraints with one improper and one linear center.
+        use super::*;
+        let coords: Vec<[f64; 3]> = vec![
+            [0.0, 0.0, 0.0],   // 0 central
+            [1.0, 0.1, 0.3],   // 1 n1
+            [-0.4, 1.0, -0.2], // 2 n2
+            [-0.3, -0.9, 0.4], // 3 n3
+            [2.0, 0.0, 0.0],   // 4 (sp1 left)
+            [-2.0, 0.05, 0.0], // 5 (sp1 right)
+        ];
+        let pc = PlanarityConstraints {
+            impropers: vec![(0usize, 1, 2, 3, 1.5f64)],
+            ring_torsions: vec![],
+            exocyclic_torsions: vec![],
+            aromatic_atoms: std::collections::HashSet::new(),
+            linear_centers: vec![(0usize, 4, 5)],
+        };
+        // reference gradient: FD of the energy terms only
+        let e_of = |cs: &[[f64; 3]]| -> f64 {
+            // improper: k*chi^2 with chi = out_of_plane_angle
+            let chi = out_of_plane_angle(cs, 0, 1, 2, 3);
+            let mut e = 1.5 * chi * chi;
+            // linear: K*(theta-pi)^2
+            let t = bond_angle(cs, 4, 0, 5);
+            e += 50.0 * (t - std::f64::consts::PI) * (t - std::f64::consts::PI);
+            e
+        };
+        let mut grad = vec![[0.0f64; 3]; coords.len()];
+        // call the SAME analytic code path: replicate by invoking the
+        // gradient function with empty everything else
+        etkdg_gradient_with_pairs(
+            &coords,
+            &[],
+            &DistanceBounds::new(6),
+            &[],
+            &[],
+            &pc,
+            &[],
+            &[],
+            &[],
+            &Molecule {
+                atoms: vec![],
+                bonds: vec![],
+                name: String::new(),
+                adjacency: vec![],
+            },
+            &[],
+            &mut grad,
+        );
+        let eps = 1e-7;
+        for a in 0..6usize {
+            for d in 0..3 {
+                let mut cp = coords.clone();
+                cp[a][d] += eps;
+                let ep = e_of(&cp);
+                cp[a][d] -= 2.0 * eps;
+                let em = e_of(&cp);
+                let fd = (ep - em) / (2.0 * eps);
+                let diff = (grad[a][d] - fd).abs();
+                let scale = grad[a][d].abs().max(fd.abs()).max(1e-5);
+                assert!(
+                    diff / scale < 5e-4,
+                    "atom {a} dim {d}: analytic {} vs fd {}",
+                    grad[a][d],
+                    fd
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_dihedral_gradient_analytic_matches_fd() {
+        // v1.2.7: the analytic dihedral gradient must match the old central
+        // FD (unwrapped) on generic and near-planar geometries.
+        let geoms: Vec<Vec<[f64; 3]>> = vec![
+            vec![
+                [1.5, 0.1, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.4, 1.43, 0.2],
+                [1.9, 1.3, -0.6],
+            ],
+            vec![
+                [1.1, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.05],
+            ], // near-planar
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.5, 0.2, 0.1],
+                [2.9, -0.3, 0.4],
+                [3.5, 0.9, -0.2],
+            ],
+        ];
+        for coords in geoms {
+            for &dedphi in &[0.35, -1.2] {
+                let (g0, g1, g2, g3) = dihedral_gradient_contrib(&coords, 0, 1, 2, 3, dedphi);
+                let slots = [g0, g1, g2, g3];
+                // old FD reference (unwrapped)
+                let eps = 1e-6;
+                let two_pi = 2.0 * std::f64::consts::PI;
+                let mut fd = [[0.0f64; 3]; 4];
+                let mut q = coords.clone();
+                for a in 0..4usize {
+                    for d in 0..3 {
+                        let orig = q[a][d];
+                        q[a][d] = orig + eps;
+                        let pp = dihedral_angle(&q, 0, 1, 2, 3);
+                        q[a][d] = orig - eps;
+                        let pm = dihedral_angle(&q, 0, 1, 2, 3);
+                        q[a][d] = orig;
+                        let mut diff = pp - pm;
+                        if diff > std::f64::consts::PI {
+                            diff -= two_pi;
+                        } else if diff < -std::f64::consts::PI {
+                            diff += two_pi;
+                        }
+                        fd[a][d] = dedphi * diff / (2.0 * eps);
+                    }
+                }
+                for a in 0..4usize {
+                    for d in 0..3 {
+                        let diff = (slots[a][d] - fd[a][d]).abs();
+                        let scale = slots[a][d].abs().max(fd[a][d].abs()).max(1e-6);
+                        assert!(
+                            diff / scale < 1e-4,
+                            "geom slot {a} dim {d}: analytic {} vs fd {} (dedphi {dedphi})",
+                            slots[a][d],
+                            fd[a][d]
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

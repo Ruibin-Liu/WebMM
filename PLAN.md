@@ -1,21 +1,20 @@
-# Plan: 主 3D 最小化收敛判据审计 → 目标 v1.2.7
+# Plan: 嵌入 E+G 内核逐项计时 → 定刀并实施 → v1.2.7
 
 ## 背景
 
-插桩显示主 3D minimize_etkdg 每次跑满 300/300 迭代(嵌入的 47%),
-force_tol=1e-3 从未触达。需查明残差梯度来源:哪个能量项在"最优
-点"仍有不可归零的梯度,还是判据过紧导致的无谓精磨。
+工作守恒确立后,嵌入的唯一杠杆是**单次求值成本**。主 3D 300 迭代
+= 47% 嵌入时间,其中 lr 对循环理论只需 ~3-6ms(16k flops × 300 ×
+2)但实测 16.8ms——~60% 在其它项(K12/chiral/planarity/h_bond/
+torsion_pref 的 FD dihedral)。先逐项计时定刀,再实施。
 
 ## 任务
 
-1. **诊断**:迭代 300 次退出时打印 max_g 终值 + 各能量项的梯度
-   贡献(lr_pairs / K12 bonds / K13 angles / chiral / planarity /
-   h_bond / torsion_pref)——定位主导残差项。
-2. **按发现定刀**(候选,由数据决定):
-   - 残差项可修(如某项梯度与能量不一致)→ 修一致
-   - 判据过紧 → 加能量停滞判据(如连续 N 迭代 ΔE < 1e-10 提前
-     退出)或放宽 force_tol;ensemble 6/6 裁决
-   - L-BFGS 在该landscape振荡 → 审视 stall 逻辑
+1. **逐项计时**(ETKDG_ITERS 门控,etkdg_gradient_with_pairs /
+   etkdg_energy_with_pairs 内):lr_pairs / K12 bonds / K13 angles /
+   chiral / planarity / h_bond / torsion_pref 各项累计 μs/次与占比
+2. **按数据实施 1–2 项**(候选:torsion_pref 的 dihedral FD 12×
+   atan2/项 → 解析梯度(v1.2.5 同型已验证);h_bond 邻接优化;
+   其它)
 3. **门禁**:cargo test、ensemble 6/6、benchmark 230/230、
    clippy 0、fmt;原生 + wasm 交错 A/B
 4. **发布**:1.2.6→1.2.7;CODE_STATUS/PLAN;commit+tag;冒烟
@@ -23,20 +22,29 @@ force_tol=1e-3 从未触达。需查明残差梯度来源:哪个能量项在"最
 
 ## 验收(实施后实测记录)
 
-**结论:收敛判据审计完成,能量停滞停止被否决(工作守恒),零代码变更。**
-
-- **审计发现**(插桩轨迹,ibuprofen seed 42):
-  - 主 3D 主下降在前 ~100 迭代完成(f 2463→1.15);100–300 迭代
-    仅买 Δf=0.085(0.003%),max_g 在 0.15–0.26 振荡不收敛——
-    软模式(扭转偏好)谷底爬行,force_tol 1e-3 无法触达
-  - 300 迭代后 max_g≈0.019(19× 容差),残差集中在 sp³ 碳
-- **能量停滞停止实验(50 迭代窗 Δf<0.02→break,最少 100)**:
-  ibuprofen ~10% 快(交错 5 轮),但 aspirin 一致 ~6% 慢——主退出
-  点改变 snap 触发模式(4 个 snap vs 2),工作转嫁;更保守阈值
-  0.005 同样模式(ibuprofen +5% / aspirin -6%)。净收益 ~0 → 否决
-- **工作守恒定律**(两轮实验证实):主 3D、snap、H-only 三个阶段
-  共享同一 landscape 的收敛需求;任何单阶段裁剪都被其它阶段
-  (或更多 snap 触发)吸收。v1.2.6 的 snap 300→25 是唯一例外
-  (snap 本质是重复劳动)
-- **剩余杠杆**:每次求值的成本(E+G 内核)或算法级重设计
-  (如 bounds 增量更新、扭转偏好解析梯度替代 FD dihedral)
+- `cargo test` 279/279 全绿(+2 解析-FD 一致性测试);ensemble 6/6;
+  benchmark 230/230 与基线逐字节一致;clippy 0;fmt;wasm(node 冒烟
+  1.2.7,引擎输出行确认);API 零变化
+- **逐项计时地图(修复前,ibuprofen 单次嵌入)**:
+  - H-bond 梯度 FD:51.1%(分子级中心差分:99 次全坐标克隆 +
+    198 次 h_bond_energy 拓扑扫描/梯度调用)
+  - planarity 梯度 FD:27.2%(ring/exocyclic 二面角 FD 每次 12 个
+    atan2 + impropers/sp1 中心差分)
+  - torsion_pref 梯度 FD:11.7%(同型二面角 FD)
+  - lr 对循环(此前以为的瓶颈)合计仅 ~5%
+- **实施**(能量函数逐位未动,仅梯度路径):
+  1. H-bond:三元组预计算(几何无关拓扑)+ 解析梯度 → 51%→0.1%
+  2. dihedral_gradient_contrib 解析化(cos φ 雅可比 + −dedphi/sinφ,
+     sinφ<1e-12 跳过——Fourier 能量在该处 dedphi 同阶为零)→
+     torsion_pref 11.7%→~2%
+  3. impropers 解析化(χ=asin|q| 链式,q=(v1·N)/|N| 未除 |v1|,
+     饱和区梯度零)与 sp1 线性解析化 → planarity 27.2%→~4%
+  4. **修出两处真 bug**:角链式导数分母误用 |u||v|(正确为 |u|²)
+     ——H-bond 与 linear 初版均有;FD 一致性测试抓出
+- **严格交错 A/B(5 轮,load ~25)**:
+  - 原生:aspirin 中位 24.4→8.8 ms(**2.8×**);ibuprofen
+    62.3→17.8 ms(**3.5×**)
+  - wasm(5×2 轮中位):aspirin 34.9→10.9(**3.2×**);ibuprofen
+    49.7→17.6(**2.8×**)
+  - 叠加 v1.2.6 snap 修复,对 v1.2.5:嵌入累计 ~4×
+- 逐项计时改为 Option 门控(clock() 关闭时热循环只付一次分支)
