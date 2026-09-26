@@ -5022,7 +5022,7 @@ fn minimize_etkdg(
     // take well-scaled steps and actually reach the force tolerance.
     let dim = 3 * n;
     let instr_on = instr::enabled();
-    let t_stage = std::time::Instant::now();
+    let t_stage = Instant::now(); // web_time::Instant (wasm-safe)
     let (mut n_e, mut n_g, mut n_it) = (0usize, 0usize, 0usize);
     let mut x = vec![0.0f64; dim];
     for i in 0..n {
