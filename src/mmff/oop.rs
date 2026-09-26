@@ -426,6 +426,112 @@ fn calculate_oop_angle(coords: &[[f64; 3]], central: usize, i: usize, j: usize, 
     sin_chi.asin()
 }
 
+/// Fused energy + gradient (v1.2.9): geometry (unit vectors, normal,
+/// asin) computed once. Energy bits identical to oop_energy; gradient
+/// bits identical to oop_gradient.
+pub fn oop_energy_and_gradient(
+    coords: &[[f64; 3]],
+    central: usize,
+    atom1: usize,
+    atom2: usize,
+    atom3: usize,
+    params: &OOPParams,
+) -> (f64, [f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
+    let v1 = [
+        coords[atom1][0] - coords[central][0],
+        coords[atom1][1] - coords[central][1],
+        coords[atom1][2] - coords[central][2],
+    ];
+    let v2 = [
+        coords[atom2][0] - coords[central][0],
+        coords[atom2][1] - coords[central][1],
+        coords[atom2][2] - coords[central][2],
+    ];
+    let v3 = [
+        coords[atom3][0] - coords[central][0],
+        coords[atom3][1] - coords[central][1],
+        coords[atom3][2] - coords[central][2],
+    ];
+    let n1 = (v1[0] * v1[0] + v1[1] * v1[1] + v1[2] * v1[2]).sqrt();
+    let n2 = (v2[0] * v2[0] + v2[1] * v2[1] + v2[2] * v2[2]).sqrt();
+    let n3 = (v3[0] * v3[0] + v3[1] * v3[1] + v3[2] * v3[2]).sqrt();
+    if n1 < 1e-10 || n2 < 1e-10 || n3 < 1e-10 {
+        // calculate_oop_angle returns 0.0 on these -> E = 0
+        return (0.0, [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let u1 = [v1[0] / n1, v1[1] / n1, v1[2] / n1];
+    let u2 = [v2[0] / n2, v2[1] / n2, v2[2] / n2];
+    let u3 = [v3[0] / n3, v3[1] / n3, v3[2] / n3];
+    let nrm = [
+        u2[1] * u3[2] - u2[2] * u3[1],
+        u2[2] * u3[0] - u2[0] * u3[2],
+        u2[0] * u3[1] - u2[1] * u3[0],
+    ];
+    let nn = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt();
+    if nn < 1e-10 {
+        return (0.0, [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let nh = [nrm[0] / nn, nrm[1] / nn, nrm[2] / nn];
+    let s = (u1[0] * nh[0] + u1[1] * nh[1] + u1[2] * nh[2]).clamp(-1.0, 1.0);
+    let chi = s.asin();
+    // energy (oop_energy: 0.5 * C * k * chi^2)
+    let c_e = 143.9325;
+    let energy = 0.5 * c_e * params.k_oop * chi * chi;
+    // gradient
+    let coef = if 1.0 - s * s > 1e-12 {
+        c_e * params.k_oop * chi / (1.0 - s * s).sqrt()
+    } else {
+        0.0
+    };
+    let dot = |x: [f64; 3], y: [f64; 3]| x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+    let du_of = |u: [f64; 3], d: usize, nv: f64, sign: f64| -> [f64; 3] {
+        let ud = u[d];
+        let mut out = [0.0f64; 3];
+        for (kk, o) in out.iter_mut().enumerate() {
+            let e = if kk == d { 1.0 } else { 0.0 };
+            *o = sign * (e - ud * u[kk]) / nv;
+        }
+        out
+    };
+    let mut g = [[0.0f64; 3]; 4];
+    // (indexed loop: d is a basis-vector selector used throughout)
+    #[allow(clippy::needless_range_loop)]
+    for d in 0..3 {
+        let du1p = du_of(u1, d, n1, 1.0);
+        let du2p = du_of(u2, d, n2, 1.0);
+        let du3p = du_of(u3, d, n3, 1.0);
+        let du1m = du_of(u1, d, n1, -1.0);
+        let du2m = du_of(u2, d, n2, -1.0);
+        let du3m = du_of(u3, d, n3, -1.0);
+        let cross_add = |a: [f64; 3], b: [f64; 3], c1: [f64; 3], c2: [f64; 3]| -> [f64; 3] {
+            [
+                a[1] * b[2] - a[2] * b[1] + c1[1] * c2[2] - c1[2] * c2[1],
+                a[2] * b[0] - a[0] * b[2] + c1[2] * c2[0] - c1[0] * c2[2],
+                a[0] * b[1] - a[1] * b[0] + c1[0] * c2[1] - c1[1] * c2[0],
+            ]
+        };
+        let dn2 = cross_add(du2p, u3, [0.0; 3], [0.0; 3]);
+        let dn3 = cross_add([0.0; 3], [0.0; 3], u2, du3p);
+        let dnm = cross_add(du2m, u3, u2, du3m);
+        let dnh = |dn: [f64; 3]| -> [f64; 3] {
+            let p = dot(nh, dn);
+            [
+                (dn[0] - nh[0] * p) / nn,
+                (dn[1] - nh[1] * p) / nn,
+                (dn[2] - nh[2] * p) / nn,
+            ]
+        };
+        let dnh2 = dnh(dn2);
+        let dnh3 = dnh(dn3);
+        let dnh_m = dnh(dnm);
+        g[0][d] = coef * (dot(du1m, nh) + dot(u1, dnh_m));
+        g[1][d] = coef * dot(du1p, nh);
+        g[2][d] = coef * dot(u1, dnh2);
+        g[3][d] = coef * dot(u1, dnh3);
+    }
+    (energy, g[0], g[1], g[2], g[3])
+}
+
 pub fn oop_gradient(
     coords: &[[f64; 3]],
     central: usize,

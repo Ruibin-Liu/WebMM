@@ -2250,6 +2250,95 @@ fn degenerate_torsion(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usiz
 /// safely below any real 3D geometry (> 0.001 degrees off linear).
 const DEGENERATE_CROSS_NORM: f64 = 1e-6;
 
+/// Fused energy + gradient (v1.2.9): the cross products/norms/cos are
+/// computed once. Energy bits identical to torsion_energy; gradient bits
+/// identical to torsion_gradient (the v1.2.5 analytic form).
+pub fn torsion_energy_and_gradient(
+    coords: &[[f64; 3]],
+    i: usize,
+    j: usize,
+    k: usize,
+    l: usize,
+    params: &TorsionParams,
+) -> (f64, [f64; 3], [f64; 3], [f64; 3], [f64; 3]) {
+    let (i, j, k, l) = (i, j, k, l);
+    let v0 = [
+        coords[i][0] - coords[j][0],
+        coords[i][1] - coords[j][1],
+        coords[i][2] - coords[j][2],
+    ];
+    let v1 = [
+        coords[k][0] - coords[j][0],
+        coords[k][1] - coords[j][1],
+        coords[k][2] - coords[j][2],
+    ];
+    let v2 = [
+        coords[l][0] - coords[k][0],
+        coords[l][1] - coords[k][1],
+        coords[l][2] - coords[k][2],
+    ];
+    let cp0 = [
+        v0[1] * v1[2] - v0[2] * v1[1],
+        v0[2] * v1[0] - v0[0] * v1[2],
+        v0[0] * v1[1] - v0[1] * v1[0],
+    ];
+    let cp1 = [
+        v1[2] * v2[1] - v1[1] * v2[2],
+        v1[0] * v2[2] - v1[2] * v2[0],
+        v1[1] * v2[0] - v1[0] * v2[1],
+    ];
+    let cp0_norm = (cp0[0] * cp0[0] + cp0[1] * cp0[1] + cp0[2] * cp0[2]).sqrt();
+    let cp1_norm = (cp1[0] * cp1[0] + cp1[1] * cp1[1] + cp1[2] * cp1[2]).sqrt();
+    if cp0_norm < DEGENERATE_CROSS_NORM || cp1_norm < DEGENERATE_CROSS_NORM {
+        return (0.0, [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let cos_phi = (cp0[0] * cp1[0] + cp0[1] * cp1[1] + cp0[2] * cp1[2]) / (cp0_norm * cp1_norm);
+    let cos_phi = cos_phi.clamp(-1.0, 1.0);
+    let cos2_phi = 2.0 * cos_phi * cos_phi - 1.0;
+    let cos3_phi = cos_phi * (2.0 * cos2_phi - 1.0);
+    let energy = 0.5
+        * (params.v1 * (1.0 + cos_phi)
+            + params.v2 * (1.0 - cos2_phi)
+            + params.v3 * (1.0 + cos3_phi));
+    // gradient (analytic, v1.2.5)
+    let c = cos_phi;
+    let de_dc = 0.5 * (params.v1 - 4.0 * c * params.v2 + (12.0 * c * c - 3.0) * params.v3);
+    let n0 = cp0_norm;
+    let n1 = cp1_norm;
+    let n0n1 = n0 * n1;
+    let n0sq = n0 * n0;
+    let n1sq = n1 * n1;
+    let cross_basis = |d: usize, v: [f64; 3]| -> [f64; 3] {
+        match d {
+            0 => [0.0, -v[2], v[1]],
+            1 => [v[2], 0.0, -v[0]],
+            _ => [-v[1], v[0], 0.0],
+        }
+    };
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let neg = |v: [f64; 3]| [-v[0], -v[1], -v[2]];
+    let add = |a: [f64; 3], b: [f64; 3]| [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    let atoms = [i, j, k, l];
+    let mut g = [[0.0f64; 3]; 4];
+    for (idx, &a) in atoms.iter().enumerate() {
+        for (d, gslot) in g[idx].iter_mut().enumerate() {
+            let (jj0, jj1) = if a == i {
+                (cross_basis(d, v1), [0.0; 3])
+            } else if a == j {
+                (cross_basis(d, add(v0, neg(v1))), cross_basis(d, v2))
+            } else if a == k {
+                (neg(cross_basis(d, v0)), neg(cross_basis(d, add(v1, v2))))
+            } else {
+                ([0.0; 3], cross_basis(d, v1))
+            };
+            let dc = (dot(jj0, cp1) + dot(cp0, jj1)) / n0n1
+                - c * (dot(jj0, cp0) / n0sq + dot(jj1, cp1) / n1sq);
+            *gslot = de_dc * dc;
+        }
+    }
+    (energy, g[0], g[1], g[2], g[3])
+}
+
 pub fn torsion_gradient(
     coords: &[[f64; 3]],
     atom1: usize,

@@ -108,6 +108,112 @@ pub fn stretch_bend_energy(
     MDYNE_A_TO_KCAL_MOL * (params.kba_ijk * dr_ij + params.kba_kji * dr_kj) * dtheta
 }
 
+/// Fused energy + gradient (v1.2.9): geometry (rij, rkj, norms, acos)
+/// computed once. Energy bits identical to stretch_bend_energy; gradient
+/// bits identical to stretch_bend_gradient.
+#[allow(clippy::too_many_arguments)]
+pub fn stretch_bend_energy_and_gradient(
+    coords: &[[f64; 3]],
+    i: usize,
+    j: usize,
+    k: usize,
+    r0_ij: f64,
+    r0_kj: f64,
+    theta0_rad: f64,
+    params: &StretchBendParams,
+) -> (f64, [f64; 3], [f64; 3], [f64; 3]) {
+    let rij: [f64; 3] = [
+        coords[i][0] - coords[j][0],
+        coords[i][1] - coords[j][1],
+        coords[i][2] - coords[j][2],
+    ];
+    let rkj: [f64; 3] = [
+        coords[k][0] - coords[j][0],
+        coords[k][1] - coords[j][1],
+        coords[k][2] - coords[j][2],
+    ];
+    let r_ij = (rij[0] * rij[0] + rij[1] * rij[1] + rij[2] * rij[2]).sqrt();
+    let r_kj = (rkj[0] * rkj[0] + rkj[1] * rkj[1] + rkj[2] * rkj[2]).sqrt();
+
+    // energy (identical to stretch_bend_energy, which has no norm guard)
+    let dot = rij[0] * rkj[0] + rij[1] * rkj[1] + rij[2] * rkj[2];
+    let cos_theta = (dot / (r_ij * r_kj)).clamp(-1.0, 1.0);
+    let theta = cos_theta.acos();
+    let dr_ij = r_ij - r0_ij;
+    let dr_kj = r_kj - r0_kj;
+    let dtheta = theta - theta0_rad;
+    const MDYNE_A_TO_KCAL_MOL: f64 = 143.9325;
+    let energy = MDYNE_A_TO_KCAL_MOL * (params.kba_ijk * dr_ij + params.kba_kji * dr_kj) * dtheta;
+
+    // gradient (identical to stretch_bend_gradient)
+    if r_ij < 1e-10 || r_kj < 1e-10 {
+        return (energy, [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let sin_theta = theta.sin();
+    let inv_sin = if sin_theta.abs() < 1e-10 {
+        1e10 * sin_theta.signum()
+    } else {
+        -1.0 / sin_theta
+    };
+    let uij = [rij[0] / r_ij, rij[1] / r_ij, rij[2] / r_ij];
+    let ukj = [rkj[0] / r_kj, rkj[1] / r_kj, rkj[2] / r_kj];
+    let dcos_di: [f64; 3] = [
+        (ukj[0] - cos_theta * uij[0]) / r_ij,
+        (ukj[1] - cos_theta * uij[1]) / r_ij,
+        (ukj[2] - cos_theta * uij[2]) / r_ij,
+    ];
+    let dcos_dk: [f64; 3] = [
+        (uij[0] - cos_theta * ukj[0]) / r_kj,
+        (uij[1] - cos_theta * ukj[1]) / r_kj,
+        (uij[2] - cos_theta * ukj[2]) / r_kj,
+    ];
+    let dcos_dj: [f64; 3] = [
+        -(dcos_di[0] + dcos_dk[0]),
+        -(dcos_di[1] + dcos_dk[1]),
+        -(dcos_di[2] + dcos_dk[2]),
+    ];
+    let dtheta_di = [
+        inv_sin * dcos_di[0],
+        inv_sin * dcos_di[1],
+        inv_sin * dcos_di[2],
+    ];
+    let dtheta_dk = [
+        inv_sin * dcos_dk[0],
+        inv_sin * dcos_dk[1],
+        inv_sin * dcos_dk[2],
+    ];
+    let dtheta_dj = [
+        inv_sin * dcos_dj[0],
+        inv_sin * dcos_dj[1],
+        inv_sin * dcos_dj[2],
+    ];
+    let c_ijk = params.kba_ijk;
+    let c_kji = params.kba_kji;
+    const SCALE: f64 = 143.9325;
+    let gi: [f64; 3] = [
+        SCALE * (c_ijk * (uij[0] * dtheta + dr_ij * dtheta_di[0]) + c_kji * dr_kj * dtheta_di[0]),
+        SCALE * (c_ijk * (uij[1] * dtheta + dr_ij * dtheta_di[1]) + c_kji * dr_kj * dtheta_di[1]),
+        SCALE * (c_ijk * (uij[2] * dtheta + dr_ij * dtheta_di[2]) + c_kji * dr_kj * dtheta_di[2]),
+    ];
+    let gj: [f64; 3] = [
+        SCALE
+            * (c_ijk * (-uij[0] * dtheta + dr_ij * dtheta_dj[0])
+                + c_kji * (-ukj[0] * dtheta + dr_kj * dtheta_dj[0])),
+        SCALE
+            * (c_ijk * (-uij[1] * dtheta + dr_ij * dtheta_dj[1])
+                + c_kji * (-ukj[1] * dtheta + dr_kj * dtheta_dj[1])),
+        SCALE
+            * (c_ijk * (-uij[2] * dtheta + dr_ij * dtheta_dj[2])
+                + c_kji * (-ukj[2] * dtheta + dr_kj * dtheta_dj[2])),
+    ];
+    let gk: [f64; 3] = [
+        SCALE * (c_ijk * dr_ij * dtheta_dk[0] + c_kji * (ukj[0] * dtheta + dr_kj * dtheta_dk[0])),
+        SCALE * (c_ijk * dr_ij * dtheta_dk[1] + c_kji * (ukj[1] * dtheta + dr_kj * dtheta_dk[1])),
+        SCALE * (c_ijk * dr_ij * dtheta_dk[2] + c_kji * (ukj[2] * dtheta + dr_kj * dtheta_dk[2])),
+    ];
+    (energy, gi, gj, gk)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn stretch_bend_gradient(
     coords: &[[f64; 3]],

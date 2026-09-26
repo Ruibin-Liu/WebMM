@@ -1,48 +1,33 @@
-# Plan: MMFF 优化 opt1 差距审计(3× vs RDKit)→ 目标 v1.2.8
+# Plan: MMFF 键合项 E+G 融合(几何量单算)→ 目标 v1.2.9
 
 ## 背景
 
-嵌入与管线已达 RDKit 持平;剩余差距集中在纯 MMFF94s 单分子优化
-(opt1:aspirin 3.4×、ibuprofen 3.0×)。v1.2.5 已把单点 E+G 提速
-5×(解析梯度),需重新审计剩余 3× 的构成。
+v1.2.8 后 E+G @ibuprofen 14.9μs。驱动对每个键合项分别调用
+X_energy + X_gradient——r/θ/φ 等几何量算两遍(acos ~30-60ns ×
+~100 次/求值是主要浪费)。E-only 路径 4.9μs 说明融合上限可观。
 
 ## 任务
 
-1. **分解审计**(插桩,OPT_ITERS 门控):
-   - opt1 时间 = FF 构建 + L-BFGS 循环(能量求值次数 / 梯度求值
-     次数 / 迭代数 / 线搜索拒绝率)
-   - 剖析 compute_energy_and_gradient_into 内部:键合项
-     (X_energy + X_gradient 分离调用 = 几何量算两遍)、非键循环、
-     分配
-2. **与 RDKit 求值次数对照**(其总时间 / 单点成本估计)
-3. **按数据实施 1–2 项**(候选:键合项 E+G 融合——bond 的 r、
-   angle 的 θ 等几何量只算一次;线搜索参数;优化器内分配)
-4. **门禁**:cargo test、benchmark 230/230(能量逐位不变——只动
-   梯度/调用结构)、ensemble 6/6、clippy 0、fmt;原生 + wasm
-   交错 A/B
-5. **发布**:1.2.7→1.2.8;CODE_STATUS/PLAN;commit+tag;冒烟
+1. **逐项融合**(bond/angle/stretch_bend/torsion/oop):新增
+   X_energy_and_gradient 计算几何中间量一次,能量与梯度表达式
+   逐位复刻既有两函数;驱动改调融合版。E-only 路径不动。
+2. **逐项验证**:benchmark 230/230 逐字节(能量算式不变)、
+   既有 FD 一致性测试、全量测试
+3. **交错 A/B**(E+G μs + opt ms,vs v1.2.8)
+4. **发布**:1.2.8→1.2.9;CODE_STATUS/PLAN;commit+tag;冒烟
    必须命中引擎输出行
 
 ## 验收(实施后实测记录)
 
-- `cargo test` 280/280 全绿(+1 oop 解析-FD 测试);benchmark 230/230
-  与基线逐字节一致(能量算式逐位未动);ensemble 6/6;clippy 0;
-  fmt;wasm(node 冒烟 1.2.8,引擎输出行确认);API 零变化
-- **审计发现**:vdW 组合参数(R* 的 exp、ε 的 2 sqrt)与静电
-  qq·scale 每对每次求值重算(构建期常量!);vdW 与静电各自独立
-  计算距离(2× sqrt/pair);oop 仍是中心 FD(24 求值/项)
-- **实施**:
-  1. 对列表携带预计算 (r*, ε, qq·scale)(构建期用同一函数→
-     逐位一致);非键循环距离单算 + vdw/静电力合并单系数
-  2. MMFF oop 解析梯度(归一化版 asin 链式,与 ETKDG 版不同:
-     此处 χ=asin(clamp(û·n̂)) 带符号;|s|=1 饱和区零梯度);
-     修正过程中抓出自身初版 bug(atom2/atom3 的 dn 必须分离)
-- **严格交错 A/B(3 轮,load ~8–15)**:
-  - E+G:aspirin 20.7–24.1→8.8–12.8 μs(**~2.2×**);ibuprofen
-    31.5–32.3→14.7–15.0 μs(**~2.1×**)
-  - opt:aspirin 5.3→2.8 ms(**1.9×**);ibuprofen 14.7–15.2→7.6
-    ms(**1.95×**——与 RDKit 原生 7.1–7.5 ms 持平)
-  - E-only:ibuprofen 11.7→4.9 μs(2.4×)
-- **wasm vs RDKit 原生(同窗口)**:opt1 ibuprofen 21.95→9.82 ms
-  (3.0×→**1.38×**);aspirin 7.15→3.23(3.4×→1.52×);ethanol
-  1.08× 近持平;**pipe30 ibuprofen 14.48 vs 14.78——wasm 反超**
+- `cargo test` 280/280 全绿;benchmark 230/230 与基线逐字节一致
+  (五项融合的能量/梯度表达式逐位复刻);clippy 0;fmt;wasm(node
+  冒烟 1.2.9,引擎输出行确认);API 零变化
+- **实施**:bond / angle / stretch_bend / torsion / oop 全部融合
+  为 X_energy_and_gradient(几何中间量 r/θ/φ/cos 单算;E-only
+  路径不动)。angle 融合版修掉了初版仍算两次 acos 的残余。
+- **严格交错 A/B(3 轮,load ~12–16)**:
+  - E+G:aspirin 10.6–11.6→8.7–9.0 μs(**~1.25×**);ibuprofen
+    17.9–20.6→14.3–15.6 μs(**~1.25×**)
+  - opt:aspirin 3.4→2.9 ms(1.19×);ibuprofen 9.3–9.7→8.1–8.4
+    ms(1.15×)
+- 累计(v1.2.4→v1.2.9):E+G @ibuprofen ~24×;opt 原生 15.3→8.2 ms

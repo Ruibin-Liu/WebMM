@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "webmm"
-version = "1.2.8"
+version = "1.2.9"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.16",

@@ -1847,10 +1847,10 @@ impl MMFFForceField {
         }
         let mut energy = 0.0;
 
-        // Bond stretching
+        // Bond stretching (fused E+G, v1.2.9)
         for &(i, j, params) in &self.bond_terms {
-            energy += bond_energy(coords, i, j, &params);
-            let (gi, gj) = bond_gradient(coords, i, j, &params);
+            let (e, gi, gj) = bond_energy_and_gradient(coords, i, j, &params);
+            energy += e;
             grad[i][0] += gi[0];
             grad[i][1] += gi[1];
             grad[i][2] += gi[2];
@@ -1859,10 +1859,10 @@ impl MMFFForceField {
             grad[j][2] += gj[2];
         }
 
-        // Angle bending
+        // Angle bending (fused E+G, v1.2.9)
         for &(i, j, k, params) in &self.angle_terms {
-            energy += angle_energy(coords, i, j, k, &params);
-            let (g1, g2, g3) = angle_gradient(coords, i, j, k, &params);
+            let (e, g1, g2, g3) = angle_energy_and_gradient(coords, i, j, k, &params);
+            energy += e;
             grad[i][0] += g1[0];
             grad[i][1] += g1[1];
             grad[i][2] += g1[2];
@@ -1874,11 +1874,11 @@ impl MMFFForceField {
             grad[k][2] += g3[2];
         }
 
-        // Stretch-bend coupling
+        // Stretch-bend coupling (fused E+G, v1.2.9)
         for &(i, j, k, r0_ij, r0_kj, theta0, params) in &self.stretch_bend_terms {
-            energy += stretch_bend_energy(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
-            let (g1, g2, g3) =
-                stretch_bend_gradient(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
+            let (e, g1, g2, g3) =
+                stretch_bend_energy_and_gradient(coords, i, j, k, r0_ij, r0_kj, theta0, &params);
+            energy += e;
             grad[i][0] += g1[0];
             grad[i][1] += g1[1];
             grad[i][2] += g1[2];
@@ -1890,10 +1890,10 @@ impl MMFFForceField {
             grad[k][2] += g3[2];
         }
 
-        // Torsion
+        // Torsion (fused E+G, v1.2.9)
         for &(i, j, k, l, params) in &self.torsion_terms {
-            energy += torsion_energy(coords, i, j, k, l, &params);
-            let (g1, g2, g3, g4) = torsion_gradient(coords, i, j, k, l, &params);
+            let (e, g1, g2, g3, g4) = torsion_energy_and_gradient(coords, i, j, k, l, &params);
+            energy += e;
             grad[i][0] += g1[0];
             grad[i][1] += g1[1];
             grad[i][2] += g1[2];
@@ -1908,10 +1908,11 @@ impl MMFFForceField {
             grad[l][2] += g4[2];
         }
 
-        // Out-of-plane
+        // Out-of-plane (fused E+G, v1.2.9)
         for &(central, a1, a2, a3, params) in &self.oop_terms {
-            energy += oop_energy(coords, central, a1, a2, a3, &params);
-            let (g_central, g1, g2, g3) = oop_gradient(coords, central, a1, a2, a3, &params);
+            let (e, g_central, g1, g2, g3) =
+                oop_energy_and_gradient(coords, central, a1, a2, a3, &params);
+            energy += e;
             grad[central][0] += g_central[0];
             grad[central][1] += g_central[1];
             grad[central][2] += g_central[2];

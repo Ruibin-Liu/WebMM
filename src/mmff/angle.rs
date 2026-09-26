@@ -150,8 +150,12 @@ pub fn angle_energy(
     k: usize,
     params: &AngleParams,
 ) -> f64 {
-    let theta_rad = calculate_angle(coords, i, j, k);
+    angle_energy_from_theta(calculate_angle(coords, i, j, k), params)
+}
 
+/// Energy expression as a function of theta (shared by angle_energy and the
+/// fused E+G path — identical arithmetic).
+pub fn angle_energy_from_theta(theta_rad: f64, params: &AngleParams) -> f64 {
     if params.theta0 >= 179.0 {
         let cos_theta = theta_rad.cos();
         143.9325 * params.k_theta * (1.0 + cos_theta)
@@ -164,6 +168,80 @@ pub fn angle_energy(
 
         0.5 * c2 * params.k_theta * dtheta * dtheta * (1.0 + cb * dtheta)
     }
+}
+
+/// Fused energy + gradient (v1.2.9): the geometry (r1, r2, norms, acos) is
+/// computed once — the driver previously called angle_energy + angle_gradient,
+/// each computing it independently. Energy bits identical to angle_energy,
+/// gradient bits identical to angle_gradient.
+#[allow(clippy::too_many_arguments)]
+pub fn angle_energy_and_gradient(
+    coords: &[[f64; 3]],
+    atom1: usize,
+    atom2: usize,
+    atom3: usize,
+    params: &AngleParams,
+) -> (f64, [f64; 3], [f64; 3], [f64; 3]) {
+    let r1 = [
+        coords[atom1][0] - coords[atom2][0],
+        coords[atom1][1] - coords[atom2][1],
+        coords[atom1][2] - coords[atom2][2],
+    ];
+    let r2 = [
+        coords[atom3][0] - coords[atom2][0],
+        coords[atom3][1] - coords[atom2][1],
+        coords[atom3][2] - coords[atom2][2],
+    ];
+    let r1_norm = (r1[0].powi(2) + r1[1].powi(2) + r1[2].powi(2)).sqrt();
+    let r2_norm = (r2[0].powi(2) + r2[1].powi(2) + r2[2].powi(2)).sqrt();
+    // shared geometry: exactly-zero norms give theta = PI (calculate_angle
+    // semantics for the energy); tiny-but-nonzero keeps the acos expression
+    let (theta, cos_theta) = if r1_norm == 0.0 || r2_norm == 0.0 {
+        (std::f64::consts::PI, 0.0)
+    } else {
+        let dot = r1[0] * r2[0] + r1[1] * r2[1] + r1[2] * r2[2];
+        let cos_theta = dot / (r1_norm * r2_norm);
+        (cos_theta.clamp(-1.0, 1.0).acos(), cos_theta)
+    };
+    let energy = angle_energy_from_theta(theta, params);
+
+    // gradient path (angle_gradient semantics)
+    if r1_norm < 1e-10 || r2_norm < 1e-10 {
+        return (energy, [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let sin_theta = theta.sin();
+    if sin_theta.abs() < 1e-10 {
+        return (energy, [0.0; 3], [0.0; 3], [0.0; 3]);
+    }
+    let d_e_dtheta = if params.theta0 >= 179.0 {
+        -143.9325 * params.k_theta * sin_theta
+    } else {
+        let theta_deg = theta.to_degrees();
+        let angle_term = theta_deg - params.theta0;
+        let c2 = 143.9325 * (std::f64::consts::PI / 180.0).powi(2);
+        let cb = -0.006981317;
+        let rad2deg = 180.0 / std::f64::consts::PI;
+        rad2deg * c2 * params.k_theta * angle_term * (1.0 + 1.5 * cb * angle_term)
+    };
+    let inv_r1_sq = 1.0 / (r1_norm * r1_norm);
+    let inv_r2_sq = 1.0 / (r2_norm * r2_norm);
+    let inv_r1_r2 = 1.0 / (r1_norm * r2_norm);
+    let grad1 = [
+        -d_e_dtheta * (r2[0] * inv_r1_r2 - cos_theta * r1[0] * inv_r1_sq) / sin_theta,
+        -d_e_dtheta * (r2[1] * inv_r1_r2 - cos_theta * r1[1] * inv_r1_sq) / sin_theta,
+        -d_e_dtheta * (r2[2] * inv_r1_r2 - cos_theta * r1[2] * inv_r1_sq) / sin_theta,
+    ];
+    let grad3 = [
+        -d_e_dtheta * (r1[0] * inv_r1_r2 - cos_theta * r2[0] * inv_r2_sq) / sin_theta,
+        -d_e_dtheta * (r1[1] * inv_r1_r2 - cos_theta * r2[1] * inv_r2_sq) / sin_theta,
+        -d_e_dtheta * (r1[2] * inv_r1_r2 - cos_theta * r2[2] * inv_r2_sq) / sin_theta,
+    ];
+    let grad2 = [
+        -(grad1[0] + grad3[0]),
+        -(grad1[1] + grad3[1]),
+        -(grad1[2] + grad3[2]),
+    ];
+    (energy, grad1, grad2, grad3)
 }
 
 /// Calculate angle between three atoms

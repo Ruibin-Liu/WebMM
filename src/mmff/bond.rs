@@ -1666,6 +1666,12 @@ pub fn bond_energy(coords: &[[f64; 3]], i: usize, j: usize, params: &BondParams)
         coords[j][2] - coords[i][2],
     ];
     let r = (r_vec[0].powi(2) + r_vec[1].powi(2) + r_vec[2].powi(2)).sqrt();
+    bond_energy_from_r(r, params)
+}
+
+/// Energy as a function of r (shared with the fused E+G path — identical
+/// arithmetic).
+pub fn bond_energy_from_r(r: f64, params: &BondParams) -> f64 {
     let dr = r - params.r0;
 
     // RDKit anharmonic bond stretch
@@ -1675,6 +1681,41 @@ pub fn bond_energy(coords: &[[f64; 3]], i: usize, j: usize, params: &BondParams)
     let dr2 = dr * dr;
 
     c1 * params.k_bond * dr2 * (1.0 + cs * dr + c3 * cs * cs * dr2) / 2.0
+}
+
+/// Fused energy + gradient (v1.2.9): geometry (r_vec, r) computed once.
+pub fn bond_energy_and_gradient(
+    coords: &[[f64; 3]],
+    i: usize,
+    j: usize,
+    params: &BondParams,
+) -> (f64, [f64; 3], [f64; 3]) {
+    let r_vec = [
+        coords[j][0] - coords[i][0],
+        coords[j][1] - coords[i][1],
+        coords[j][2] - coords[i][2],
+    ];
+    let r = (r_vec[0].powi(2) + r_vec[1].powi(2) + r_vec[2].powi(2)).sqrt();
+    let dr = r - params.r0;
+    let energy = bond_energy_from_r(r, params);
+    if r < 1e-10 {
+        return (energy, [0.0; 3], [0.0; 3]);
+    }
+    let c1 = 143.9325;
+    let cs = -2.0 * params.cb;
+    let c3 = 7.0 / 12.0;
+    let d_e_dr = c1 * params.k_bond * dr * (1.0 + 1.5 * cs * dr + 2.0 * c3 * cs * cs * dr * dr);
+    let grad_i = [
+        -d_e_dr * r_vec[0] / r,
+        -d_e_dr * r_vec[1] / r,
+        -d_e_dr * r_vec[2] / r,
+    ];
+    let grad_j = [
+        d_e_dr * r_vec[0] / r,
+        d_e_dr * r_vec[1] / r,
+        d_e_dr * r_vec[2] / r,
+    ];
+    (energy, grad_i, grad_j)
 }
 
 /// Calculate bond stretching gradient (forces on atoms i and j)
