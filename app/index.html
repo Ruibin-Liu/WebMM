@@ -2911,8 +2911,12 @@ function startReopt(windowKcal, engine, confSummary) {
     const m = e.data;
     if (m.type === 'optimized') {
       const idx = st.queue[st.i];
-      confEnsemble[idx].E = m.E;
       confEnsemble[idx].sdf = buildSdfFromCoords(m.coords, confEnsemble[idx].sdf);
+      // same consistency rule as the ensemble pass: report the single-point
+      // energy OF the (4-decimal) displayed geometry, not the full-precision
+      // worker E — keeps list/chart/panel/export identical (v1.3.2)
+      try { confEnsemble[idx].E = JSON.parse(webmm.energy_terms_wasm(confEnsemble[idx].sdf, engine)).E; }
+      catch (e) { confEnsemble[idx].E = m.E; }
       confEnsemble[idx].converged = m.converged;
       st.done++; st.i++;
       showSdfIn3D(buildSdfFromCoords(m.coords, confEnsemble[idx].sdf));

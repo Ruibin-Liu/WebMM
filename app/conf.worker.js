@@ -112,11 +112,21 @@ self.onmessage = async (e) => {
       const seeds = batch.get_seeds();
       for (let i = 0; i < nc; i++) {
         const coords = Array.from(flat.slice(i * na * 3, (i + 1) * na * 3));
+        const sdf = buildSdfFromCoords(coords, template);
+        // Recompute the energy on the SDF as displayed/exported (4-decimal
+        // quantized coordinates): the batch energies[i] are evaluated at the
+        // full-precision coordinates, so the ensemble list and the energy
+        // panel's single-point on the same conformer disagreed by the
+        // quantization sensitivity of the geometry. One extra single-point
+        // per conformer makes list / chart / panel / export all report the
+        // energy OF the geometry the user sees (see the v1.3.2 fix note).
+        let E = energies[i];
+        try { E = JSON.parse(wasm.energy_terms_wasm(sdf, engine)).E; } catch (e) { /* keep batch E */ }
         self.postMessage({
-          type: 'conf', seed: seeds[i], E: energies[i],
+          type: 'conf', seed: seeds[i], E,
           converged: !!conv[i], iterations: iters[i],
           termsJson: null,
-          sdf: buildSdfFromCoords(coords, template), coords,
+          sdf, coords,
         });
       }
     }
