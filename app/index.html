@@ -1100,11 +1100,14 @@ details {
 
 <script>
 let rdkitModule = null;
+let rdkitInitFailed = false;
 
 // WebAssembly modules (RDKit, the WebMM engine) cannot be fetched from a
 // file:// URL — this page must be served over HTTP. Keep the hint in one
 // place so every failure path shows something actionable.
 function rdkitLoadHint() {
+  if (!rdkitInitFailed)
+    return 'RDKit (WebAssembly) is still loading (the .wasm is several MB) \u2014 try again in a moment.';
   return location.protocol === 'file:'
     ? 'RDKit (WebAssembly) failed to load: this page was opened directly from disk (file://), which blocks WASM fetching. Serve the repository over HTTP instead \u2014 e.g. run `python3 -m http.server` from the repo root, then open http://localhost:8000/app/'
     : 'RDKit (WebAssembly) failed to load \u2014 check the browser console for details (a failed vendor/RDKit_minimal.wasm fetch is the usual cause).';
@@ -1118,11 +1121,13 @@ function rdkitAvailable() {
    async function initRDKit() {
      try {
        rdkitModule = await initRDKitModule();
+       document.getElementById("error").textContent = ""; // clear any "still loading" hint
        displayVersion();
        loadFromURL();
        setupAutoProcess();
        loadHistory();
      } catch(e) {
+       rdkitInitFailed = true;
        document.getElementById("error").textContent = rdkitLoadHint() + " (" + e + ")";
      }
    }
@@ -1785,6 +1790,7 @@ function rdkitAvailable() {
   }
 
   async function exportHistoryToCSV() {
+    if (!rdkitAvailable()) return;
     if (compoundHistory.length === 0) {
       alert('No history to export.');
       return;
