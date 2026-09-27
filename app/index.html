@@ -1101,6 +1101,20 @@ details {
 <script>
 let rdkitModule = null;
 
+// WebAssembly modules (RDKit, the WebMM engine) cannot be fetched from a
+// file:// URL — this page must be served over HTTP. Keep the hint in one
+// place so every failure path shows something actionable.
+function rdkitLoadHint() {
+  return location.protocol === 'file:'
+    ? 'RDKit (WebAssembly) failed to load: this page was opened directly from disk (file://), which blocks WASM fetching. Serve the repository over HTTP instead \u2014 e.g. run `python3 -m http.server` from the repo root, then open http://localhost:8000/app/'
+    : 'RDKit (WebAssembly) failed to load \u2014 check the browser console for details (a failed vendor/RDKit_minimal.wasm fetch is the usual cause).';
+}
+function rdkitAvailable() {
+  if (rdkitModule) return true;
+  document.getElementById("error").textContent = rdkitLoadHint();
+  return false;
+}
+
    async function initRDKit() {
      try {
        rdkitModule = await initRDKitModule();
@@ -1109,7 +1123,7 @@ let rdkitModule = null;
        setupAutoProcess();
        loadHistory();
      } catch(e) {
-       document.getElementById("error").textContent = "Failed to load RDKit: " + e;
+       document.getElementById("error").textContent = rdkitLoadHint() + " (" + e + ")";
      }
    }
 
@@ -1133,6 +1147,7 @@ let rdkitModule = null;
  let sourceMolblock = null;   // original parsed molblock — preserves 3D coords + H
 
    function process(updateURL = true) {
+     if (!rdkitAvailable()) return;
      clearError();
      try {
        let input = document.getElementById("input").value;
@@ -2280,6 +2295,7 @@ function finishBatch() {
 }
 
 async function runBatch() {
+  if (!rdkitAvailable()) return;
   if (batchRun) { cancelBatch(); return; }
   clearError();
   const items = parseBatchInputs();
