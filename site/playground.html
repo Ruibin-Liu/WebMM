@@ -1638,7 +1638,12 @@ function updateURL() {
 function copyLink() {
   navigator.clipboard.writeText(location.href)
     .then(() => setStatus('Link copied — shares this molecule + temperature', 'success'))
-    .catch(() => setStatus('Copy failed', 'error'));
+    .catch(() => {
+      // clipboard unavailable (permissions / non-secure context): offer the
+      // link manually — same fallback the demo page uses for its Python check
+      window.prompt('Clipboard blocked — copy the link manually:', location.href);
+      setStatus('The link also lives in the address bar', 'info');
+    });
 }
 
 function setStatus(msg, kind) {
