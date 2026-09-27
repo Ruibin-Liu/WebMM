@@ -48,7 +48,6 @@ solvent. MMFF typing refuses metal-bonded systems exactly like RDKit's MMFF
 `pkg/` is generated (gitignored). Python appears only in dev-time validation
 scripts (`scripts/`); the shipped library has no Python dependency.
 
----
 
 ## Quick start
 
@@ -56,10 +55,32 @@ scripts (`scripts/`); the shipped library has no Python dependency.
 
 WebAssembly with `simd128`: **Safari 16.4+, Chrome 91+, Firefox 89+.**
 
-### Prerequisites
+### Option 0 — use the compiled engine (no toolchain, no build)
+
+The Pages deployment serves the engine directly, so you can import it from
+any web page:
+
+```html
+<script type="module">
+  import init, { OptimizationOptions, optimize_from_sdf } from
+    "https://ruibin-liu.github.io/WebMM/webmm.js";
+  await init();   // fetches + instantiates webmm_bg.wasm
+  // ... same API as below
+</script>
+```
+
+Requirements: a modern browser and network access **at load time** (the
+engine itself runs entirely locally afterwards). Caveat: this URL always
+serves the **latest** deployed build — there is no version pinning. For a
+pinned version, download `webmm.js` + `webmm_bg.wasm` once and self-host,
+or build from source.
+
+### Building from source
+
+The remaining paths share these prerequisites:
 
 - [Rust](https://rustup.rs/) stable + `wasm32-unknown-unknown` target
-- [wasm-pack] — pinned via `npm install` (devDependency)
+- [wasm-pack](https://rustwasm.github.io/wasm-pack/) — pinned via `npm install` (devDependency)
 - Node.js ≥ 18 (only for the pinned toolchain)
 - Python 3 (only as a static file server)
 
@@ -103,8 +124,6 @@ visualization, and metadynamics with a live FES.
 cargo build --release
 cargo test --release        # 281 tests
 ```
-
----
 
 ## Usage (JavaScript)
 
