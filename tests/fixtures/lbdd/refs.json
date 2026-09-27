@@ -1,0 +1,1035 @@
+{
+ "caffeine": {
+  "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+  "qed_mean": 0.538463,
+  "qed_max": 0.558007,
+  "qed_none": 0.593214,
+  "props": {
+   "MW": 194.194,
+   "ALOGP": -1.0293,
+   "HBA": 3,
+   "HBD": 0,
+   "PSA": 61.82,
+   "ROTB": 0,
+   "AROM": 2,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "O=c1[nH]c(=O)c2[nH]cnc2[nH]1"
+ },
+ "aspirin": {
+  "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+  "qed_mean": 0.550122,
+  "qed_max": 0.491463,
+  "qed_none": 0.673403,
+  "props": {
+   "MW": 180.15899999999996,
+   "ALOGP": 1.3101,
+   "HBA": 4,
+   "HBD": 1,
+   "PSA": 63.60000000000001,
+   "ROTB": 2,
+   "AROM": 1,
+   "ALERTS": 2
+  },
+  "pains": [],
+  "brenk": [
+   "phenol_ester"
+  ],
+  "murcko": "c1ccccc1"
+ },
+ "ibuprofen": {
+  "smiles": "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+  "qed_mean": 0.8216,
+  "qed_max": 0.817668,
+  "qed_none": 0.851426,
+  "props": {
+   "MW": 206.28499999999997,
+   "ALOGP": 3.073200000000001,
+   "HBA": 2,
+   "HBD": 1,
+   "PSA": 37.3,
+   "ROTB": 4,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "paracetamol": {
+  "smiles": "CC(=O)Nc1ccc(O)cc1",
+  "qed_mean": 0.595026,
+  "qed_max": 0.57901,
+  "qed_none": 0.680391,
+  "props": {
+   "MW": 151.165,
+   "ALOGP": 1.3505999999999998,
+   "HBA": 2,
+   "HBD": 2,
+   "PSA": 49.33,
+   "ROTB": 1,
+   "AROM": 1,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "hydroquinone"
+  ],
+  "murcko": "c1ccccc1"
+ },
+ "nicotine": {
+  "smiles": "CN1CCCC1c1ccc(nc1)C",
+  "qed_mean": 0.651522,
+  "qed_max": 0.65111,
+  "qed_none": 0.667867,
+  "props": {
+   "MW": 176.26299999999998,
+   "ALOGP": 2.15672,
+   "HBA": 2,
+   "HBD": 0,
+   "PSA": 16.130000000000003,
+   "ROTB": 1,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1cncc(C2CCCN2)c1"
+ },
+ "metformin": {
+  "smiles": "CN(C)C(=N)N=C(N)N",
+  "qed_mean": 0.281874,
+  "qed_max": 0.269656,
+  "qed_none": 0.3692,
+  "props": {
+   "MW": 129.167,
+   "ALOGP": -1.243829999999999,
+   "HBA": 3,
+   "HBD": 3,
+   "PSA": 91.49,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 2
+  },
+  "pains": [],
+  "brenk": [
+   "imine_1",
+   "imine_2"
+  ],
+  "murcko": ""
+ },
+ "salicylic_acid": {
+  "smiles": "OC(=O)c1ccccc1O",
+  "qed_mean": 0.610259,
+  "qed_max": 0.610144,
+  "qed_none": 0.685441,
+  "props": {
+   "MW": 138.12199999999999,
+   "ALOGP": 1.0903999999999998,
+   "HBA": 3,
+   "HBD": 2,
+   "PSA": 57.53,
+   "ROTB": 1,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "ethanol": {
+  "smiles": "CCO",
+  "qed_mean": 0.406808,
+  "qed_max": 0.436003,
+  "qed_none": 0.391802,
+  "props": {
+   "MW": 46.069,
+   "ALOGP": -0.0014000000000000123,
+   "HBA": 1,
+   "HBD": 1,
+   "PSA": 20.23,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": ""
+ },
+ "benzene": {
+  "smiles": "c1ccccc1",
+  "qed_mean": 0.442628,
+  "qed_max": 0.47066,
+  "qed_none": 0.302119,
+  "props": {
+   "MW": 78.11399999999999,
+   "ALOGP": 1.6866,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 0,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "naphthalene": {
+  "smiles": "c1ccc2ccccc2c1",
+  "qed_mean": 0.511431,
+  "qed_max": 0.538886,
+  "qed_none": 0.338903,
+  "props": {
+   "MW": 128.17399999999995,
+   "ALOGP": 2.839800000000001,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 0,
+   "AROM": 2,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccc2ccccc2c1"
+ },
+ "anthracene": {
+  "smiles": "c1ccc2cc3ccccc3cc2c1",
+  "qed_mean": 0.45641,
+  "qed_max": 0.495193,
+  "qed_none": 0.300867,
+  "props": {
+   "MW": 178.23399999999995,
+   "ALOGP": 3.993000000000002,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 0,
+   "AROM": 3,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "Polycyclic_aromatic_hydrocarbon_2"
+  ],
+  "murcko": "c1ccc2cc3ccccc3cc2c1"
+ },
+ "hexane": {
+  "smiles": "CCCCCC",
+  "qed_mean": 0.462954,
+  "qed_max": 0.489612,
+  "qed_none": 0.312668,
+  "props": {
+   "MW": 86.178,
+   "ALOGP": 2.5866000000000007,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 3,
+   "AROM": 0,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "Aliphatic_long_chain"
+  ],
+  "murcko": ""
+ },
+ "alanine": {
+  "smiles": "CC(N)C(=O)O",
+  "qed_mean": 0.451352,
+  "qed_max": 0.477248,
+  "qed_none": 0.51734,
+  "props": {
+   "MW": 89.09399999999998,
+   "ALOGP": -0.5817999999999999,
+   "HBA": 3,
+   "HBD": 2,
+   "PSA": 63.32000000000001,
+   "ROTB": 1,
+   "AROM": 0,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": ""
+ },
+ "threonine": {
+  "smiles": "CC(O)C(N)C(=O)O",
+  "qed_mean": 0.425096,
+  "qed_max": 0.455741,
+  "qed_none": 0.467794,
+  "props": {
+   "MW": 119.11999999999999,
+   "ALOGP": -1.2208999999999997,
+   "HBA": 4,
+   "HBD": 3,
+   "PSA": 83.55,
+   "ROTB": 2,
+   "AROM": 0,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": ""
+ },
+ "glucose_alpha": {
+  "smiles": "OC[C@H]1O[C@H](O)[C@H](O)[C@@H](O)[C@@H]1O",
+  "qed_mean": 0.290153,
+  "qed_max": 0.32381,
+  "qed_none": 0.294627,
+  "props": {
+   "MW": 180.156,
+   "ALOGP": -3.2214000000000005,
+   "HBA": 6,
+   "HBD": 5,
+   "PSA": 110.38000000000001,
+   "ROTB": 1,
+   "AROM": 0,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "C1CCOCC1"
+ },
+ "cholesterol": {
+  "smiles": "CC(C)CCCC(C)C1CCC2(C)C1CCC1C2CC=C2CC(O)CCC12C",
+  "qed_mean": 0.488312,
+  "qed_max": 0.554891,
+  "qed_none": 0.413975,
+  "props": {
+   "MW": 386.6640000000002,
+   "ALOGP": 7.388700000000009,
+   "HBA": 1,
+   "HBD": 1,
+   "PSA": 20.23,
+   "ROTB": 5,
+   "AROM": 0,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "isolated_alkene"
+  ],
+  "murcko": "C1=C2CCCCC2C2CCC3CCCC3C2C1"
+ },
+ "phenylalanine": {
+  "smiles": "N[C@@H](Cc1ccccc1)C(=O)O",
+  "qed_mean": 0.690463,
+  "qed_max": 0.694265,
+  "qed_none": 0.745564,
+  "props": {
+   "MW": 165.19199999999995,
+   "ALOGP": 0.641,
+   "HBA": 3,
+   "HBD": 2,
+   "PSA": 63.32000000000001,
+   "ROTB": 3,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "diclofenac": {
+  "smiles": "OC(=O)Cc1ccccc1Nc1c(Cl)cccc1Cl",
+  "qed_mean": 0.880729,
+  "qed_max": 0.876023,
+  "qed_none": 0.902379,
+  "props": {
+   "MW": 296.153,
+   "ALOGP": 4.364100000000001,
+   "HBA": 3,
+   "HBD": 2,
+   "PSA": 49.33,
+   "ROTB": 4,
+   "AROM": 2,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccc(Nc2ccccc2)cc1"
+ },
+ "warfarin": {
+  "smiles": "CC(=O)CC(c1ccccc1)c1c(O)c2ccccc2oc1=O",
+  "qed_mean": 0.747626,
+  "qed_max": 0.760052,
+  "qed_none": 0.771914,
+  "props": {
+   "MW": 308.3330000000001,
+   "ALOGP": 3.609600000000003,
+   "HBA": 4,
+   "HBD": 1,
+   "PSA": 67.50999999999999,
+   "ROTB": 4,
+   "AROM": 3,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "cumarine"
+  ],
+  "murcko": "O=c1oc2ccccc2cc1Cc1ccccc1"
+ },
+ "propranolol": {
+  "smiles": "CC(C)NCC(O)COc1cccc2ccccc12",
+  "qed_mean": 0.837506,
+  "qed_max": 0.825249,
+  "qed_none": 0.874733,
+  "props": {
+   "MW": 259.34900000000005,
+   "ALOGP": 2.5775000000000006,
+   "HBA": 3,
+   "HBD": 2,
+   "PSA": 41.489999999999995,
+   "ROTB": 6,
+   "AROM": 2,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccc2ccccc2c1"
+ },
+ "metoprolol": {
+  "smiles": "COCCc1ccc(OCC(O)CNC(C)C)cc1",
+  "qed_mean": 0.71357,
+  "qed_max": 0.708881,
+  "qed_none": 0.763346,
+  "props": {
+   "MW": 267.36899999999997,
+   "ALOGP": 1.6132,
+   "HBA": 4,
+   "HBD": 2,
+   "PSA": 50.72,
+   "ROTB": 9,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "naproxen": {
+  "smiles": "COc1ccc2cc(C(C)C(=O)O)ccc2c1",
+  "qed_mean": 0.881078,
+  "qed_max": 0.870569,
+  "qed_none": 0.913788,
+  "props": {
+   "MW": 230.26299999999998,
+   "ALOGP": 3.036500000000001,
+   "HBA": 3,
+   "HBD": 1,
+   "PSA": 46.53,
+   "ROTB": 3,
+   "AROM": 2,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccc2ccccc2c1"
+ },
+ "theophylline": {
+  "smiles": "Cn1c(=O)c2[nH]cnc2n(C)c1=O",
+  "qed_mean": 0.562472,
+  "qed_max": 0.587102,
+  "qed_none": 0.611411,
+  "props": {
+   "MW": 180.16699999999997,
+   "ALOGP": -1.0397000000000005,
+   "HBA": 3,
+   "HBD": 1,
+   "PSA": 72.68,
+   "ROTB": 0,
+   "AROM": 2,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "O=c1[nH]c(=O)c2[nH]cnc2[nH]1"
+ },
+ "benzocaine": {
+  "smiles": "COC(=O)c1ccc(N)cc1",
+  "qed_mean": 0.481886,
+  "qed_max": 0.431033,
+  "qed_none": 0.617418,
+  "props": {
+   "MW": 151.16500000000002,
+   "ALOGP": 1.0554,
+   "HBA": 3,
+   "HBD": 1,
+   "PSA": 52.32,
+   "ROTB": 1,
+   "AROM": 1,
+   "ALERTS": 2
+  },
+  "pains": [],
+  "brenk": [
+   "aniline"
+  ],
+  "murcko": "c1ccccc1"
+ },
+ "lidocaine": {
+  "smiles": "CCN(CC)CC(=O)Nc1c(C)cccc1C",
+  "qed_mean": 0.848967,
+  "qed_max": 0.845234,
+  "qed_none": 0.865005,
+  "props": {
+   "MW": 234.343,
+   "ALOGP": 2.5837400000000006,
+   "HBA": 2,
+   "HBD": 1,
+   "PSA": 32.34,
+   "ROTB": 5,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "ethylbenzene": {
+  "smiles": "CCc1ccccc1",
+  "qed_mean": 0.514758,
+  "qed_max": 0.545979,
+  "qed_none": 0.339118,
+  "props": {
+   "MW": 106.16799999999996,
+   "ALOGP": 2.2490000000000006,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 1,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "bibenzyl": {
+  "smiles": "c1ccc(CCc2ccccc2)cc1",
+  "qed_mean": 0.68146,
+  "qed_max": 0.718497,
+  "qed_none": 0.419542,
+  "props": {
+   "MW": 182.26600000000002,
+   "ALOGP": 3.4718000000000018,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 3,
+   "AROM": 2,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccc(CCc2ccccc2)cc1"
+ },
+ "spiro_decane": {
+  "smiles": "C1CCC2(CC1)CCCCC2",
+  "qed_mean": 0.493562,
+  "qed_max": 0.536013,
+  "qed_none": 0.321003,
+  "props": {
+   "MW": 152.28099999999998,
+   "ALOGP": 3.9010000000000034,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "C1CCC2(CC1)CCCCC2"
+ },
+ "decalin": {
+  "smiles": "C1CCC2CCCCC2C1",
+  "qed_mean": 0.481193,
+  "qed_max": 0.521111,
+  "qed_none": 0.316129,
+  "props": {
+   "MW": 138.254,
+   "ALOGP": 3.3668000000000022,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "C1CCC2CCCCC2C1"
+ },
+ "piperazine_linker": {
+  "smiles": "c1ccc(CN2CCNCC2)cc1",
+  "qed_mean": 0.725421,
+  "qed_max": 0.734623,
+  "qed_none": 0.718708,
+  "props": {
+   "MW": 176.263,
+   "ALOGP": 1.0917999999999999,
+   "HBA": 2,
+   "HBD": 1,
+   "PSA": 15.27,
+   "ROTB": 2,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccc(CN2CCNCC2)cc1"
+ },
+ "acyclic_only": {
+  "smiles": "CCCCOCCCC",
+  "qed_mean": 0.502075,
+  "qed_max": 0.511919,
+  "qed_none": 0.450174,
+  "props": {
+   "MW": 130.231,
+   "ALOGP": 2.603200000000001,
+   "HBA": 1,
+   "HBD": 0,
+   "PSA": 9.23,
+   "ROTB": 6,
+   "AROM": 0,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "Aliphatic_long_chain"
+  ],
+  "murcko": ""
+ },
+ "rhodanine_nmethyl": {
+  "smiles": "CN1C(=O)/C(=C/c2ccccc2)SC1=S",
+  "qed_mean": 0.550853,
+  "qed_max": 0.48869,
+  "qed_none": 0.648472,
+  "props": {
+   "MW": 235.333,
+   "ALOGP": 2.5176000000000007,
+   "HBA": 3,
+   "HBD": 0,
+   "PSA": 20.310000000000002,
+   "ROTB": 1,
+   "AROM": 1,
+   "ALERTS": 2
+  },
+  "pains": [
+   "ene_rhod_A(235)"
+  ],
+  "brenk": [
+   "Michael_acceptor_1",
+   "Thiocarbonyl_group"
+  ],
+  "murcko": "O=C1NC(=S)SC1=Cc1ccccc1"
+ },
+ "catechol": {
+  "smiles": "c1cc(O)c(O)cc1",
+  "qed_mean": 0.490728,
+  "qed_max": 0.47928,
+  "qed_none": 0.584615,
+  "props": {
+   "MW": 110.11199999999997,
+   "ALOGP": 1.0977999999999997,
+   "HBA": 2,
+   "HBD": 2,
+   "PSA": 40.46,
+   "ROTB": 0,
+   "AROM": 1,
+   "ALERTS": 1
+  },
+  "pains": [
+   "catechol_A(92)"
+  ],
+  "brenk": [
+   "catechol"
+  ],
+  "murcko": "c1ccccc1"
+ },
+ "hydroquinone": {
+  "smiles": "c1ccc(O)cc1O",
+  "qed_mean": 0.524584,
+  "qed_max": 0.525342,
+  "qed_none": 0.605082,
+  "props": {
+   "MW": 110.11199999999997,
+   "ALOGP": 1.0977999999999999,
+   "HBA": 2,
+   "HBD": 2,
+   "PSA": 40.46,
+   "ROTB": 0,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "coumarin_diOH": {
+  "smiles": "O=c1oc2cc(O)c(O)cc2cc1O-c3ccccc3",
+  "qed_mean": 0.552406,
+  "qed_max": 0.513804,
+  "qed_none": 0.628991,
+  "props": {
+   "MW": 270.23999999999995,
+   "ALOGP": 2.996500000000002,
+   "HBA": 5,
+   "HBD": 2,
+   "PSA": 79.9,
+   "ROTB": 2,
+   "AROM": 3,
+   "ALERTS": 2
+  },
+  "pains": [
+   "catechol_A(92)"
+  ],
+  "brenk": [
+   "catechol",
+   "cumarine"
+  ],
+  "murcko": "O=c1oc2ccccc2cc1Oc1ccccc1"
+ },
+ "aniline_dialkyl": {
+  "smiles": "c1ccc(N(C)C)cc1N(C)C",
+  "qed_mean": 0.657548,
+  "qed_max": 0.663336,
+  "qed_none": 0.635471,
+  "props": {
+   "MW": 164.25199999999998,
+   "ALOGP": 1.8186,
+   "HBA": 2,
+   "HBD": 0,
+   "PSA": 6.48,
+   "ROTB": 2,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccccc1"
+ },
+ "pyrrole_alkyl": {
+  "smiles": "Cc1cc(C)n(-c2ccccc2)c1C",
+  "qed_mean": 0.641355,
+  "qed_max": 0.67263,
+  "qed_none": 0.414743,
+  "props": {
+   "MW": 185.27,
+   "ALOGP": 3.402560000000002,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 4.93,
+   "ROTB": 1,
+   "AROM": 2,
+   "ALERTS": 0
+  },
+  "pains": [
+   "pyrrole_A(118)"
+  ],
+  "brenk": [],
+  "murcko": "c1ccc(-n2cccc2)cc1"
+ },
+ "ketoene_A": {
+  "smiles": "CC(=O)C=Cc1ccccc1",
+  "qed_mean": 0.584875,
+  "qed_max": 0.580235,
+  "qed_none": 0.536368,
+  "props": {
+   "MW": 146.189,
+   "ALOGP": 2.2888,
+   "HBA": 1,
+   "HBD": 0,
+   "PSA": 17.07,
+   "ROTB": 2,
+   "AROM": 1,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "Michael_acceptor_1"
+  ],
+  "murcko": "c1ccccc1"
+ },
+ "sulfonamide_alkene": {
+  "smiles": "C=CCS(=O)(=O)Nc1ccccc1",
+  "qed_mean": 0.745321,
+  "qed_max": 0.725173,
+  "qed_none": 0.807354,
+  "props": {
+   "MW": 197.25900000000001,
+   "ALOGP": 1.6142999999999998,
+   "HBA": 2,
+   "HBD": 1,
+   "PSA": 46.17,
+   "ROTB": 4,
+   "AROM": 1,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "isolated_alkene"
+  ],
+  "murcko": "c1ccccc1"
+ },
+ "nitro_benzene": {
+  "smiles": "O=[N+]([O-])c1ccccc1",
+  "qed_mean": 0.420076,
+  "qed_max": 0.372635,
+  "qed_none": 0.55228,
+  "props": {
+   "MW": 123.11099999999996,
+   "ALOGP": 1.5948,
+   "HBA": 2,
+   "HBD": 0,
+   "PSA": 43.14,
+   "ROTB": 1,
+   "AROM": 1,
+   "ALERTS": 2
+  },
+  "pains": [],
+  "brenk": [
+   "Oxygen-nitrogen_single_bond",
+   "nitro_group"
+  ],
+  "murcko": "c1ccccc1"
+ },
+ "azo": {
+  "smiles": "c1ccc(N=Nc2ccccc2)cc1",
+  "qed_mean": 0.624437,
+  "qed_max": 0.633524,
+  "qed_none": 0.454477,
+  "props": {
+   "MW": 182.22600000000003,
+   "ALOGP": 4.102000000000002,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 24.72,
+   "ROTB": 2,
+   "AROM": 2,
+   "ALERTS": 1
+  },
+  "pains": [
+   "azo_A(324)"
+  ],
+  "brenk": [
+   "diazo_group"
+  ],
+  "murcko": "c1ccc(N=Nc2ccccc2)cc1"
+ },
+ "aldehyde": {
+  "smiles": "CCC(=O)C=O",
+  "qed_mean": 0.354194,
+  "qed_max": 0.327994,
+  "qed_none": 0.462902,
+  "props": {
+   "MW": 86.08999999999999,
+   "ALOGP": 0.1644,
+   "HBA": 2,
+   "HBD": 0,
+   "PSA": 34.14,
+   "ROTB": 2,
+   "AROM": 0,
+   "ALERTS": 2
+  },
+  "pains": [],
+  "brenk": [
+   "aldehyde",
+   "diketo_group"
+  ],
+  "murcko": ""
+ },
+ "terminal_alkyne": {
+  "smiles": "CC#CC",
+  "qed_mean": 0.362198,
+  "qed_max": 0.386186,
+  "qed_none": 0.257741,
+  "props": {
+   "MW": 54.092,
+   "ALOGP": 1.0296,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "triple_bond"
+  ],
+  "murcko": ""
+ },
+ "thiol": {
+  "smiles": "CCS",
+  "qed_mean": 0.396503,
+  "qed_max": 0.425554,
+  "qed_none": 0.276658,
+  "props": {
+   "MW": 62.137,
+   "ALOGP": 0.9360999999999999,
+   "HBA": 0,
+   "HBD": 1,
+   "PSA": 0.0,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "thiol_2"
+  ],
+  "murcko": ""
+ },
+ "sulfonyl_halide": {
+  "smiles": "CS(=O)(=O)Cl",
+  "qed_mean": 0.421427,
+  "qed_max": 0.425686,
+  "qed_none": 0.498693,
+  "props": {
+   "MW": 114.55300000000001,
+   "ALOGP": 0.18480000000000008,
+   "HBA": 2,
+   "HBD": 0,
+   "PSA": 34.14,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": ""
+ },
+ "anhydride": {
+  "smiles": "O=C1OC(=O)C1",
+  "qed_mean": 0.293482,
+  "qed_max": 0.275678,
+  "qed_none": 0.40137,
+  "props": {
+   "MW": 86.04599999999999,
+   "ALOGP": -0.5401000000000001,
+   "HBA": 3,
+   "HBD": 0,
+   "PSA": 43.370000000000005,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 2
+  },
+  "pains": [],
+  "brenk": [
+   "beta-keto/anhydride",
+   "four_member_lactones"
+  ],
+  "murcko": "O=C1CC(=O)O1"
+ },
+ "hydrazine": {
+  "smiles": "CNNC",
+  "qed_mean": 0.392481,
+  "qed_max": 0.408211,
+  "qed_none": 0.451997,
+  "props": {
+   "MW": 60.10000000000001,
+   "ALOGP": -0.6598000000000002,
+   "HBA": 2,
+   "HBD": 2,
+   "PSA": 24.06,
+   "ROTB": 1,
+   "AROM": 0,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "Oxygen-nitrogen_single_bond"
+  ],
+  "murcko": ""
+ },
+ "cyclohexane": {
+  "smiles": "C1CCCCC1",
+  "qed_mean": 0.422316,
+  "qed_max": 0.457805,
+  "qed_none": 0.287042,
+  "props": {
+   "MW": 84.162,
+   "ALOGP": 2.3406000000000002,
+   "HBA": 0,
+   "HBD": 0,
+   "PSA": 0.0,
+   "ROTB": 0,
+   "AROM": 0,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "C1CCCCC1"
+ },
+ "chloramphenicol": {
+  "smiles": "OCC(NC(=O)C(Cl)Cl)c1ccc([N+](=O)[O-])cc1",
+  "qed_mean": 0.489133,
+  "qed_max": 0.395049,
+  "qed_none": 0.636772,
+  "props": {
+   "MW": 293.10600000000005,
+   "ALOGP": 1.5480999999999998,
+   "HBA": 4,
+   "HBD": 2,
+   "PSA": 92.47,
+   "ROTB": 5,
+   "AROM": 1,
+   "ALERTS": 3
+  },
+  "pains": [],
+  "brenk": [
+   "Oxygen-nitrogen_single_bond",
+   "alkyl_halide",
+   "nitro_group"
+  ],
+  "murcko": "c1ccccc1"
+ },
+ "isoniazid": {
+  "smiles": "NC(=O)Nc1cccnc1",
+  "qed_mean": 0.59379,
+  "qed_max": 0.598556,
+  "qed_none": 0.659147,
+  "props": {
+   "MW": 137.142,
+   "ALOGP": 0.5722000000000003,
+   "HBA": 2,
+   "HBD": 2,
+   "PSA": 68.01,
+   "ROTB": 1,
+   "AROM": 1,
+   "ALERTS": 0
+  },
+  "pains": [],
+  "brenk": [],
+  "murcko": "c1ccncc1"
+ },
+ "warfarin_enol": {
+  "smiles": "CC(=O)CC(c1ccccc1)c1c(O)c2ccccc2oc1=O",
+  "qed_mean": 0.747626,
+  "qed_max": 0.760052,
+  "qed_none": 0.771914,
+  "props": {
+   "MW": 308.3330000000001,
+   "ALOGP": 3.609600000000003,
+   "HBA": 4,
+   "HBD": 1,
+   "PSA": 67.50999999999999,
+   "ROTB": 4,
+   "AROM": 3,
+   "ALERTS": 1
+  },
+  "pains": [],
+  "brenk": [
+   "cumarine"
+  ],
+  "murcko": "O=c1oc2ccccc2cc1Cc1ccccc1"
+ }
+}

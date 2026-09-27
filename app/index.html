@@ -137,6 +137,28 @@
    color: #166534;
  }
 
+ /* LBDD: structural-alert chips + sortable batch headers */
+ .alerts-list {
+   margin-top: 0.35rem;
+   display: flex;
+   flex-wrap: wrap;
+   gap: 0.3rem;
+ }
+ .alert-chip {
+   font-size: 0.7rem;
+   padding: 0.15rem 0.45rem;
+   border-radius: 10px;
+   border: 1px solid transparent;
+   cursor: pointer;
+ }
+ .alert-chip.pains { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+ .alert-chip.brenk { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+ .alert-chip.clear { background: #f1f5f9; color: #334155; border-color: #cbd5e1; }
+ .alert-chip:hover { filter: brightness(0.95); }
+ #batchTable th.sortable { cursor: pointer; user-select: none; }
+ #batchTable th.sortable:hover { background: rgba(15,23,42,0.06); }
+ #batchTable th.sortable.active { color: #1d4ed8; }
+
  .result-badge.fail {
    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
    color: #b91c1c;
@@ -699,6 +721,12 @@ textarea:focus {
   gap: 1.25rem;
 }
 
+/* grid items must not feed content min-content into the track sizing
+   (same class of fix as the v1.3.2 3Dmol intrinsic-width blowout) */
+.grid > div {
+  min-width: 0;
+}
+
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; }
 }
@@ -821,7 +849,7 @@ details {
       <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
         <input type="checkbox" id="batch3d"> 3D: embed + MMFF94s optimize
       </label>
-      <span class="version" id="batchInfo">descriptors + drug rules · 3D optional · export CSV/SDF</span>
+      <span class="version" id="batchInfo">descriptors + drug rules + QED/PAINS · 3D optional · sort/filter · export CSV/SDF</span>
     </div>
   </div>
 
@@ -863,7 +891,7 @@ details {
      <div>
          <strong>2D Structure</strong>
          <div id="svg" style="margin-top:0.75rem; margin-bottom:0.75rem;"></div>
-         <div style="display:flex; gap:0.75rem; justify-content:center;">
+         <div class="action-buttons">
            <div class="ctl-group" title="Download the 2D structure">
              <button id="btn2dSvg" class="action-btn export" onclick="downloadSVG()" title="Download 2D structure as SVG">
                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -910,6 +938,11 @@ details {
           <summary>More Rules</summary>
           <table id="moreRules"></table>
         </details>
+
+        <br>
+        <strong>Structural Alerts</strong>
+        <table id="alerts"></table>
+        <div id="alertsList" class="alerts-list"></div>
       </div>
   </div>
 
@@ -1033,6 +1066,11 @@ details {
         <td class="value" id="inchikey"></td>
         <td><button onclick="copy('inchikey')">Copy</button></td>
       </tr>
+      <tr>
+        <td class="key">Murcko Scaffold</td>
+        <td class="value" id="murcko"></td>
+        <td><button onclick="copy('murcko')">Copy</button></td>
+      </tr>
     </table>
 
    </div>
@@ -1044,11 +1082,19 @@ details {
      <div class="action-buttons" style="justify-content:flex-start; margin-bottom:0.6rem;">
        <button id="btnBatchCSV" class="action-btn export" onclick="exportBatchCSV()">Export CSV</button>
        <button id="btnBatchSDF" class="action-btn export" onclick="exportBatchSDF()">Export SDF</button>
+       <label for="batchFilter" style="font-size:0.75rem; color:#64748b; margin-left:0.3rem;">Filter</label>
+       <select id="batchFilter" onchange="applyBatchView()" style="font-size:0.75rem; padding:0.25rem;">
+         <option value="all">All</option>
+         <option value="lipinski">Lipinski pass</option>
+         <option value="veber">Veber pass</option>
+         <option value="qed">QED ≥ 0.5</option>
+         <option value="nopains">No PAINS</option>
+       </select>
      </div>
      <div style="overflow-x:auto;">
      <table id="batchTable">
        <thead>
-         <tr><th>#</th><th>Name</th><th>SMILES</th><th>Formula</th><th>MW</th><th>cLogP</th><th>TPSA</th><th>HBD</th><th>HBA</th><th>RotB</th><th>Lipinski</th><th>Veber</th><th>E MMFF94s</th></tr>
+         <tr><th>#</th><th class="sortable" data-key="Name" onclick="sortBatch('Name')" aria-sort="none">Name</th><th>SMILES</th><th class="sortable" data-key="Formula" onclick="sortBatch('Formula')" aria-sort="none">Formula</th><th class="sortable" data-key="MW" onclick="sortBatch('MW')" aria-sort="none">MW</th><th class="sortable" data-key="cLogP" onclick="sortBatch('cLogP')" aria-sort="none">cLogP</th><th class="sortable" data-key="TPSA" onclick="sortBatch('TPSA')" aria-sort="none">TPSA</th><th class="sortable" data-key="HBD" onclick="sortBatch('HBD')" aria-sort="none">HBD</th><th class="sortable" data-key="HBA" onclick="sortBatch('HBA')" aria-sort="none">HBA</th><th class="sortable" data-key="RotB" onclick="sortBatch('RotB')" aria-sort="none">RotB</th><th class="sortable" data-key="QED" onclick="sortBatch('QED')" aria-sort="none">QED</th><th class="sortable" data-key="PAINS" onclick="sortBatch('PAINS')" aria-sort="none">PAINS</th><th class="sortable" data-key="Lipinski" onclick="sortBatch('Lipinski')" aria-sort="none">Lipinski</th><th class="sortable" data-key="Veber" onclick="sortBatch('Veber')" aria-sort="none">Veber</th><th class="sortable" data-key="E MMFF94s" onclick="sortBatch('E MMFF94s')" aria-sort="none">E MMFF94s</th></tr>
        </thead>
        <tbody id="batchRows"></tbody>
      </table>
@@ -1157,6 +1203,7 @@ function rdkitAvailable() {
    }
 </script>
 <script src="vendor/RDKit_minimal.js"></script>
+<script defer src="lbdd_data.js"></script>
 <script>initRDKit();</script>
 
 <script>
@@ -1291,6 +1338,7 @@ function rdkitAvailable() {
     }
 
     document.getElementById("svg").innerHTML = svgContent;
+    lastBaseSvg = svgContent;   // LBDD highlight clear restores this
 
     document.getElementById("name").textContent = name;
 
@@ -1401,7 +1449,284 @@ function rdkitAvailable() {
       <tr><td class="key">Too Many Rings (>5)</td><td class="value"><span class="result-badge ${alertTooManyRings?'fail':'pass'}">${alertTooManyRings?'Alert':'OK'}</span></td></tr>
       <tr><td class="key">Complex Stereo (>3)</td><td class="value"><span class="result-badge ${alertStereo?'fail':'pass'}">${alertStereo?'Alert':'OK'}</span></td></tr>
     `;
+
+    // ---- LBDD: QED / structural alerts / Murcko scaffold ----
+    try {
+      const qed = computeQED(m, d);
+      const pains = matchCatalog(m, lbddQueries().pains);
+      const brenk = matchCatalog(m, lbddQueries().brenk);
+      const murcko = murckoScaffold(m);
+      currentLBDD = { qed, pains, brenk, murcko };
+      highlightedCat = null; highlightedIdx = -1;
+
+      document.getElementById("props").insertAdjacentHTML("beforeend",
+        `<tr><td class="key">QED (mean)</td><td class="value">${qed.mean.toFixed(2)}</td></tr>` +
+        `<tr><td class="key">QED (max)</td><td class="value">${qed.max.toFixed(2)}</td></tr>`);
+
+      const badge = (n) => n
+        ? `<span class="result-badge fail">${n} hit${n > 1 ? 's' : ''}</span>`
+        : `<span class="result-badge pass">Clean</span>`;
+      document.getElementById("alerts").innerHTML = `
+        <tr><td class="key">PAINS (A/B/C)</td><td class="value">${badge(pains.length)}</td></tr>
+        <tr><td class="key">BRENK</td><td class="value">${badge(brenk.length)}</td></tr>
+      `;
+
+      const chips = [];
+      pains.forEach((h, i) => chips.push(
+        `<button class="alert-chip pains" title="Highlight match in 2D — click again to clear" onclick="highlightAlert('pains', ${i})">${h.id}</button>`));
+      brenk.forEach((h, i) => chips.push(
+        `<button class="alert-chip brenk" title="Highlight match in 2D — click again to clear" onclick="highlightAlert('brenk', ${i})">${h.id}</button>`));
+      if (chips.length) chips.push(
+        `<button class="alert-chip clear" id="btnClearHighlight" style="display:none" onclick="clearHighlight()">clear highlight</button>`);
+      document.getElementById("alertsList").innerHTML = chips.join(' ');
+
+      document.getElementById("murcko").textContent = murcko || '—';
+    } catch (e) {
+      console.warn('[lbdd] computation failed:', e);
+      document.getElementById("alerts").innerHTML = '';
+      document.getElementById("alertsList").innerHTML = '';
+      document.getElementById("murcko").textContent = '—';
+    }
   }
+
+  // ===================== LBDD layer =====================
+  // QED (Bickerton 2012; faithful port of RDKit's pure-Python implementation,
+  // constants extracted by scripts/gen_lbdd_data.py), PAINS/BRENK structural
+  // alerts (RDKit FilterCatalog sources) and Murcko scaffold (2-core pruning).
+  // Catalog data: app/lbdd_data.js (generated, committed).
+
+  let _lbddQueries = null;
+
+  function lbddQueries() {
+    if (_lbddQueries) return _lbddQueries;
+    const D = window.LBDD_DATA;
+    const mk = entries => entries
+      .map(e => ({ id: e.id, q: rdkitModule.get_qmol(e.smarts) }))
+      .filter(e => e.q && e.q.is_valid());
+    const mkQ = smarts => smarts
+      .map(s => rdkitModule.get_qmol(s))
+      .filter(q => q && q.is_valid());
+    _lbddQueries = {
+      pains: mk(D.pains),
+      brenk: mk(D.brenk),
+      acceptors: mkQ(D.qed.acceptors),
+      alerts: mkQ(D.qed.alerts),
+      aromatic: rdkitModule.get_qmol('[a]'),
+      qed: D.qed,
+    };
+    if (_lbddQueries.pains.length !== D.pains.length ||
+        _lbddQueries.brenk.length !== D.brenk.length ||
+        _lbddQueries.alerts.length !== D.qed.alerts.length ||
+        _lbddQueries.acceptors.length !== D.qed.acceptors.length)
+      console.warn('[lbdd] some catalog SMARTS failed to parse');
+    return _lbddQueries;
+  }
+
+  function lbddMatchCount(m, q) {
+    // NB: the minimal build returns the string "{}" when there are no hits.
+    const r = JSON.parse(m.get_substruct_matches(q));
+    return Array.isArray(r) ? r.length : 0;
+  }
+
+  function lbddFirstAtoms(m, q) {
+    try {
+      const r = m.get_substruct_match(q);
+      if (!r) return null;
+      const parsed = JSON.parse(r);
+      return parsed && parsed.atoms ? parsed.atoms : null;
+    } catch (e) { return null; }
+  }
+
+  // Aromatic ring count = cycle rank of the aromatic-atom-induced subgraph.
+  // Equivalent to RDKit QED's GetSSSR(DeleteSubstructs(mol, AliphaticRings)).
+  function lbddAromaticRings(m) {
+    const Q = lbddQueries();
+    // NB: the minimal build returns the string "{}" when there are no hits.
+    const parsed = JSON.parse(m.get_substruct_matches(Q.aromatic));
+    const matches = Array.isArray(parsed) ? parsed : [];
+    const arom = new Set();
+    for (const mt of matches) for (const i of mt.atoms) arom.add(i);
+    if (!arom.size) return 0;
+    const lines = m.get_molblock().split('\n');
+    const na = parseInt(lines[3].substring(0, 3));
+    const nb = parseInt(lines[3].substring(3, 6));
+    const parent = new Map();
+    const find = x => {
+      while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); }
+      return x;
+    };
+    for (const a of arom) parent.set(a, a);
+    let edges = 0;
+    for (let i = 4 + na; i < 4 + na + nb; i++) {
+      const l = lines[i] || '';
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      if (arom.has(a) && arom.has(b)) {
+        edges++;
+        const ra = find(a), rb = find(b);
+        if (ra !== rb) parent.set(ra, rb);
+      }
+    }
+    let comps = 0;
+    for (const a of arom) if (find(a) === a) comps++;
+    return edges - arom.size + comps;
+  }
+
+  function lbddAds(p, x) {
+    const exp1 = 1 + Math.exp(-(x - p.C + p.D / 2) / p.E);
+    const exp2 = 1 + Math.exp(-(x - p.C - p.D / 2) / p.F);
+    return (p.A + p.B / exp1 * (1 - 1 / exp2)) / p.DMAX;
+  }
+
+  // d: parsed get_descriptors() of the same molecule m.
+  function computeQED(m, d) {
+    const Q = lbddQueries(), C = Q.qed;
+    const props = {
+      MW: d.amw, ALOGP: d.CrippenClogP, HBA: 0, HBD: d.NumHBD,
+      PSA: d.tpsa, ROTB: d.NumRotatableBonds,
+      AROM: lbddAromaticRings(m), ALERTS: 0,
+    };
+    for (const q of Q.acceptors) props.HBA += lbddMatchCount(m, q);
+    for (const q of Q.alerts) if (lbddMatchCount(m, q)) props.ALERTS++;
+    const dd = C.ads_order.map(k => lbddAds(C.ads[k], props[k]));
+    const score = w => Math.exp(
+      w.reduce((s, wi, i) => s + wi * Math.log(dd[i]), 0) /
+      w.reduce((a, b) => a + b, 0));
+    return {
+      mean: score(C.weights.mean),
+      max: score(C.weights.max),
+      none: score(C.weights.none),
+      props,
+    };
+  }
+
+  // FilterCatalog's matcher semantics are H-aware: patterns like "-[#8]-[#1]"
+  // (explicit H) need an AddHs copy, while degree queries like "[R0;D2]" need
+  // the implicit-H form. Matching BOTH and taking the union reproduces
+  // FilterCatalog exactly (validated 51/51 against Python RDKit).
+  function matchCatalog(m, queries) {
+    let mh = null;
+    try { mh = rdkitModule.get_mol(m.add_hs()); } catch (e) { /* fall back to implicit-H only */ }
+    const hits = [];
+    for (const { id, q } of queries) {
+      let atoms = lbddFirstAtoms(m, q);
+      if (!atoms && mh && mh.is_valid()) atoms = lbddFirstAtoms(mh, q);   // AddHs preserves heavy indices
+      if (atoms) hits.push({ id, atoms });
+    }
+    if (mh) mh.delete();
+    return hits;
+  }
+
+  // Murcko scaffold, replicating RDKit MurckoScaffold semantics (validated
+  // against Python MurckoScaffoldSmiles):
+  //   framework = plain 2-core (rings + linkers between rings),
+  //   PLUS terminal atoms attached to framework atoms by non-single bonds
+  //   (exocyclic =O/=S/=CH2 survive; single-bonded side chains never do).
+  function murckoScaffold(m) {
+    const lines = m.get_molblock().split('\n');
+    if (!lines[3]) return '';
+    const na = parseInt(lines[3].substring(0, 3));
+    const nb = parseInt(lines[3].substring(3, 6));
+    if (!na) return '';
+    const atomLines = lines.slice(4, 4 + na);
+    const bonds = [];
+    for (let i = 4 + na; i < 4 + na + nb; i++) {
+      const l = lines[i] || '';
+      bonds.push([parseInt(l.substring(0, 3)), parseInt(l.substring(3, 6)),
+        (l.substring(6, 9) || ' ').trim(), l]);
+    }
+    const deg = new Array(na + 1).fill(0);
+    const adj = Array.from({ length: na + 1 }, () => []);
+    for (let i = 0; i < bonds.length; i++) {
+      const a = bonds[i][0], b = bonds[i][1];
+      adj[a].push([b, i]); adj[b].push([a, i]); deg[a]++; deg[b]++;
+    }
+    // phase A: plain 2-core (prune degree<=1 regardless of bond order)
+    const alive = new Array(na + 1).fill(true);
+    const bAlive = new Array(bonds.length).fill(true);
+    const queue = [];
+    for (let a = 1; a <= na; a++) if (deg[a] <= 1) queue.push(a);
+    while (queue.length) {
+      const a = queue.shift();
+      if (!alive[a]) continue;
+      alive[a] = false;
+      for (const [b, bi] of adj[a]) if (bAlive[bi]) {
+        bAlive[bi] = false;
+        if (alive[b] && --deg[b] <= 1) queue.push(b);
+      }
+    }
+    let keptCount = 0;
+    for (let a = 1; a <= na; a++) if (alive[a]) keptCount++;
+    if (!keptCount) return '';   // acyclic: no scaffold
+    // phase B: keep non-single-bonded terminals of framework atoms
+    const keep = alive.slice();
+    for (let i = 0; i < bonds.length; i++) {
+      const [a, b, ord] = bonds[i];
+      if (ord !== '1') {
+        if (alive[a] && !alive[b]) keep[b] = true;
+        if (alive[b] && !alive[a]) keep[a] = true;
+      }
+    }
+    // rebuild the subset molblock
+    const remap = new Array(na + 1).fill(0);
+    const keptAtoms = [];
+    for (let a = 1; a <= na; a++) if (keep[a]) { remap[a] = keptAtoms.length + 1; keptAtoms.push(atomLines[a - 1]); }
+    if (!keptAtoms.length) return '';
+    const keptBondLines = [];
+    for (let i = 0; i < bonds.length; i++) {
+      const [a, b, , l] = bonds[i];
+      if (keep[a] && keep[b] && (bAlive[i] || (l.substring(6, 9) || ' ').trim() !== '1'))
+        keptBondLines.push(String(remap[a]).padStart(3, ' ') + String(remap[b]).padStart(3, ' ') + (l.substring(6) || ''));
+    }
+    const p3 = n => String(n).padStart(3, ' ');
+    const out = [lines[0], lines[1], lines[2],
+      p3(keptAtoms.length) + p3(keptBondLines.length) + (lines[3].substring(6) || '')];
+    for (const l of keptAtoms) out.push(l);
+    for (const l of keptBondLines) out.push(l);
+    out.push('M  END');
+    const mm = rdkitModule.get_mol(out.join('\n'));
+    if (!mm || !mm.is_valid()) { if (mm) mm.delete(); return ''; }
+    // non-isomeric canonical SMILES (matches MurckoScaffoldSmiles includeChirality=False)
+    const smi = mm.get_smiles('{"doIsomericSmiles": false}');
+    mm.delete();
+    return smi || '';
+  }
+
+  function computeLBDDSummary(m, d) {
+    const qed = computeQED(m, d);
+    return {
+      qed: +qed.mean.toFixed(6), qedMax: +qed.max.toFixed(6),
+      pains: matchCatalog(m, lbddQueries().pains).length,
+      brenk: matchCatalog(m, lbddQueries().brenk).length,
+      murcko: murckoScaffold(m),
+    };
+  }
+
+  // ---- single-molecule state & highlight interaction ----
+  let currentLBDD = null;    // { qed, pains, brenk, murcko }
+  let lastBaseSvg = '';      // un-highlighted 2D depiction (render() stores it)
+  let highlightedCat = null, highlightedIdx = -1;
+
+  function highlightAlert(cat, idx) {
+    if (!currentLBDD || !mol || !currentLBDD[cat] || !currentLBDD[cat][idx]) return;
+    if (highlightedCat === cat && highlightedIdx === idx) { clearHighlight(); return; }
+    highlightedCat = cat; highlightedIdx = idx;
+    const atoms = currentLBDD[cat][idx].atoms;
+    let svg = '';
+    try { svg = mol.get_svg_with_highlights(JSON.stringify({ atoms })); } catch (e) { console.warn(e); }
+    if (svg) document.getElementById('svg').innerHTML = svg;
+    const btn = document.getElementById('btnClearHighlight');
+    if (btn) btn.style.display = '';
+  }
+
+  function clearHighlight() {
+    highlightedCat = null; highlightedIdx = -1;
+    if (lastBaseSvg) document.getElementById('svg').innerHTML = lastBaseSvg;
+    const btn = document.getElementById('btnClearHighlight');
+    if (btn) btn.style.display = 'none';
+  }
+
+  // test hook for the Playwright parity suite (no UI role)
+  window.__lbdd = { computeQED, matchCatalog, murckoScaffold, lbddQueries, computeLBDDSummary };
 
   function copy(id) {
     const text = document.getElementById(id).textContent;
@@ -1827,6 +2152,11 @@ function rdkitAvailable() {
       'Aliphatic Rings',
       'Fsp3',
       'Labute ASA',
+      'QED mean',
+      'QED max',
+      'PAINS',
+      'BRENK',
+      'Murcko',
       'Lipinski',
       'Veber',
       'Egan',
@@ -1848,7 +2178,7 @@ function rdkitAvailable() {
       try {
         const m = rdkitModule.get_mol(compound.smiles);
         if (!m || !m.is_valid()) {
-          csvContent += compound.name + ',ERROR,,,,,,,,,,,,,,,,,,,,,,,,,,,' + compound.timestamp + '\n';
+          csvContent += compound.name + ',ERROR,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,' + compound.timestamp + '\n';
           continue;
         }
 
@@ -1896,6 +2226,9 @@ function rdkitAvailable() {
         const alertTooManyRings = d.NumRings > 5;
         const alertStereo = d.NumAtomStereoCenters > 3;
 
+        let lb = { qed: null, qedMax: null, pains: null, brenk: null, murcko: '' };
+        try { lb = computeLBDDSummary(m, d); } catch (e) { console.warn('[lbdd] history row failed:', e); }
+
         const row = [
           compound.name,
           compound.smiles,
@@ -1915,6 +2248,11 @@ function rdkitAvailable() {
           d.NumAliphaticRings,
           d.FractionCSP3.toFixed(3),
           d.labuteASA.toFixed(2),
+          lb.qed != null ? lb.qed.toFixed(6) : '',
+          lb.qedMax != null ? lb.qedMax.toFixed(6) : '',
+          lb.pains != null ? lb.pains : '',
+          lb.brenk != null ? lb.brenk : '',
+          lb.murcko || '',
           lipinski ? 'Pass' : 'Fail',
           veber ? 'Pass' : 'Fail',
           egan ? 'Pass' : 'Fail',
@@ -1939,7 +2277,7 @@ function rdkitAvailable() {
         csvContent += row + '\n';
         m.delete();
       } catch (e) {
-        csvContent += compound.name + ',ERROR,,,,,,,,,,,,,,,,,,,,,,,,,,,' + compound.timestamp + '\n';
+        csvContent += compound.name + ',ERROR,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,' + compound.timestamp + '\n';
       }
     }
 
@@ -2247,6 +2585,11 @@ function describeBatchMolecule(item, idx) {
     r.exactmw = d.exactmw.toFixed(2); r.heavy = d.NumHeavyAtoms; r.fsp3 = d.FractionCSP3.toFixed(3);
     r.lipinski = (d.amw <= 500 && d.CrippenClogP <= 5 && d.NumHBD <= 5 && d.NumHBA <= 10) ? 'Pass' : 'Fail';
     r.veber = (d.tpsa <= 140 && d.NumRotatableBonds <= 10) ? 'Pass' : 'Fail';
+    try {
+      const lb = computeLBDDSummary(m, d);
+      r.qed = lb.qed; r.qedMax = lb.qedMax; r.pains = lb.pains;
+      r.brenk = lb.brenk; r.murcko = lb.murcko;
+    } catch (e) { console.warn('[lbdd] batch row failed:', e); }
     m.delete();
   } catch (e) {
     r.error = String(e && e.message ? e.message : e);
@@ -2271,12 +2614,14 @@ function renderBatchRow(r) {
   const tb = document.getElementById('batchRows');
   const tr = tb.querySelector(`tr[data-idx="${r.idx}"]`);
   const cells = r.error
-    ? `<td>${r.idx + 1}</td><td>${r.name || ''}</td><td colspan="11" style="color:var(--bad);">${r.error}</td>`
+    ? `<td>${r.idx + 1}</td><td>${r.name || ''}</td><td colspan="13" style="color:var(--bad);">${r.error}</td>`
     : `<td>${r.idx + 1}</td><td>${r.name || ''}</td>` +
       `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${r.smiles}">${r.smiles}</td>` +
       `<td class="value">${batchFormula(r)}</td>` +
       `<td class="value">${r.MW}</td><td class="value">${r.cLogP}</td><td class="value">${r.TPSA}</td>` +
       `<td class="value">${r.HBD}</td><td class="value">${r.HBA}</td><td class="value">${r.RotB}</td>` +
+      `<td class="value">${r.qed != null ? r.qed.toFixed(2) : '—'}</td>` +
+      `<td><span class="result-badge ${r.pains ? 'fail' : 'pass'}">${r.pains != null ? r.pains : '—'}</span></td>` +
       `<td><span class="result-badge ${r.lipinski === 'Pass' ? 'pass' : 'fail'}">${r.lipinski}</span></td>` +
       `<td><span class="result-badge ${r.veber === 'Pass' ? 'pass' : 'fail'}">${r.veber}</span></td>` +
       `<td class="value">${r.E !== null && r.E !== undefined ? r.E.toFixed(2) : '—'}</td>`;
@@ -2292,6 +2637,76 @@ function renderBatchRow(r) {
     el.innerHTML = cells;
     tb.appendChild(el);
   }
+  applyBatchView();
+}
+
+// ---- batch table sort & filter (LBDD layer) ----
+const BATCH_COLS = {
+  'Name': r => r.name || '',
+  'Formula': r => batchFormula(r),
+  'MW': r => parseFloat(r.MW),
+  'cLogP': r => parseFloat(r.cLogP),
+  'TPSA': r => parseFloat(r.TPSA),
+  'HBD': r => r.HBD,
+  'HBA': r => r.HBA,
+  'RotB': r => r.RotB,
+  'QED': r => r.qed,
+  'PAINS': r => r.pains,
+  'Lipinski': r => r.lipinski,
+  'Veber': r => r.veber,
+  'E MMFF94s': r => r.E,
+};
+let batchSort = { key: null, dir: 1 };
+
+function sortBatch(key) {
+  if (!BATCH_COLS[key]) return;
+  if (batchSort.key === key) {
+    if (batchSort.dir > 0) batchSort.dir = -1;
+    else { batchSort.key = null; batchSort.dir = 1; }   // third click: reset
+  } else { batchSort.key = key; batchSort.dir = 1; }
+  applyBatchView();
+}
+
+function rowMatchesFilter(r, f) {
+  if (!r) return true;
+  if (r.error) return f === 'all';
+  if (f === 'lipinski') return r.lipinski === 'Pass';
+  if (f === 'veber') return r.veber === 'Pass';
+  if (f === 'qed') return r.qed != null && r.qed >= 0.5;
+  if (f === 'nopains') return r.pains != null && r.pains === 0;
+  return true;
+}
+
+function applyBatchView() {
+  const tb = document.getElementById('batchRows');
+  if (!tb) return;
+  const rows = Array.from(tb.querySelectorAll('tr'));
+  if (batchSort.key && rows.length) {
+    const get = BATCH_COLS[batchSort.key];
+    rows.sort((A, B) => {
+      const ra = batchResults[+A.dataset.idx], rb = batchResults[+B.dataset.idx];
+      let a = ra ? get(ra) : null, b = rb ? get(rb) : null;
+      const an = (a == null || a === '' || (typeof a === 'number' && isNaN(a)) || isNaN(a));
+      const bn = (b == null || b === '' || (typeof b === 'number' && isNaN(b)) || isNaN(b));
+      if (an && bn) return 0;
+      if (an) return 1;    // rows without values sink to the bottom
+      if (bn) return -1;
+      if (typeof a === 'number' && typeof b === 'number') return (a - b) * batchSort.dir;
+      return String(a).localeCompare(String(b)) * batchSort.dir;
+    });
+    rows.forEach(tr => tb.appendChild(tr));
+  }
+  const f = document.getElementById('batchFilter') ? document.getElementById('batchFilter').value : 'all';
+  rows.forEach(tr => {
+    const r = batchResults[+tr.dataset.idx];
+    tr.style.display = rowMatchesFilter(r, f) ? '' : 'none';
+  });
+  document.querySelectorAll('#batchTable th.sortable').forEach(th => {
+    const active = th.dataset.key === batchSort.key;
+    th.classList.toggle('active', active);
+    th.setAttribute('aria-sort', active ? (batchSort.dir > 0 ? 'ascending' : 'descending') : 'none');
+    th.textContent = th.dataset.key + (active ? (batchSort.dir > 0 ? ' ▲' : ' ▼') : '');
+  });
 }
 
 function pumpBatch() {
@@ -2436,11 +2851,16 @@ function loadBatchRow(idx) {
 
 function exportBatchCSV() {
   const headers = ['Name', 'SMILES', 'InChIKey', 'Formula', 'MW', 'cLogP', 'TPSA', 'HBD', 'HBA', 'RotB',
+                   'QED mean', 'QED max', 'PAINS', 'BRENK', 'Murcko',
                    'Exact MW', 'Heavy Atoms', 'Fsp3', 'Lipinski', 'Veber', 'E_MMFF94s_kcal'];
   const rows = batchResults.map(r => {
     if (r.error) return [r.name || '', r.smiles || '', 'ERROR'];
     return [r.name || '', r.smiles, r.inchikey || '', batchFormula(r), r.MW, r.cLogP, r.TPSA,
-            r.HBD, r.HBA, r.RotB, r.exactmw || '', r.heavy || '', r.fsp3 || '',
+            r.HBD, r.HBA, r.RotB,
+            r.qed != null ? r.qed.toFixed(6) : '', r.qedMax != null ? r.qedMax.toFixed(6) : '',
+            r.pains != null ? r.pains : '', r.brenk != null ? r.brenk : '',
+            r.murcko || '',
+            r.exactmw || '', r.heavy || '', r.fsp3 || '',
             r.lipinski, r.veber, r.E !== null && r.E !== undefined ? r.E.toFixed(3) : ''];
   });
   const esc = v => { const s = String(v); return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s; };

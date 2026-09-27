@@ -25,7 +25,7 @@ Structures never leave the user's machine.
 | Molecular dynamics | Velocity-Verlet (NVE) / BAOAB Langevin (NVT) | Live-steppable for in-browser trajectory animation |
 | Enhanced sampling | Well-tempered metadynamics | Dihedral and distance collective variables, FES reconstruction |
 | Implicit solvation | GBSA (OBC2 + LCPO) | Optional add-on; gas phase by default |
-| Ligand workbench | `app/` | Draw (JSME) → descriptors (RDKit-js) → embed/optimize/rank conformers → export; offline-capable |
+| Ligand workbench | `app/` | Draw (JSME) → descriptors + QED + PAINS/BRENK alerts + Murcko scaffold (RDKit-js) → embed/optimize/rank conformers → batch sort/filter/export; offline-capable |
 
 **Not covered:** proteins, periodic systems, QM beyond GFN-FF, explicit
 solvent. MMFF typing refuses metal-bonded systems exactly like RDKit's MMFF
