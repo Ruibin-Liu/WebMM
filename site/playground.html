@@ -903,7 +903,7 @@ let bonds = [];               // {i, j, ring} from the SDF bond block
 let adjacency = [];           // number[][]
 let mouse = { x: 0, y: 0 };
 let targetT = 300;
-let peBuf = [], tBuf = [];    // scrolling chart buffers
+let peBuf = [], tBuf = [], timeBuf = [];    // scrolling chart buffers
 const FPS = 30;
 
 // ---------------------------------------------------------------------------
@@ -1192,7 +1192,7 @@ function startLiveMD(sdf, tK) {
   liveKind = 'md';
   nAtoms = live.n_atoms();
   masses = live.masses();
-  peBuf = []; tBuf = [];
+  peBuf = []; tBuf = []; timeBuf = [];
   grabbed = null;
   lastDisplayed = null; lastRot = null; // fresh geometry → fresh display frame
   alignRef = null;
@@ -1321,8 +1321,8 @@ function renderLiveFrame() {
     setStatus('☢ the molecule exploded — resetting', 'error');
     return;
   }
-  peBuf.push(pe); tBuf.push(t);
-  if (peBuf.length > 300) { peBuf.splice(0, peBuf.length - 300); tBuf.splice(0, tBuf.length - 300); }
+  peBuf.push(pe); tBuf.push(t); timeBuf.push(live.time_fs());
+  if (peBuf.length > 300) { peBuf.splice(0, peBuf.length - 300); tBuf.splice(0, tBuf.length - 300); timeBuf.splice(0, timeBuf.length - 300); }
   drawChart();
   updateOverlay(pe, t);
   // gentle auto-recenter on extreme COM drift: rebuild the handle at the
@@ -1361,21 +1361,49 @@ function drawChart() {
   const W = cv.width, H = cv.height;
   ctx.clearRect(0, 0, W, H);
   if (peBuf.length < 2) return;
-  const pad = 4;
-  const draw = (buf, color) => {
+  const padL = 40, padR = 40, padT = 4, padB = 14;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const stats = buf => {
     let mn = Infinity, mx = -Infinity;
     for (const v of buf) { mn = Math.min(mn, v); mx = Math.max(mx, v); }
+    return [mn, mx];
+  };
+  const [peMn, peMx] = stats(peBuf), [tMn, tMx] = stats(tBuf);
+  // --- axes (gridlines under the curves) ---
+  ctx.font = '9px system-ui, sans-serif';
+  ctx.strokeStyle = 'rgba(100,116,139,0.25)'; ctx.lineWidth = 1;
+  ctx.fillStyle = '#2563eb'; ctx.textAlign = 'right';
+  for (const frac of [0, 0.5, 1]) {
+    const y = padT + (1 - frac) * plotH;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillText((peMn + frac * (peMx - peMn)).toFixed(0), padL - 4, y + 3);
+  }
+  ctx.fillStyle = '#ff4545'; ctx.textAlign = 'left';
+  for (const frac of [0, 0.5, 1]) {
+    const y = padT + (1 - frac) * plotH;
+    ctx.fillText((tMn + frac * (tMx - tMn)).toFixed(0), W - padR + 4, y + 3);
+  }
+  // x: MD-time span of the scrolling window (ps)
+  ctx.fillStyle = '#64748b'; ctx.textAlign = 'center';
+  const t0 = (timeBuf[0] || 0) / 1000, t1 = (timeBuf[timeBuf.length - 1] || 0) / 1000;
+  for (const frac of [0, 0.5, 1]) {
+    const x = padL + frac * plotW;
+    const label = (t0 + (t1 - t0) * frac).toFixed(1);
+    ctx.fillText(label + ' ps', Math.min(Math.max(x, padL + 14), W - padR - 16), H - 3);
+  }
+  // --- curves (each normalized to its own axis) ---
+  const draw = (buf, mn, mx, color) => {
     const range = Math.max(mx - mn, 1e-6);
     ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
     for (let i = 0; i < buf.length; i++) {
-      const x = pad + i / (300 - 1) * (W - 2 * pad);
-      const y = H - pad - (buf[i] - mn) / range * (H - 2 * pad);
+      const x = padL + i / (300 - 1) * plotW;
+      const y = padT + (1 - (buf[i] - mn) / range) * plotH;
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
   };
-  draw(peBuf, '#2563eb');
-  draw(tBuf, '#ff4545');
+  draw(peBuf, peMn, peMx, '#2563eb');
+  draw(tBuf, tMn, tMx, '#ff4545');
 }
 
 // ---------------------------------------------------------------------------
@@ -1539,7 +1567,7 @@ async function runMetad() {
     liveKind = 'metad';
     nAtoms = live.n_atoms();
     masses = live.masses();
-    peBuf = []; tBuf = [];
+    peBuf = []; tBuf = []; timeBuf = [];
     const chunk = Math.max(20, Math.ceil(nSteps / 120));
     const fmtCv = v => cvType === 'distance' ? v.toFixed(2) + ' Å' : (v * 180 / Math.PI).toFixed(0) + '°';
     renderLiveFrame();
