@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc a0fb08f4affc54f3f7accdbc0dd6f73b493fc83e4244d489924b2b4e1a96647d # shrinks to x = 0.5, y = 0.0, z = 0.0
 cc 5d107c1b6d47695144affce83b059e80017674ea12d52f589a3cf1445ae27d2d # shrinks to x = 0.5, y = 2.921487466354333, z = 2.6456898639748805
+cc 2c1a8f11fd89af986f2cb6f15706b861e3ddb1e00063809513f57075c07b7314 # shrinks to x = 0.5, y = 0.0, z = 6.669785584037465e-6

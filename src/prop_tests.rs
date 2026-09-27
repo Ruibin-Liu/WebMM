@@ -161,22 +161,29 @@ M  END"#, x, y, z, x + 1.5, y, z);
             // Calculate analytical gradient
             let (_g1, g2) = bond_gradient(&coords, 0, 1, &params);
 
-            // Calculate numerical gradient using finite difference
+            // Calculate numerical gradient using a CENTRAL difference. A
+            // one-sided step was not enough here: with a stretched bond
+            // dE/dr is large (~-6e3) and the z-path curvature d²r/dz² = 1/r
+            // feeds (eps/2)·dE/dr·(1/r) ~ 6e-4 of truncation error straight
+            // into the gradient — exactly the flake persisted in
+            // proptest-regressions. The central form cancels that even-order
+            // term exactly, leaving O(eps²) truncation + ~1e-6 roundoff.
             let eps = 1e-7;
-            let e0 = bond_energy(&coords, 0, 1, &params);
-
             for dim in 0..3 {
                 let mut coords_plus = coords.clone();
                 coords_plus[1][dim] += eps;
-                let e_plus = bond_energy(&coords_plus, 0, 1, &params);
-                let num_grad = (e_plus - e0) / eps;
+                let mut coords_minus = coords.clone();
+                coords_minus[1][dim] -= eps;
+                let num_grad = (bond_energy(&coords_plus, 0, 1, &params)
+                    - bond_energy(&coords_minus, 0, 1, &params))
+                    / (2.0 * eps);
 
                 let abs_diff = (g2[dim] - num_grad).abs();
                 // Relative error when the gradient is sizable; when the analytical
                 // gradient is ~0 (symmetric points, e.g. bond along x at y=z=0),
-                // finite-difference accumulates O(eps * dE/dr) second-order error
-                // proportional to the (possibly large) force, so fall back to an
-                // absolute tolerance. Otherwise rel_err = |0 - noise|/noise = 1.
+                // central-difference roundoff is proportional to |E|·u/eps while
+                // the true gradient vanishes, so fall back to an absolute
+                // tolerance. Otherwise rel_err = |0 - noise|/noise = 1.
                 let passed = if g2[dim].abs() > 1e-3 {
                     abs_diff / g2[dim].abs() < 5e-3
                 } else {

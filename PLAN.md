@@ -2,36 +2,31 @@
 
 ## 背景
 
-用户更正复现路径:并非 file://,而是在 Workbench 里点 History 的一条
-记录时看到 `TypeError: Cannot read properties of null (reading
-'get_mol')`。
+用户观察:页脚 `engine: WebMM` 的版本号似乎丢了——随后自行更正:
+没丢,只是引擎(7MB 级 WASM,双布局探测 + 动态导入)加载更慢,
+期间静态占位就是裸 `WebMM`,与 RDKit 侧的 `Loading...` 不一致,
+初看像版本号缺失。另发现:双布局两条导入路径都失败时无任何处理
+(webmmready 永不触发,占位永远停留且 3D 按钮静默不可用)。
 
-真实根因(代码审查 + 竞态复现确认):History 按钮与弹窗在 RDKit
-初始化完成前就可用(showHistory 直接读 localStorage,不经 RDKit);
-vendored RDKit_minimal.wasm 有 7.3MB,http/gh-pages 首访下载需数秒——
-该窗口内点 history 条目(loadFromHistory → process() →
-rdkitModule.get_mol)即裸抛 TypeError。file:// 只是让该窗口变成
-『永远』(上一轮已修),慢网络下的竞态是独立且更普遍的入口。
-history 弹窗内的 Export CSV(exportHistoryToCSV 直接调 get_mol)
-同样可达;其余调用点均在已守卫的 process()/runBatch() 下游或
-disabled 按钮之后。
+## 任务(app/index.html,两处微改)
 
-## 任务(app/index.html,纯 JS 防御层,上一轮基础上补齐)
-
-1. rdkitInitFailed 状态位:区分『仍在加载』(竞态窗口,提示
-   several MB / try again in a moment)与『加载失败』(file:// 归因 +
-   `python3 -m http.server` 指引,或保留原始错误);
-2. exportHistoryToCSV 顶部加 rdkitAvailable() 守卫(history 弹窗
-   内的最后一个未守卫入口);
-3. initRDKit 成功后清空 #error(去掉残留的 still-loading 提示)。
+1. #engineVersion 初始占位 `WebMM` → `WebMM (loading…)`,与 RDKit
+   侧行为对齐,消除"版本号丢失"的误读;
+2. 引擎加载器外层 try/catch:双路径均失败时占位改为
+   `WebMM (unavailable)` 并 console.error 归因(取代静默死态)。
 
 ## 验收(实施后实测记录)
 
-- Playwright 竞态复现(route 将 wasm 延迟 8s + localStorage 预置
-  history):加载窗口内点 history 条目——无 TypeError,提示为
-  still loading / try again in a moment;同窗口 Export CSV——
-  无 TypeError;wasm 到位后一切正常、#error 自动清空、全程零
-  page error(7/7 + 复核);
-- file:// 场景保持:失败归因 + http.server 指引,无 TypeError;
-- http 正常加载:行为零变化;
-- cargo test 281/281、clippy 0、fmt(零 Rust 改动,门禁例行)。
+- Playwright:正常 http——早期占位 `WebMM (loading…)`(route 延迟 4s
+  验证),就绪后 `WebMM v1.3.1`、3D 动作启用、零 page error;引擎双路径
+  阻断——占位 `WebMM (unavailable)` + console.error,页面其余部分
+  (RDKit)正常;
+- **门禁附带修复(阻塞性既有脆性,与本任务无关但卡 cargo test)**:
+  prop_tests::gradient_finite_difference 在随机种子下失败(proptest
+  将种子持久化到 proptest-regressions/prop_tests.txt 后必复现)。
+  数值定论:解析梯度正确(g2[2] = −0.08324 与闭式一致);单侧有限
+  差分在该构型(拉伸键 dE/dr ≈ −6241、z 路径曲率 ∂²r/∂z² = 1/r = 2)
+  的截断误差 (eps/2)·|dE/dr|·(1/r) ≈ 6.2e-4,与观测差逐位吻合——
+  纯测试数值方法问题。修复:改中心差分(偶阶曲率项严格抵消,残余
+  O(eps²) 截断 + ~1e-6 舍入),注释记录推导;3 个失败种子重放全过;
+- `cargo test` 281/281、clippy 0、fmt 干净。
