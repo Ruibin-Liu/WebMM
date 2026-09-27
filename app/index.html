@@ -6,6 +6,10 @@
 <title>WebMM Workbench</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='10' r='6' fill='%232563eb'/%3E%3Ccircle cx='23' cy='14' r='5' fill='%23ef4444'/%3E%3Ccircle cx='15' cy='24' r='5' fill='%2322c55e'/%3E%3Cpath d='M10 10L23 14L15 24L10 10' stroke='%23334155' stroke-width='2' fill='none'/%3E%3C/svg%3E">
 <meta name="description" content="A lightweight, ligand-based CADD workbench: draw, inspect, embed 3D, optimize, and enumerate conformers — all locally in your browser. Powered by RDKit, JSME, and the WebMM force-field engine.">
+<meta property="og:title" content="WebMM Workbench">
+<meta property="og:description" content="A lightweight, ligand-based CADD workbench: draw, inspect, embed 3D, optimize, and enumerate conformers — all locally in your browser. Powered by RDKit, JSME, and the WebMM force-field engine.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://ruibin-liu.github.io/WebMM/app/index.html">
 <meta name="keywords" content="WebMM, molecular mechanics, CADD, conformers, ETKDG, MMFF94, GFN-FF, SMILES, JSME, RDKit, molecular properties, browser cheminformatics">
 <script defer src="vendor/jsme/jsme/jsme.nocache.js"></script>
 <script src="vendor/3Dmol-min.js"></script>
@@ -43,6 +47,9 @@
  }
  .topnav .links a:hover { color: var(--accent); background: rgba(37,99,235,0.08); }
  .topnav .links a.active { color: #1d4ed8; background: rgba(37,99,235,0.14); font-weight: 500; }
+ @media (max-width: 620px) {
+   .topnav { flex-wrap: wrap; height: auto; min-height: 54px; padding: 8px 14px; }
+ }
 
  body {
    margin: 0;
@@ -753,7 +760,7 @@ details {
 <nav class="topnav">
   <a class="brand" href="#" onclick="window.scrollTo({top:0}); return false;">Web<span>MM</span></a>
   <div class="links">
-    <a href="#" class="active">Workbench</a>
+    <a href="#" class="active" aria-current="page">Workbench</a>
     <a id="navDemo" href="../index.html">Demo</a>
     <a id="navPlayground" href="../playground.html">Playground</a>
     <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a>

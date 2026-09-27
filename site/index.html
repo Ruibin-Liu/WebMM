@@ -6,6 +6,10 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='10' r='6' fill='%232563eb'/%3E%3Ccircle cx='23' cy='14' r='5' fill='%23ef4444'/%3E%3Ccircle cx='15' cy='24' r='5' fill='%2322c55e'/%3E%3Cpath d='M10 10L23 14L15 24L10 10' stroke='%23334155' stroke-width='2' fill='none'/%3E%3C/svg%3E">
 <title>WebMM Demo — Engine Capabilities &amp; Validation</title>
 <meta name="description" content="MMFF94s force field, ETKDG embedding, geometry optimization, and molecular dynamics — compiled from Rust to WebAssembly. No server, no API calls, 100% in-browser.">
+<meta property="og:title" content="WebMM Demo — Engine Capabilities &amp; Validation">
+<meta property="og:description" content="MMFF94s force field, ETKDG embedding, geometry optimization, and molecular dynamics — compiled from Rust to WebAssembly. No server, no API calls, 100% in-browser.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://ruibin-liu.github.io/WebMM/">
 <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.0/build/3Dmol-min.js"></script>
 <style>
   :root {
@@ -40,6 +44,9 @@
   }
   .topnav .links a:hover { color: var(--accent); background: rgba(37,99,235,0.08); }
   .topnav .links a.active { color: #1d4ed8; background: rgba(37,99,235,0.12); }
+  @media (max-width: 620px) {
+    .topnav { flex-wrap: wrap; height: auto; min-height: 54px; padding: 8px 14px; }
+  }
   /* Hero */
   header.hero { text-align: center; padding: 46px 24px 30px; }
   header.hero h1 { font-size: 2.6em; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 10px; }
@@ -214,7 +221,7 @@
   <a class="brand" href="app/index.html">Web<span>MM</span></a>
   <div class="links">
     <a href="app/index.html">Workbench</a>
-    <a href="index.html" class="active">Demo</a>
+    <a href="index.html" class="active" aria-current="page">Demo</a>
     <a href="playground.html">Playground</a>
     <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a>
   </div>
@@ -222,12 +229,12 @@
 
 <header class="hero">
   <h1>Molecular mechanics <span>you can verify</span></h1>
-  <p class="tagline">MMFF94s energies match RDKit to &lt;0.01 kcal/mol on 230/230 validation molecules. Five checks, in order: embed, verify the energy against a frozen RDKit reference, optimize, then run MD and metadynamics — and copy a Python script to reproduce any number yourself. Rust → WebAssembly, no server, no API calls.</p>
+  <p class="tagline">MMFF94s energies match RDKit to &lt;0.01 kcal/mol on 230/230 validation molecules — computed entirely in your browser.</p>
   <div class="badges">
     <div class="badge"><strong>230/230</strong> match RDKit</div>
-    <div class="badge"><strong>~1.4&times;</strong> RDKit speed</div>
+    <div class="badge" title="WASM vs RDKit native C++, single-molecule MMFF94s optimize (v1.2.10 benchmarks): aspirin 1.03&times;, ibuprofen 1.28&times;, ethanol parity"><strong>&asymp;1&times;</strong> RDKit opt speed</div>
     <div class="badge"><strong>0</strong> server calls</div>
-    <div class="badge"><strong>+MD</strong> &amp; metadynamics</div>
+    <div class="badge"><strong>7</strong> energy terms decomposed</div>
   </div>
 </header>
 
@@ -240,9 +247,9 @@
     <!-- trajectory UI: hidden until the first MD/metad frame exists -->
     <div id="traj-ui" style="display:none">
       <div class="playback">
-        <button id="btn-prev" title="Previous frame" disabled>&#9664;</button>
-        <button id="btn-play" title="Play/pause" disabled>&#9658;</button>
-        <button id="btn-next" title="Next frame" disabled>&#9654;</button>
+        <button id="btn-prev" title="Previous frame" aria-label="Previous frame" disabled>&#9664;</button>
+        <button id="btn-play" title="Play/pause" aria-label="Play or pause" disabled>&#9658;</button>
+        <button id="btn-next" title="Next frame" aria-label="Next frame" disabled>&#9654;</button>
         <input type="range" id="frame-slider" min="0" max="1" value="0" disabled>
         <select id="speed">
           <option value="15">15 fps</option>
@@ -321,7 +328,6 @@
 
     <details>
       <summary>Advanced options</summary>
-      <label>MD Options</label>
       <div class="opts-grid">
         <div><label>Steps</label><input type="number" id="md-steps" value="100000" min="100" step="100"></div>
         <div><label>dt (fs)</label><input type="number" id="md-dt" value="1.0" min="0.1" step="0.1"></div>
@@ -333,10 +339,10 @@
       <label>Metadynamics CV</label>
       <div class="opts-grid">
         <div><label>CV Type</label><select id="metad-cv-type"><option>dihedral</option><option>distance</option></select></div>
-        <div><label>CV Atoms</label><input type="text" id="metad-cv-atoms" value="8,2,1,0"></div>
-        <div><label>Hill Height</label><input type="number" id="metad-hill-h" value="0.3" step="0.1"></div>
-        <div><label>Hill Width</label><input type="number" id="metad-hill-w" value="0.2" step="0.05"></div>
-        <div><label>Deposit Every</label><input type="number" id="metad-deposit" value="50" step="10"></div>
+        <div><label>CV Atoms (0-based)</label><input type="text" id="metad-cv-atoms" value="8,2,1,0" title="Comma-separated atom indices, 0-based: 4 atoms for dihedral, 2 for distance"></div>
+        <div><label>Hill Height (kcal/mol)</label><input type="number" id="metad-hill-h" value="0.3" step="0.1"></div>
+        <div><label>Hill Width (rad/&Aring;)</label><input type="number" id="metad-hill-w" value="0.2" step="0.05" title="Gaussian width: radians for dihedral CV, angstroms for distance CV"></div>
+        <div><label>Deposit Every (steps)</label><input type="number" id="metad-deposit" value="50" step="10"></div>
         <div><label>Bias Factor γ</label><input type="number" id="metad-bias" value="10.0" step="1"></div>
       </div>
     </details>
