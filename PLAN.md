@@ -1,73 +1,68 @@
-# Plan: Demo 页 Metadynamics 经典实验第一批 — 丁烷/甲基环己烷/水杨酸(接入现有 recipe 框架)
+# Plan: Demo 页 Metadynamics 经典实验第二批 — trans-1,2-DMCH + 联苯
 
 ## 背景
 
-环己烷翻环示例上线后的候选案例筛选(原生验证,临时例程验收后删除)。
-选定第一批三个,加上已有环己烷共四个"一键经典实验";trans-1,2-DMCH
-与联苯列为第二档(暂不做);丙氨酸二肽需 2D CV,另立项。
+第一批(环己烷/丁烷/甲基环己烷/水杨酸)上线后的第二档两个案例,
+接入同一 METADEXP 框架;引擎零改动。丙氨酸二肽(2D CV)仍另立项。
 
-已验证的事实基础(引擎零改动):
+已验证的事实基础(本轮原生复测,临时例程验收后删除):
 
-- **丁烷**(14 原子,CV=dihedral 0,1,2,3,60k 步,hillW 0.25):
-  三阱 FES——anti ±171°(简并基态)、gauche ±66°(+0.9–2.0,真值 0.78)、
-  eclipsed 势垒 0°(+5.7)/±126°(+4.1)。优化参考(引擎↔RDKit 逐位):
-  anti E=−5.0760、gauche−anti ΔE=**+0.78**(实验 ≈0.9)。gauche 帧优化
-  落在 −4.29 = anti+0.78(Use frame 闭环可验证)。
-- **甲基环己烷**(21 原子,CV=环二面角 5,4,3,2,100k 步):非对称双阱
-  (eq +54.4° 起始侧 / ax −57°)。优化参考:ax−eq ΔE=**+1.37**
-  (MMFF94s;实验 A 值 1.74)。**FES 盆差不报数字**:demo 预算内驻留偏置
-  噪声主导(100k/200k/deposit25 实测 +3.6/+4.2/+5.0,物理真值 1.37),
-  evidence 明示"lobe balance is run-dependent,以优化参考为准"。
-- **水杨酸**(16 原子,CV=**distance** 9,2(酚 O···羰基 O),60k 步,
-  hillW 0.3):两态 FES——H-bonded 2.75 Å(全局)vs open 4.15 Å
-  (+0.85–1.14)。起始几何为氢键构象(O···O=2.66 Å,X-ray ≈2.65);
-  优化参考 E=8.8294。展示 distance CV 类型(此前 demo 只演示 dihedral)。
-- 三个新 preset 的冻结奇偶参考(RDKit 单点,引擎对拍 Δ=0.0000):
-  butane −5.0760 / methylcyclohexane 0.6983(eq 椅)/ salicylic 8.8294。
-
-诚实边界(沿用环己兰先例):FES 盆差半定量(1D 投影 + 有限采样);
-定量锚点是优化参考值,全部可经 "scrub → Use frame → Optimize" 闭环验证。
+- **trans-1,2-二甲基环己烷**(24 原子,ee 椅起始,RDKit 单点/引擎
+  对拍 6.2046,CV=环二面角 5,4,3,2,100k 步):翻环成功(CV ±89/95°),
+  非对称双阱;起始侧 +55.0° = ee。优化参考(引擎↔RDKit 对拍):
+  diaxial − diequatorial = **+1.80**(b1 aa 优化 8.0068 − b0 ee 6.2046;
+  实验 ≈1.86——2×A 值减 Me–Me gauche 抵消)。FES 盆差不报数字:
+  驻留偏置(100k 本种子 camping 在 ee 侧 → ax +3.92;200k 上轮
+  camping 在对侧——符号都会翻),与 MCH 同治。
+- **联苯**(22 原子,RDKit 单点/引擎对拍 39.3292,CV=环间二面角
+  4,5,6,7,100k 步):退化 ±54° 双阱(MMFF94s 优化扭转角 −53.9°;
+  气相实验 ≈45°)+ 平面位阻壁(0° +3.3 / ±180° +4.2);90° 肩部
+  近乎平坦——MMFF94s 的共轭项弱于教科书 ~1.6 kcal/mol(FF 局限,
+  诚实标注)。两阱简并(对映),gap 行无意义。
 
 零引擎/WASM/API/Rust 改动;纯 site/index.html。
 
 ## 任务
 
-1. **Preset 扩充**:MOLS 增 butane(anti 构象)/ methylcyclohexane
-   (eq 椅)/ salicylic(H-bonded 构象)三个 SDF;RDKIT_REF 增对应冻结值;
-   preset 顺序:caffeine, ethanol, butane, benzene, cyclohexane,
-   methylcyclohexane, salicylic, dmso(.presets 已 flex-wrap,无需改 CSS)。
-2. **实验表驱动重构**:新增 `METADEXP` 表(4 条:ringflip/butane/mch/
-   salicylic),每条含 label/title/mol/cvType/cvAtoms/steps/hillW/marks/
-   gap(或 fesLine)/ref/verify/msg;`runExperiment(key)` 载入分子并钉死
-   全部 MD+Metad 表单字段(dt 1.0/T 300/摩擦 1.0/seed 42/步数/hill
-   0.3+hillW/每 50 步/γ10)保证复现性;替代原 metadRecipe/isRingFlip
-   单例代码。命中判定保持数据驱动:(preset key, cvType, cvAtoms 规范化)。
-3. **UI**:步骤 5 的单按钮换为 4 个 step-btn link 实验按钮
-   (cyclohexane: chair flip / butane: anti/gauche / methylcyclohexane:
-   eq/ax / salicylic acid: H-bond),title 由 METADEXP 注入;init 解禁、
-   disableActions 纳管(.btn-exp 类)。claim 文案改为四实验通用引导。
-4. **evidence/status**:命中实验时——有 gap 的报盆差行(半定量标注);
-   MCH 报 fesLine(run-dependent 声明)+ 优化参考;全部追加 reference 行
-   与 verify 行;状态栏消息按实验定制。drawFES 的 marks 机制不变
-   (距离 CV 的 mark 单位为 Å,复用同一绘制路径)。
+1. **Preset 扩充**:MOLS 增 dmch(trans-1,2-Dimethylcyclohexane,ee 椅
+   几何)/ biphenyl(twist 几何);RDKIT_REF 增 6.2046 / 39.3292;
+   preset 顺序:…, cyclohexane, methylcyclohexane, dmch, salicylic,
+   biphenyl, dmso(共 10 个,.presets 已 flex-wrap)。
+2. **METADEXP 增两条**:
+   - dmch:CV 5,4,3,2、100k、hillW 0.2;marks 'ee chair' +0.96 /
+     'aa chair' −1.00;gap=null + run-dependent fesLine;ref 行
+     (+1.80,实验 1.86,gauche 抵消注记);verify 行(−55° 帧 →
+     Optimize → E = ee + 1.80);定制 msg。
+   - biphenyl:CV 4,5,6,7、100k、hillW 0.2;marks 'twist' ±0.94 +
+     'planar wall' 0;gap=null(简并对映阱)+ fesLine(平面壁来源 +
+     MMFF 90° 肩部近零的诚实注记);ref 行(54° MMFF94s vs 实验 45°);
+     verify 行(twist 架任意帧 → Optimize → E = 39.33);定制 msg。
+3. **claim 文案**:补两实验枚举(ee/aa 平衡、联苯扭转)。
+4. 实验按钮增至 6 个(.btn-exp,机制不变;命中判定仍是数据驱动的
+   (mol, cvType, cvAtoms))。
 
-不做:引擎/WASM/Rust 改动;trans-1,2-DMCH、联苯(第二档);丙氨酸
-二肽(需 2D CV,另立项);通用坐标轴刻度(既有延期项)。
+不做:引擎/WASM/Rust 改动;丙氨酸二肽 2D CV(另立项);FES 坐标轴
+刻度(既有延期项);第二档之外的扩容。
 
 ## 验收(实施后实测记录)
 
 Playwright 23/23 全绿,要点:
 
-- 四实验各一键跑通,字段钉死正确;evidence 各含 reference 行
-  (+5.93 / +0.78 / +1.37 / 2.66 Å)与 verify 行;状态栏定制消息;
-- MCH 与水杨酸无 'FES basins' 数字盆差行(实施中实测:水杨酸浏览器
-  运行盆差符号翻转为 open −3.1——两盆近简并 + 驻留偏置,与 MCH 同治,
-  改报 run-dependent 声明 + 几何锚点);
-- 丁烷 C 闭环逐位命中:gauche 帧(CV=−40°)→ Use frame → Optimize →
-  E_final = −4.2938 = anti+0.78(与原生一致);
-- 新 preset:8 按钮出现;butane 奇偶 MATCH(vs 冻结 −5.0760);
-- 环己烷实验回归一致;caffeine 默认 CV 无实验行;
-- 水杨酸 FES 截图目检:H-bonded/open 标签 + 虚线标注正常;
-- 布局:390px 无溢出、桌面 nav 54;
+- 两实验一键跑通,字段钉死(5,4,3,2 / 4,5,6,7、100k、hillW 0.2);
+  evidence 含 ref 行(+1.80 / twist minimum)与 verify 行;无 'FES basins'
+  数字行;状态栏定制消息;preset 10 按钮;两分子奇偶 MATCH(6.2046 /
+  39.3292);butane 回归无污染;390px 无溢出、nav 54;
+- biphenyl C 闭环:任意帧 → Optimize → E = 39.3292(±54° 极小,逐位);
+- **实施中两个诚实发现并修正文案**:
+  1. **引擎 DihedralCV 符号与 RDKit GetDihedralDeg 相反**(同坐标同原子
+     序:引擎 −55.0 vs RDKit +55.0)——MCH/DMCH 的 marks 与 CV 提示符号
+     全部翻正(batch-1 上线的 MCH 标注同步修正);
+  2. **取代环己烷的 ax/aa 椅在轨迹中从未被沉积**:原生逐帧核查
+     (100k/200k、种子 42/7/123)远叶帧优化 100% 落扭船架(DMCH
+     12.5136 = ee+6.3;MCH 6.9/7.386 = eq+6.1~6.7),ax/aa 椅是 1D 投影
+     内的窄子盆地——MCH/DMCH 的远叶标注改为 'twist-boat shelf',
+     verify/ref 改为承诺可验证的扭船值 + 注明取代椅"藏在其内"
+     (batch-1 MCH 的误导性 verify 提示一并修正);
+  浏览器实测一致:DMCH 远叶 9 帧全部优化到 12.514。
 - `cargo test` 281/281、clippy 0、fmt 干净;临时例程
-  (metad_cand/metad_cand2/opt_e/sp_e)已删除。
+  (metad_cand/sp_e/dih_sign/dmch_check/mch_check)已删除。
