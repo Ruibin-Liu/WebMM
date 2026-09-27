@@ -790,7 +790,7 @@ details {
      </span>
 
    </div>
-   <div class="version">RDKit version: <span id="rdkitVersion">Loading...</span> · engine: <span id="engineVersion">WebMM</span></div>
+   <div class="version">RDKit version: <span id="rdkitVersion">Loading...</span> · engine: <span id="engineVersion">WebMM (loading…)</span></div>
  </header>
 
 <div class="panel">
@@ -3086,17 +3086,25 @@ function exportEnsembleSDF() {
 <script type="module">
   // dual-layout: repo root serves ../pkg/, GitHub Pages serves the wasm at
   // the site root — try both and remember the resolved URL for workers
-  let mod;
   try {
-    mod = await import('../pkg/webmm.js');
-    window.__webmmUrl = new URL('../pkg/webmm.js', location.href).href;
+    let mod;
+    try {
+      mod = await import('../pkg/webmm.js');
+      window.__webmmUrl = new URL('../pkg/webmm.js', location.href).href;
+    } catch (e) {
+      mod = await import('../webmm.js');
+      window.__webmmUrl = new URL('../webmm.js', location.href).href;
+    }
+    await mod.default();   // default export = the loader (named init() is a wasm passthrough)
+    window.webmm = mod;
+    window.dispatchEvent(new Event('webmmready'));
   } catch (e) {
-    mod = await import('../webmm.js');
-    window.__webmmUrl = new URL('../webmm.js', location.href).href;
+    // both layouts failed — surface it in the header instead of leaving a
+    // stale "(loading…)" and silently dead 3D actions
+    const el = document.getElementById('engineVersion');
+    if (el) el.textContent = 'WebMM (unavailable)';
+    console.error('WebMM engine failed to load:', e);
   }
-  await mod.default();   // default export = the loader (named init() is a wasm passthrough)
-  window.webmm = mod;
-  window.dispatchEvent(new Event('webmmready'));
 </script>
 <script>
   document.getElementById('confChart').addEventListener('click', (e) => {
