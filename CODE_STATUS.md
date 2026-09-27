@@ -4,19 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**v1.0.0 RELEASED (tag v1.0.0) — 三大奇偶承诺均经外部引擎逐位验证(MMFF94s 97 分子 0.00000 锁值、GFN-FF 37 分子对拍 xtb、构象系综 6/6 全局最低逐位)。发布后评审修复(README 默认值同步/乱码)与仓库卫生清理已入库;无进行中开发流。**
-
-Playground = fun/cool teaching sandbox over the existing WASM engine (decision:
-separate page sharing `pkg/webmm.js`, not a molecule-clipboard extension — that
-project stays 2D). v1.5 candidates: beat-the-optimizer game, manual dihedral
-twisting, MetaDLive perturbation exports, spring-based dragging (engine
-restraint wrapper) if the kinematic clamp feels too rigid.
-
-MMFF94/MMFF94s energy validation remains COMPLETE: 230/230 molecules match RDKit to <0.01 kcal/mol (unchanged).
-
-**ETKDG embedding** at r=0.9749 (RMSD 11.83, ceiling ~0.997). Remaining outliers: P(=O) compounds (+15/+14.6, 4D-start local minima).
+**v1.3.2 已发布(tag v1.3.2):v1.3.1 以来 19 个提交全部为 site/app/文档/测试——metadynamics 六个经典实验(环己烷/丁烷/甲基环己烷/trans-1,2-DMCH/水杨酸/联苯)、FES 标注与 Use frame 验证闭环、能量图/FES 坐标轴、三页框内视图重置、Workbench history 竞态与引擎版本占位修复、移动端/文案/a11y/og、proptest 中心差分脆性修复、wasm 体积调查(诚实关闭)。零引擎逻辑改动(仅版本号 1.3.1→1.3.2);281 测试。**部署惯例修正:pages.yml 在 main push(路径过滤 src/site/app/Cargo)即部署,v* tag 亦触发——并非仅 tag 部署;gh-pages 在发布前已随 push 更新至最新 main。Playground v1.5 候选(beat-the-optimizer 游戏、手动二面角扭转、MetaDLive 扰动导出、弹簧拖拽)与 2D CV(丙氨酸二肽 Ramachandran,需引擎多 CV 支持)为后续方向。
 
 ## Recently Completed
++- **Release v1.3.2(站点里程碑版本)。** v1.3.1 以来 19 个提交:metadynamics 六个一键经典实验(METADEXP 表驱动 + FES 区域标注 + Use frame→Optimize 验证闭环;两个诚实发现:引擎 DihedralCV 符号与 RDKit 相反、取代环己烷 ax/aa 椅在轨迹中不被沉积——远叶实为扭船架)、能量图/FES 坐标轴与『lower = favored』释义、三页 3Dmol 框内视图重置按钮(含 Workbench 容器重写保留修复与 3Dmol intrinsic 宽度撑破 grid 的既有 bug 顺修)、Workbench history 竞态/file:// 防御/引擎版本占位、移动端导航与文案/单位/a11y/og 两轮、构象能量一致性、proptest 中心差分脆性修复、wasm 体积调查(诚实关闭:433KB gz 近自然体积)。版本号同步 Cargo.toml/Cargo.lock/package.json/pkg(webmm_version()→1.3.2,node+浏览器双冒烟,奇偶逐位);零引擎逻辑/API 变化;281 测试、clippy 0、fmt。
 +- **三页 UI 三连修:Demo 步骤 5 按钮分行 + 能量图/FES 坐标轴与释义 + 三页 3Dmol 框内视图重置按钮(纯 site/app 端)。** ①实验按钮移入独立 .experiments 容器,Run MetaD 独占一行;②drawChart 加左 PE 轴/右 T 轴(有温度时)/时间轴三刻度;drawFES 加 ΔF 纵轴(相对全局最小)+ CV 横轴(度/Å,signature 增 cvType)+ 网格线,legend 释义改为 'ΔF along CV — lower = favored (F = −γ/(γ−1)·Σhills) · N hills'(原'能量图坐标轴'延期项就此落地);③三页 viewer 容器内右下角 ⟲ 重置按钮(.view-reset,点击 zoomTo+render;Workbench 以 sdf3d 为前置 no-op;Playground 框外旧按钮删除)。**实施中排掉两个关联坑**:Workbench initViewer/clear3DViewer 重写容器会清子节点(createViewer 自身 empty + 占位文本恢复)——按钮在两处清理后重新 appendChild(clear3DViewer 须先取引用再重写);既有 bug:3Dmol canvas intrinsic 宽度把 grid/flex 列撑到 753px('390 直接打开+跑实验'流程首次被测,此前 1440→390 缩窗靠 resize 自愈)——三页容器 min-width: 0,fresh-390 实测 390/390。验收 Playwright 12/12 + 截图目检(坐标/标注/释义到位,实验 evidence 与零 page error 回归);281 测试、clippy 0、fmt;零引擎改动。
 +- **WASM 体积缩减可行性调查(诚实关闭,零代码变更):现役 433 KB gz 已近自然体积,所有无损杠杆 <1%,显著杠杆以 12–37% 性能换 9% 体积,否决。** 量化:webmm_bg.wasm 1138 KB raw/433 KB gz(Pages 口径),RDKit vendored 7161/2324 占 Workbench 传输 84%;profile 已是 opt3+lto+cg1,机器此前无 binaryen(wasm-pack 静默跳过后端优化)。实验(node 基准 30×3 累计计时+冻结奇偶):wasm-opt -O4/-Oz ±0.5%;panic=abort −3KB;opt-level=s/z 1032/404 但 aspirin +12%/ibuprofen +37% 慢——与性能基线冲突否决。若未来强需求:twiggy 剖析后试轻量 JSON 解析/特性门控(违反导出契约,需立项)。附带发现:复用 OptimizationOptions 对象二次调用报 null pointer(按值 move 语义,非 bug;生产页每次新建)。实验现场逐字节还原,Cargo.toml git diff 空,281 测试,demo 加载正常。
 +- **Workbench 引擎版本占位 + cargo test 门禁脆性修复(中心差分)。** ①用户观察页脚 `engine: WebMM` 版本号似丢失——实为引擎 WASM 加载慢于 RDKit,期间静态占位是裸 `WebMM`;且双布局两条导入路径都失败时无任何处理(webmmready 永不触发、3D 按钮静默不可用)。修复:#engineVersion 初始占位改 `WebMM (loading…)`,加载器外层 try/catch 在双路径失败时置 `WebMM (unavailable)` + console.error(Playwright:延迟 4s 早期占位正确、就绪后 v1.3.1 + 零 page error;双路径阻断下 (unavailable) + 归因、RDKit 不受影响)。②门禁附带:prop_tests::gradient_finite_difference 随机种子失败并被 proptest-regressions 持久化(必复现);数值定论:解析梯度正确,单侧 FD 在拉伸键大梯度(dE/dr≈−6241)+ z 路径曲率 1/r 下截断误差 6.2e-4 与观测逐位吻合——改中心差分(偶阶曲率项严格抵消),3 个失败种子重放全过,281/281 恢复。零引擎生产代码改动(仅测试数值方法与 app JS)。
