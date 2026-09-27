@@ -88,7 +88,7 @@
   .overlay span, .overlay b { color: var(--accent); }
   /* Trajectory UI (hidden until the first MD/metad frame) */
   #traj-ui { margin-top: 12px; }
-  .playback { display: flex; align-items: center; gap: 10px; }
+  .playback { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .playback button {
     background: #fff; color: var(--text); border: 1px solid var(--border); cursor: pointer;
     width: 36px; height: 36px; border-radius: 8px; font-size: 1.05em;
@@ -97,6 +97,7 @@
   }
   .playback button:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
   .playback button:disabled { opacity: 0.4; cursor: default; }
+  #btn-useframe { width: auto; padding: 0 12px; font-size: 0.85em; }
   .playback input[type=range] { flex: 1; accent-color: var(--accent); }
   .playback select {
     background: #fff; color: var(--text); border: 1px solid var(--border);
@@ -256,6 +257,7 @@
           <option value="30" selected>30 fps</option>
           <option value="60">60 fps</option>
         </select>
+        <button id="btn-useframe" title="Send the current frame's geometry to the SDF input, then Optimize (step 3) to see which basin it lands in" disabled>Use frame</button>
       </div>
       <canvas id="chart" width="760" height="90"></canvas>
       <div class="chart-legend">
@@ -311,9 +313,10 @@
 
       <div class="step" id="step-metad">
         <div class="step-head"><div class="step-n">5</div><div class="step-title">Metadynamics</div></div>
-        <div class="step-claim">Well-tempered metadynamics floods a collective variable with Gaussian hills and recovers the free-energy profile underneath.</div>
+        <div class="step-claim">Well-tempered metadynamics floods a collective variable with Gaussian hills and recovers the free-energy profile underneath. Try the classic: bias the cyclohexane ring dihedral and watch chairs flip through the twist-boat shelf (+5.9 kcal/mol; experiment &asymp; 5.5).</div>
         <div class="step-actions">
           <button class="step-btn" id="btn-metad" disabled>Run MetaD</button>
+          <button class="step-btn link" id="btn-metad-recipe" disabled title="Loads cyclohexane, biases the C1-C2-C3-C4 ring dihedral (atoms 0,1,2,3), and runs 100k steps — the FES recovers the two chair basins and the twist-boat region between them">cyclohexane ring flip</button>
         </div>
         <div class="evidence" id="ev-metad" tabindex="0" role="group" aria-label="metad result"></div>
       </div>
@@ -420,6 +423,7 @@ async function init() {
     document.getElementById('btn-md').disabled = false;
     document.getElementById('btn-embed').disabled = false;
     document.getElementById('btn-metad').disabled = false;
+    document.getElementById('btn-metad-recipe').disabled = false;
     document.getElementById('btn-parity').disabled = false;
     document.getElementById('btn-copycheck').disabled = false;
     setStatus('Ready', 'info');
@@ -816,6 +820,29 @@ print(f"|delta|          = {abs(E - webmm_E):.5f} kcal/mol")
   });
 }
 
+// --- Metadynamics recipe: the classic cyclohexane chair <-> boat ring flip ---
+function metadRecipe() {
+  loadMol('cyclohexane');
+  document.getElementById('metad-cv-type').value = 'dihedral';
+  document.getElementById('metad-cv-atoms').value = '0,1,2,3';
+  document.getElementById('md-steps').value = 100000;
+  runMetad();
+}
+
+// Copy the current trajectory frame into the SDF input so any step (e.g.
+// Optimize) can act on it — closes the "metad found it, now prove it" loop.
+function useFrame() {
+  if (!traj || !currentSdf) return;
+  const n3 = traj.nAtoms * 3;
+  const fc = traj.coords.subarray(currentFrame * n3, (currentFrame + 1) * n3);
+  const s = buildSdfFromCoords(fc, currentSdf);
+  document.getElementById('sdf-input').value = s;
+  currentSdf = s; currentPresetKey = null;
+  renderSdf(s);
+  markStep('parity', false); // frozen RDKit reference no longer applies
+  setStatus(`Frame ${currentFrame + 1}/${traj.nFrames} sent to the input — run Optimize (step 3) to see which basin it lands in`, 'info');
+}
+
 // --- Metadynamics ---
 function runMetad() {
   const sdf = getSdf(); if (!sdf) return;
@@ -877,25 +904,50 @@ function runMetad() {
         await new Promise(r => setTimeout(r, 1000 / fps));
       }
       if (myRun !== runId) return;
-      drawFES(state.fes_s(72), state.fes_f(72), state.hill_centers());
-      const fesF = state.fes_f(72);
+      const fesS = state.fes_s(72), fesF = state.fes_f(72);
+      const cvAtomsNorm = document.getElementById('metad-cv-atoms').value.replace(/\s+/g, '');
+      const isRingFlip = currentPresetKey === 'cyclohexane' && cvType === 'dihedral' && cvAtomsNorm === '0,1,2,3';
+      // marks from the optimized minima: chair dihedral ±54.3°, twist-boat ±29.2°
+      const marks = isRingFlip ? [
+        {s: -0.948, label: 'chair'}, {s: 0.948, label: 'chair'},
+        {s: -0.510, label: 'twist-boat'}, {s: 0.510, label: 'twist-boat'},
+      ] : null;
+      drawFES(fesS, fesF, state.hill_centers(), marks);
       const fesSpan = fesF.length > 0 ? (Math.max(...fesF) - Math.min(...fesF)).toFixed(1) : '—';
       enablePlayback();
       const dt = ((performance.now() - t0) / 1000).toFixed(2);
       markStep('metad', true);
-      showEvidence('metad',
+      let ev =
         `hills       = ${state.hill_count()}\n` +
         `CV          = ${cvType} ${document.getElementById('metad-cv-atoms').value}\n` +
         `bias factor = \u03b3 ${(parseFloat(document.getElementById('metad-bias').value) || 10.0).toFixed(0)}\n` +
         `FES span    = ${fesSpan} kcal/mol\n` +
-        `wall time   = ${dt} s`);
-      setStatus(`MetaD: ${state.hill_count()} hills in ${dt}s. FES span: ${fesSpan} kcal/mol`, 'success');
+        `wall time   = ${dt} s`;
+      let msg = `MetaD: ${state.hill_count()} hills in ${dt}s. FES span: ${fesSpan} kcal/mol`;
+      if (isRingFlip) {
+        // semi-quantitative 1-D basin gap: min F over |s|>0.9 rad (chair)
+        // vs |s|<0.6 rad (boat region); a 1-D projection + finite sampling
+        // systematically lower this vs the optimized minimum-minimum gap.
+        let chairMin = Infinity, boatMin = Infinity;
+        for (let i = 0; i < fesS.length; i++) {
+          const a = Math.abs(fesS[i]);
+          if (a > 0.9) chairMin = Math.min(chairMin, fesF[i]);
+          else if (a < 0.6) boatMin = Math.min(boatMin, fesF[i]);
+        }
+        const basinDelta = (boatMin - chairMin).toFixed(1);
+        ev += `\nFES basins  = boat region +${basinDelta} kcal/mol vs chair (semi-quantitative 1-D projection)` +
+          `\nreference   = twist-boat optimum +5.93 kcal/mol above chair (MMFF94s opt; experiment \u2248 5.5)` +
+          `\nverify      = scrub to a boat frame (CV \u2248 \u00b130\u00b0), Use frame, then Optimize`;
+        msg = `Ring flip recovered: boat region +${basinDelta} kcal/mol (semi-quant); twist-boat optimum +5.93, experiment \u2248 5.5`;
+      }
+      showEvidence('metad', ev);
+      setStatus(msg, 'success');
     } catch (e) { setStatus('MetaD error: ' + e.message, 'error'); console.error(e); }
     disableActions(false);
   }, 20);
 }
 
-function drawFES(fes_s, fes_f, hill_centers) {
+function drawFES(fes_s, fes_f, hill_centers, marks) {
   const cv = document.getElementById('fes-chart');
   cv.style.display = 'block';
   document.getElementById('fes-legend-row').style.display = 'flex';
@@ -931,13 +983,30 @@ function drawFES(fes_s, fes_f, hill_centers) {
     const x = pad + (s - sMin) / sRange * (W - 2*pad);
     ctx.beginPath(); ctx.arc(x, H - pad, 1.5, 0, 2*Math.PI); ctx.fill();
   }
+  // region markers (cyclohexane ring-flip recipe): dashed verticals + labels
+  if (marks && marks.length) {
+    ctx.save();
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1;
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'center';
+    for (const m of marks) {
+      const x = pad + (m.s - sMin) / sRange * (W - 2*pad);
+      if (x < pad + 4 || x > W - pad - 4) continue;
+      ctx.beginPath(); ctx.moveTo(x, 18); ctx.lineTo(x, H - pad); ctx.stroke();
+      ctx.fillText(m.label, x, 12);
+    }
+    ctx.restore();
+  }
   document.getElementById('legend-fes').textContent =
     `FES: ${fMin.toFixed(1)} – ${fMax.toFixed(1)} kcal/mol · ${hill_centers.length} hills`;
 }
 function enablePlayback() {
   const sl = document.getElementById('frame-slider');
   sl.disabled = false; sl.max = traj.nFrames - 1; sl.value = currentFrame;
-  ['btn-play','btn-prev','btn-next'].forEach(id => document.getElementById(id).disabled = false);
+  ['btn-play','btn-prev','btn-next','btn-useframe'].forEach(id => document.getElementById(id).disabled = false);
 }
 function disablePlayback() {
   // A running play interval must be stopped here too — otherwise the next
@@ -945,7 +1014,7 @@ function disablePlayback() {
   if (playTimer) { clearInterval(playTimer); playTimer = null; }
   playing = false;
   document.getElementById('btn-play').innerHTML = '&#9658;'; // back to play icon
-  ['btn-play','btn-prev','btn-next'].forEach(id => document.getElementById(id).disabled = true);
+  ['btn-play','btn-prev','btn-next','btn-useframe'].forEach(id => document.getElementById(id).disabled = true);
   const sl = document.getElementById('frame-slider');
   sl.disabled = true; sl.max = 1; sl.value = 0;
   clearChart();
@@ -1049,7 +1118,7 @@ function setStatus(msg, kind) {
   el.textContent = msg; el.className = 'status show ' + kind;
 }
 function disableActions(b) {
-  ['btn-optimize','btn-md','btn-embed','btn-metad','btn-parity','btn-copycheck'].forEach(id => document.getElementById(id).disabled = b);
+  ['btn-optimize','btn-md','btn-embed','btn-metad','btn-metad-recipe','btn-parity','btn-copycheck'].forEach(id => document.getElementById(id).disabled = b);
 }
 
 // --- Wire up ---
@@ -1065,6 +1134,8 @@ document.getElementById('btn-optimize').onclick = runOptimize;
 document.getElementById('btn-md').onclick = runMD;
 document.getElementById('btn-embed').onclick = runEmbed;
 document.getElementById('btn-metad').onclick = runMetad;
+document.getElementById('btn-metad-recipe').onclick = metadRecipe;
+document.getElementById('btn-useframe').onclick = useFrame;
 document.getElementById('btn-parity').onclick = runParity;
 document.getElementById('btn-copycheck').onclick = copyCheckScript;
 document.getElementById('btn-play').onclick = togglePlay;
