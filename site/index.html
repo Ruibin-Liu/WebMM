@@ -70,6 +70,7 @@
   .panel {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 1rem; backdrop-filter: blur(10px);
+    min-width: 0; /* grid item: don't let the 3Dmol canvas intrinsic width blow the column */
   }
   /* Viewer */
   #viewer {
@@ -129,6 +130,18 @@
   .step-title { font-weight: 700; font-size: 0.92em; }
   .step-claim { color: var(--muted); font-size: 0.8em; margin-top: 3px; line-height: 1.45; }
   .step-actions { display: flex; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+  .experiments { margin-top: 6px; }
+
+  /* in-frame view reset (all 3Dmol viewers, shared shape across pages) */
+  .view-reset {
+    position: absolute; right: 10px; bottom: 10px; z-index: 12;
+    width: 30px; height: 30px; border-radius: 8px;
+    background: rgba(255,255,255,0.92); border: 1px solid var(--border);
+    color: var(--text); font-size: 1.1em; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .view-reset:hover { border-color: var(--accent); color: var(--accent); }
   button.step-btn {
     border: 1px solid var(--border); background: #fff; color: var(--text);
     border-radius: 8px; padding: 8px 14px; font-size: 0.86em; font-weight: 600;
@@ -244,6 +257,7 @@
     <div id="viewer">
       <div class="overlay" id="overlay">Loading WebAssembly…</div>
       <div class="loading" id="loading">Initializing…</div>
+      <button class="view-reset" id="btn-viewreset" title="Reset view" aria-label="Reset view">⟲</button>
     </div>
     <!-- trajectory UI: hidden until the first MD/metad frame exists -->
     <div id="traj-ui" style="display:none">
@@ -316,6 +330,8 @@
         <div class="step-claim">Well-tempered metadynamics floods a collective variable with Gaussian hills and recovers the free-energy profile underneath. One-click classics below: ring flip (cyclohexane), torsional wells (butane), the methyl A-value (methylcyclohexane), an intramolecular H-bond (salicylic acid &mdash; a distance CV), the ee/aa balance (trans-1,2-dimethylcyclohexane), and the biphenyl twist.</div>
         <div class="step-actions">
           <button class="step-btn" id="btn-metad" disabled>Run MetaD</button>
+        </div>
+        <div class="step-actions experiments">
           <button class="step-btn link btn-exp" data-exp="ringflip" disabled>cyclohexane: chair flip</button>
           <button class="step-btn link btn-exp" data-exp="butane" disabled>butane: anti/gauche</button>
           <button class="step-btn link btn-exp" data-exp="mch" disabled>methylcyclohexane: eq/ax</button>
@@ -1007,7 +1023,7 @@ function runMetad() {
       const exp = Object.values(METADEXP).find(e =>
         currentPresetKey === e.mol && cvType === e.cvType &&
         cvAtomsNorm === e.cvAtoms.replace(/\s+/g, ''));
-      drawFES(fesS, fesF, state.hill_centers(), exp ? exp.marks : null);
+      drawFES(fesS, fesF, state.hill_centers(), exp ? exp.marks : null, cvType);
       const fesSpan = fesF.length > 0 ? (Math.max(...fesF) - Math.min(...fesF)).toFixed(1) : '—';
       enablePlayback();
       const dt = ((performance.now() - t0) / 1000).toFixed(2);
@@ -1044,7 +1060,7 @@ function runMetad() {
   }, 20);
 }
 
-function drawFES(fes_s, fes_f, hill_centers, marks) {
+function drawFES(fes_s, fes_f, hill_centers, marks, cvType) {
   const cv = document.getElementById('fes-chart');
   cv.style.display = 'block';
   document.getElementById('fes-legend-row').style.display = 'flex';
@@ -1052,35 +1068,50 @@ function drawFES(fes_s, fes_f, hill_centers, marks) {
   const W = cv.width, H = cv.height;
   ctx.clearRect(0, 0, W, H);
   if (fes_s.length < 2) return;
-  const pad = 10;
+  const padL = 34, padR = 10, padT = 16, padB = 16;
   const fMin = Math.min(...fes_f), fMax = Math.max(...fes_f);
   const sMin = fes_s[0], sMax = fes_s[fes_s.length - 1];
   const sRange = Math.max(sMax - sMin, 1e-9);
   const fRange = Math.max(fMax - fMin, 0.01);
+  const xAt = s => padL + (s - sMin) / sRange * (W - padL - padR);
+  const yAt = f => padT + (1 - (f - fMin) / fRange) * (H - padT - padB);
   // fill under curve
-  ctx.beginPath(); ctx.moveTo(pad, H - pad);
-  for (let i = 0; i < fes_s.length; i++) {
-    const x = pad + (fes_s[i] - sMin) / sRange * (W - 2*pad);
-    const y = H - pad - (fes_f[i] - fMin) / fRange * (H - 2*pad);
-    ctx.lineTo(x, y);
-  }
-  ctx.lineTo(W - pad, H - pad); ctx.closePath();
+  ctx.beginPath(); ctx.moveTo(xAt(fes_s[0]), H - padB);
+  for (let i = 0; i < fes_s.length; i++) ctx.lineTo(xAt(fes_s[i]), yAt(fes_f[i]));
+  ctx.lineTo(xAt(fes_s[fes_s.length - 1]), H - padB); ctx.closePath();
   ctx.fillStyle = 'rgba(181,140,255,0.14)'; ctx.fill();
   // FES line
   ctx.strokeStyle = '#b58cff'; ctx.lineWidth = 2; ctx.beginPath();
   for (let i = 0; i < fes_s.length; i++) {
-    const x = pad + (fes_s[i] - sMin) / sRange * (W - 2*pad);
-    const y = H - pad - (fes_f[i] - fMin) / fRange * (H - 2*pad);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    i === 0 ? ctx.moveTo(xAt(fes_s[i]), yAt(fes_f[i])) : ctx.lineTo(xAt(fes_s[i]), yAt(fes_f[i]));
   }
   ctx.stroke();
   // hill centers as dots
   ctx.fillStyle = '#fbbf24';
   for (const s of hill_centers) {
-    const x = pad + (s - sMin) / sRange * (W - 2*pad);
-    ctx.beginPath(); ctx.arc(x, H - pad, 1.5, 0, 2*Math.PI); ctx.fill();
+    ctx.beginPath(); ctx.arc(xAt(s), H - padB, 1.5, 0, 2*Math.PI); ctx.fill();
   }
-  // region markers (cyclohexane ring-flip recipe): dashed verticals + labels
+  // --- axes ---
+  // y: dF relative to the global minimum, 3 gridlines + labels
+  ctx.strokeStyle = 'rgba(100,116,139,0.25)'; ctx.lineWidth = 1;
+  ctx.fillStyle = '#64748b'; ctx.font = '9px system-ui, sans-serif';
+  ctx.textAlign = 'right';
+  for (const frac of [0, 0.5, 1]) {
+    const y = padT + (1 - frac) * (H - padT - padB);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillText((frac * fRange).toFixed(1), padL - 4, y + 3);
+  }
+  // x: 5 ticks in CV units (degrees for dihedral, angstroms for distance)
+  ctx.textAlign = 'center';
+  for (let i = 0; i <= 4; i++) {
+    const s = sMin + sRange * i / 4, x = xAt(s);
+    ctx.beginPath(); ctx.moveTo(x, H - padB); ctx.lineTo(x, H - padB + 3); ctx.stroke();
+    const label = cvType === 'distance' ? s.toFixed(1) + ' \u00c5' : (s * 180 / Math.PI).toFixed(0) + '\u00b0';
+    ctx.fillText(label, x, H - padB + 12);
+  }
+  ctx.textAlign = 'left';
+  ctx.fillText('\u0394F (kcal/mol)', padL + 4, padT - 5);
+  // region markers (experiments): dashed verticals + labels
   if (marks && marks.length) {
     ctx.save();
     ctx.setLineDash([4, 3]);
@@ -1090,15 +1121,15 @@ function drawFES(fes_s, fes_f, hill_centers, marks) {
     ctx.fillStyle = '#64748b';
     ctx.textAlign = 'center';
     for (const m of marks) {
-      const x = pad + (m.s - sMin) / sRange * (W - 2*pad);
-      if (x < pad + 4 || x > W - pad - 4) continue;
-      ctx.beginPath(); ctx.moveTo(x, 18); ctx.lineTo(x, H - pad); ctx.stroke();
+      const x = xAt(m.s);
+      if (x < padL + 4 || x > W - padR - 4) continue;
+      ctx.beginPath(); ctx.moveTo(x, 18); ctx.lineTo(x, H - padB); ctx.stroke();
       ctx.fillText(m.label, x, 12);
     }
     ctx.restore();
   }
   document.getElementById('legend-fes').textContent =
-    `FES: ${fMin.toFixed(1)} – ${fMax.toFixed(1)} kcal/mol · ${hill_centers.length} hills`;
+    `\u0394F along CV \u2014 lower = favored (F = \u2212\u03b3/(\u03b3\u22121)\u00b7\u03a3 hills) \u00b7 ${hill_centers.length} hills \u25cf`;
 }
 function enablePlayback() {
   const sl = document.getElementById('frame-slider');
@@ -1177,29 +1208,58 @@ function drawChart() {
   const W = cv.width, H = cv.height;
   ctx.clearRect(0, 0, W, H);
   if (!traj || traj.nFrames < 2) return;
-  const pad = 6;
+  const hasT = traj.temps && traj.temps.length > 0;
+  const padL = 40, padR = hasT ? 36 : 10, padT = 4, padB = 14;
+  const xAt = i => padL + (i / (traj.nFrames - 1)) * (W - padL - padR);
+  // --- axes first (gridlines under the curves) ---
+  ctx.font = '9px system-ui, sans-serif';
+  ctx.strokeStyle = 'rgba(100,116,139,0.25)'; ctx.lineWidth = 1;
+  // y-left: potential energy (kcal/mol)
+  ctx.fillStyle = '#2563eb'; ctx.textAlign = 'right';
+  for (const frac of [0, 0.5, 1]) {
+    const v = traj.eMin + frac * (traj.eMax - traj.eMin);
+    const y = padT + (1 - frac) * (H - padT - padB);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillText(v.toFixed(0), padL - 4, y + 3);
+  }
+  // y-right: temperature (K), when present
+  if (hasT) {
+    ctx.fillStyle = '#ff4545'; ctx.textAlign = 'left';
+    for (const frac of [0, 0.5, 1]) {
+      const v = traj.tMin + frac * (traj.tMax - traj.tMin);
+      const y = padT + (1 - frac) * (H - padT - padB);
+      ctx.fillText(v.toFixed(0), W - padR + 4, y + 3);
+    }
+  }
+  // x: time (ps), 3 ticks
+  ctx.fillStyle = '#64748b'; ctx.textAlign = 'center';
+  const tEnd = (traj.times && traj.times[traj.nFrames - 1] || 0) / 1000;
+  for (const frac of [0, 0.5, 1]) {
+    const x = padL + frac * (W - padL - padR);
+    const label = frac === 0 ? '0' : (tEnd * frac).toFixed(1);
+    ctx.fillText(label + ' ps', Math.min(Math.max(x, padL + 14), W - padR - 16), H - 3);
+  }
+  // --- curves ---
   const drawLine = (data, min, max, color) => {
     ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
     for (let i = 0; i < traj.nFrames; i++) {
-      const x = pad + (i / (traj.nFrames-1)) * (W - 2*pad);
-      const y = H - pad - ((data[i] - min) / Math.max(max - min, 1e-9)) * (H - 2*pad);
+      const x = xAt(i);
+      const y = padT + (1 - (data[i] - min) / Math.max(max - min, 1e-9)) * (H - padT - padB);
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
   };
   drawLine(traj.energies, traj.eMin, traj.eMax, '#2563eb');
-  if (traj.temps && traj.temps.length > 0) {
-    drawLine(traj.temps, traj.tMin, traj.tMax, '#ff4545');
-  }
+  if (hasT) drawLine(traj.temps, traj.tMin, traj.tMax, '#ff4545');
   // cursor
   ctx.strokeStyle = '#e6edf3'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
-  const cx = pad + (currentFrame / (traj.nFrames-1)) * (W - 2*pad);
+  const cx = xAt(currentFrame);
   ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
   ctx.setLineDash([]);
   // legend values
-  document.getElementById('legend-pe').textContent = `PE: ${traj.eMin.toFixed(0)}–${traj.eMax.toFixed(0)} kcal/mol`;
-  document.getElementById('legend-temp').textContent = (traj.temps && traj.temps.length > 0)
-    ? `T: ${traj.tMin.toFixed(0)}–${traj.tMax.toFixed(0)} K`
+  document.getElementById('legend-pe').textContent = `PE: ${traj.eMin.toFixed(0)}\u2013${traj.eMax.toFixed(0)} kcal/mol`;
+  document.getElementById('legend-temp').textContent = hasT
+    ? `T: ${traj.tMin.toFixed(0)}\u2013${traj.tMax.toFixed(0)} K`
     : 'Temperature (K)';
 }
 function clearChart() {
@@ -1237,6 +1297,9 @@ document.querySelectorAll('.btn-exp').forEach(b => {
   b.title = METADEXP[b.dataset.exp].title;
 });
 document.getElementById('btn-useframe').onclick = useFrame;
+document.getElementById('btn-viewreset').onclick = () => {
+  if (viewer) { viewer.zoomTo(); viewer.render(); }
+};
 document.getElementById('btn-parity').onclick = runParity;
 document.getElementById('btn-copycheck').onclick = copyCheckScript;
 document.getElementById('btn-play').onclick = togglePlay;

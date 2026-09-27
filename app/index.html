@@ -623,6 +623,7 @@ textarea:focus {
     display: flex;
     gap: 1rem;
     align-items: flex-start;
+    min-width: 0; /* 3Dmol canvas intrinsic width must not blow the flex row */
     margin-top: 0.75rem;
     margin-bottom: 0.75rem;
   }
@@ -641,6 +642,16 @@ textarea:focus {
     color: var(--muted);
     font-size: 0.85rem;
   }
+  /* in-frame view reset */
+  .view-reset {
+    position: absolute; right: 10px; bottom: 10px; z-index: 12;
+    width: 30px; height: 30px; border-radius: 8px;
+    background: rgba(255,255,255,0.92); border: 1px solid var(--border);
+    color: var(--text); font-size: 1.1em; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .view-reset:hover { border-color: var(--accent); color: var(--accent); }
   #energyPanel {
     flex: 0 0 280px;
     min-width: 0;
@@ -907,6 +918,7 @@ details {
      <div class="viewer-row">
        <div id="viewer3d" role="img" aria-label="3D molecule viewer">
          Embed a 3D structure to begin (ETKDG)
+         <button class="view-reset" id="btn-viewreset" title="Reset view" aria-label="Reset view">⟲</button>
        </div>
        <div id="energyPanel" style="display:none;">
          <strong id="energyTitle">WebMM Energy (kcal/mol)</strong>
@@ -2091,9 +2103,11 @@ let molEpoch = 0;          // bumped on every process() — stale async results 
 
 function clear3DViewer() {
   const el = document.getElementById('viewer3d');
+  const resetBtn = document.getElementById('btn-viewreset'); // grab before the rewrite drops it
   if (viewer && viewer.clear) { try { viewer.clear(); } catch (e) { /* ignore */ } }
   viewer = null;
   el.innerHTML = 'Embed a 3D structure to begin (ETKDG)';
+  if (resetBtn) el.appendChild(resetBtn);
 }
 
 // Reset every 3D-panel state when the input molecule changes: structure,
@@ -2134,11 +2148,17 @@ function enable3dActions() {
 function initViewer() {
   if (viewer) return viewer;
   const el = document.getElementById('viewer3d');
+  const resetBtn = document.getElementById('btn-viewreset');
   el.innerHTML = '';
   viewer = $3Dmol.createViewer(el, { backgroundColor: 'white' });
+  if (resetBtn) el.appendChild(resetBtn); // after createViewer: it empties the container itself
   viewer.resize();
   return viewer;
 }
+
+document.getElementById('btn-viewreset').onclick = () => {
+  if (viewer && sdf3d) { viewer.zoomTo(); viewer.render(); }
+};
 
 function showSdfIn3D(sdf) {
   sdf3d = sdf;

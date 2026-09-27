@@ -1,52 +1,62 @@
-# Plan: WASM 体积缩减可行性调查(诚实关闭,零代码变更)
+# Plan: Demo 步骤 5 按钮分行 + 能量图/FES 坐标与释义 + 三页 3Dmol 视图重置按钮
 
 ## 背景
 
-用户问:是否有必要尝试减小 wasm 体积(不损失功能与性能)。动机线索:
-引擎加载慢于 RDKit 的观察。先量化、再实验、后结论。
+用户三项反馈:
+1. Demo 步骤 5 的第一个实验按钮与 'Run MetaD' 没有分行(7 个按钮
+   挤在一行 flex-wrap 里,首行混排不清晰);
+2. MD/MetaD 下方的能量曲线无坐标(此前"能量图坐标轴"曾立项延期,
+   现用户点名要);MetaD 的 FES 图"意义不明确"(无轴、无解释);
+3. 三个 3Dmol 框(Demo/Playground/Workbench)都缺视图重置按钮,
+   且要求**在框内**。
 
-## 现状
+零引擎/WASM/Rust 改动;site/index.html、site/playground.html、
+app/index.html。
 
-- pkg/webmm_bg.wasm = 1138 KB raw / **433 KB gzip9**(Pages 实际传输口径);
-  webmm.js 60 KB / 8 KB gz。
-- app/vendor/RDKit_minimal.wasm = 7161 KB / 2324 KB gz(第三方,Workbench
-  加载两者,引擎只占传输的 16%)。
-- Cargo [profile.release] 已是 opt-level=3 + lto + codegen-units=1
-  (速度优先,体积零调优);机器此前无 binaryen,wasm-pack 一直静默
-  跳过后端优化,当前 wasm 为纯 rustc LTO 产物。
-- 内嵌 JSON(gfnff 109KB + mmff 10KB)非大头;数据段约 329 KB,
-  其余为代码(698 个 LTO 后函数)。
+## 任务
 
-## 实验(node 基准:30 次优化累计计时 × 3 轮取最优;奇偶 caffeine/
-ethanol/butane 对冻结参考;实验后 Cargo.toml 与 pkg 均已逐字节还原)
+1. **按钮分行(site/index.html)**:实验按钮移入独立容器
+   `.step-actions.experiments`(复用 flex-wrap,margin-top 6px),
+   'Run MetaD' 独占一行;按钮 id/类/接线不变。
+2. **能量图坐标(drawChart,site/index.html)**:
+   - 左边距 40px 画 PE 纵轴刻度(min/mid/max 三条水平网格线 +
+     kcal/mol 数值);有温度数据时右边距 36px 画 T 刻度(红色系);
+   - 底部 14px 画时间轴三刻度(0/中点/末点,ps);
+   - 折线/游标映射改用新绘图区;图例行保持。
+3. **FES 坐标与释义(drawFES,site/index.html)**:
+   - signature 增 cvType 参数;绘图区 pad L34/R10/T16/B16;
+   - 纵轴:ΔF(相对全局最小,0 起)三刻度;横轴:5 刻度,二面角
+     显示度数(±180/±90/0)、距离显示 Å;
+   - marks 虚线/标签适配新绘图区;
+   - #legend-fes 释义文案:`ΔF along CV (lower = favored) ·
+     F = −γ/(γ−1)·Σhills · N hills ●`(讲清"低=更有利"与构造式)。
+4. **视图重置按钮(三页)**:
+   - 各 viewer 容器内右下角 `.view-reset`(30px,⟲,title/aria-label
+     "Reset view",z-index 高于 canvas;三页 CSS 同构);
+   - 点击 = `viewer.zoomTo(); viewer.render();`(Demo/Playground
+     直接调;Workbench 以 sdf3d 存在为前置,无模型时 no-op);
+     轨迹播放不受影响(updateViewerFrame 本就不动相机,重置只影响
+     当前视图)。
 
-| 变体 | raw | gz | aspirin | ibuprofen | 结论 |
-|---|---|---|---|---|---|
-| base(现役) | 1138 | 433 | 4.3ms | 12.5ms | — |
-| wasm-opt -O4 | 1137 | 434 | 4.0 | 12.1 | 体积无收益 |
-| wasm-opt -Oz+strip | 1131 | 433 | 3.8 | 12.6 | 体积无收益 |
-| panic=abort+opt3 | 1135 | 433 | — | — | 无收益(−3KB) |
-| panic=abort+opt-s/z | 1032 | 404 | 4.8 | **17.1** | −9% 体积换 −12~37% 速度,**否决** |
+不做:Playground 能量图坐标(用户所指为 Demo 的 MD/MetaD 图;
+Playground 图另行跟进);引擎/布局级改动。
 
-## 结论(诚实关闭)
+## 验收(实施后实测记录)
 
-1. **不建议做**:现役 433 KB gz 已接近该代码库的自然体积——所有
-   无损杠杆(binaryen 后端优化、panic=abort)收益 <1%;唯一显著的
-   opt-level=s/z 用 12–37% 优化性能换 9% 体积(29 KB gz),与仓库
-   逐版本积累的性能基线(v1.2.4→v1.3.1 的 24×/5× 等)直接冲突。
-2. 加载体验的真实瓶颈不在此:Workbench 侧 RDKit 2.3 MB gz 是引擎的
-   5.4 倍(第三方 vendored);Demo/Playground 侧 433 KB gz 一次缓存,
-   且加载态 UX 已处理(版本占位/引擎失败兜底)。
-3. 若未来确有强需求,候选方向(均有代价,需单独立项):serde_json
-   换更轻解析(数据段/派生代码占比需先做 twiggy 剖析);功能特性
-   门控裁剪 demo 构建(违反"WASM 导出是公共契约"的稳定性承诺);
-   brotli(不在 Pages 控制范围)。
-4. 附带发现:harness 中复用 OptimizationOptions 对象会在第二次调用
-   触发 "null pointer passed to rust"(wasm-bindgen 按值传参=move,
-   非引擎 bug,生产页面每次新建 options 不受影响)。
-
-## 验收
-
-- 零代码变更;Cargo.toml 与 pkg/ 实验后逐字节还原(git diff 空、
-  cmp 一致);cargo test 281/281;demo 页加载还原 pkg 正常(v1.3.1,
-  零 page error)。
+- Playwright 12/12 + 截图目检:
+- 分行:Run MetaD 底边 1438 < 首实验按钮顶边 1444;
+- 坐标:能量图左轴 kcal/mol 刻度 + 网格线 + 时间轴(ps,metad 无
+  温度时右轴正确缺席);FES 图 ΔF 纵轴(0/中/顶)+ 度数横轴
+  (−180..180),实验 marks 正常;#legend-fes 释义
+  "ΔF along CV — lower = favored (F = −γ/(γ−1)·Σ hills) · N hills ●";
+- 重置按钮:三页均在框内(Demo zoomTo spy 命中;Playground 旧框外
+  按钮已删;Workbench 全链路 CCO→Embed 3D→in-frame→点击零错误);
+- 实施中排掉的两个关联坑:①Workbench initViewer/clear3DViewer 会
+  重写 viewer3d 容器(createViewer 与占位文本恢复都清子节点)——
+  按钮改为清空后重新 appendChild(clear3DViewer 须在 innerHTML
+  重写**前**取引用);②**既有 bug 顺修**:3Dmol canvas 的 intrinsic
+  宽度把 grid/flex 列撑到 753px("390 直接打开+跑实验"流程从未测过,
+  以前 1440→390 缩窗触发 resize 自愈)——三页容器加 min-width: 0,
+  fresh-390 流程实测 390/390;
+- 回归:实验 evidence(+0.78/verify)不变、零 page error;
+- `cargo test` 281/281、clippy 0、fmt 干净(零 Rust 改动)。
