@@ -1,32 +1,52 @@
-# Plan: Workbench file:// 打开时的裸 TypeError 修复(RDKit 未加载防御 + 可操作提示)
+# Plan: WASM 体积缩减可行性调查(诚实关闭,零代码变更)
 
 ## 背景
 
-用户观察:页脚 `engine: WebMM` 的版本号似乎丢了——随后自行更正:
-没丢,只是引擎(7MB 级 WASM,双布局探测 + 动态导入)加载更慢,
-期间静态占位就是裸 `WebMM`,与 RDKit 侧的 `Loading...` 不一致,
-初看像版本号缺失。另发现:双布局两条导入路径都失败时无任何处理
-(webmmready 永不触发,占位永远停留且 3D 按钮静默不可用)。
+用户问:是否有必要尝试减小 wasm 体积(不损失功能与性能)。动机线索:
+引擎加载慢于 RDKit 的观察。先量化、再实验、后结论。
 
-## 任务(app/index.html,两处微改)
+## 现状
 
-1. #engineVersion 初始占位 `WebMM` → `WebMM (loading…)`,与 RDKit
-   侧行为对齐,消除"版本号丢失"的误读;
-2. 引擎加载器外层 try/catch:双路径均失败时占位改为
-   `WebMM (unavailable)` 并 console.error 归因(取代静默死态)。
+- pkg/webmm_bg.wasm = 1138 KB raw / **433 KB gzip9**(Pages 实际传输口径);
+  webmm.js 60 KB / 8 KB gz。
+- app/vendor/RDKit_minimal.wasm = 7161 KB / 2324 KB gz(第三方,Workbench
+  加载两者,引擎只占传输的 16%)。
+- Cargo [profile.release] 已是 opt-level=3 + lto + codegen-units=1
+  (速度优先,体积零调优);机器此前无 binaryen,wasm-pack 一直静默
+  跳过后端优化,当前 wasm 为纯 rustc LTO 产物。
+- 内嵌 JSON(gfnff 109KB + mmff 10KB)非大头;数据段约 329 KB,
+  其余为代码(698 个 LTO 后函数)。
 
-## 验收(实施后实测记录)
+## 实验(node 基准:30 次优化累计计时 × 3 轮取最优;奇偶 caffeine/
+ethanol/butane 对冻结参考;实验后 Cargo.toml 与 pkg 均已逐字节还原)
 
-- Playwright:正常 http——早期占位 `WebMM (loading…)`(route 延迟 4s
-  验证),就绪后 `WebMM v1.3.1`、3D 动作启用、零 page error;引擎双路径
-  阻断——占位 `WebMM (unavailable)` + console.error,页面其余部分
-  (RDKit)正常;
-- **门禁附带修复(阻塞性既有脆性,与本任务无关但卡 cargo test)**:
-  prop_tests::gradient_finite_difference 在随机种子下失败(proptest
-  将种子持久化到 proptest-regressions/prop_tests.txt 后必复现)。
-  数值定论:解析梯度正确(g2[2] = −0.08324 与闭式一致);单侧有限
-  差分在该构型(拉伸键 dE/dr ≈ −6241、z 路径曲率 ∂²r/∂z² = 1/r = 2)
-  的截断误差 (eps/2)·|dE/dr|·(1/r) ≈ 6.2e-4,与观测差逐位吻合——
-  纯测试数值方法问题。修复:改中心差分(偶阶曲率项严格抵消,残余
-  O(eps²) 截断 + ~1e-6 舍入),注释记录推导;3 个失败种子重放全过;
-- `cargo test` 281/281、clippy 0、fmt 干净。
+| 变体 | raw | gz | aspirin | ibuprofen | 结论 |
+|---|---|---|---|---|---|
+| base(现役) | 1138 | 433 | 4.3ms | 12.5ms | — |
+| wasm-opt -O4 | 1137 | 434 | 4.0 | 12.1 | 体积无收益 |
+| wasm-opt -Oz+strip | 1131 | 433 | 3.8 | 12.6 | 体积无收益 |
+| panic=abort+opt3 | 1135 | 433 | — | — | 无收益(−3KB) |
+| panic=abort+opt-s/z | 1032 | 404 | 4.8 | **17.1** | −9% 体积换 −12~37% 速度,**否决** |
+
+## 结论(诚实关闭)
+
+1. **不建议做**:现役 433 KB gz 已接近该代码库的自然体积——所有
+   无损杠杆(binaryen 后端优化、panic=abort)收益 <1%;唯一显著的
+   opt-level=s/z 用 12–37% 优化性能换 9% 体积(29 KB gz),与仓库
+   逐版本积累的性能基线(v1.2.4→v1.3.1 的 24×/5× 等)直接冲突。
+2. 加载体验的真实瓶颈不在此:Workbench 侧 RDKit 2.3 MB gz 是引擎的
+   5.4 倍(第三方 vendored);Demo/Playground 侧 433 KB gz 一次缓存,
+   且加载态 UX 已处理(版本占位/引擎失败兜底)。
+3. 若未来确有强需求,候选方向(均有代价,需单独立项):serde_json
+   换更轻解析(数据段/派生代码占比需先做 twiggy 剖析);功能特性
+   门控裁剪 demo 构建(违反"WASM 导出是公共契约"的稳定性承诺);
+   brotli(不在 Pages 控制范围)。
+4. 附带发现:harness 中复用 OptimizationOptions 对象会在第二次调用
+   触发 "null pointer passed to rust"(wasm-bindgen 按值传参=move,
+   非引擎 bug,生产页面每次新建 options 不受影响)。
+
+## 验收
+
+- 零代码变更;Cargo.toml 与 pkg/ 实验后逐字节还原(git diff 空、
+  cmp 一致);cargo test 281/281;demo 页加载还原 pkg 正常(v1.3.1,
+  零 page error)。
