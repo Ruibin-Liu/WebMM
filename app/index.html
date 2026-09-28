@@ -1145,7 +1145,7 @@ details {
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
-         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="searchScoreCol">Tanimoto</th></tr>
+         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="comboCol" style="display:none;">Combo</th></tr>
        </thead>
        <tbody id="searchRows"></tbody>
      </table>
@@ -1997,6 +1997,169 @@ function rdkitAvailable() {
     return out.join('\n');
   }
 
+  // ---- Color force field v1 (ROCS-style implicit rules, page-side) ----
+  // Six feature types, multi-label, uniform weights (documented
+  // simplification — the OpenEye weight table is closed). Overlap uses the
+  // same atom-Gaussian machinery as the engine (GCI = 2√2, per-element α).
+  const COLOR_GCI = 2.828427125;
+  const COLOR_ALPHA = { H: 1.679158285, C: 0.836674025, N: 1.006446589, O: 1.046566798, F: 1.118972618, P: 0.814231526, S: 0.834737044, Cl: 0.878848066, Br: 0.817809742, I: 0.724390270 };
+  const COLOR_Q = {
+    donor: ['[NX3;H1,H2,H3]', '[OX2;H1,H2]', '[nX3;H1]'],
+    acceptor: ['[#8;!+]', '[#7;H0;!+]'],
+    pos: ['[+;!$([N+](=O)[O-])]', '[NX3;H1,H2;!$(N[a]);!$(NC=O)]', '[NX3](=[NX2])[N]'],
+    neg: ['[-]', '[CX3](=[OX1])-[OX2;H1]'],
+  };
+  const HYDROPHOBE_Z = new Set(['C', 'F', 'Cl', 'Br', 'I']);
+
+  function elementOfMolblock(mb, idx) {
+    const lines = mb.split('\n');
+    const na = parseInt((lines[3] || '').substring(0, 3)) || 0;
+    if (idx >= na) return 'C';
+    return ((lines[4 + idx] || '').substring(31, 34) || 'C').trim() || 'C';
+  }
+
+  /// Perceive color feature sites on a molblock (H-count SMARTS see both
+  /// implicit and explicit hydrogens, so 3D and 2D inputs both work).
+  function colorSites(mb, m) {
+    const sites = [];
+    const add = (idx, type) => {
+      const el = elementOfMolblock(mb, idx);
+      sites.push({ i: idx, type, alpha: COLOR_ALPHA[el] || COLOR_ALPHA.C });
+    };
+    for (const [type, patterns] of Object.entries(COLOR_Q)) {
+      for (const sma of patterns) {
+        let q = null;
+        try { q = rdkitModule.get_qmol(sma); } catch (e) {}
+        if (!q || !q.is_valid()) continue;
+        const raw = m.get_substruct_matches(q);
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          for (const mt of arr) {
+            // pos/neg rules can match multi-atom patterns: take the charged /
+            // hetero atom (donor/acceptor/pos: first atom; neg: the O−H oxygen
+            // is the last atom of the acid pattern)
+            const idx = type === 'neg' && mt.atoms.length === 3 ? mt.atoms[2] : mt.atoms[0];
+            add(idx, type);
+          }
+        }
+        q.delete();
+      }
+    }
+    // hydrophobe: C/halogen whose heavy neighbors are all C/halogen (graph rule)
+    const lines = mb.split('\n');
+    const na = parseInt((lines[3] || '').substring(0, 3)) || 0;
+    const nb = parseInt((lines[3] || '').substring(3, 6)) || 0;
+    const adj = Array.from({ length: na }, () => []);
+    for (let i = 4 + na; i < 4 + na + nb && i < lines.length; i++) {
+      const l = lines[i] || '';
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      if (a >= 0 && b >= 0 && a < na && b < na) { adj[a].push(b); adj[b].push(a); }
+    }
+    for (let i = 0; i < na; i++) {
+      const el = ((lines[4 + i] || '').substring(31, 34) || '').trim();
+      if (!HYDROPHOBE_Z.has(el)) continue;
+      if (adj[i].every(j => HYDROPHOBE_Z.has(((lines[4 + j] || '').substring(31, 34) || '').trim()))) {
+        if (adj[i].length) add(i, 'hydrophobe');
+      }
+    }
+    // aromatic ring centroids (single sites; aromatic atoms via the '[a]'
+    // query, components of the aromatic subgraph)
+    let qa = null;
+    try { qa = rdkitModule.get_qmol('[a]'); } catch (e) {}
+    if (qa && qa.is_valid()) {
+      const arr = JSON.parse(m.get_substruct_matches(qa));
+      const arom = new Set();
+      if (Array.isArray(arr)) for (const mt of arr) for (const i of mt.atoms) arom.add(i);
+      const parent = new Map();
+      const find = x => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+      for (const a of arom) parent.set(a, a);
+      for (const a of arom) for (const b of adj[a]) if (arom.has(b)) {
+        const ra = find(a), rb = find(b);
+        if (ra !== rb) parent.set(ra, rb);
+      }
+      const groups = new Map();
+      for (const a of arom) {
+        const r = find(a);
+        if (!groups.has(r)) groups.set(r, []);
+        groups.get(r).push(a);
+      }
+      for (const g of groups.values()) {
+        // centroid site: position computed on demand from posed coords; store
+        // ring as a synthetic site with member atoms
+        sites.push({ i: -1, type: 'ring', alpha: COLOR_ALPHA.C, ring: g });
+      }
+      qa.delete();
+    }
+    return sites;
+  }
+
+  function sitePos(s, coords, transform) {
+    let p;
+    if (s.type === 'ring' && s.ring) {
+      let x = 0, y = 0, z = 0;
+      for (const i of s.ring) {
+        x += coords[i * 3]; y += coords[i * 3 + 1]; z += coords[i * 3 + 2];
+      }
+      const n = s.ring.length;
+      p = [x / n, y / n, z / n];
+    } else {
+      p = [coords[s.i * 3], coords[s.i * 3 + 1], coords[s.i * 3 + 2]];
+    }
+    if (transform) {
+      const m = transform;
+      return [
+        m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
+        m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
+        m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11],
+      ];
+    }
+    return p;
+  }
+
+  function colorOverlap(sitesA, posA, sitesB, posB) {
+    // same-type pairwise Gaussian volume (no inclusion–exclusion for colors:
+    // features are sparse point sites, the pairwise sum is the ROCS-style
+    // color score)
+    let total = 0.0;
+    for (const a of sitesA) {
+      for (const b of sitesB) {
+        if (a.type !== b.type) continue;
+        const aij = a.alpha + b.alpha;
+        const beta = a.alpha * b.alpha / aij;
+        const s = Math.PI / aij;
+        const k = COLOR_GCI * COLOR_GCI * s * Math.sqrt(s);
+        const d = [posA[a._p][0] - posB[b._p][0], posA[a._p][1] - posB[b._p][1], posA[a._p][2] - posB[b._p][2]];
+        total += Math.exp(-beta * (d[0] * d[0] + d[1] * d[1] + d[2] * d[2])) * k;
+      }
+    }
+    return total;
+  }
+
+  function colorTanimoto(sitesA, coordsA, sitesB, coordsB, transformB) {
+    if (!sitesA.length || !sitesB.length) return { color: sitesA.length && sitesB.length ? 0 : 0, empty: !sitesA.length || !sitesB.length };
+    const posA = sitesA.map(s => sitePos(s, coordsA));
+    sitesA.forEach((s, i) => s._p = i);
+    const posB0 = sitesB.map(s => sitePos(s, coordsB, transformB));
+    sitesB.forEach((s, i) => s._p = i);
+    const oab = colorOverlap(sitesA, posA, sitesB, posB0);
+    const oaa = colorOverlap(sitesA, posA, sitesA, posA.map(p => p));
+    const obb = colorOverlap(sitesB, posB0, sitesB, posB0);
+    const den = oaa + obb - oab;
+    return { color: den > 1e-12 ? Math.min(1, Math.max(0, oab / den)) : 0, empty: false };
+  }
+
+  // coords of an SDF (3D molblock) as flat array
+  function sdfCoords(sdf) {
+    const lines = sdf.split('\n');
+    const na = parseInt((lines[3] || '').substring(0, 3)) || 0;
+    const out = [];
+    for (let i = 0; i < na; i++) {
+      const l = lines[4 + i] || '';
+      out.push(parseFloat(l.substring(0, 10)), parseFloat(l.substring(10, 20)), parseFloat(l.substring(20, 30)));
+    }
+    return out;
+  }
+
   async function runShapeSearch(q) {
     if (!window.webmm) { searchStatus('WebMM engine not loaded — shape search unavailable'); return; }
     const thr = parseFloat(document.getElementById('searchThreshold').value);
@@ -2004,6 +2167,16 @@ function rdkitAvailable() {
     try { qsdf = ensureQuery3D(q); }
     catch (e) { searchStatus('Query 3D prep failed: ' + e.message); return; }
     searchStatus('Preparing 3D and aligning…');
+    // query color sites (computed on the query 3D molblock)
+    let qSites = null, qCoords = null;
+    try {
+      const qm = rdkitModule.get_mol(qsdf);
+      if (qm && qm.is_valid()) {
+        qSites = colorSites(qsdf, qm);
+        qCoords = sdfCoords(qsdf);
+        qm.delete();
+      }
+    } catch (e) { qSites = null; }
     const rows = [];
     const t0 = performance.now();
     const CH = 20;
@@ -2012,16 +2185,31 @@ function rdkitAvailable() {
       try {
         const esdf = ensureEntry3D(e);
         const res = JSON.parse(window.webmm.shape_align_wasm(qsdf, esdf, '{"random_starts": 8}'));
-        if (res.tanimoto >= thr) rows.push({ e, score: res.tanimoto, aligned: applyTransformToSdf(esdf, res.transform) });
+        if (res.tanimoto >= thr) {
+          let colorT = null;
+          if (qSites && qSites.length) {
+            try {
+              const tm = rdkitModule.get_mol(esdf);
+              if (tm && tm.is_valid()) {
+                const tSites = e.sites || (e.sites = colorSites(esdf, tm));
+                tm.delete();
+                const tCoords = sdfCoords(esdf);
+                const { color } = colorTanimoto(qSites, qCoords, tSites, tCoords, res.transform);
+                colorT = color;
+              }
+            } catch (err) { colorT = null; }
+          }
+          rows.push({ e, score: res.tanimoto, colorT, aligned: applyTransformToSdf(esdf, res.transform) });
+        }
       } catch (err) { /* skip entry */ }
       if (i % CH === CH - 1 || i === searchLibrary.length - 1) {
         searchStatus(`Shape search: ${i + 1}/${searchLibrary.length} aligned…`);
         await new Promise(r => setTimeout(r, 0));
       }
     }
-    rows.sort((a, b) => b.score - a.score);
+    rows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
     renderSearchResults(rows, 'shape',
-      `${rows.length}/${searchLibrary.length} at shape T ≥ ${thr.toFixed(2)} · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+      `${rows.length}/${searchLibrary.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   }
 
   async function runSearch() {
@@ -2075,9 +2263,12 @@ function rdkitAvailable() {
     const shown = rows.slice(0, cap);
     const tb = document.getElementById('searchRows');
     tb.innerHTML = '';
-    document.getElementById('searchScoreCol').textContent = mode === 'sub' ? 'Match' : 'Tanimoto';
+    const shapeMode = mode === 'shape';
+    document.getElementById('searchScoreCol').textContent = mode === 'sub' ? 'Match' : (shapeMode ? 'Shape T' : 'Tanimoto');
+    document.getElementById('colorCol').style.display = shapeMode ? '' : 'none';
+    document.getElementById('comboCol').style.display = shapeMode ? '' : 'none';
     for (let i = 0; i < shown.length; i++) {
-      const { e, score, aligned } = shown[i];
+      const { e, score, colorT, aligned } = shown[i];
       const tr = document.createElement('tr');
       tr.tabIndex = 0;
       tr.setAttribute('role', 'button');
@@ -2091,6 +2282,10 @@ function rdkitAvailable() {
         `<td class="value">${e.MW}</td>` +
         (mode === 'sub'
           ? `<td><span class="result-badge pass">Match</span></td>`
+          : shapeMode
+          ? `<td class="value">${(score * 100).toFixed(1)}%</td>` +
+            `<td class="value">${colorT != null ? (colorT * 100).toFixed(1) + '%' : '—'}</td>` +
+            `<td class="value"><strong>${((score + (colorT || 0)) * 100).toFixed(1)}%</strong></td>`
           : `<td class="value">${(score * 100).toFixed(1)}%</td>`);
       tb.appendChild(tr);
     }
