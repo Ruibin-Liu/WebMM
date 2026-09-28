@@ -162,8 +162,7 @@ fn enumerate_specs(atoms: &[ShapeAtom]) -> Vec<TermSpec> {
     }
     let mut specs: Vec<TermSpec> = Vec::with_capacity(n * 2);
     let mut stack: Vec<Entry> = Vec::new();
-    for i in 0..n {
-        let a = &atoms[i];
+    for (i, a) in atoms.iter().enumerate() {
         let spec = TermSpec {
             idx: vec![i as u8],
             alpha_sum: a.alpha,
@@ -789,8 +788,8 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
                 - cols[0][1] * (cols[1][0] * cols[2][2] - cols[1][2] * cols[2][0])
                 + cols[0][2] * (cols[1][0] * cols[2][1] - cols[1][1] * cols[2][0]);
             if det < 0.0 {
-                for r in 0..3 {
-                    cols[1][r] = -cols[1][r];
+                for v in cols[1].iter_mut() {
+                    *v = -*v;
                 }
             }
             // rotvec from R0 (matrix → axis·angle)
