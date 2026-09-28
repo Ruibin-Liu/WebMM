@@ -25,6 +25,9 @@ pub mod md;
 pub mod metad;
 pub mod solvation;
 
+/// Gaussian shape overlap + rigid-body alignment (ROCS lineage)
+pub mod shape;
+
 /// L-BFGS optimization algorithm
 pub mod optimizer;
 
@@ -7511,4 +7514,61 @@ M  END"#;
         assert!(!generate_optimized_conformers_wasm(ETHANOL_SDF, 501, 42, "MMFF94s", 250).success);
         assert!(!generate_optimized_conformers_wasm("", 5, 42, "MMFF94s", 250).success);
     }
+}
+
+// ===========================================================================
+// 3D shape similarity (Gaussian overlap, ROCS lineage)
+// ===========================================================================
+
+/// Rigid-body shape alignment of `target_sdf` onto `query_sdf` (both 3D SDF
+/// with explicit hydrogens — e.g. ETKDG+MMFF conformers). Returns a JSON
+/// string: {"tanimoto", "transform": [12 row-major 3x4 affine applied to the
+/// target], "surrogate_overlap", "iterations", "starts"}.
+/// `opts_json`: {"random_starts": int (default 16), "max_iter": int
+/// (default 200), "seed": int (default 42)} — unknown fields ignored.
+#[wasm_bindgen]
+pub fn shape_align_wasm(
+    query_sdf: &str,
+    target_sdf: &str,
+    opts_json: &str,
+) -> Result<String, JsValue> {
+    console_error_panic_hook::set_once();
+    let q = crate::molecule::parser::parse_sdf(query_sdf).map_err(|e| JsValue::from_str(&e))?;
+    let t = crate::molecule::parser::parse_sdf(target_sdf).map_err(|e| JsValue::from_str(&e))?;
+    let qa = crate::shape::shape_atoms(&q);
+    let ta = crate::shape::shape_atoms(&t);
+    if qa.is_empty() || ta.is_empty() {
+        return Err(JsValue::from_str("empty molecule"));
+    }
+    let mut opts = crate::shape::AlignOptions::default();
+    if !opts_json.trim().is_empty() {
+        let v: serde_json::Value = serde_json::from_str(opts_json)
+            .map_err(|e| JsValue::from_str(&format!("opts: {e}")))?;
+        if let Some(n) = v.get("random_starts").and_then(|x| x.as_u64()) {
+            opts.random_starts = n.min(64) as usize;
+        }
+        if let Some(n) = v.get("max_iter").and_then(|x| x.as_u64()) {
+            opts.max_iter = n.min(2000) as usize;
+        }
+        if let Some(s) = v.get("seed").and_then(|x| x.as_u64()) {
+            opts.seed = s;
+        }
+    }
+    let res = crate::shape::align(&qa, &ta, &opts);
+    #[derive(serde::Serialize)]
+    struct Out {
+        tanimoto: f64,
+        transform: [f64; 12],
+        surrogate_overlap: f64,
+        iterations: usize,
+        starts: usize,
+    }
+    let out = Out {
+        tanimoto: res.tanimoto,
+        transform: res.transform,
+        surrogate_overlap: res.surrogate_overlap,
+        iterations: res.iterations,
+        starts: res.starts,
+    };
+    serde_json::to_string(&out).map_err(|e| JsValue::from_str(&e.to_string()))
 }
