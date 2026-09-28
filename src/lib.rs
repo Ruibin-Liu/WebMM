@@ -7572,3 +7572,126 @@ pub fn shape_align_wasm(
     };
     serde_json::to_string(&out).map_err(|e| JsValue::from_str(&e.to_string()))
 }
+
+/// Joint shape+color rigid-body alignment. Sites JSON (per molecule):
+/// `[{"i": <atom idx>, "t": "donor"|"acceptor"|"pos"|"neg"|"hydrophobe"},
+/// {"atoms": [<ring atom idxs>], "t": "ring"}, ...]` — positions resolve to
+/// the atom coordinates (ring: centroid), exponents to the atoms' α.
+/// Returns the `shape_align_wasm` JSON plus `"color_tanimoto"` and
+/// `"combo"` (Shape T + Color T). The optimization objective is
+/// O_shape + O_color (unit weights).
+#[wasm_bindgen]
+pub fn shape_align_color_wasm(
+    query_sdf: &str,
+    target_sdf: &str,
+    query_sites_json: &str,
+    target_sites_json: &str,
+    opts_json: &str,
+) -> Result<String, JsValue> {
+    console_error_panic_hook::set_once();
+    use crate::shape::{color_type_id, ColorSite};
+
+    let parse_sites = |sdf: &str, json: &str| -> Result<Option<Vec<ColorSite>>, String> {
+        if json.trim().is_empty() {
+            return Ok(None);
+        }
+        let mol = crate::molecule::parser::parse_sdf(sdf).map_err(|e| e)?;
+        let atoms = crate::shape::shape_atoms(&mol);
+        let raw: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| format!("sites: {e}"))?;
+        let arr = raw.as_array().ok_or("sites: expected an array")?;
+        let mut out = Vec::with_capacity(arr.len());
+        for it in arr {
+            let tname = it
+                .get("t")
+                .and_then(|v| v.as_str())
+                .ok_or("site missing \"t\"")?;
+            let tid = color_type_id(tname).ok_or(format!("unknown color type {tname}"))?;
+            if let Some(i) = it.get("i").and_then(|v| v.as_u64()) {
+                let i = i as usize;
+                let a = atoms
+                    .get(i)
+                    .ok_or(format!("site atom idx {i} out of range"))?;
+                out.push(ColorSite {
+                    c: a.c,
+                    alpha: a.alpha,
+                    type_id: tid,
+                });
+            } else if let Some(list) = it.get("atoms").and_then(|v| v.as_array()) {
+                let idxs: Vec<usize> = list
+                    .iter()
+                    .map(|v| v.as_u64().map(|x| x as usize).ok_or("bad ring atom"))
+                    .collect::<Result<_, _>>()?;
+                if idxs.is_empty() {
+                    continue;
+                }
+                let mut c = [0.0f64; 3];
+                let mut alpha = 0.0f64;
+                for &i in &idxs {
+                    let a = atoms
+                        .get(i)
+                        .ok_or(format!("ring atom idx {i} out of range"))?;
+                    c[0] += a.c[0];
+                    c[1] += a.c[1];
+                    c[2] += a.c[2];
+                    alpha += a.alpha;
+                }
+                let n = idxs.len() as f64;
+                out.push(ColorSite {
+                    c: [c[0] / n, c[1] / n, c[2] / n],
+                    alpha: alpha / n,
+                    type_id: tid,
+                });
+            } else {
+                return Err("site needs \"i\" or \"atoms\"".into());
+            }
+        }
+        Ok(Some(out))
+    };
+
+    let q = crate::molecule::parser::parse_sdf(query_sdf).map_err(|e| JsValue::from_str(&e))?;
+    let t = crate::molecule::parser::parse_sdf(target_sdf).map_err(|e| JsValue::from_str(&e))?;
+    let qa = crate::shape::shape_atoms(&q);
+    let ta = crate::shape::shape_atoms(&t);
+    if qa.is_empty() || ta.is_empty() {
+        return Err(JsValue::from_str("empty molecule"));
+    }
+    let qs = parse_sites(query_sdf, query_sites_json).map_err(|e| JsValue::from_str(&e))?;
+    let ts = parse_sites(target_sdf, target_sites_json).map_err(|e| JsValue::from_str(&e))?;
+
+    let mut opts = crate::shape::AlignOptions::default();
+    if !opts_json.trim().is_empty() {
+        let v: serde_json::Value = serde_json::from_str(opts_json)
+            .map_err(|e| JsValue::from_str(&format!("opts: {e}")))?;
+        if let Some(n) = v.get("random_starts").and_then(|x| x.as_u64()) {
+            opts.random_starts = n.min(64) as usize;
+        }
+        if let Some(n) = v.get("max_iter").and_then(|x| x.as_u64()) {
+            opts.max_iter = n.min(2000) as usize;
+        }
+        if let Some(s) = v.get("seed").and_then(|x| x.as_u64()) {
+            opts.seed = s;
+        }
+    }
+    let res = crate::shape::align_colored(&qa, &ta, qs.as_deref(), ts.as_deref(), &opts);
+    #[derive(serde::Serialize)]
+    struct Out {
+        tanimoto: f64,
+        color_tanimoto: f64,
+        combo: f64,
+        transform: [f64; 12],
+        surrogate_overlap: f64,
+        iterations: usize,
+        starts: usize,
+    }
+    let out = Out {
+        tanimoto: res.tanimoto,
+        color_tanimoto: res.color_tanimoto,
+        combo: res.combo,
+        transform: res.transform,
+        surrogate_overlap: res.surrogate_overlap,
+        iterations: res.iterations,
+        starts: res.starts,
+    };
+    serde_json::to_string(&out).map_err(|e| JsValue::from_str(&e.to_string()))
+}

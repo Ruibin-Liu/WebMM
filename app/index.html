@@ -2160,6 +2160,16 @@ function rdkitAvailable() {
     return out;
   }
 
+  /// Page sites → engine sites JSON ([{i,t}...] + [{atoms,t:"ring"}]).
+  function sitesToEngineJson(sites) {
+    const out = [];
+    for (const s of sites) {
+      if (s.type === 'ring' && s.ring) out.push({ atoms: s.ring, t: 'ring' });
+      else if (s.i >= 0) out.push({ i: s.i, t: s.type });
+    }
+    return out;
+  }
+
   async function runShapeSearch(q) {
     if (!window.webmm) { searchStatus('WebMM engine not loaded — shape search unavailable'); return; }
     const thr = parseFloat(document.getElementById('searchThreshold').value);
@@ -2167,16 +2177,16 @@ function rdkitAvailable() {
     try { qsdf = ensureQuery3D(q); }
     catch (e) { searchStatus('Query 3D prep failed: ' + e.message); return; }
     searchStatus('Preparing 3D and aligning…');
-    // query color sites (computed on the query 3D molblock)
-    let qSites = null, qCoords = null;
+    // query color sites (perceived once on the query 3D molblock)
+    let qSites = null;
     try {
       const qm = rdkitModule.get_mol(qsdf);
       if (qm && qm.is_valid()) {
         qSites = colorSites(qsdf, qm);
-        qCoords = sdfCoords(qsdf);
         qm.delete();
       }
     } catch (e) { qSites = null; }
+    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites)) : '';
     const rows = [];
     const t0 = performance.now();
     const CH = 20;
@@ -2184,21 +2194,22 @@ function rdkitAvailable() {
       const e = searchLibrary[i];
       try {
         const esdf = ensureEntry3D(e);
-        const res = JSON.parse(window.webmm.shape_align_wasm(qsdf, esdf, '{"random_starts": 8}'));
-        if (res.tanimoto >= thr) {
-          let colorT = null;
-          if (qSites && qSites.length) {
-            try {
-              const tm = rdkitModule.get_mol(esdf);
-              if (tm && tm.is_valid()) {
-                const tSites = e.sites || (e.sites = colorSites(esdf, tm));
-                tm.delete();
-                const tCoords = sdfCoords(esdf);
-                const { color } = colorTanimoto(qSites, qCoords, tSites, tCoords, res.transform);
-                colorT = color;
-              }
-            } catch (err) { colorT = null; }
+        let tSitesJson = '';
+        try {
+          const tm = rdkitModule.get_mol(esdf);
+          if (tm && tm.is_valid()) {
+            const tSites = e.sites || (e.sites = colorSites(esdf, tm));
+            tm.delete();
+            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites));
           }
+        } catch (err) { tSitesJson = ''; }
+        // joint shape+color optimization when both sides have sites
+        const useColor = qSitesJson && tSitesJson;
+        const res = JSON.parse(useColor
+          ? window.webmm.shape_align_color_wasm(qsdf, esdf, qSitesJson, tSitesJson, '{"random_starts": 8}')
+          : window.webmm.shape_align_wasm(qsdf, esdf, '{"random_starts": 8}'));
+        if (res.tanimoto >= thr) {
+          const colorT = useColor ? res.color_tanimoto : null;
           rows.push({ e, score: res.tanimoto, colorT, aligned: applyTransformToSdf(esdf, res.transform) });
         }
       } catch (err) { /* skip entry */ }

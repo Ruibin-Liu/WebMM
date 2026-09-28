@@ -1,42 +1,47 @@
-# Plan: 形状检索颜色力场 v1 —— Color Tanimoto(ROCS 隐式颜色规则)+ Combo 评分
+# Plan: 联合 shape+color 刚体对齐 —— 颜色进入优化目标(v1.5.0)
 
 ## 背景
 
-3D 形状 v1 的已知短板:纯 shape 对化学特征不敏感(glucose 会排在含氢键
-特征的分子之上)。ROCS 的实践是 shape + color 组合打分。本增量给 Shape
-(3D) 检索加颜色层,纯 app 端(不改引擎/版本):
+颜色 v1 的姿态仍由 shape 单独决定,颜色只在对齐后打分——当氢键特征
+方向与体积最优姿态冲突时会留分。ROCS 实践是联合优化。本增量把颜色
+重叠加入引擎优化目标,并在引擎侧返回 Color T / Combo(JS 事后打分路径
+退役)。
 
-- **特征感知(页面 JS,规则表)**:六类特征位点,多标签不互斥
-  - donor:N/O 带氢([NX3;H1,H2]、[OX2;H1])
-  - acceptor:中性 N/O(排除阳离子;含酰胺 O/吡啶 N)
-  - pos:formal charge ≥ +1;neg:formal charge ≤ −1
-  - hydrophobe:与杂原子不相邻的 C/F/Cl/Br/I
-  - ring:芳香环质心(单点,等价 ROCS ring 特征)
-  - 权重 v1 统一(donor/acceptor/hydrophobe/ring/charge 全 1.0,文档化
-    简化;ROCS 官方权重属闭源实现细节)
-- **颜色重叠(页面 JS)**:同型位点对的原子高斯重叠(复用引擎同款
-  GCI=2√2/逐元素 α 公式,纯解析 10 行);Color Tanimoto =
-  O_c/(O_cA + O_cB − O_c);Combo = Shape T + Color T
-- **流程**:shape_align_wasm 拿到最优姿态变换 → JS 对目标特征位点施加
-  同一变换 → 颜色打分(对齐仍只优化 shape,combo 联合优化为后续,如实
-  记录)
-- **UI**:Shape 结果表加 Color T、Combo 两列(按 Combo 降序开关:列头
-  点击切换排序键,默认 Combo)
+## 设计
 
-## 验证
+1. **引擎**(`src/shape`):
+   - `ColorSite { c, alpha, type_id }`(type_id 稳定整数枚举 donor/
+     acceptor/pos/neg/hydrophobe/ring)
+   - `color_overlap_grad(qs, ts, w, t)`:同型位点对高斯重叠 + 解析
+     6-DOF 梯度(与 pairwise 形状代理同数学形式,K/β 公式复用)
+   - `ShapeObj` 增加可选双份位点表:f_and_g = −(O_shape + w·O_color),
+     w=1.0(v1 文档化;颜色位点稀疏,量级天然小于形状)
+   - `align_colored(query_atoms, target_atoms, q_sites, t_sites, opts)`:
+     与 align 同骨架(帧起点/随机/polish),重打分 = shape T(全量)
+     + color T(位点对,同型)@最优姿态;返回 {tanimoto, color_tanimoto,
+     combo, transform, ...}
+   - 单测:颜色梯度 FD 奇偶(种子锁定);自对齐含色 = combo 2.0;
+     颜色恒等式(自色 1、对称)
+2. **WASM(additive)**:`shape_align_color_wasm(query_sdf, target_sdf,
+   query_sites_json, target_sites_json, opts_json) -> JSON`;版本
+   1.4.0 → **1.5.0**;d.ts 同步;`shape_align_wasm` 签名不动
+   (sites JSON:[{i, t}] 原子索引+类型名;ring 位点 {atoms:[..], t})
+3. **页面**:Shape 检索改调新导出(sites 已在感知层就绪);移除 JS
+   事后 colorTanimoto 路径;列/排序不变(Combo)
+4. **parity**:引擎 color T @固定姿态 vs JS 公式 @同姿态(同常数同公式,
+   求和序不同 → 容差 1e-9);端到端:aspirin 自匹配 Combo 200;salicylic
+   居次席不回归;**联合 ≥ 事后**统计(top-10 combo 平均不降——姿态为
+   颜色让步的净效应应为非负,如个别下降如实记录)
 
-1. **规则表对照**(scripts/color_rules_check.py):donor/acceptor/pos/neg
-   位点集合 vs Python RDKit fdef 特征(Donor/Acceptor/PosIonizable/
-   NegIonizable 家族)在 LBDD refs 51 分子 + demo 库上的一致率;差异
-   逐类列出(hydrophobe/ring 定义本就不同,不参与对照,文档说明)
-2. **单测式验收(Playwright)**:自匹配 Color T = 1;对称性;色零分子
-   (己烷)Color T 分母保护;combo = shape + color
-3. **端到端**:aspirin 查询 → salicylic/glucose 排序变化符合化学直觉
-  (带 COOH/酯受体的分子 combo 提升);390px;零 page error;sim/sub
-   回归
-4. 门禁:289 测试、clippy(已对齐 CI 1.98)、fmt;纯 JS 无需 wasm 重建
+## 验收
+
+1. Rust 单测新增全绿(289 → ~293);clippy 1.98 = CI;fmt
+2. node 冒烟:1.5.0;benzene-H 自对齐 shape 1.0;aspirin 自对齐
+   combo 2.0
+3. Playwright:Shape 检索全流程(引擎侧颜色)、top-k 化学直觉排序
+   保持、390px、零 page error、sim/sub 回归
+4. 既有回归:289 测试、LBDD parity 51/51 不受影响(纯增量)
 
 ## 边界与不做
 
-- 不做:联合 shape+color 优化、fdef 递归宏整体移植、LumpedHydrophobe、
-  ZnBinder、可调权重 UI(后续)
+- 不做:类型间权重表/可调 w、颜色项的全量包含-排斥、多构象联合

@@ -499,6 +499,95 @@ fn surrogate_energy(a: &[ShapeAtom], b: &[ShapeAtom]) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// Color force field (joint optimization + scoring)
+// ---------------------------------------------------------------------------
+
+/// A color feature site (position, Gaussian exponent, feature type).
+#[derive(Debug, Clone, Copy)]
+pub struct ColorSite {
+    pub c: [f64; 3],
+    pub alpha: f64,
+    pub type_id: u8,
+}
+
+pub const COLOR_TYPES: [&str; 6] = ["donor", "acceptor", "pos", "neg", "hydrophobe", "ring"];
+
+pub fn color_type_id(name: &str) -> Option<u8> {
+    COLOR_TYPES.iter().position(|t| *t == name).map(|i| i as u8)
+}
+
+/// Same-type pairwise Gaussian overlap + 6-DOF gradient (identical kernel
+/// to `pairwise_overlap_grad`, restricted to matching feature types).
+pub fn color_overlap_grad(
+    qs: &[ColorSite],
+    ts: &[ColorSite],
+    w: &[f64; 3],
+    t: &[f64; 3],
+) -> (f64, [f64; 6]) {
+    let mut total = 0.0f64;
+    let mut g_t = [0.0f64; 3];
+    let mut torque = [0.0f64; 3];
+    for h in ts.iter() {
+        let rp = rodrigues(w, &[0.0, 0.0, 0.0], &h.c);
+        let y = [rp[0] + t[0], rp[1] + t[1], rp[2] + t[2]];
+        let mut g_j = [0.0f64; 3];
+        for ai in qs.iter() {
+            if ai.type_id != h.type_id {
+                continue;
+            }
+            let alpha_ij = ai.alpha + h.alpha;
+            let beta = ai.alpha * h.alpha / alpha_ij;
+            let s = std::f64::consts::PI / alpha_ij;
+            let k_ij = GCI * GCI * s * s.sqrt();
+            let d = [y[0] - ai.c[0], y[1] - ai.c[1], y[2] - ai.c[2]];
+            let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            let e = (-beta * d2).exp() * k_ij;
+            total += e;
+            let f = -2.0 * beta * e;
+            g_j[0] += f * d[0];
+            g_j[1] += f * d[1];
+            g_j[2] += f * d[2];
+        }
+        g_t[0] += g_j[0];
+        g_t[1] += g_j[1];
+        g_t[2] += g_j[2];
+        torque[0] += rp[1] * g_j[2] - rp[2] * g_j[1];
+        torque[1] += rp[2] * g_j[0] - rp[0] * g_j[2];
+        torque[2] += rp[0] * g_j[1] - rp[1] * g_j[0];
+    }
+    let jl = so3_left_jacobian(w);
+    let g_w = [
+        jl[0] * torque[0] + jl[3] * torque[1] + jl[6] * torque[2],
+        jl[1] * torque[0] + jl[4] * torque[1] + jl[7] * torque[2],
+        jl[2] * torque[0] + jl[5] * torque[1] + jl[8] * torque[2],
+    ];
+    (total, [g_w[0], g_w[1], g_w[2], g_t[0], g_t[1], g_t[2]])
+}
+
+/// Overlap value only (line-search `energy` path consistency is guaranteed
+/// because `f_and_g` uses the same gradient-carrying function).
+fn color_overlap_value(qs: &[ColorSite], ts: &[ColorSite], w: &[f64; 3], t: &[f64; 3]) -> f64 {
+    color_overlap_grad(qs, ts, w, t).0
+}
+
+/// Color Tanimoto with the target sites posed by (w, t):
+/// T_c = O_ab/(O_aa + O_bb − O_ab), all terms same-type pairwise sums.
+pub fn color_tanimoto_at(qs: &[ColorSite], ts: &[ColorSite], w: &[f64; 3], t: &[f64; 3]) -> f64 {
+    if qs.is_empty() || ts.is_empty() {
+        return 0.0;
+    }
+    let oab = color_overlap_value(qs, ts, w, t);
+    let oaa = color_overlap_value(qs, qs, &[0.0; 3], &[0.0; 3]);
+    let obb = color_overlap_value(ts, ts, &[0.0; 3], &[0.0; 3]);
+    let den = oaa + obb - oab;
+    if den > 1e-12 {
+        (oab / den).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Rigid-body alignment (multi-start L-BFGS on the surrogate, full rescoring)
 // ---------------------------------------------------------------------------
 
@@ -543,6 +632,10 @@ impl Default for AlignOptions {
 #[derive(Debug, Clone)]
 pub struct AlignResult {
     pub tanimoto: f64,
+    /// Color Tanimoto at the best pose (0 when no color sites were given).
+    pub color_tanimoto: f64,
+    /// Shape Tanimoto + Color Tanimoto.
+    pub combo: f64,
     /// Row-major 3×4 affine (rotation, then translation) for the target.
     pub transform: [f64; 12],
     pub surrogate_overlap: f64,
@@ -672,12 +765,29 @@ fn optimize_pose(
     t0: [f64; 3],
     max_iter: usize,
 ) -> (f64, [f64; 3], [f64; 3], usize) {
+    optimize_pose_colored(a, b_centered, None, None, w0, t0, max_iter)
+}
+
+/// Joint shape+color objective: O = O_shape + Σ_w O_color(same-type site
+/// pairs). Both terms share the same pairwise-Gaussian kernel, so the
+/// J_l(w)-corrected gradient chain applies to the sum.
+fn optimize_pose_colored(
+    a: &[ShapeAtom],
+    b_centered: &[ShapeAtom],
+    q_sites: Option<&[ColorSite]>,
+    t_sites: Option<&[ColorSite]>,
+    w0: [f64; 3],
+    t0: [f64; 3],
+    max_iter: usize,
+) -> (f64, [f64; 3], [f64; 3], usize) {
     use crate::optimizer::{lbfgs_core, Objective, OptimizationResult};
     use crate::ConvergenceOptions;
 
     struct ShapeObj<'a> {
         a: &'a [ShapeAtom],
         b: &'a [ShapeAtom],
+        q_sites: Option<&'a [ColorSite]>,
+        t_sites: Option<&'a [ColorSite]>,
         last_z: Vec<f64>,
         last_max: f64,
         last_rms: f64,
@@ -691,7 +801,14 @@ fn optimize_pose(
             let t = [z[3], z[4], z[5]];
             // direct call: the gradient must carry the J_l(w) chain factor —
             // posing first and taking the identity gradient loses it
-            let (o, g) = pairwise_overlap_grad(self.a, self.b, &w, &t);
+            let (mut o, mut g) = pairwise_overlap_grad(self.a, self.b, &w, &t);
+            if let (Some(qs), Some(ts)) = (self.q_sites, self.t_sites) {
+                let (oc, gc) = color_overlap_grad(qs, ts, &w, &t);
+                o += oc;
+                for i in 0..6 {
+                    g[i] += gc[i];
+                }
+            }
             self.last_z = z.to_vec();
             self.last_max = g.iter().fold(0.0f64, |m, v| m.max(v.abs()));
             self.last_rms = (g.iter().map(|v| v * v).sum::<f64>() / 6.0).sqrt();
@@ -718,6 +835,8 @@ fn optimize_pose(
     let mut obj = ShapeObj {
         a,
         b: b_centered,
+        q_sites,
+        t_sites,
         last_z: vec![0.0; 6],
         last_max: 0.0,
         last_rms: 0.0,
@@ -737,7 +856,10 @@ fn optimize_pose(
     let w = optimized_coords[0];
     let t = optimized_coords[1];
     let posed = pose(b_centered, &w, &t);
-    let o = surrogate_energy(a, &posed);
+    let mut o = surrogate_energy(a, &posed);
+    if let (Some(qs), Some(ts)) = (q_sites, t_sites) {
+        o += color_overlap_value(qs, ts, &w, &t);
+    }
     (o, w, t, iterations)
 }
 
@@ -745,11 +867,49 @@ fn optimize_pose(
 /// keep their coordinates; the returned transform maps original target
 /// coordinates to the best-aligned pose.
 pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> AlignResult {
+    align_colored(query, target, None, None, opts)
+}
+
+/// Joint shape+color alignment: the objective maximizes O_shape + O_color
+/// (same-type site pairs, unit weights), and starts are ranked by the
+/// Shape T + Color T combo. Sites are given in ORIGINAL coordinates and
+/// centered alongside their molecules.
+pub fn align_colored(
+    query: &[ShapeAtom],
+    target: &[ShapeAtom],
+    q_sites: Option<&[ColorSite]>,
+    t_sites: Option<&[ColorSite]>,
+    opts: &AlignOptions,
+) -> AlignResult {
     // Work in centered frames: target gets centered first (its own centroid
     // to origin), and we align it onto the centered query; the returned
     // affine therefore maps original target coords → aligned frame.
     let q = center(query);
     let t_c = center(target);
+    // center the site lists into the same frames
+    let q_com = centroid(query);
+    let t_com = centroid(target);
+    let q_sites_c: Option<Vec<ColorSite>> = q_sites.map(|ss| {
+        ss.iter()
+            .map(|x| ColorSite {
+                c: [x.c[0] - q_com[0], x.c[1] - q_com[1], x.c[2] - q_com[2]],
+                alpha: x.alpha,
+                type_id: x.type_id,
+            })
+            .collect()
+    });
+    let t_sites_c: Option<Vec<ColorSite>> = t_sites.map(|ss| {
+        ss.iter()
+            .map(|x| ColorSite {
+                c: [x.c[0] - t_com[0], x.c[1] - t_com[1], x.c[2] - t_com[2]],
+                alpha: x.alpha,
+                type_id: x.type_id,
+            })
+            .collect()
+    });
+    let q_sites_ref = q_sites_c.as_deref();
+    let t_sites_ref = t_sites_c.as_deref();
+    let colored = q_sites_ref.is_some() && t_sites_ref.is_some();
 
     // Compose transform back to original query coordinates: aligned point =
     // R·(p − t_com) + t + q_com.
@@ -839,6 +999,8 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
 
     let mut best = AlignResult {
         tanimoto: -1.0,
+        color_tanimoto: 0.0,
+        combo: -1.0,
         transform: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
         surrogate_overlap: -1.0,
         iterations: 0,
@@ -853,7 +1015,11 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
     let n_starts = starts.len();
     let mut best_wt: Option<([f64; 3], [f64; 3])> = None;
     for (w0, t0) in &starts {
-        let (o, w, t, iters) = optimize_pose(&q, &t_c, *w0, *t0, opts.max_iter);
+        let (o, w, t, iters) = if colored {
+            optimize_pose_colored(&q, &t_c, q_sites_ref, t_sites_ref, *w0, *t0, opts.max_iter)
+        } else {
+            optimize_pose(&q, &t_c, *w0, *t0, opts.max_iter)
+        };
         total_iters += iters;
         // full rescoring at this pose (map centered pose back to query frame)
         let posed_rel = pose(&t_c, &w, &t); // aligned onto centered query
@@ -864,7 +1030,13 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
         } else {
             0.0
         };
-        if tj > best.tanimoto {
+        let cj = if colored {
+            color_tanimoto_at(q_sites_ref.unwrap(), t_sites_ref.unwrap(), &w, &t)
+        } else {
+            0.0
+        };
+        let key = tj + cj;
+        if key > best.combo {
             best_wt = Some((w, t));
             // affine for original target coords: p ↦ R·(p − t_com) + t + q_com
             let r = rotmat(&w);
@@ -884,6 +1056,8 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
             ];
             best = AlignResult {
                 tanimoto: tj,
+                color_tanimoto: cj,
+                combo: key,
                 transform: m,
                 surrogate_overlap: o,
                 iterations: iters,
@@ -895,7 +1069,19 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
     // stalls — the rotation-vector 2π flat directions can freeze the line
     // search while the pose is still ~0.3 Å off on symmetric systems)
     if let Some((w, t)) = best_wt {
-        let (o2, w2, t2, it2) = optimize_pose(&q, &t_c, w, t, opts.max_iter / 2 + 10);
+        let (o2, w2, t2, it2) = if colored {
+            optimize_pose_colored(
+                &q,
+                &t_c,
+                q_sites_ref,
+                t_sites_ref,
+                w,
+                t,
+                opts.max_iter / 2 + 10,
+            )
+        } else {
+            optimize_pose(&q, &t_c, w, t, opts.max_iter / 2 + 10)
+        };
         let posed_rel = pose(&t_c, &w2, &t2);
         let vab2 = overlap_full(&q, &posed_rel);
         let den2 = vq + vt - vab2;
@@ -904,7 +1090,12 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
         } else {
             0.0
         };
-        if tj > best.tanimoto {
+        let cj2 = if colored {
+            color_tanimoto_at(q_sites_ref.unwrap(), t_sites_ref.unwrap(), &w2, &t2)
+        } else {
+            0.0
+        };
+        if tj + cj2 > best.combo {
             let r = rotmat(&w2);
             let m = [
                 r[0],
@@ -922,12 +1113,17 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
             ];
             best = AlignResult {
                 tanimoto: tj,
+                color_tanimoto: cj2,
+                combo: tj + cj2,
                 transform: m,
                 surrogate_overlap: o2,
                 iterations: it2,
                 starts: n_starts,
             };
         }
+    }
+    if best.combo < 0.0 {
+        best.combo = best.tanimoto; // uncolored path: combo degenerates to shape
     }
     best.iterations += total_iters;
     best.starts = n_starts;
@@ -1157,6 +1353,173 @@ mod tests {
                 assert!(angle < 1e-3, "self frame start angle {angle}");
             }
         }
+    }
+
+    /// Color-overlap analytic gradient vs central finite differences
+    /// (seeded; the kernel is shared with the shape surrogate but the
+    /// type filtering changes the summation structure).
+    #[test]
+    fn color_gradient_fd() {
+        let mk = |i: u8, c: [f64; 3]| ColorSite {
+            c,
+            alpha: 1.0 + 0.1 * i as f64,
+            type_id: i % 3,
+        };
+        let mut rng = MiniRng::new(11);
+        for case in 0..30 {
+            let qs: Vec<ColorSite> = (0..5)
+                .map(|i| {
+                    mk(
+                        i,
+                        [
+                            rng.next_f64() * 3.0 - 1.5,
+                            rng.next_f64() * 3.0 - 1.5,
+                            rng.next_f64() * 3.0 - 1.5,
+                        ],
+                    )
+                })
+                .collect();
+            let ts: Vec<ColorSite> = (0..4)
+                .map(|i| {
+                    mk(
+                        i + 2,
+                        [
+                            rng.next_f64() * 3.0 - 1.5,
+                            rng.next_f64() * 3.0 - 1.5,
+                            rng.next_f64() * 3.0 - 1.5,
+                        ],
+                    )
+                })
+                .collect();
+            let w = [
+                rng.next_f64() * 1.5 - 0.75,
+                rng.next_f64() * 1.5 - 0.75,
+                rng.next_f64() * 1.5 - 0.75,
+            ];
+            let t = [
+                rng.next_f64() - 0.5,
+                rng.next_f64() - 0.5,
+                rng.next_f64() - 0.5,
+            ];
+            let (_, g) = color_overlap_grad(&qs, &ts, &w, &t);
+            let eps = 1e-6;
+            for k in 0..6 {
+                let mut wp = w;
+                let mut tp = t;
+                let mut wm = w;
+                let mut tm = t;
+                if k < 3 {
+                    wp[k] += eps;
+                    wm[k] -= eps;
+                } else {
+                    tp[k - 3] += eps;
+                    tm[k - 3] -= eps;
+                }
+                let fp = color_overlap_grad(&qs, &ts, &wp, &tp).0;
+                let fm = color_overlap_grad(&qs, &ts, &wm, &tm).0;
+                let fd = (fp - fm) / (2.0 * eps);
+                assert!(
+                    (fd - g[k]).abs() < 1e-4 * (1.0 + fd.abs()),
+                    "case {case} dof {k}: {} vs {fd}",
+                    g[k]
+                );
+            }
+        }
+    }
+
+    /// Color Tanimoto identities: self = 1, empty = 0, symmetric.
+    #[test]
+    fn color_tanimoto_identities() {
+        let qs = vec![
+            ColorSite {
+                c: [0.0, 0.0, 0.0],
+                alpha: 1.0,
+                type_id: 0,
+            },
+            ColorSite {
+                c: [1.5, 0.0, 0.0],
+                alpha: 1.0,
+                type_id: 1,
+            },
+            ColorSite {
+                c: [0.0, 1.5, 0.0],
+                alpha: 1.1,
+                type_id: 1,
+            },
+        ];
+        let self_t = color_tanimoto_at(&qs, &qs, &[0.0; 3], &[0.0; 3]);
+        assert!((self_t - 1.0).abs() < 1e-9, "self {self_t}");
+        let ts = vec![ColorSite {
+            c: [4.0, 0.0, 0.0],
+            alpha: 1.0,
+            type_id: 2,
+        }];
+        assert_eq!(color_tanimoto_at(&qs, &ts, &[0.0; 3], &[0.0; 3]), 0.0); // no shared types
+        let empty: Vec<ColorSite> = Vec::new();
+        assert_eq!(color_tanimoto_at(&empty, &qs, &[0.0; 3], &[0.0; 3]), 0.0);
+    }
+
+    /// Joint shape+color self-alignment reaches combo = 2.0.
+    #[test]
+    fn colored_self_alignment_combo() {
+        let ring: Vec<ShapeAtom> = (0..6)
+            .map(|i| {
+                let th = i as f64 * std::f64::consts::PI / 3.0;
+                ShapeAtom {
+                    c: [1.4 * th.cos(), 1.4 * th.sin(), 0.0],
+                    alpha: alpha_for(6),
+                }
+            })
+            .collect();
+        let qs: Vec<ColorSite> = [
+            ColorSite {
+                c: [0.0, 0.0, 0.3],
+                alpha: alpha_for(7),
+                type_id: 0,
+            },
+            ColorSite {
+                c: [1.2, 0.4, -0.2],
+                alpha: alpha_for(8),
+                type_id: 1,
+            },
+        ]
+        .to_vec();
+        // rigidly move the target (atoms + sites together)
+        let w0 = [0.7, -1.1, 0.5];
+        let t0 = [2.0, 1.0, -3.0];
+        let moved: Vec<ShapeAtom> = ring
+            .iter()
+            .map(|a| ShapeAtom {
+                c: rodrigues(&w0, &t0, &a.c),
+                alpha: a.alpha,
+            })
+            .collect();
+        let t_sites: Vec<ColorSite> = qs
+            .iter()
+            .map(|s| ColorSite {
+                c: rodrigues(&w0, &t0, &s.c),
+                alpha: s.alpha,
+                type_id: s.type_id,
+            })
+            .collect();
+        let res = align_colored(
+            &ring,
+            &moved,
+            Some(&qs),
+            Some(&t_sites),
+            &AlignOptions {
+                random_starts: 6,
+                max_iter: 250,
+                seed: 5,
+            },
+        );
+        assert!(
+            res.combo > 1.99,
+            "combo {} (shape {} color {})",
+            res.combo,
+            res.tanimoto,
+            res.color_tanimoto
+        );
     }
 
     /// Shape Tanimoto is symmetric and bounded.
