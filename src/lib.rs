@@ -7595,7 +7595,7 @@ pub fn shape_align_color_wasm(
         if json.trim().is_empty() {
             return Ok(None);
         }
-        let mol = crate::molecule::parser::parse_sdf(sdf).map_err(|e| e)?;
+        let mol = crate::molecule::parser::parse_sdf(sdf)?;
         let atoms = crate::shape::shape_atoms(&mol);
         let raw: serde_json::Value =
             serde_json::from_str(json).map_err(|e| format!("sites: {e}"))?;
