@@ -836,6 +836,7 @@ details {
   <div class="mode-tabs" role="tablist">
     <button class="mode-tab active" id="tabSingle" role="tab" aria-selected="true" onclick="switchMode('single')">Single</button>
     <button class="mode-tab" id="tabBatch" role="tab" aria-selected="false" onclick="switchMode('batch')">Batch</button>
+    <button class="mode-tab" id="tabSearch" role="tab" aria-selected="false" onclick="switchMode('search')">Search</button>
   </div>
   <textarea id="input" aria-label="Molecule input: SMILES, MolBlock, or SDF" placeholder="Paste SMILES, MolBlock, or SDF here"></textarea>
   <div id="batchBar" style="display:none;">
@@ -851,6 +852,41 @@ details {
       </label>
       <span class="version" id="batchInfo">descriptors + drug rules + QED/PAINS · 3D optional · sort/filter · export CSV/SDF</span>
     </div>
+  </div>
+
+  <div id="searchBar" style="display:none;">
+    <div class="separator">-- library: one SMILES + name per line, or a multi-record SDF · then search below --</div>
+    <div class="action-buttons" style="justify-content:flex-start;">
+      <button id="btnLibLoad" class="primary" onclick="loadSearchLibrary()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,3 19,12 5,21"/></svg>
+        Load library
+      </button>
+      <button id="btnLibDemo" class="action-btn edit" onclick="loadDemoLibrary()" title="Load the bundled demo library (repo test molecules + named drugs)">Demo library</button>
+      <button id="btnLibClear" class="action-btn clear" onclick="clearSearchLibrary()" title="Clear the current library and forget the saved one">Clear</button>
+      <label class="action-btn export" style="cursor:pointer;" title="Upload a .smi / .txt / .sdf library file">
+        Upload file
+        <input type="file" id="libFile" accept=".smi,.txt,.sdf,.mol" style="display:none;" onchange="onLibFile(event)">
+      </label>
+    </div>
+    <div class="action-buttons" style="justify-content:flex-start; margin-top:0.5rem;">
+      <input type="text" id="searchQuery" placeholder="Query: SMILES (similarity) or SMILES/SMARTS (substructure)" aria-label="Search query" style="flex:1; min-width:160px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
+      <button class="action-btn edit" onclick="useCurrentAsQuery()" title="Use the molecule currently loaded in the single view">Use current</button>
+      <select id="searchMode" aria-label="Search mode" style="padding:0.35rem; font-size:0.8rem;">
+        <option value="sim">Similarity</option>
+        <option value="sub">Substructure</option>
+      </select>
+      <select id="searchFp" aria-label="Fingerprint type" style="padding:0.35rem; font-size:0.8rem;">
+        <option value="morgan">Morgan</option>
+        <option value="rdkit">RDKit</option>
+        <option value="maccs">MACCS</option>
+        <option value="atompair">AtomPair</option>
+        <option value="topologicaltorsion">TopoTorsion</option>
+      </select>
+      <label for="searchThreshold" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">T ≥ <span id="searchThresholdVal">0.30</span></label>
+      <input type="range" id="searchThreshold" min="0" max="1" step="0.05" value="0.3" style="width:90px;" oninput="document.getElementById('searchThresholdVal').textContent = parseFloat(this.value).toFixed(2)">
+      <button id="btnSearchRun" class="primary" onclick="runSearch()">Search</button>
+    </div>
+    <div class="version" id="searchStatus" aria-live="polite" style="margin:0.3rem 0 0;"></div>
   </div>
 
   <div class="separator">-- or --</div>
@@ -1102,6 +1138,20 @@ details {
      <div class="version" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
    </div>
 
+   <div id="searchPanel" class="panel" style="display:none;">
+     <strong>Search Results</strong>
+     <div class="version" id="searchResultStatus" aria-live="polite" style="margin:0.3rem 0 0.5rem;"></div>
+     <div style="overflow-x:auto;">
+     <table id="searchTable">
+       <thead>
+         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="searchScoreCol">Tanimoto</th></tr>
+       </thead>
+       <tbody id="searchRows"></tbody>
+     </table>
+     </div>
+     <div class="version" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+   </div>
+
   <div class="crosslinks">
   Want the validation numbers? <a id="xDemo" href="../index.html">See the Demo</a> · Just exploring? <a id="xPlayground" href="../playground.html">Try the Playground</a>
 </div>
@@ -1193,17 +1243,18 @@ function rdkitAvailable() {
    function setupAutoProcess() {
      const input = document.getElementById("input");
      input.addEventListener("blur", () => {
-       process(true);
+      if (!batchMode && !searchMode) process(true);
      });
      input.addEventListener("keydown", (e) => {
        if (e.key === "Enter") {
-         process(true);
+        if (!batchMode && !searchMode) process(true);
        }
      });
    }
 </script>
 <script src="vendor/RDKit_minimal.js"></script>
 <script defer src="lbdd_data.js"></script>
+<script defer src="demo_library.js"></script>
 <script>initRDKit();</script>
 
 <script>
@@ -1727,6 +1778,232 @@ function rdkitAvailable() {
 
   // test hook for the Playwright parity suite (no UI role)
   window.__lbdd = { computeQED, matchCatalog, murckoScaffold, lbddQueries, computeLBDDSummary };
+
+  // ===================== Library Search (LBDD layer 2) =====================
+  // Fingerprint bit-strings are parity-validated bit-for-bit against Python
+  // RDKit generators (Morgan r2/2048, RDKit 2048, MACCS 167, AtomPair 2048,
+  // TopologicalTorsion 2048); Tanimoto is an exact integer ratio in JS doubles,
+  // so similarity parity is exact by construction. Substructure follows
+  // Chem.HasSubstructMatch default semantics (implicit H).
+
+  const SEARCH_FPS = {
+    morgan: 'get_morgan_fp',
+    rdkit: 'get_rdkit_fp',
+    maccs: 'get_maccs_fp',
+    atompair: 'get_atom_pair_fp',
+    topologicaltorsion: 'get_topological_torsion_fp',
+  };
+  const SEARCH_LIB_KEY = 'wb-searchLibrary';
+  let searchLibrary = null;   // [{idx, name, smiles, MW, fps:{fpKey: bitstring}}]
+  let searchLibRestored = false;
+
+  function searchStatus(msg) {
+    document.getElementById('searchStatus').textContent = msg;
+  }
+
+  // Persist the parsed input (canonical SMILES + names), not the fingerprint
+  // cache: 2000 x 5 x 2048-bit vectors would blow the ~5MB localStorage quota,
+  // while the input is ~100-200KB and re-derives everything in ~1s.
+  function saveSearchLibrary(lib) {
+    try {
+      localStorage.setItem(SEARCH_LIB_KEY, JSON.stringify(lib.map(e => ({ name: e.name, smiles: e.smiles }))));
+    } catch (e) {
+      searchStatus('Library loaded but too large to persist across sessions');
+    }
+  }
+
+  function restoreSearchLibrary() {
+    if (searchLibRestored || searchLibrary) return;
+    searchLibRestored = true;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(SEARCH_LIB_KEY) || 'null'); } catch (e) { saved = null; }
+    if (!Array.isArray(saved) || !saved.length) return;
+    const r = loadSearchLibraryFrom(saved);
+    if (r && r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
+  }
+
+  function clearSearchLibrary() {
+    searchLibrary = null;
+    try { localStorage.removeItem(SEARCH_LIB_KEY); } catch (e) {}
+    document.getElementById('searchPanel').style.display = 'none';
+    searchStatus('Library cleared');
+  }
+
+
+  function escHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function parseLibraryText(raw) {
+    const out = [];
+    if (raw.includes('$$$$')) {
+      for (const block of raw.split('$$$$')) {
+        if (!block.trim()) continue;
+        const L = sdfLines(block);
+        const name = (L[0] || '').trim() || ('lib-' + (out.length + 1));
+        out.push({ smiles: block.trim(), name, isMolblock: true });
+      }
+      return out;
+    }
+    for (let line of raw.split('\n')) {
+      line = line.trim();
+      if (!line) continue;
+      const parts = line.split(/\s+/);
+      out.push({ smiles: parts[0], name: parts.length > 1 ? parts.slice(1).join(' ') : null });
+    }
+    return out;
+  }
+
+  function loadSearchLibraryFrom(items) {
+    if (!rdkitAvailable()) return null;
+    const lib = [];
+    let skipped = 0;
+    for (const item of items.slice(0, 2000)) {
+      try {
+        const m = rdkitModule.get_mol(item.smiles);
+        if (!m || !m.is_valid()) { skipped++; continue; }
+        const smiles = m.get_smiles();
+        const d = JSON.parse(m.get_descriptors());
+        const fps = {};
+        for (const [k, fn] of Object.entries(SEARCH_FPS)) fps[k] = m[fn]();
+        m.delete();
+        lib.push({ idx: lib.length, name: item.name || smiles, smiles, MW: d.amw.toFixed(2), fps });
+      } catch (e) { skipped++; }
+    }
+    searchLibrary = lib;
+    saveSearchLibrary(lib);
+    return { lib, skipped };
+  }
+
+  function loadSearchLibrary() {
+    const items = parseLibraryText(document.getElementById('input').value);
+    if (!items.length) { searchStatus('Nothing to load — enter one SMILES per line or a multi-record SDF'); return; }
+    const r = loadSearchLibraryFrom(items);
+    if (!r) return;
+    document.getElementById('searchPanel').style.display = 'none';
+    searchStatus(`Library loaded: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}` +
+      (r.skipped ? `, ${r.skipped} skipped (unparseable)` : ''));
+  }
+
+  function loadDemoLibrary() {
+    const demo = window.DEMO_LIBRARY || [];
+    if (!demo.length) { searchStatus('Demo library data missing (app/demo_library.js)'); return; }
+    const r = loadSearchLibraryFrom(demo.map(e => ({ smiles: e.smiles, name: e.name })));
+    if (!r) return;
+    document.getElementById('searchPanel').style.display = 'none';
+    searchStatus(`Demo library loaded: ${r.lib.length} molecules (repo test set + named drugs)`);
+  }
+
+  function onLibFile(ev) {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    f.text().then(t => {
+      document.getElementById('input').value = t;
+      loadSearchLibrary();
+      ev.target.value = '';
+    });
+  }
+
+  function useCurrentAsQuery() {
+    const s = document.getElementById('smiles').textContent;
+    if (!s) { searchStatus('No molecule loaded in the single view yet'); return; }
+    document.getElementById('searchQuery').value = s;
+  }
+
+  function tanimotoBits(a, b) {
+    let inter = 0, onA = 0, onB = 0;
+    for (let i = 0; i < a.length; i++) {
+      const x = a.charCodeAt(i) === 49, y = b.charCodeAt(i) === 49;
+      if (x) { onA++; if (y) inter++; }
+      if (y) onB++;
+    }
+    const un = onA + onB - inter;
+    return un ? inter / un : 0;
+  }
+
+  function runSearch() {
+    if (!rdkitAvailable()) return;
+    if (!searchLibrary || !searchLibrary.length) { searchStatus('Load a library first (paste + Load library, or Demo library)'); return; }
+    const q = document.getElementById('searchQuery').value.trim();
+    if (!q) { searchStatus('Enter a query (SMILES for similarity; SMILES or SMARTS for substructure)'); return; }
+    const mode = document.getElementById('searchMode').value;
+    if (mode === 'sim') {
+      let qm = null;
+      try { qm = rdkitModule.get_mol(q); } catch (e) {}
+      if (!qm || !qm.is_valid()) {
+        if (qm) qm.delete();
+        searchStatus('Query is not a valid SMILES (SMARTS is only supported in substructure mode)');
+        return;
+      }
+      const fpKey = document.getElementById('searchFp').value;
+      const qfp = qm[SEARCH_FPS[fpKey]]();
+      qm.delete();
+      const thr = parseFloat(document.getElementById('searchThreshold').value);
+      const rows = [];
+      for (const e of searchLibrary) {
+        const t = tanimotoBits(qfp, e.fps[fpKey]);
+        if (t >= thr) rows.push({ e, score: t });
+      }
+      rows.sort((a, b) => b.score - a.score);
+      renderSearchResults(rows, 'sim', `${rows.length}/${searchLibrary.length} at T ≥ ${thr.toFixed(2)}`);
+    } else {
+      let qq = null;
+      try { qq = rdkitModule.get_qmol(q); } catch (e) {}
+      if (!qq || !qq.is_valid()) {
+        if (qq) qq.delete();
+        searchStatus('Query is neither a valid SMILES nor SMARTS');
+        return;
+      }
+      const rows = [];
+      for (const e of searchLibrary) {
+        const m = rdkitModule.get_mol(e.smiles);
+        if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
+        if (lbddFirstAtoms(m, qq)) rows.push({ e, score: 1 });
+        m.delete();
+      }
+      qq.delete();
+      renderSearchResults(rows, 'sub', `${rows.length}/${searchLibrary.length} matching the substructure`);
+    }
+  }
+
+  function renderSearchResults(rows, mode, statusMsg) {
+    const cap = 500;
+    const shown = rows.slice(0, cap);
+    const tb = document.getElementById('searchRows');
+    tb.innerHTML = '';
+    document.getElementById('searchScoreCol').textContent = mode === 'sim' ? 'Tanimoto' : 'Match';
+    for (let i = 0; i < shown.length; i++) {
+      const { e, score } = shown[i];
+      const tr = document.createElement('tr');
+      tr.tabIndex = 0;
+      tr.setAttribute('role', 'button');
+      tr.setAttribute('aria-label', 'Load ' + e.name + ' into the single view');
+      tr.addEventListener('click', () => loadSearchRow(e));
+      tr.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e); }
+      });
+      tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}</td>` +
+        `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
+        `<td class="value">${e.MW}</td>` +
+        (mode === 'sim'
+          ? `<td class="value">${(score * 100).toFixed(1)}%</td>`
+          : `<td><span class="result-badge pass">Match</span></td>`);
+      tb.appendChild(tr);
+    }
+    document.getElementById('searchPanel').style.display = 'block';
+    document.getElementById('searchResultStatus').textContent =
+      statusMsg + (rows.length > cap ? ` · showing top ${cap}` : '');
+  }
+
+  function loadSearchRow(e) {
+    switchMode('single');
+    document.getElementById('input').value = e.smiles + ' ' + (e.name || '');
+    process(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // test hook for the Search parity suite (no UI role)
+  window.__search = { loadSearchLibraryFrom, tanimotoBits, parseLibraryText, runSearch, getState: () => searchLibrary };
 
   function copy(id) {
     const text = document.getElementById(id).textContent;
@@ -2531,6 +2808,7 @@ function yieldToUI() {
 // parse errors). Locate the counts line by CONTENT instead.
 // ===== v1.4: batch molecule mode =====
 let batchMode = false;
+let searchMode = false;
 let batchRun = null;       // farm state while running
 let batchQueue = [];       // pending 3D jobs
 let batchWorkers = [];
@@ -2538,36 +2816,27 @@ let batchResults = [];
 
 function switchMode(m) {
   batchMode = (m === 'batch');
-  document.getElementById('tabSingle').classList.toggle('active', !batchMode);
+  searchMode = (m === 'search');
+  const single = !batchMode && !searchMode;
+  document.getElementById('tabSingle').classList.toggle('active', single);
   document.getElementById('tabBatch').classList.toggle('active', batchMode);
-  document.getElementById('tabSingle').setAttribute('aria-selected', String(!batchMode));
+  document.getElementById('tabSearch').classList.toggle('active', searchMode);
+  document.getElementById('tabSingle').setAttribute('aria-selected', String(single));
   document.getElementById('tabBatch').setAttribute('aria-selected', String(batchMode));
+  document.getElementById('tabSearch').setAttribute('aria-selected', String(searchMode));
   document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
-  document.getElementById('singleActions').style.display = batchMode ? 'none' : 'flex';
+  document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
+  if (searchMode) restoreSearchLibrary();
+  document.getElementById('singleActions').style.display = single ? 'flex' : 'none';
   document.getElementById('input').placeholder = batchMode
     ? 'One SMILES per line (optionally: SMILES name), or a multi-record SDF'
+    : searchMode
+    ? 'Library: one SMILES + name per line, or a multi-record SDF'
     : 'Paste SMILES, MolBlock, or SDF here';
 }
 
 function parseBatchInputs() {
-  const raw = document.getElementById('input').value;
-  const out = [];
-  if (raw.includes('$$$$')) {
-    for (const block of raw.split('$$$$')) {
-      if (!block.trim()) continue;
-      const L = sdfLines(block);
-      const name = (L[0] || '').trim() || ('batch-' + (out.length + 1));
-      out.push({ smiles: block.trim(), name, isMolblock: true });
-    }
-    return out;
-  }
-  for (let line of raw.split('\n')) {
-    line = line.trim();
-    if (!line) continue;
-    const parts = line.split(/\s+/);
-    out.push({ smiles: parts[0], name: parts.length > 1 ? parts.slice(1).join(' ') : null });
-  }
-  return out;
+  return parseLibraryText(document.getElementById('input').value);
 }
 
 function describeBatchMolecule(item, idx) {
