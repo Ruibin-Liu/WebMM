@@ -187,8 +187,7 @@ fn enumerate_specs(atoms: &[ShapeAtom]) -> Vec<TermSpec> {
             e.center_num,
             e.sum_alpha_c_sq,
         );
-        for j in (e.last + 1)..n {
-            let b = &atoms[j];
+        for (j, b) in atoms.iter().enumerate().skip(e.last + 1) {
             let alpha_sum = e.spec.alpha_sum + b.alpha;
             let log_c = e.spec.log_c + GCI.ln();
             let cn = [
@@ -416,21 +415,7 @@ pub fn rotmat(w: &[f64; 3]) -> [f64; 9] {
     let e = [[0.0, -u[2], u[1]], [u[2], 0.0, -u[0]], [-u[1], u[0], 0.0]];
     let (c, s) = (th.cos(), th.sin());
     let mut r = [0.0f64; 9];
-    for i in 0..3 {
-        for k in 0..3 {
-            let mut uut = 0.0;
-            for m in 0..3 {
-                uut += e[i][m] * e[m][k];
-            }
-            r[i * 3 + k] = c * (if i == k { 1.0 } else { 0.0 })
-                + s * e[i][k]
-                + (1.0 - c) * u[i] * u[k]
-                + c * 0.0
-                - 0.0
-                + uut * 0.0;
-        }
-    }
-    // rebuild cleanly: R = cI + s[u]× + (1−c)uuᵀ
+    // R = cI + s[u]× + (1−c)uuᵀ
     for i in 0..3 {
         for k in 0..3 {
             r[i * 3 + k] =
@@ -454,10 +439,7 @@ fn so3_left_jacobian(w: &[f64; 3]) -> [f64; 9] {
     let mut j = [0.0f64; 9];
     for i in 0..3 {
         for k in 0..3 {
-            let mut w2sum = 0.0;
-            for q in 0..3 {
-                w2sum += m[i][q] * m[q][k];
-            }
+            let w2sum: f64 = (0..3).map(|q| m[i][q] * m[q][k]).sum();
             j[i * 3 + k] = (if i == k { 1.0 } else { 0.0 }) + a * m[i][k] + b * w2sum;
         }
     }
@@ -624,7 +606,7 @@ fn principal_axes(atoms: &[ShapeAtom]) -> [[f64; 3]; 3] {
     crate::optimizer::jacobi::sym_jacobi(&mut m, &mut v, 3);
     // order eigenvector columns by descending eigenvalue (m diagonal after solve)
     let mut order: [usize; 3] = [0, 1, 2];
-    let mut vals = [m[0], m[4], m[8]];
+    let vals = [m[0], m[4], m[8]];
     order.sort_by(|&a, &b| vals[b].partial_cmp(&vals[a]).unwrap());
     let mut axes = [[0.0f64; 3]; 3];
     for (r, col) in order.iter().enumerate() {
@@ -948,7 +930,7 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
             };
         }
     }
-    best.iterations = total_iters + best.iterations;
+    best.iterations += total_iters;
     best.starts = n_starts;
     best
 }
