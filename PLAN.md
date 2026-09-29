@@ -1,31 +1,29 @@
-# Plan: 双线性对循环加速 —— α 索引查表 + 严格距离界跳过 + 查询侧物化缓存(v1.6.3)
+# Plan: 目标侧逐特征高亮进 3D(纯 app 端,零引擎改动)
 
-## 剩余成本解剖(v1.6.2,~229ms 浏览器内)
+## 背景
 
-- 重打分 ~8×25ms:每对项做 merged_volume = K_ij·exp(−cross/α)(每对一次
-  sqrt+除法+exp),加上粗 heuristic 预滤(7Å+r_bound——对多原子项的
-  r_bound 大,近乎全过)
-- 查询侧 TermPose 每次重打分重新物化——但查询在对齐中不动!
+药效团层已有逐特征匹配(Pharm k/n 列),但点行回载对齐构象后 3D 特征球
+无差别渲染——看不到"哪些特征对上了"。本增量把匹配状态渲染进 3D 视图。
 
-## 三个加速点(全部位值无损,论证见下)
+## 设计
 
-1. **α 索引查表**:α 只有元素级离散值(每分子 ~4-6 种);按α值索引建
-   K[i][j] = GCI²(π/αij)^{3/2} 与 β[i][j] = αiαj/(αi+αj) 表(每对齐
-   一次),对循环零 sqrt/除法(查表)
-2. **严格距离界跳过**:恒等式 Σ_{i∈S,j∈T}αiαj d² = αS·αT·|cS−cT|²
-   ⟹ V_pair ≤ K·exp(−β·d²) ⟹ d²max[i][j] = ln(K/cutoff)/β 表化;
-   纯比较跳过,免 exp。**界是精确下界外推 → 永不漏贡献项**;且
-   d²max ≤ ~4.2Å² < 旧 7Å 阈 ⟹ 跳得更准。被旧法"计算后因 <cutoff 丢弃"
-   的对现在被界跳过——两者都不计入总和 ⟹ **位值逐位不变**(求和顺序
-   不变)
-3. **查询侧物化缓存**:align_colored 中查询项的 TermPose 物化一次,
-   重打分循环复用(overlap_prepared_with 变体)
+1. **pharmMatch 增目标侧分数**:对称计算 tBest[j] = 每个目标位点的最佳
+   同型查询匹配(按目标位点自重叠归一);返回值增 `tBest`
+2. **行点击携带匹配数据 + 自动 Embed**:loadSearchRow 增 pharm 参;
+   process() 入口清 stale 状态,loadSearchRow 在 process 后回填
+   `pendingFeatureMatch`;对齐构象(自带 3D 坐标)自动 embed3D() 并自动
+   勾上 Features 开关(可手动关)
+3. **特征球按匹配态渲染**:addFeatureSpheres 存在 pendingFeatureMatch 时
+   — tBest[j] ≥ 0.5:类型色 alpha 0.55 正常半径(命中)
+   — 否则:类型色 alpha 0.12 半径 0.35(暗)
+   3D 状态行报告 "target features x/y matched";索引对应关系依赖
+   applyTransformToSdf 保全原子序(已成立)与 colorSites 确定性序
+4. **清理**:新分子 process 自动失效;离开检索上下文不残留
 
-## 验收
+## 验收(Playwright + describe_image)
 
-1. 位值不变:node 冒烟 tanimoto 逐位(0.689534...);既有 294 测试 +
-   自对齐 1.000000 不回归
-2. 性能:node fixtures 367ms → 预期 ≤220ms;浏览器内 229ms → 预期
-   ≤160ms(实测如实报告)
-3. 质量回归:两段式召回 19/20;sim/sub/390px/零 page error;clippy
-   (1.98,-D warnings)、fmt;版本 1.6.2→1.6.3
+1. aspirin 查询 → shape 检索 → 点 salicylic 行:自动 Embed、特征球多数
+   亮(6/8);点 glucose 行:明显亮暗混排(4/8)——目检
+2. 程序断言:亮/暗球计数与 pharmMatch.tBest 一致(测试钩子读回)
+3. 手动 Embed 普通分子(无 pending 数据)→ 特征球回归统一亮
+4. 390px、零 page error、三模式回归;门禁 sanity(295 测试,纯 JS)

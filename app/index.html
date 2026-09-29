@@ -1304,8 +1304,13 @@ function rdkitAvailable() {
  let mol = null;
  let sourceMolblock = null;   // original parsed molblock — preserves 3D coords + H
 
+   // target-side pharmacophore match state for the 3D feature spheres
+   // (set by loadSearchRow after process; cleared on every fresh process)
+   let pendingFeatureMatch = null;
+
    function process(updateURL = true) {
      if (!rdkitAvailable()) return;
+     pendingFeatureMatch = null;
      clearError();
      try {
        let input = document.getElementById("input").value;
@@ -2246,8 +2251,22 @@ function rdkitAvailable() {
       }
       best.push(Math.min(1, m));
     }
+    // symmetric per-TARGET scores (which of the target's features found a
+    // query counterpart) — drives the 3D matched/unmatched sphere styling
+    const tBest = [];
+    for (let j = 0; j < tSites.length; j++) {
+      const t = tSites[j];
+      const selfT = pairO(t, posT[j], t, posT[j]);
+      let m = 0;
+      for (let i = 0; i < qSites.length; i++) {
+        if (qSites[i].type !== t.type) continue;
+        m = Math.max(m, pairO(t, posT[j], qSites[i], posQ[i]) / (selfT || 1e-12));
+      }
+      tBest.push(Math.min(1, m));
+    }
     const matched = best.filter(x => x >= 0.5).length;
-    return { matched, total: qSites.length, best };
+    const tMatched = tBest.filter(x => x >= 0.5).length;
+    return { matched, total: qSites.length, best, tBest, tMatched, tTotal: tSites.length };
   }
 
   const SHAPE_SCREEN_THRESHOLD = 300; // entries; above this, two-phase search
@@ -2418,9 +2437,9 @@ function rdkitAvailable() {
       tr.tabIndex = 0;
       tr.setAttribute('role', 'button');
       tr.setAttribute('aria-label', 'Load ' + e.name + ' into the single view');
-      tr.addEventListener('click', () => loadSearchRow(e, aligned));
+      tr.addEventListener('click', () => loadSearchRow(e, aligned, pharm));
       tr.addEventListener('keydown', ev => {
-        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e, aligned); }
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e, aligned, pharm); }
       });
       tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
@@ -2440,7 +2459,7 @@ function rdkitAvailable() {
       statusMsg + (rows.length > cap ? ` · showing top ${cap}` : '');
   }
 
-  function loadSearchRow(e, alignedSdf) {
+  function loadSearchRow(e, alignedSdf, pharm) {
     switchMode('single');
     if (alignedSdf) {
       // load the aligned pose: a molblock whose title carries the name
@@ -2451,6 +2470,15 @@ function rdkitAvailable() {
       document.getElementById('input').value = e.smiles + ' ' + (e.name || '');
     }
     process(true);
+    if (pharm && pharm.tBest) {
+      pendingFeatureMatch = { tBest: pharm.tBest, tMatched: pharm.tMatched, tTotal: pharm.tTotal };
+      // the aligned pose carries 3D coordinates — show it immediately with
+      // the feature overlay on
+      try {
+        document.getElementById('featSpheres').checked = true;
+        embed3D();
+      } catch (err) { /* 3D optional */ }
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -3285,14 +3313,31 @@ function addFeatureSpheres() {
   } catch (e) { return; }
   if (!sites || !sites.length) return;
   const coords = sdfCoords(sdf3d);
-  for (const s of sites) {
+  const fm = pendingFeatureMatch;
+  let matchedCount = 0, styled = 0;
+  for (let i = 0; i < sites.length; i++) {
+    const s = sites[i];
     const p = sitePos(s, coords);
+    let alpha = 0.45, radius = s.type === 'ring' ? 0.85 : 0.5;
+    if (fm && fm.tBest) {
+      const t = fm.tBest[i];
+      if (t != null && t >= 0.5) { alpha = 0.6; matchedCount++; }
+      else { alpha = 0.12; radius = 0.35; }
+      styled++;
+    }
     viewer.addSphere({
       center: { x: p[0], y: p[1], z: p[2] },
-      radius: s.type === 'ring' ? 0.85 : 0.5,
+      radius,
       color: FEATURE_COLORS[s.type] || '#94a3b8',
-      alpha: 0.45,
+      alpha,
     });
+  }
+  if (fm && styled) {
+    const st = document.getElementById('status3d');
+    if (st) st.title = `pharmacophore: ${matchedCount}/${styled} target features matched (bright = matched, dim = unmatched)`;
+    window.__lastFeatureStyling = { matched: matchedCount, styled };
+  } else if (window.__lastFeatureStyling) {
+    window.__lastFeatureStyling = null; // no pending match: uniform styling
   }
 }
 
@@ -3431,6 +3476,9 @@ function showSdfIn3D(sdf) {
   v.clear();
   v.addModel(sdf, 'sdf');
   v.setStyle({}, { stick: { radius: 0.15 }, sphere: { scale: 0.25 } });
+  // pharmacophore overlay follows the Features toggle on every fresh model
+  const fsEl = document.getElementById('featSpheres');
+  if (fsEl && fsEl.checked) addFeatureSpheres();
   v.zoomTo();
   v.render();
   for (const id of ['btnOpt', 'btnSdf', 'btnXyz', 'btnPng'])
