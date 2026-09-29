@@ -125,12 +125,12 @@ pub fn shape_atoms(mol: &Molecule) -> Vec<ShapeAtom> {
 /// pose-independent statistics (Σα, n·ln GCI). Term volumes are
 /// materialized per pose from the posed centers.
 #[derive(Clone)]
-struct TermSpec {
+pub struct TermSpec {
     /// Atom indices in increasing order.
-    idx: Vec<u8>,
-    alpha_sum: f64,
-    log_c: f64,
-    sign: f64,
+    pub idx: Vec<u8>,
+    pub alpha_sum: f64,
+    pub log_c: f64,
+    pub sign: f64,
 }
 
 /// Enumerate the inclusion–exclusion terms with shape-it-style pruning:
@@ -329,14 +329,67 @@ pub fn self_volume(atoms: &[ShapeAtom]) -> f64 {
 /// (shape-it `atomOverlap` semantics): the bilinear expansion over the
 /// inclusion–exclusion terms of each molecule,
 ///   V_AB = Σ_{i∈terms(A)} Σ_{j∈terms(B)} ε_i·ε_j·V(term_i · term_j).
-/// With GCI = 2√2 the self-product volume identity V(g·g) = V(g) makes
-/// coincident identical sets give exactly V_AB = V_A (Tanimoto 1).
-pub fn overlap_full(a: &[ShapeAtom], b: &[ShapeAtom]) -> f64 {
+/// A molecule bundled with its prepared shape (specs + lazy self overlap).
+/// `align`/`align_colored` consume these so callers (and the wasm-level
+/// cache) can prepare once and reuse across a whole library scan.
+pub struct ShapeMol {
+    pub atoms: Vec<ShapeAtom>,
+    pub prepared: PreparedShape,
+}
+
+pub fn shape_mol_from_atoms(atoms: &[ShapeAtom]) -> ShapeMol {
+    ShapeMol {
+        atoms: atoms.to_vec(),
+        prepared: prepare_shape(atoms),
+    }
+}
+
+pub fn shape_mol(mol: &Molecule) -> ShapeMol {
+    shape_mol_from_atoms(&shape_atoms(mol))
+}
+
+/// A prepared shape: the inclusion–exclusion term specs enumerated once
+/// (the pruning criterion depends only on inter-atomic distances, so the
+/// subset is identical under any rigid pose — preparing is lossless) plus
+/// the lazily-computed pose-invariant self overlap.
+pub struct PreparedShape {
+    pub specs: Vec<TermSpec>,
+    /// Pose-invariant self bilinear overlap, computed at prepare time.
+    pub self_overlap: f64,
+}
+
+pub fn prepare_shape(atoms: &[ShapeAtom]) -> PreparedShape {
+    let specs = enumerate_specs(atoms);
+    let self_overlap = {
+        let p = prepared_view(&specs);
+        overlap_prepared_view(&p, atoms, &p, atoms)
+    };
+    PreparedShape {
+        specs,
+        self_overlap,
+    }
+}
+
+// small view shim so prepare can score before owning the struct
+struct PreparedView<'a> {
+    specs: &'a [TermSpec],
+}
+
+fn prepared_view(specs: &[TermSpec]) -> PreparedView<'_> {
+    PreparedView { specs }
+}
+
+fn overlap_prepared_view(
+    pa: &PreparedView,
+    a: &[ShapeAtom],
+    pb: &PreparedView,
+    b: &[ShapeAtom],
+) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
     }
-    let ta = materialize(&enumerate_specs(a), a);
-    let tb = materialize(&enumerate_specs(b), b);
+    let ta = materialize(pa.specs, a);
+    let tb = materialize(pb.specs, b);
     let scale: f64 = ta.iter().map(volume_of_term).sum::<f64>().abs().max(1e-12);
     let cutoff = 1e-7 * scale;
     let mut total = 0.0f64;
@@ -358,6 +411,51 @@ pub fn overlap_full(a: &[ShapeAtom], b: &[ShapeAtom]) -> f64 {
         }
     }
     total
+}
+
+/// Overlap of two prepared shapes, materialized at the given (posed) atom
+/// coordinates.
+pub fn overlap_prepared(
+    pa: &PreparedShape,
+    a: &[ShapeAtom],
+    pb: &PreparedShape,
+    b: &[ShapeAtom],
+) -> f64 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let ta = materialize(&pa.specs, a);
+    let tb = materialize(&pb.specs, b);
+    let scale: f64 = ta.iter().map(volume_of_term).sum::<f64>().abs().max(1e-12);
+    let cutoff = 1e-7 * scale;
+    let mut total = 0.0f64;
+    for pa in ta.iter() {
+        for pb in tb.iter() {
+            let d = [
+                pa.center[0] - pb.center[0],
+                pa.center[1] - pb.center[1],
+                pa.center[2] - pb.center[2],
+            ];
+            if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > (pa.r_bound + pb.r_bound + 7.0).powi(2) {
+                continue;
+            }
+            let v = pa.merged_volume(pb);
+            if v.abs() < cutoff {
+                continue;
+            }
+            total += pa.sign * pb.sign * v;
+        }
+    }
+    total
+}
+
+/// With GCI = 2√2 the self-product volume identity V(g·g) = V(g) makes
+/// coincident identical sets give exactly V_AB = V_A (Tanimoto 1).
+pub fn overlap_full(a: &[ShapeAtom], b: &[ShapeAtom]) -> f64 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    overlap_prepared(&prepare_shape(a), a, &prepare_shape(b), b)
 }
 
 /// Shape Tanimoto at the current relative pose. Following the shape-it
@@ -881,7 +979,7 @@ fn optimize_pose_colored(
 /// Multi-start rigid-body alignment of `target` onto `query`. Both inputs
 /// keep their coordinates; the returned transform maps original target
 /// coordinates to the best-aligned pose.
-pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> AlignResult {
+pub fn align(query: &ShapeMol, target: &ShapeMol, opts: &AlignOptions) -> AlignResult {
     align_colored(query, target, None, None, opts)
 }
 
@@ -890,8 +988,8 @@ pub fn align(query: &[ShapeAtom], target: &[ShapeAtom], opts: &AlignOptions) -> 
 /// Shape T + Color T combo. Sites are given in ORIGINAL coordinates and
 /// centered alongside their molecules.
 pub fn align_colored(
-    query: &[ShapeAtom],
-    target: &[ShapeAtom],
+    query: &ShapeMol,
+    target: &ShapeMol,
     q_sites: Option<&[ColorSite]>,
     t_sites: Option<&[ColorSite]>,
     opts: &AlignOptions,
@@ -899,11 +997,11 @@ pub fn align_colored(
     // Work in centered frames: target gets centered first (its own centroid
     // to origin), and we align it onto the centered query; the returned
     // affine therefore maps original target coords → aligned frame.
-    let q = center(query);
-    let t_c = center(target);
+    let q = center(&query.atoms);
+    let t_c = center(&target.atoms);
     // center the site lists into the same frames
-    let q_com = centroid(query);
-    let t_com = centroid(target);
+    let q_com = centroid(&query.atoms);
+    let t_com = centroid(&target.atoms);
     let q_sites_c: Option<Vec<ColorSite>> = q_sites.map(|ss| {
         ss.iter()
             .map(|x| ColorSite {
@@ -928,8 +1026,8 @@ pub fn align_colored(
 
     // Compose transform back to original query coordinates: aligned point =
     // R·(p − t_com) + t + q_com.
-    let t_com = centroid(target);
-    let q_com = centroid(query);
+    let t_com = centroid(&target.atoms);
+    let q_com = centroid(&query.atoms);
 
     let axes_q = principal_axes(&q);
     let axes_t = principal_axes(&t_c);
@@ -1023,13 +1121,18 @@ pub fn align_colored(
         starts: starts.len(),
     };
     let mut total_iters = 0usize;
+    // prepared shapes: specs enumerated once, self overlaps lazy — the
+    // pruning criterion is distance-only so preparing at any rigid pose is
+    // bit-identical to per-call enumeration (v1.6.2 perf, lossless).
+    let pq = &query.prepared; // specs pose-independent: reuse the caller's
+    let pt = &target.prepared;
     // self-overlap volumes are pose invariant: compute once (the Tanimoto
     // denominator still needs the pose-dependent vab). All scoring happens
     // in the CENTERED query frame (`q`), consistently.
     let (vq, vt) = if opts.screen {
         (0.0, 0.0) // not needed in screen mode (no IE rescoring at all)
     } else {
-        (overlap_full(&q, &q), overlap_full(&t_c, &t_c))
+        (pq.self_overlap, pt.self_overlap)
     };
     let n_starts = starts.len();
     let mut best_wt: Option<([f64; 3], [f64; 3])> = None;
@@ -1084,7 +1187,7 @@ pub fn align_colored(
     for &(o, w, t) in runs.iter().take(opts.rescore_top.max(1)) {
         // full rescoring at this pose (map centered pose back to query frame)
         let posed_rel = pose(&t_c, &w, &t); // aligned onto centered query
-        let vab = overlap_full(&q, &posed_rel);
+        let vab = overlap_prepared(pq, &q, pt, &posed_rel);
         let den = vq + vt - vab;
         let tj = if den > 0.0 {
             (vab / den).clamp(0.0, 1.0)
@@ -1144,7 +1247,7 @@ pub fn align_colored(
             optimize_pose(&q, &t_c, w, t, opts.max_iter / 2 + 10)
         };
         let posed_rel = pose(&t_c, &w2, &t2);
-        let vab2 = overlap_full(&q, &posed_rel);
+        let vab2 = overlap_prepared(pq, &q, pt, &posed_rel);
         let den2 = vq + vt - vab2;
         let tj = if den2 > 0.0 {
             (vab2 / den2).clamp(0.0, 1.0)
@@ -1364,9 +1467,11 @@ mod tests {
             .iter()
             .map(|a| sa(rodrigues(&w, &t, &a.c), 6))
             .collect();
+        let ring_m = shape_mol_from_atoms(&ring);
+        let moved_m = shape_mol_from_atoms(&moved);
         let res = align(
-            &ring,
-            &moved,
+            &ring_m,
+            &moved_m,
             &AlignOptions {
                 random_starts: 6,
                 max_iter: 250,
@@ -1565,9 +1670,11 @@ mod tests {
                 type_id: s.type_id,
             })
             .collect();
+        let ring_m = shape_mol_from_atoms(&ring);
+        let moved_m = shape_mol_from_atoms(&moved);
         let res = align_colored(
-            &ring,
-            &moved,
+            &ring_m,
+            &moved_m,
             Some(&qs),
             Some(&t_sites),
             &AlignOptions {
@@ -1593,6 +1700,7 @@ mod tests {
         let sdf = std::fs::read_to_string("tests/fixtures/conformers/aspirin.sdf").unwrap();
         let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
         let base = shape_atoms(&mol);
+        let base_m = shape_mol_from_atoms(&base);
         let w = [0.9, 0.4, -0.6];
         let moved: Vec<ShapeAtom> = base
             .iter()
@@ -1601,6 +1709,7 @@ mod tests {
                 alpha: a.alpha,
             })
             .collect();
+        let moved_m = shape_mol_from_atoms(&moved);
         let opts = AlignOptions {
             random_starts: 16,
             max_iter: 200,
@@ -1608,14 +1717,14 @@ mod tests {
             screen: true,
             rescore_top: 3,
         };
-        let res = align_colored(&base, &moved, None, None, &opts);
+        let res = align_colored(&base_m, &moved_m, None, None, &opts);
         assert!(res.surrogate_overlap > 0.0);
         assert_eq!(
             res.tanimoto, 0.0,
             "screen mode must not compute the IE tanimoto"
         );
         // far fewer iterations than the full pipeline (no polish, frame starts)
-        let full = align(&base, &moved, &AlignOptions::default());
+        let full = align(&base_m, &moved_m, &AlignOptions::default());
         assert!(res.iterations < full.iterations);
     }
 
@@ -1631,11 +1740,11 @@ mod tests {
             "naphthalene.sdf",
             "threonine.sdf",
         ];
-        let mols: Vec<Vec<ShapeAtom>> = names
+        let mols: Vec<ShapeMol> = names
             .iter()
             .map(|n| {
                 let sdf = std::fs::read_to_string(dir.join(n)).unwrap();
-                shape_atoms(&crate::molecule::parser::parse_sdf(&sdf).unwrap())
+                shape_mol(&crate::molecule::parser::parse_sdf(&sdf).unwrap())
             })
             .collect();
         let mut worst = 0.0f64;
@@ -1647,15 +1756,17 @@ mod tests {
                 // pose the target so alignment is non-trivial
                 let w = [0.9, 0.3 * i as f64, -0.4 * j as f64];
                 let moved: Vec<ShapeAtom> = mols[j]
+                    .atoms
                     .iter()
                     .map(|a| ShapeAtom {
                         c: rodrigues(&w, &[1.0, -1.0, 0.5], &a.c),
                         alpha: a.alpha,
                     })
                     .collect();
+                let moved_m = shape_mol_from_atoms(&moved);
                 let k8 = align(
                     &mols[i],
-                    &moved,
+                    &moved_m,
                     &AlignOptions {
                         random_starts: 12,
                         max_iter: 200,
@@ -1666,7 +1777,7 @@ mod tests {
                 );
                 let kall = align(
                     &mols[i],
-                    &moved,
+                    &moved_m,
                     &AlignOptions {
                         random_starts: 12,
                         max_iter: 200,

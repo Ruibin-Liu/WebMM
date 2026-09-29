@@ -7533,11 +7533,9 @@ pub fn shape_align_wasm(
     opts_json: &str,
 ) -> Result<String, JsValue> {
     console_error_panic_hook::set_once();
-    let q = crate::molecule::parser::parse_sdf(query_sdf).map_err(|e| JsValue::from_str(&e))?;
-    let t = crate::molecule::parser::parse_sdf(target_sdf).map_err(|e| JsValue::from_str(&e))?;
-    let qa = crate::shape::shape_atoms(&q);
-    let ta = crate::shape::shape_atoms(&t);
-    if qa.is_empty() || ta.is_empty() {
+    let qa = shape_mol_cached(query_sdf).map_err(|e| JsValue::from_str(&e))?;
+    let ta = shape_mol_cached(target_sdf).map_err(|e| JsValue::from_str(&e))?;
+    if qa.atoms.is_empty() || ta.atoms.is_empty() {
         return Err(JsValue::from_str("empty molecule"));
     }
     let mut opts = crate::shape::AlignOptions::default();
@@ -7581,6 +7579,34 @@ pub fn shape_align_wasm(
         starts: res.starts,
     };
     serde_json::to_string(&out).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Transparent wasm-level shape cache: SDF string hash → prepared ShapeMol
+/// (term specs + lazy self overlap). Library scans re-submit the same query
+/// SDF per entry, so this removes the per-entry re-enumeration and
+/// self-overlap recomputation entirely. Capacity-capped (cleared on overflow).
+fn shape_mol_cached(sdf: &str) -> Result<std::sync::Arc<crate::shape::ShapeMol>, String> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<u64, Arc<crate::shape::ShapeMol>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    // FNV-1a
+    let mut key: u64 = 0xcbf29ce484222325;
+    for b in sdf.bytes() {
+        key ^= b as u64;
+        key = key.wrapping_mul(0x100000001b3);
+    }
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(m) = guard.get(&key) {
+        return Ok(m.clone());
+    }
+    let mol = crate::molecule::parser::parse_sdf(sdf)?;
+    let m = Arc::new(crate::shape::shape_mol(&mol));
+    if guard.len() >= 512 {
+        guard.clear();
+    }
+    guard.insert(key, m.clone());
+    Ok(m)
 }
 
 /// Joint shape+color rigid-body alignment. Sites JSON (per molecule):
@@ -7659,11 +7685,9 @@ pub fn shape_align_color_wasm(
         Ok(Some(out))
     };
 
-    let q = crate::molecule::parser::parse_sdf(query_sdf).map_err(|e| JsValue::from_str(&e))?;
-    let t = crate::molecule::parser::parse_sdf(target_sdf).map_err(|e| JsValue::from_str(&e))?;
-    let qa = crate::shape::shape_atoms(&q);
-    let ta = crate::shape::shape_atoms(&t);
-    if qa.is_empty() || ta.is_empty() {
+    let qa = shape_mol_cached(query_sdf).map_err(|e| JsValue::from_str(&e))?;
+    let ta = shape_mol_cached(target_sdf).map_err(|e| JsValue::from_str(&e))?;
+    if qa.atoms.is_empty() || ta.atoms.is_empty() {
         return Err(JsValue::from_str("empty molecule"));
     }
     let qs = parse_sites(query_sdf, query_sites_json).map_err(|e| JsValue::from_str(&e))?;
