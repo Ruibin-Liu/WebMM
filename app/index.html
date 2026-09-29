@@ -1202,6 +1202,8 @@ details {
        <button class="action-btn edit" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">Build from current molecule</button>
        <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± tolerance (Å)</label>
        <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
+       <label for="pharmConfs" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Conformers generated per molecule (more = fewer false negatives, slower)">conformers</label>
+       <input type="number" id="pharmConfs" min="1" max="50" value="10" style="width:4rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
        <button id="btnPharmQ" class="primary" onclick="screenPharmQuery()">Screen library</button>
      </div>
      <div class="version" id="pharmQStatus" aria-live="polite"></div>
@@ -1209,11 +1211,11 @@ details {
      <div class="version" id="pharmQDist" style="font-family:ui-monospace,Menlo,monospace; font-size:0.72rem; white-space:pre;"></div>
      <div style="overflow-x:auto;">
      <table id="pharmQTable">
-       <thead><tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th>Result</th></tr></thead>
+       <thead><tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th>Conf</th><th>Result</th></tr></thead>
        <tbody id="pharmQRows"></tbody>
      </table>
      </div>
-     <div class="version" style="margin-top:0.4rem;">pick 2–6 features, set a distance tolerance, screen the library against the single-conformer geometry (no alignment — pure geometric constraints)</div>
+     <div class="version" style="margin-top:0.4rem;">pick 2–6 features, set a distance tolerance and a conformer count; each library molecule is screened across its conformer ensemble (no alignment — pure geometric constraints; conformer 1 ≈ the single-conformer path)</div>
    </div>
 
   <div class="crosslinks">
@@ -2654,43 +2656,67 @@ function rdkitAvailable() {
       return;
     }
     const tol = Math.max(0.1, Math.min(3, parseFloat(document.getElementById('pharmTol').value) || 1.5));
-    document.getElementById('pharmQStatus').textContent = `Screening ${searchLibrary.length} molecules at ±${tol} Å…`;
+    const nConfs = Math.max(1, Math.min(50, Math.round(parseFloat(document.getElementById('pharmConfs').value) || 10)));
+    document.getElementById('pharmQStatus').textContent = `Screening ${searchLibrary.length} molecules at ±${tol} Å (${nConfs} conformer${nConfs > 1 ? 's' : ''} each)…`;
     await new Promise(r => setTimeout(r, 0));
+    const t0 = performance.now();
     const matched = [];
     let prepared = 0;
     for (const e of searchLibrary) {
       try {
-        const esdf = ensureEntry3D(e);
+        // heavy-atom molblock -> N conformers in one engine call; conformer
+        // 0 carries seed 42+idx (same as the single-conformer paths)
+        let heavyMb = null;
+        {
+          const m = rdkitModule.get_mol(e.smiles);
+          if (m && m.is_valid()) { heavyMb = m.get_molblock(); m.delete(); }
+        }
+        if (!heavyMb) throw new Error('parse');
+        const r = window.webmm.generate_optimized_conformers_wasm(heavyMb, nConfs, BigInt(42 + e.idx), 'MMFF94s', 100);
+        if (!r.get_success() || !r.get_n_confs()) throw new Error('conformers failed');
+        const na = r.get_n_atoms();
+        const allCoords = r.get_coordinates();
+        const template = r.get_template_sdf();
+        // feature perception is conformation-independent (H-count SMARTS)
         let sites = e.sites;
         if (!sites) {
-          const m = rdkitModule.get_mol(esdf);
-          if (m && m.is_valid()) { sites = e.sites = colorSites(esdf, m); m.delete(); }
+          const m2 = rdkitModule.get_mol(template);
+          if (m2 && m2.is_valid()) { sites = e.sites = colorSites(template, m2); m2.delete(); }
         }
         if (sites && sites.length) {
-          const coords = sdfCoords(esdf);
-          const tSites = sites.map(s => ({ type: s.type, pos: sitePos(s, coords) }));
-          if (pharmAssign(qFeat, tol, tSites)) matched.push(e);
+          for (let j = 0; j < r.get_n_confs(); j++) {
+            const coords = allCoords.slice(j * na * 3, (j + 1) * na * 3);
+            const tSites = sites.map(x => ({ type: x.type, pos: sitePos(x, coords) }));
+            if (pharmAssign(qFeat, tol, tSites)) {
+              const confSdf = buildSdfFromCoords(Array.from(coords), template);
+              matched.push({ e, conf: j, confSdf });
+              break;
+            }
+          }
         }
-      } catch (err) { /* skip */ }
+      } catch (err) { /* skip entry */ }
       prepared++;
-      if (prepared % 25 === 0) {
-        document.getElementById('pharmQStatus').textContent = `Screening ${prepared}/${searchLibrary.length}…`;
-        await new Promise(r => setTimeout(r, 0));
+      if (prepared % 10 === 0 || prepared === searchLibrary.length) {
+        document.getElementById('pharmQStatus').textContent = `Screening ${prepared}/${searchLibrary.length} (${nConfs} confs each)…`;
+        await new Promise(r2 => setTimeout(r2, 0));
       }
     }
-    document.getElementById('pharmQStatus').textContent = `${matched.length}/${searchLibrary.length} molecules match the pharmacophore query (±${tol} Å, single conformer)`;
+    const dt = ((performance.now() - t0) / 1000).toFixed(1);
+    document.getElementById('pharmQStatus').textContent = `${matched.length}/${searchLibrary.length} molecules match the pharmacophore query (±${tol} Å, ${nConfs} conformer${nConfs > 1 ? 's' : ''}, ${dt} s)`;
     const tb = document.getElementById('pharmQRows');
     tb.innerHTML = '';
-    matched.forEach((e, i) => {
+    matched.forEach((hit, i) => {
+      const e = hit.e;
       const tr = document.createElement('tr');
       tr.tabIndex = 0;
       tr.setAttribute('role', 'button');
-      tr.setAttribute('aria-label', 'Load ' + e.name + ' into the single view');
-      tr.addEventListener('click', () => loadSearchRow(e));
-      tr.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e); } });
+      tr.setAttribute('aria-label', 'Load ' + e.name + ' conformer ' + (hit.conf + 1) + ' into the single view');
+      tr.addEventListener('click', () => loadSearchRow(e, hit.confSdf));
+      tr.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e, hit.confSdf); } });
       tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
         `<td class="value">${e.MW}</td>` +
+        `<td class="value">${hit.conf + 1}</td>` +
         `<td><span class="result-badge pass">Match</span></td>`;
       tb.appendChild(tr);
     });
