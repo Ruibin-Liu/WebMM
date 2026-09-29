@@ -1195,6 +1195,26 @@ details {
      <div class="version" style="margin-top:0.4rem;">click a row to load the scaffold into the single-molecule view</div>
    </div>
 
+   <div id="pharmQueryPanel" class="panel" style="display:none;">
+     <strong>Pharmacophore Query</strong>
+     <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
+       <button class="action-btn edit" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">Build from current molecule</button>
+       <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± tolerance (Å)</label>
+       <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
+       <button id="btnPharmQ" class="primary" onclick="screenPharmQuery()">Screen library</button>
+     </div>
+     <div class="version" id="pharmQStatus" aria-live="polite"></div>
+     <div id="pharmQFeatures" style="max-height:180px; overflow-y:auto; margin:0.3rem 0;"></div>
+     <div class="version" id="pharmQDist" style="font-family:ui-monospace,Menlo,monospace; font-size:0.72rem; white-space:pre;"></div>
+     <div style="overflow-x:auto;">
+     <table id="pharmQTable">
+       <thead><tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th>Result</th></tr></thead>
+       <tbody id="pharmQRows"></tbody>
+     </table>
+     </div>
+     <div class="version" style="margin-top:0.4rem;">pick 2–6 features, set a distance tolerance, screen the library against the single-conformer geometry (no alignment — pure geometric constraints)</div>
+   </div>
+
   <div class="crosslinks">
   Want the validation numbers? <a id="xDemo" href="../index.html">See the Demo</a> · Just exploring? <a id="xPlayground" href="../playground.html">Try the Playground</a>
 </div>
@@ -1283,14 +1303,22 @@ function rdkitAvailable() {
      }
    }
 
+   let lastProcessedInput = null;
+
    function setupAutoProcess() {
      const input = document.getElementById("input");
-     input.addEventListener("blur", () => {
-      if (!batchMode && !searchMode) process(true);
-     });
+     // re-process only when the text actually changed: tab switches blur
+     // the input and a no-op re-process would wipe the 3D state
+     // (reset3DState) for nothing
+     const maybeProcess = () => {
+       if (batchMode || searchMode) return;
+       if (input.value === lastProcessedInput) return;
+       process(true);
+     };
+     input.addEventListener("blur", maybeProcess);
      input.addEventListener("keydown", (e) => {
        if (e.key === "Enter") {
-        if (!batchMode && !searchMode) process(true);
+        maybeProcess();
        }
      });
    }
@@ -1337,6 +1365,7 @@ function rdkitAvailable() {
         enable3dActions();
         if (updateURL) setURL(smiles, name);
         addToHistory(smiles, name);
+        lastProcessedInput = document.getElementById("input").value;
      } catch (e) {
        showError(e);
      }
@@ -2485,6 +2514,187 @@ function rdkitAvailable() {
   // test hook for the Search parity suite (no UI role)
   window.__search = { loadSearchLibraryFrom, tanimotoBits, parseLibraryText, runSearch, getState: () => searchLibrary };
 
+
+  // ===================== Pharmacophore Query Editor =====================
+  let pharmQueryFeatures = null; // [{type, pos, label, checked}]
+
+  function buildPharmQuery() {
+    if (!rdkitAvailable()) return;
+    if (!sdf3d || !sdf3d.trim()) {
+      document.getElementById('pharmQStatus').textContent = 'No 3D in the single view — Embed 3D first (the query uses the current conformer geometry)';
+      return;
+    }
+    let sites = null;
+    try {
+      const m = rdkitModule.get_mol(sdf3d);
+      if (m && m.is_valid()) { sites = colorSites(sdf3d, m); m.delete(); }
+    } catch (e) { sites = null; }
+    if (!sites || !sites.length) {
+      document.getElementById('pharmQStatus').textContent = 'No features perceived on the current molecule';
+      return;
+    }
+    const coords = sdfCoords(sdf3d);
+    // default selection: a compact discriminating set — donor, the first
+    // acceptor, negative charge and the ring (≈ a classic pharmacophore
+    // triangle); more features = more pairwise constraints = brittler
+    // across different single conformers (documented semantics)
+    let firstAcceptorDone = false;
+    pharmQueryFeatures = sites.map((s, i) => {
+      const checked =
+        s.type === 'donor' || s.type === 'neg' ||
+        (s.type === 'ring' && s.ring && s.ring.length >= 5) ||
+        (s.type === 'acceptor' && !firstAcceptorDone && (firstAcceptorDone = true));
+      return {
+        type: s.type,
+        pos: sitePos(s, coords),
+        label: (s.type === 'ring' && s.ring ? `ring(${s.ring.length})` : `${s.type} @${s.i}`) + ` #${i}`,
+        checked,
+      };
+    });
+    renderPharmQueryEditor();
+  }
+
+  function renderPharmQueryEditor() {
+    const host = document.getElementById('pharmQFeatures');
+    if (!pharmQueryFeatures) { host.innerHTML = ''; return; }
+    host.innerHTML = '';
+    const nChecked = pharmQueryFeatures.filter(f => f.checked).length;
+    pharmQueryFeatures.forEach((f, i) => {
+      const id = `pharmFeat${i}`;
+      const row = document.createElement('label');
+      row.htmlFor = id;
+      row.style.cssText = 'display:flex; gap:0.4rem; align-items:center; font-size:0.78rem; padding:0.1rem 0; cursor:pointer;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = id;
+      cb.checked = f.checked;
+      cb.disabled = !f.checked && nChecked >= 6;
+      cb.addEventListener('change', () => {
+        f.checked = cb.checked;
+        renderPharmQueryEditor();
+      });
+      row.appendChild(cb);
+      const dot = document.createElement('span');
+      dot.style.cssText = `width:10px; height:10px; border-radius:50%; background:${FEATURE_COLORS[f.type] || '#94a3b8'}; display:inline-block;`;
+      row.appendChild(dot);
+      const txt = document.createElement('span');
+      txt.textContent = f.label;
+      row.appendChild(txt);
+      host.appendChild(row);
+    });
+    // distance matrix preview
+    const sel = pharmQueryFeatures.map((f, i) => ({ f, i })).filter(x => x.f.checked);
+    let txt = '';
+    if (sel.length >= 2) {
+      txt = 'pairwise query distances (Å):\n';
+      for (let a = 0; a < sel.length; a++) {
+        const rowTxt = [];
+        for (let b = 0; b < sel.length; b++) {
+          if (a === b) { rowTxt.push('  —  '); continue; }
+          const d = Math.hypot(
+            sel[a].f.pos[0] - sel[b].f.pos[0],
+            sel[a].f.pos[1] - sel[b].f.pos[1],
+            sel[a].f.pos[2] - sel[b].f.pos[2]);
+          rowTxt.push(d.toFixed(2).padStart(5));
+        }
+        txt += sel[a].f.label.split(' ')[0].padEnd(14) + rowTxt.join(' ') + '\n';
+      }
+    }
+    document.getElementById('pharmQDist').textContent = txt;
+  }
+
+  /// Backtracking assignment: can the target's same-type features be
+  /// assigned to the query features such that EVERY pair distance matches
+  /// within tol? (single-conformer, pure geometry — documented semantics)
+  function pharmAssign(qFeat, tol, tSites) {
+    // candidates per query feature
+    const cand = qFeat.map(q => tSites.filter(t => t.type === q.type));
+    if (cand.some(c => c.length === 0)) return false;
+    // most-constrained-first order
+    const order = qFeat.map((_, i) => i).sort((a, b) => cand[a].length - cand[b].length);
+    const assign = new Array(qFeat.length).fill(null);
+    const d3 = (p, r) => Math.hypot(p[0] - r[0], p[1] - r[1], p[2] - r[2]);
+    const rec = (k) => {
+      if (k === order.length) return true;
+      const qi = order[k];
+      for (const t of cand[qi]) {
+        if (assign.includes(t)) continue;
+        let ok = true;
+        for (let j = 0; j < qFeat.length && ok; j++) {
+          if (j === qi || assign[j] === null) continue;
+          const dq = d3(qFeat[qi].pos, qFeat[j].pos);
+          const dt = d3(t.pos, assign[j].pos);
+          if (Math.abs(dq - dt) > tol) ok = false;
+        }
+        if (ok) {
+          assign[qi] = t;
+          if (rec(k + 1)) return true;
+          assign[qi] = null;
+        }
+      }
+      return false;
+    };
+    return rec(0);
+  }
+
+  async function screenPharmQuery() {
+    if (!rdkitAvailable()) return;
+    if (!searchLibrary || !searchLibrary.length) {
+      document.getElementById('pharmQStatus').textContent = 'Load a library first';
+      return;
+    }
+    if (!pharmQueryFeatures) {
+      document.getElementById('pharmQStatus').textContent = 'Build the query from the current molecule first';
+      return;
+    }
+    const qFeat = pharmQueryFeatures.filter(f => f.checked);
+    if (qFeat.length < 2) {
+      document.getElementById('pharmQStatus').textContent = 'Select at least 2 features';
+      return;
+    }
+    const tol = Math.max(0.1, Math.min(3, parseFloat(document.getElementById('pharmTol').value) || 1.5));
+    document.getElementById('pharmQStatus').textContent = `Screening ${searchLibrary.length} molecules at ±${tol} Å…`;
+    await new Promise(r => setTimeout(r, 0));
+    const matched = [];
+    let prepared = 0;
+    for (const e of searchLibrary) {
+      try {
+        const esdf = ensureEntry3D(e);
+        let sites = e.sites;
+        if (!sites) {
+          const m = rdkitModule.get_mol(esdf);
+          if (m && m.is_valid()) { sites = e.sites = colorSites(esdf, m); m.delete(); }
+        }
+        if (sites && sites.length) {
+          const coords = sdfCoords(esdf);
+          const tSites = sites.map(s => ({ type: s.type, pos: sitePos(s, coords) }));
+          if (pharmAssign(qFeat, tol, tSites)) matched.push(e);
+        }
+      } catch (err) { /* skip */ }
+      prepared++;
+      if (prepared % 25 === 0) {
+        document.getElementById('pharmQStatus').textContent = `Screening ${prepared}/${searchLibrary.length}…`;
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+    document.getElementById('pharmQStatus').textContent = `${matched.length}/${searchLibrary.length} molecules match the pharmacophore query (±${tol} Å, single conformer)`;
+    const tb = document.getElementById('pharmQRows');
+    tb.innerHTML = '';
+    matched.forEach((e, i) => {
+      const tr = document.createElement('tr');
+      tr.tabIndex = 0;
+      tr.setAttribute('role', 'button');
+      tr.setAttribute('aria-label', 'Load ' + e.name + ' into the single view');
+      tr.addEventListener('click', () => loadSearchRow(e));
+      tr.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e); } });
+      tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}</td>` +
+        `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
+        `<td class="value">${e.MW}</td>` +
+        `<td><span class="result-badge pass">Match</span></td>`;
+      tb.appendChild(tr);
+    });
+  }
+
   // ===================== R-Group Decomposition & Scaffold Analysis =====================
   let rgdResults = null;   // [{e, frags: [smiles...]}]
   let scaffoldResults = null; // [[smiles, count, members]] sorted desc
@@ -3526,6 +3736,7 @@ function switchMode(m) {
   document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
   document.getElementById('rgdPanel').style.display = searchMode ? (rgdResults ? 'block' : 'none') : 'none';
   document.getElementById('scaffoldPanel').style.display = searchMode ? (scaffoldResults ? 'block' : 'none') : 'none';
+  document.getElementById('pharmQueryPanel').style.display = searchMode ? 'block' : 'none';
   if (searchMode) restoreSearchLibrary();
   document.getElementById('singleActions').style.display = single ? 'flex' : 'none';
   document.getElementById('input').placeholder = batchMode
