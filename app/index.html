@@ -1161,6 +1161,40 @@ details {
      <div class="version" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
    </div>
 
+   <div id="rgdPanel" class="panel" style="display:none;">
+     <strong>R-Group Decomposition</strong>
+     <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
+       <input type="text" id="rgdCore" placeholder="Core with attachment labels, e.g. [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
+       <button class="action-btn edit" onclick="fillRgdExample()" title="Fill a para-disubstituted benzene example core">Example</button>
+       <button id="btnRGD" class="primary" onclick="runRGD()">Decompose library</button>
+       <button class="action-btn export" onclick="exportRGDCSV()">Export CSV</button>
+     </div>
+     <div class="version" id="rgdStatus" aria-live="polite"></div>
+     <div style="overflow-x:auto;">
+     <table id="rgdTable">
+       <thead><tr id="rgdHead"></tr></thead>
+       <tbody id="rgdRows"></tbody>
+     </table>
+     </div>
+     <div class="version" style="margin-top:0.4rem;">the core needs explicit [*:n] attachment labels; molecules not containing the core are skipped; the first match per molecule is used</div>
+   </div>
+
+   <div id="scaffoldPanel" class="panel" style="display:none;">
+     <strong>Scaffold Frequency</strong>
+     <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
+       <button id="btnScaffold" class="primary" onclick="analyzeScaffolds()">Analyze scaffolds</button>
+       <button class="action-btn export" onclick="exportScaffoldCSV()">Export CSV</button>
+     </div>
+     <div class="version" id="scaffoldStatus" aria-live="polite"></div>
+     <div style="overflow-x:auto;">
+     <table id="scaffoldTable">
+       <thead><tr><th>#</th><th>Murcko Scaffold</th><th>Molecules</th><th>Share</th></tr></thead>
+       <tbody id="scaffoldRows"></tbody>
+     </table>
+     </div>
+     <div class="version" style="margin-top:0.4rem;">click a row to load the scaffold into the single-molecule view</div>
+   </div>
+
   <div class="crosslinks">
   Want the validation numbers? <a id="xDemo" href="../index.html">See the Demo</a> · Just exploring? <a id="xPlayground" href="../playground.html">Try the Playground</a>
 </div>
@@ -2417,6 +2451,161 @@ function rdkitAvailable() {
   // test hook for the Search parity suite (no UI role)
   window.__search = { loadSearchLibraryFrom, tanimotoBits, parseLibraryText, runSearch, getState: () => searchLibrary };
 
+  // ===================== R-Group Decomposition & Scaffold Analysis =====================
+  let rgdResults = null;   // [{e, frags: [smiles...]}]
+  let scaffoldResults = null; // [[smiles, count, members]] sorted desc
+
+  function coreLabels(core) {
+    const labels = [];
+    const re = /\[\*:(\d+)\]/g;
+    let m;
+    while ((m = re.exec(core)) !== null) labels.push(parseInt(m[1], 10));
+    return [...new Set(labels)].sort((a, b) => a - b);
+  }
+
+  function fillRgdExample() {
+    document.getElementById('rgdCore').value = '[*:1]c1ccc([*:2])cc1';
+  }
+
+  function runRGD() {
+    if (!rdkitAvailable()) return;
+    if (!searchLibrary || !searchLibrary.length) {
+      document.getElementById('rgdStatus').textContent = 'Load a library first (Demo library or paste/upload)';
+      return;
+    }
+    const core = document.getElementById('rgdCore').value.trim();
+    const labels = coreLabels(core);
+    if (!labels.length) {
+      document.getElementById('rgdStatus').textContent = 'The core needs at least one [*:n] attachment label (e.g. [*:1]c1ccc([*:2])cc1)';
+      return;
+    }
+    const products = labels.map(n => `[*:${n}]`).join('.');
+    let rxn;
+    try { rxn = rdkitModule.get_rxn(`${core}>>${products}`); }
+    catch (e) { rxn = null; }
+    if (!rxn) {
+      document.getElementById('rgdStatus').textContent = 'Could not parse the core/reaction — check the SMARTS';
+      return;
+    }
+    rgdResults = [];
+    let skipped = 0;
+    for (const e of searchLibrary) {
+      let m = null;
+      try { m = rdkitModule.get_mol(e.smiles); } catch (err) {}
+      if (!m || !m.is_valid()) { if (m) m.delete(); skipped++; continue; }
+      let frags = null;
+      try {
+        const ml = new rdkitModule.MolList();
+        ml.append(m);
+        const sets = rxn.run_reactants(ml);
+        if (sets && sets.size() > 0) {
+          const set = sets.get(0);
+          frags = [];
+          for (let j = 0; j < set.size(); j++) {
+            const p = set.at(j);
+            frags.push(p && p.is_valid() ? p.get_smiles() : '');
+          }
+        }
+      } catch (err) { frags = null; }
+      m.delete();
+      if (frags) rgdResults.push({ e, frags });
+      else skipped++;
+    }
+    document.getElementById('rgdPanel').style.display = 'block';
+    document.getElementById('rgdStatus').textContent =
+      `${rgdResults.length}/${searchLibrary.length} molecules contain the core` +
+      (skipped ? ` · ${skipped} skipped (no core or unparseable)` : '');
+    // header + rows
+    const head = document.getElementById('rgdHead');
+    head.innerHTML = '<th>#</th><th>Name</th><th>SMILES</th>' + labels.map(n => `<th>R${n}</th>`).join('');
+    const tb = document.getElementById('rgdRows');
+    tb.innerHTML = '';
+    rgdResults.forEach((r, i) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(r.e.name)}</td>` +
+        `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(r.e.smiles)}">${escHtml(r.e.smiles)}</td>` +
+        labels.map((_, j) => `<td class="value">${escHtml(r.frags[j] || '—')}</td>`).join('');
+      tr.addEventListener('click', () => loadSearchRow(r.e));
+      tb.appendChild(tr);
+    });
+  }
+
+  function exportRGDCSV() {
+    if (!rgdResults || !rgdResults.length) { document.getElementById('rgdStatus').textContent = 'Nothing to export — run a decomposition first'; return; }
+    const labels = coreLabels(document.getElementById('rgdCore').value);
+    const headers = ['Name', 'SMILES', ...labels.map(n => 'R' + n)];
+    const esc = v => { const s = String(v); return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    let csv = headers.join(',') + '\n';
+    for (const r of rgdResults) {
+      csv += [r.e.name || '', r.e.smiles, ...labels.map((_, j) => r.frags[j] || '')].map(esc).join(',') + '\n';
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    a.download = 'rgd_' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function analyzeScaffolds() {
+    if (!rdkitAvailable()) return;
+    if (!searchLibrary || !searchLibrary.length) {
+      document.getElementById('scaffoldStatus').textContent = 'Load a library first';
+      return;
+    }
+    const counts = new Map();
+    let acyclic = 0;
+    for (const e of searchLibrary) {
+      let m = null;
+      try { m = rdkitModule.get_mol(e.smiles); } catch (err) {}
+      if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
+      const s = murckoScaffold(m);
+      m.delete();
+      if (!s) { acyclic++; continue; }
+      if (!counts.has(s)) counts.set(s, []);
+      counts.get(s).push(e);
+    }
+    scaffoldResults = [...counts.entries()].sort((a, b) => b[1].length - a[1].length);
+    document.getElementById('scaffoldPanel').style.display = 'block';
+    const total = searchLibrary.length;
+    document.getElementById('scaffoldStatus').textContent =
+      `${scaffoldResults.length} scaffolds across ${total - acyclic} cyclic molecules` +
+      (acyclic ? ` · ${acyclic} acyclic (no scaffold)` : '');
+    const tb = document.getElementById('scaffoldRows');
+    tb.innerHTML = '';
+    scaffoldResults.forEach(([s, members], i) => {
+      const tr = document.createElement('tr');
+      tr.tabIndex = 0;
+      tr.setAttribute('role', 'button');
+      tr.setAttribute('aria-label', 'Load scaffold ' + s);
+      tr.addEventListener('click', () => {
+        switchMode('single');
+        document.getElementById('input').value = s;
+        process(true);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+      tr.innerHTML = `<td>${i + 1}</td>` +
+        `<td class="value" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(s)} (${members.length} molecules)">${escHtml(s)}</td>` +
+        `<td class="value">${members.length}</td>` +
+        `<td class="value">${(100 * members.length / total).toFixed(1)}%</td>`;
+      tb.appendChild(tr);
+    });
+  }
+
+  function exportScaffoldCSV() {
+    if (!scaffoldResults || !scaffoldResults.length) { document.getElementById('scaffoldStatus').textContent = 'Nothing to export — analyze first'; return; }
+    const esc = v => { const s = String(v); return (s.includes(',') || s.includes('"')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    let csv = 'Scaffold,Molecules,SharePercent,Members\n';
+    const total = searchLibrary.length;
+    for (const [s, members] of scaffoldResults) {
+      csv += [s, members.length, (100 * members.length / total).toFixed(1), members.map(e => e.name).join('; ')].map(esc).join(',') + '\n';
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    a.download = 'scaffolds_' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   function copy(id) {
     const text = document.getElementById(id).textContent;
     navigator.clipboard.writeText(text);
@@ -3281,6 +3470,8 @@ function switchMode(m) {
   document.getElementById('tabSearch').setAttribute('aria-selected', String(searchMode));
   document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
   document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
+  document.getElementById('rgdPanel').style.display = searchMode ? (rgdResults ? 'block' : 'none') : 'none';
+  document.getElementById('scaffoldPanel').style.display = searchMode ? (scaffoldResults ? 'block' : 'none') : 'none';
   if (searchMode) restoreSearchLibrary();
   document.getElementById('singleActions').style.display = single ? 'flex' : 'none';
   document.getElementById('input').placeholder = batchMode

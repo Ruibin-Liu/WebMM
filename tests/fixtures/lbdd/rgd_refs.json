@@ -1,0 +1,78 @@
+{
+ "core": "[*:1]c1ccc([*:2])cc1",
+ "refs": {
+  "Aromatic Rings 001": null,
+  "Aromatic Rings 002": null,
+  "Aromatic Rings 006": null,
+  "Branched Alkanes 001": null,
+  "Branched Alkanes 002": null,
+  "Branched Alkanes 003": null,
+  "Drug-like Fragments 004": null,
+  "Drug-like Fragments 006": null,
+  "Functional Groups 001": null,
+  "Functional Groups 002": null,
+  "Functional Groups 003": null,
+  "Functional Groups 004": null,
+  "Functional Groups 005": null,
+  "Functional Groups 006": null,
+  "Functional Groups 009": null,
+  "Functional Groups 011": null,
+  "Functional Groups 012": null,
+  "Functional Groups 013": null,
+  "Heterocycles 004": null,
+  "Heterocycles 005": null,
+  "Heterocycles 006": null,
+  "Nitrogen-containing 004": null,
+  "Nitrogen-containing 005": null,
+  "Nitrogen-containing 006": null,
+  "Nitrogen-containing 007": null,
+  "Nitrogen-containing 008": null,
+  "Simple Alkanes 001": null,
+  "Simple Alkanes 002": null,
+  "Simple Alkanes 003": null,
+  "Simple Alkanes 004": null,
+  "Simple Alkanes 005": null,
+  "Simple Alkanes 006": null,
+  "Small Rings (3-7 members) 001": null,
+  "Small Rings (3-7 members) 002": null,
+  "Small Rings (3-7 members) 003": null,
+  "Sulfur and Phosphorus 003": null,
+  "test": null,
+  "aspirin": null,
+  "ibuprofen": [
+   "CC(C)C",
+   "CCC(=O)O"
+  ],
+  "paracetamol": [
+   "CC(N)=O",
+   "O"
+  ],
+  "caffeine": null,
+  "theophylline": null,
+  "nicotine": null,
+  "diclofenac": null,
+  "warfarin": null,
+  "propranolol": null,
+  "metoprolol": [
+   "CCOC",
+   "CC(C)NCC(O)CO"
+  ],
+  "naproxen": [
+   "CO",
+   "ccc(c)C(C)C(=O)O"
+  ],
+  "lidocaine": null,
+  "benzocaine": [
+   "COC=O",
+   "N"
+  ],
+  "salicylic acid": null,
+  "cholesterol": null,
+  "naphthalene": null,
+  "anthracene": [
+   "cccc",
+   "cccc"
+  ],
+  "glucose alpha": null
+ }
+}

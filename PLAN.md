@@ -1,42 +1,38 @@
-# Plan: 药效团层 —— 逐特征匹配(Pharm k/n)+ 3D 特征可视化(纯 app 端)
+# Plan: RGD(R-基团分解)+ 骨架频率分析(纯 app 端,反应 SMARTS 路线)
 
-## 背景
+## 探测结论(已实测)
 
-颜色层给的是整体 Color T;药效团实践关心的是**逐特征命中**:"这个供体
-有没有对上受体、苯环有没有贴上疏水区"。ROCS 的 feature map 即此。本
-增量在 Shape (3D) 检索上叠加逐特征匹配报告与过滤,并在 3D 视图可视化
-特征球。零引擎改动(对齐变换与位点感知均已就绪)。
+- vendored `get_rgd` 绑定恒 null(疑似未实现)——弃用
+- **反应路线全通**:`get_rxn('[*:1]c1ccccc1[*:2]>>[*:1].[*:2]')` +
+  `run_reactants(MolList)` → 产品集(多匹配=多集)→ 每集 MolList 的片段
+  `get_smiles()`(苯乙酮例:R1=CCO、R2=O=CO 正确;产品序=反应式标签序,
+  确定性);MCS 可用(`get_mcs_as_json(MolList)` → SMARTS,备后续)
+- RGD 核心 v1 需显式 `[*:n]` 标记(库内无 mol 编辑 API,自动标记不可行,
+  诚实文档化;DataWarrior 同惯例)
 
-## 设计
+## 设计(Search 标签页下两面板,复用库基建)
 
-### T1 逐特征药效团匹配(Shape 结果列 + 过滤)
+### T1 R-基团分解面板
 
-- 对齐后(引擎 transform 施于目标位点,sitePos 现成):对每个查询位点
-  i,match_i = max_j(同型目标位点)O_ij / O_ii(高斯对重叠归一,封顶 1);
-  **命中** = match_i ≥ 0.5
-- 结果列「Pharm」= "k/n"(命中数/查询特征数);自匹配 = n/n
-- 搜索栏过滤器:「Pharmacophore」下拉(any / ≥60% / ≥80% / all,默认
-  any)作用于命中比例 k/n,先于阈值渲染;状态行报告过滤前后计数
-- 排序仍按 Combo(Pharm 为过滤维度,不抢排序——文档化)
+- 输入:核心 SMILES(占位示例 `[*:1]c1ccccc1[*:2]`,标签数 k 由正则
+  解析)+「Example」按钮一键填 aspirin-苯环双取代示例
+- 分解:每库条目 → MolList → run_reactants → 取**第一产品集**(多匹配
+  只取首集,文档化;RDKit 完整 RGD 会跨匹配打分)
+- 结果表:Name | SMILES | R1..Rk(片段 canonical SMILES)+ 匹配数状态行
+  (matched/total,不含核心者不计)+ CSV 导出
+- Python 奇偶:`scripts/gen_rgd_refs.py` 用 rdChemReactions 同反应
+  SMARTS,产物片段剥除 `[n*]` 虚原子后 canonical 对拍(冻结参考 +
+  Playwright 全量断言)
 
-### T2 3D 特征可视化(单分子视图)
+### T2 骨架频率面板
 
-- 3D 面板增「Features」开关:当前分子的 colorSites 以小球渲染进
-  3Dmol 视图(donor 红 / acceptor 蓝 / pos 紫 / neg 橙 / hydrophobe
-  灰 / ring 黄绿;ring 画在质心,半径稍大;球半径 ~0.5 Å)
-- 开关随视图重置/新分子加载保持状态; legend 用 title 提示(色-型
-  对照写在开关 title)
+- 「Analyze scaffolds」:对库逐条 murckoScaffold(现有 JS 函数)→
+  频率表:骨架 SMILES | 条数 | 占比(降序);CSV 导出
+- 行点击 → 回载该骨架(单分子视图,复用 loadSearchRow 式流程)
 
-### T3 验证
+### T3 验收
 
-1. 自匹配:aspirin 查询自身 Pharm = n/n(全部命中)
-2. 化学直觉:aspirin 查询下 salicylic 高命中、glucose 低命中;过滤
-   「≥60%」后 glucose 出局而 salicylic 保留
-3. 可视化:截图目检特征球(颜色-型对应、ring 质心位置)
-4. 回归:sim/sub/shape 列不变(Pharm 列仅 shape 模式);390px;零
-   page error;门禁 sanity(293 测试,纯 JS)
-
-## 边界
-
-- 单构象语义(与 shape 层一致,文档化);不做距离容差手工查询编辑器
-  (后续);不做目标侧逐特征高亮进 3D(后续)
+1. RGD 奇偶:参考集(核心=对位双取代苯;库=demo 55)片段逐一相等
+2. 交互:Example 一键、分解表 R1..Rk 正确、无核心条目被排除且计数
+   正确、CSV 列齐;骨架表计数总和=库数、行点击回载
+3. 390px、零 page error、三模式检索回归;门禁 sanity(293 测试,纯 JS)
