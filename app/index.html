@@ -885,6 +885,13 @@ details {
       </select>
       <label for="searchThreshold" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">T ≥ <span id="searchThresholdVal">0.30</span></label>
       <input type="range" id="searchThreshold" min="0" max="1" step="0.05" value="0.3" style="width:90px;" oninput="document.getElementById('searchThresholdVal').textContent = parseFloat(this.value).toFixed(2)">
+      <label for="pharmFilter" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">Pharm</label>
+      <select id="pharmFilter" aria-label="Minimum pharmacophore feature matches" style="padding:0.35rem; font-size:0.8rem;">
+        <option value="0">any</option>
+        <option value="0.6">≥60%</option>
+        <option value="0.8">≥80%</option>
+        <option value="1">all</option>
+      </select>
       <button id="btnSearchRun" class="primary" onclick="runSearch()">Search</button>
     </div>
     <div class="version" id="searchStatus" aria-live="polite" style="margin:0.3rem 0 0;"></div>
@@ -1055,6 +1062,7 @@ details {
      <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
        <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
          <input type="checkbox" id="chargeColor" disabled> Color atoms by partial charge
+         <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" title="Pharmacophore features: red donor, blue acceptor, purple positive, orange negative, grey hydrophobe, yellow-green ring centroid"> Features
          <span title="blue = positive, red = negative; white = neutral" style="display:inline-flex; gap:2px;">
            <span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
            <span style="width:10px;height:10px;border-radius:2px;background:#f1f5f9;border:1px solid var(--border);display:inline-block;"></span>
@@ -1145,7 +1153,7 @@ details {
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
-         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="comboCol" style="display:none;">Combo</th></tr>
+         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th></tr>
        </thead>
        <tbody id="searchRows"></tbody>
      </table>
@@ -2170,6 +2178,38 @@ function rdkitAvailable() {
     return out;
   }
 
+  /// Per-feature pharmacophore matching at the aligned pose: for each
+  /// query site, the best same-type target-site Gaussian overlap normalized
+  /// by the site's self overlap (capped at 1); a feature is matched at ≥ 0.5.
+  function pharmMatch(qSites, qCoords, tSites, tCoords, transform) {
+    if (!qSites.length || !tSites.length) return { matched: 0, total: qSites.length, best: [] };
+    const posQ = qSites.map(s => sitePos(s, qCoords));
+    qSites.forEach((s, i) => s._p = i);
+    const posT = tSites.map(s => sitePos(s, tCoords, transform));
+    tSites.forEach((s, i) => s._p = i);
+    const pairO = (a, pa, b, pb) => {
+      const aij = a.alpha + b.alpha;
+      const beta = a.alpha * b.alpha / aij;
+      const s = Math.PI / aij;
+      const k = COLOR_GCI * COLOR_GCI * s * Math.sqrt(s);
+      const d = [pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]];
+      return Math.exp(-beta * (d[0] * d[0] + d[1] * d[1] + d[2] * d[2])) * k;
+    };
+    const best = [];
+    for (let i = 0; i < qSites.length; i++) {
+      const q = qSites[i];
+      const self = pairO(q, posQ[i], q, posQ[i]);
+      let m = 0;
+      for (let j = 0; j < tSites.length; j++) {
+        if (tSites[j].type !== q.type) continue;
+        m = Math.max(m, pairO(q, posQ[i], tSites[j], posT[j]) / (self || 1e-12));
+      }
+      best.push(Math.min(1, m));
+    }
+    const matched = best.filter(x => x >= 0.5).length;
+    return { matched, total: qSites.length, best };
+  }
+
   const SHAPE_SCREEN_THRESHOLD = 300; // entries; above this, two-phase search
   const SHAPE_TOP_N = 50;              // full-quality re-rank count
 
@@ -2182,10 +2222,12 @@ function rdkitAvailable() {
     searchStatus('Preparing 3D and aligning…');
     // query color sites (perceived once on the query 3D molblock)
     let qSites = null;
+    let qCoordsCache = null;
     try {
       const qm = rdkitModule.get_mol(qsdf);
       if (qm && qm.is_valid()) {
         qSites = colorSites(qsdf, qm);
+        qCoordsCache = sdfCoords(qsdf);
         qm.delete();
       }
     } catch (e) { qSites = null; }
@@ -2239,7 +2281,18 @@ function rdkitAvailable() {
           : window.webmm.shape_align_wasm(qsdf, esdf, '{"random_starts": 8}'));
         if (res.tanimoto >= thr) {
           const colorT = useColor ? res.color_tanimoto : null;
-          rows.push({ e, score: res.tanimoto, colorT, aligned: applyTransformToSdf(esdf, res.transform) });
+          let pharm = null;
+          if (qSites && qSites.length) {
+            try {
+              const tm = rdkitModule.get_mol(esdf);
+              if (tm && tm.is_valid()) {
+                const tSites = e.sites || (e.sites = colorSites(esdf, tm));
+                tm.delete();
+                pharm = pharmMatch(qSites, qCoordsCache, tSites, sdfCoords(esdf), res.transform);
+              }
+            } catch (err) { pharm = null; }
+          }
+          rows.push({ e, score: res.tanimoto, colorT, pharm, aligned: applyTransformToSdf(esdf, res.transform) });
         }
       } catch (err) { /* skip entry */ }
       if (i % CH === CH - 1 || i === candidates.length - 1) {
@@ -2248,11 +2301,19 @@ function rdkitAvailable() {
       }
     }
     rows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+    // pharmacophore filter (share of query features matched)
+    const pharmMin = parseFloat(document.getElementById('pharmFilter').value) || 0;
+    const before = rows.length;
+    const shownRows = pharmMin > 0 && qCoordsCache
+      ? rows.filter(r => r.pharm && r.pharm.total > 0 && r.pharm.matched / r.pharm.total >= pharmMin)
+      : rows;
     const phases = candidates.length !== searchLibrary.length
       ? ` · two-phase (screen ${searchLibrary.length} → full ${candidates.length}, screen ${(screenMs / 1000).toFixed(1)} s)`
       : '';
-    renderSearchResults(rows, 'shape',
-      `${rows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${phases} · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    renderSearchResults(shownRows, 'shape',
+      `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${phases}` +
+      (pharmMin > 0 && shownRows.length !== before ? ` · pharm filter ${before} → ${shownRows.length}` : '') +
+      ` · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   }
 
   async function runSearch() {
@@ -2309,9 +2370,10 @@ function rdkitAvailable() {
     const shapeMode = mode === 'shape';
     document.getElementById('searchScoreCol').textContent = mode === 'sub' ? 'Match' : (shapeMode ? 'Shape T' : 'Tanimoto');
     document.getElementById('colorCol').style.display = shapeMode ? '' : 'none';
+    document.getElementById('pharmCol').style.display = shapeMode ? '' : 'none';
     document.getElementById('comboCol').style.display = shapeMode ? '' : 'none';
     for (let i = 0; i < shown.length; i++) {
-      const { e, score, colorT, aligned } = shown[i];
+      const { e, score, colorT, pharm, aligned } = shown[i];
       const tr = document.createElement('tr');
       tr.tabIndex = 0;
       tr.setAttribute('role', 'button');
@@ -2328,6 +2390,7 @@ function rdkitAvailable() {
           : shapeMode
           ? `<td class="value">${(score * 100).toFixed(1)}%</td>` +
             `<td class="value">${colorT != null ? (colorT * 100).toFixed(1) + '%' : '—'}</td>` +
+            `<td class="value" title="pharmacophore features matched">${pharm ? pharm.matched + '/' + pharm.total : '—'}</td>` +
             `<td class="value"><strong>${((score + (colorT || 0)) * 100).toFixed(1)}%</strong></td>`
           : `<td class="value">${(score * 100).toFixed(1)}%</td>`);
       tb.appendChild(tr);
@@ -2988,6 +3051,7 @@ function chargeColor(q) {
 
 function applyStyle() {
   if (!viewer || !sdf3d) return;
+  try { viewer.removeAllShapes(); } catch (e) {}
   if (chargeColorOn && lastCharges && lastCharges.length) {
     const cf = (atom) => chargeColor(lastCharges[atom.index] || 0);
     viewer.setStyle({}, {
@@ -2997,7 +3061,49 @@ function applyStyle() {
   } else {
     viewer.setStyle({}, { stick: { radius: 0.15 }, sphere: { scale: 0.25 } });
   }
+  // pharmacophore feature spheres (toggleable overlay)
+  if (document.getElementById('featSpheres') && document.getElementById('featSpheres').checked) {
+    addFeatureSpheres();
+  }
   viewer.render();
+}
+
+const FEATURE_COLORS = {
+  donor: '#ef4444',      // red
+  acceptor: '#3b82f6',   // blue
+  pos: '#a855f7',        // purple
+  neg: '#f97316',        // orange
+  hydrophobe: '#94a3b8', // grey
+  ring: '#84cc16',       // yellow-green (centroid)
+};
+
+/// Overlay the current molecule's color sites as spheres in the 3D viewer.
+function addFeatureSpheres() {
+  if (!viewer || !sdf3d) return;
+  let sites = null;
+  try {
+    const m = rdkitModule.get_mol(sdf3d);
+    if (m && m.is_valid()) {
+      sites = colorSites(sdf3d, m);
+      m.delete();
+    }
+  } catch (e) { return; }
+  if (!sites || !sites.length) return;
+  const coords = sdfCoords(sdf3d);
+  for (const s of sites) {
+    const p = sitePos(s, coords);
+    viewer.addSphere({
+      center: { x: p[0], y: p[1], z: p[2] },
+      radius: s.type === 'ring' ? 0.85 : 0.5,
+      color: FEATURE_COLORS[s.type] || '#94a3b8',
+      alpha: 0.45,
+    });
+  }
+}
+
+function onFeatureSpheres() {
+  // re-applying the style rebuilds the shapes (spheres only re-added when on)
+  applyStyle();
 }
 
 // Number of conformers the chart displays: the lowest 100, or everything
