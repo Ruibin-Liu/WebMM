@@ -1,38 +1,35 @@
-# Plan: RGD(R-基团分解)+ 骨架频率分析(纯 app 端,反应 SMARTS 路线)
+# Plan: 两个提速杠杆 —— 起点预筛重打分(rescore_top)+ 初筛构象降档(v1.6.1)
 
-## 探测结论(已实测)
+## 测量结论(先行)
 
-- vendored `get_rgd` 绑定恒 null(疑似未实现)——弃用
-- **反应路线全通**:`get_rxn('[*:1]c1ccccc1[*:2]>>[*:1].[*:2]')` +
-  `run_reactants(MolList)` → 产品集(多匹配=多集)→ 每集 MolList 的片段
-  `get_smiles()`(苯乙酮例:R1=CCO、R2=O=CO 正确;产品序=反应式标签序,
-  确定性);MCS 可用(`get_mcs_as_json(MolList)` → SMARTS,备后续)
-- RGD 核心 v1 需显式 `[*:n]` 标记(库内无 mol 编辑 API,自动标记不可行,
-  诚实文档化;DataWarrior 同惯例)
+- 预制成本分解:ibuprofen iter=250 → 105.7ms,iter=1 → 64ms(嵌入+建场
+  地板),iter=50 → 57.5ms——**ETKDG 嵌入占 55-60%,iter=50 的松弛近乎
+  免费**(aspirin 同构:36.5 / 19.7 / 31.7)
+- 对齐成本(上轮已知):每起点 ~24ms 全量 IE 重打分占 ~95%
 
-## 设计(Search 标签页下两面板,复用库基建)
+## 杠杆一:起点预筛后重打分(引擎)
 
-### T1 R-基团分解面板
+- `AlignOptions.rescore_top: usize`(默认 **3**,opts_json
+  "rescore_top";usize::MAX = 旧行为全重打)
+- align_colored 两段:先跑全部起点收集代理分(便宜),按代理排序后仅
+  对 **top-K 姿态**做全量 IE + 颜色重打分;polish 从最优全量分姿态出发
+- 等价性测试:fixtures 8 分子两两配对(K=3 vs K=MAX),断言 combo 差
+  < 1e-3 并报告实际最大差;既有测试(自对齐 1.000000 等)不回归
 
-- 输入:核心 SMILES(占位示例 `[*:1]c1ccccc1[*:2]`,标签数 k 由正则
-  解析)+「Example」按钮一键填 aspirin-苯环双取代示例
-- 分解:每库条目 → MolList → run_reactants → 取**第一产品集**(多匹配
-  只取首集,文档化;RDKit 完整 RGD 会跨匹配打分)
-- 结果表:Name | SMILES | R1..Rk(片段 canonical SMILES)+ 匹配数状态行
-  (matched/total,不含核心者不计)+ CSV 导出
-- Python 奇偶:`scripts/gen_rgd_refs.py` 用 rdChemReactions 同反应
-  SMARTS,产物片段剥除 `[n*]` 虚原子后 canonical 对拍(冻结参考 +
-  Playwright 全量断言)
+## 杠杆二:初筛构象降档(页面)
 
-### T2 骨架频率面板
+- 两段式的 phase 1 预制改 `max_iter: 50`(SCREEN_PREP_ITER;嵌入价买
+  半松弛几何);phase 2 的 top-50 仍用完整 250 预制(e.sdf3d 与
+  e.sdf3dScreen 双缓存,ensureEntry3D 增 tier 参数)
+- 小库单段路径不变(全 250)
 
-- 「Analyze scaffolds」:对库逐条 murckoScaffold(现有 JS 函数)→
-  频率表:骨架 SMILES | 条数 | 占比(降序);CSV 导出
-- 行点击 → 回载该骨架(单分子视图,复用 loadSearchRow 式流程)
+## 验收
 
-### T3 验收
-
-1. RGD 奇偶:参考集(核心=对位双取代苯;库=demo 55)片段逐一相等
-2. 交互:Example 一键、分解表 R1..Rk 正确、无核心条目被排除且计数
-   正确、CSV 列齐;骨架表计数总和=库数、行点击回载
-3. 390px、零 page error、三模式检索回归;门禁 sanity(293 测试,纯 JS)
+1. Rust:等价性测试 + 293→294+;clippy 1.98(-D warnings)、fmt;版本
+   1.6.0→1.6.1(wasm 重建,node 冒烟)
+2. 性能断言(node + Playwright):ibuprofen 单对全质量对齐 472ms →
+   预期 ≤150ms;55 库两段式 10-11s → 预期 ≤6s
+3. 质量断言(Playwright):两段式(降档预制 + top-3 重打)top-20 vs
+   全质量单段参考,召回 ≥ 18/20(旧口径 19/20,允许小幅让步并如实
+   记录)
+4. 390px、零 page error、三模式回归

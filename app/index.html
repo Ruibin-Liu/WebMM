@@ -1988,17 +1988,23 @@ function rdkitAvailable() {
   // ---- Shape (3D) search: ETKDG+MMFF94s single-conformer prep, then
   // Gaussian shape alignment against the query (engine side). ----
 
-  function ensureEntry3D(e) {
-    if (e.sdf3d) return e.sdf3d;
+  const FULL_PREP_ITER = 250;
+  const SCREEN_PREP_ITER = 50; // embed-cost floor buys a half-relaxed geometry
+  /// tier: 'full' (250-iter MMFF relax) or 'screen' (50 iters — the ETKDG
+  /// embed dominates prep cost and 50 iterations are nearly free after it)
+  function ensureEntry3D(e, tier = 'full') {
+    const cache = tier === 'screen' ? 'sdf3dScreen' : 'sdf3d';
+    if (e[cache]) return e[cache];
     if (!window.webmm) throw new Error('WebMM engine not loaded');
     const m = rdkitModule.get_mol(e.smiles);
     if (!m || !m.is_valid()) { if (m) m.delete(); throw new Error('parse'); }
     const mb = m.get_molblock();
     m.delete();
-    const r = window.webmm.generate_optimized_conformers_wasm(mb, 1, BigInt(42 + e.idx), 'MMFF94s', 250);
+    const iter = tier === 'screen' ? SCREEN_PREP_ITER : FULL_PREP_ITER;
+    const r = window.webmm.generate_optimized_conformers_wasm(mb, 1, BigInt(42 + e.idx), 'MMFF94s', iter);
     if (!r.get_success() || !r.get_n_confs()) throw new Error('conformer failed');
-    e.sdf3d = buildSdfFromCoords(r.get_coordinates(), r.get_template_sdf());
-    return e.sdf3d;
+    e[cache] = buildSdfFromCoords(r.get_coordinates(), r.get_template_sdf());
+    return e[cache];
   }
 
   function ensureQuery3D(q) {
@@ -2277,7 +2283,7 @@ function rdkitAvailable() {
       for (let i = 0; i < searchLibrary.length; i++) {
         const e = searchLibrary[i];
         try {
-          const esdf = ensureEntry3D(e);
+          const esdf = ensureEntry3D(e, 'screen');
           const r = JSON.parse(window.webmm.shape_align_wasm(qsdf, esdf, '{"screen":true}'));
           screened.push({ e, sur: r.surrogate_overlap });
         } catch (err) { /* skip entry */ }

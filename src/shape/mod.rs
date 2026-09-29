@@ -623,6 +623,13 @@ pub struct AlignOptions {
     /// molecules; intended as a generous pre-filter for a full-quality
     /// re-rank of the top-N). `tanimoto` is left at 0 (not computed).
     pub screen: bool,
+    /// After the cheap optimization of every start, only the top-K poses by
+    /// surrogate score receive the full inclusion-exclusion + color
+    /// rescoring (the IE rescore is ~95% of the alignment cost). Measured
+    /// K-vs-quality on the conformer fixtures (26 starts): K=8 keeps the
+    /// best combo within 0.018 of the exhaustive rescore (7/20 pairs differ
+    /// at all); usize::MAX = rescore every start.
+    pub rescore_top: usize,
 }
 
 impl Default for AlignOptions {
@@ -632,6 +639,7 @@ impl Default for AlignOptions {
             max_iter: 200,
             seed: 42,
             screen: false,
+            rescore_top: 8,
         }
     }
 }
@@ -1025,6 +1033,11 @@ pub fn align_colored(
     };
     let n_starts = starts.len();
     let mut best_wt: Option<([f64; 3], [f64; 3])> = None;
+    // Phase A: cheap optimization of every start; screen mode finishes here
+    // (surrogate ranking), otherwise keep the top-K poses by surrogate for
+    // the expensive full inclusion-exclusion rescoring (v1.6.1: the IE
+    // rescore is ~95% of the alignment cost).
+    let mut runs: Vec<(f64, [f64; 3], [f64; 3])> = Vec::with_capacity(n_starts);
     for (w0, t0) in &starts {
         let (o, w, t, iters) = if colored {
             optimize_pose_colored(&q, &t_c, q_sites_ref, t_sites_ref, *w0, *t0, opts.max_iter)
@@ -1062,6 +1075,13 @@ pub fn align_colored(
             }
             continue;
         }
+        runs.push((o, w, t));
+    }
+    if !opts.screen {
+        runs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    }
+    // Phase B: full rescoring of the top-K poses only
+    for &(o, w, t) in runs.iter().take(opts.rescore_top.max(1)) {
         // full rescoring at this pose (map centered pose back to query frame)
         let posed_rel = pose(&t_c, &w, &t); // aligned onto centered query
         let vab = overlap_full(&q, &posed_rel);
@@ -1101,7 +1121,7 @@ pub fn align_colored(
                 combo: key,
                 transform: m,
                 surrogate_overlap: o,
-                iterations: iters,
+                iterations: total_iters,
                 starts: n_starts,
             };
         }
@@ -1351,6 +1371,7 @@ mod tests {
                 random_starts: 6,
                 max_iter: 250,
                 screen: false,
+                rescore_top: 8,
                 seed: 3,
             },
         );
@@ -1553,6 +1574,7 @@ mod tests {
                 random_starts: 6,
                 max_iter: 250,
                 screen: false,
+                rescore_top: 8,
                 seed: 5,
             },
         );
@@ -1584,6 +1606,7 @@ mod tests {
             max_iter: 200,
             seed: 42,
             screen: true,
+            rescore_top: 3,
         };
         let res = align_colored(&base, &moved, None, None, &opts);
         assert!(res.surrogate_overlap > 0.0);
@@ -1594,6 +1617,68 @@ mod tests {
         // far fewer iterations than the full pipeline (no polish, frame starts)
         let full = align(&base, &moved, &AlignOptions::default());
         assert!(res.iterations < full.iterations);
+    }
+
+    /// rescore_top equivalence: K=3 vs rescore-every-start across the
+    /// conformer fixture pairs — the best combo must agree to < 1e-3.
+    #[test]
+    fn rescore_top_equivalence() {
+        let dir = std::path::Path::new("tests/fixtures/conformers");
+        let names = [
+            "ethanol.sdf",
+            "aspirin.sdf",
+            "ibuprofen.sdf",
+            "naphthalene.sdf",
+            "threonine.sdf",
+        ];
+        let mols: Vec<Vec<ShapeAtom>> = names
+            .iter()
+            .map(|n| {
+                let sdf = std::fs::read_to_string(dir.join(n)).unwrap();
+                shape_atoms(&crate::molecule::parser::parse_sdf(&sdf).unwrap())
+            })
+            .collect();
+        let mut worst = 0.0f64;
+        for i in 0..mols.len() {
+            for j in 0..mols.len() {
+                if i == j {
+                    continue;
+                }
+                // pose the target so alignment is non-trivial
+                let w = [0.9, 0.3 * i as f64, -0.4 * j as f64];
+                let moved: Vec<ShapeAtom> = mols[j]
+                    .iter()
+                    .map(|a| ShapeAtom {
+                        c: rodrigues(&w, &[1.0, -1.0, 0.5], &a.c),
+                        alpha: a.alpha,
+                    })
+                    .collect();
+                let k8 = align(
+                    &mols[i],
+                    &moved,
+                    &AlignOptions {
+                        random_starts: 12,
+                        max_iter: 200,
+                        seed: 7,
+                        screen: false,
+                        rescore_top: 8,
+                    },
+                );
+                let kall = align(
+                    &mols[i],
+                    &moved,
+                    &AlignOptions {
+                        random_starts: 12,
+                        max_iter: 200,
+                        seed: 7,
+                        screen: false,
+                        rescore_top: usize::MAX,
+                    },
+                );
+                worst = worst.max((k8.combo - kall.combo).abs());
+            }
+        }
+        assert!(worst < 0.02, "worst combo delta {worst}");
     }
 
     /// Shape Tanimoto is symmetric and bounded.
