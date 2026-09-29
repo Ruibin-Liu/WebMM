@@ -7553,8 +7553,15 @@ pub fn shape_align_wasm(
         if let Some(s) = v.get("seed").and_then(|x| x.as_u64()) {
             opts.seed = s;
         }
+        if let Some(f) = v.get("screen").and_then(|x| x.as_bool()) {
+            opts.screen = f;
+        }
     }
-    let res = crate::shape::align(&qa, &ta, &opts);
+    let res = if opts.screen {
+        crate::shape::align_colored(&qa, &ta, None, None, &opts)
+    } else {
+        crate::shape::align(&qa, &ta, &opts)
+    };
     #[derive(serde::Serialize)]
     struct Out {
         tanimoto: f64,
@@ -7671,6 +7678,9 @@ pub fn shape_align_color_wasm(
         }
         if let Some(s) = v.get("seed").and_then(|x| x.as_u64()) {
             opts.seed = s;
+        }
+        if let Some(f) = v.get("screen").and_then(|x| x.as_bool()) {
+            opts.screen = f;
         }
     }
     let res = crate::shape::align_colored(&qa, &ta, qs.as_deref(), ts.as_deref(), &opts);

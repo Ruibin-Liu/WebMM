@@ -2170,6 +2170,9 @@ function rdkitAvailable() {
     return out;
   }
 
+  const SHAPE_SCREEN_THRESHOLD = 300; // entries; above this, two-phase search
+  const SHAPE_TOP_N = 50;              // full-quality re-rank count
+
   async function runShapeSearch(q) {
     if (!window.webmm) { searchStatus('WebMM engine not loaded — shape search unavailable'); return; }
     const thr = parseFloat(document.getElementById('searchThreshold').value);
@@ -2187,11 +2190,37 @@ function rdkitAvailable() {
       }
     } catch (e) { qSites = null; }
     const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites)) : '';
+    let candidates = searchLibrary;
+    let t1, screenMs = 0;
+
+    // ---- phase 1: surrogate screening for large libraries ----
+    if (searchLibrary.length > SHAPE_SCREEN_THRESHOLD || window.__forceTwoPhase) {
+      const screened = [];
+      t1 = performance.now();
+      const CH1 = 50;
+      for (let i = 0; i < searchLibrary.length; i++) {
+        const e = searchLibrary[i];
+        try {
+          const esdf = ensureEntry3D(e);
+          const r = JSON.parse(window.webmm.shape_align_wasm(qsdf, esdf, '{"screen":true}'));
+          screened.push({ e, sur: r.surrogate_overlap });
+        } catch (err) { /* skip entry */ }
+        if (i % CH1 === CH1 - 1 || i === searchLibrary.length - 1) {
+          searchStatus(`Phase 1 screening: ${i + 1}/${searchLibrary.length}…`);
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+      screenMs = performance.now() - t1;
+      screened.sort((a, b) => b.sur - a.sur);
+      candidates = screened.slice(0, SHAPE_TOP_N).map(x => x.e);
+    }
+
+    // ---- phase 2 (or single pass): full-quality joint shape+color ----
     const rows = [];
     const t0 = performance.now();
     const CH = 20;
     for (let i = 0; i < searchLibrary.length; i++) {
-      const e = searchLibrary[i];
+      const e = candidates[i];
       try {
         const esdf = ensureEntry3D(e);
         let tSitesJson = '';
@@ -2213,14 +2242,17 @@ function rdkitAvailable() {
           rows.push({ e, score: res.tanimoto, colorT, aligned: applyTransformToSdf(esdf, res.transform) });
         }
       } catch (err) { /* skip entry */ }
-      if (i % CH === CH - 1 || i === searchLibrary.length - 1) {
-        searchStatus(`Shape search: ${i + 1}/${searchLibrary.length} aligned…`);
+      if (i % CH === CH - 1 || i === candidates.length - 1) {
+        searchStatus(`Phase 2 aligning: ${i + 1}/${candidates.length}…`);
         await new Promise(r => setTimeout(r, 0));
       }
     }
     rows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+    const phases = candidates.length !== searchLibrary.length
+      ? ` · two-phase (screen ${searchLibrary.length} → full ${candidates.length}, screen ${(screenMs / 1000).toFixed(1)} s)`
+      : '';
     renderSearchResults(rows, 'shape',
-      `${rows.length}/${searchLibrary.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+      `${rows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${phases} · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   }
 
   async function runSearch() {

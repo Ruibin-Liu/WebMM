@@ -617,6 +617,12 @@ pub struct AlignOptions {
     pub random_starts: usize,
     pub max_iter: usize,
     pub seed: u64,
+    /// Screening mode: frame starts only, no polish, NO inclusion-exclusion
+    /// or color rescoring — the best start is ranked purely by the pairwise
+    /// surrogate overlap (an absolute overlap, biased toward larger
+    /// molecules; intended as a generous pre-filter for a full-quality
+    /// re-rank of the top-N). `tanimoto` is left at 0 (not computed).
+    pub screen: bool,
 }
 
 impl Default for AlignOptions {
@@ -625,6 +631,7 @@ impl Default for AlignOptions {
             random_starts: 16,
             max_iter: 200,
             seed: 42,
+            screen: false,
         }
     }
 }
@@ -986,9 +993,10 @@ pub fn align_colored(
         let a0 = [a0[0] / norm, a0[1] / norm, a0[2] / norm];
         starts.push((rotvec_between(&a0, &b0), [0.0, 0.0, 0.0]));
     }
-    // random rotations
+    // random rotations (skipped in screen mode: frame starts only)
+    let n_random = if opts.screen { 0 } else { opts.random_starts };
     let mut rng = MiniRng::new(opts.seed);
-    for _ in 0..opts.random_starts {
+    for _ in 0..n_random {
         let w = [
             (rng.next_f64() * 2.0 - 1.0) * std::f64::consts::PI,
             (rng.next_f64() * 2.0 - 1.0) * std::f64::consts::PI,
@@ -1010,8 +1018,11 @@ pub fn align_colored(
     // self-overlap volumes are pose invariant: compute once (the Tanimoto
     // denominator still needs the pose-dependent vab). All scoring happens
     // in the CENTERED query frame (`q`), consistently.
-    let vq = overlap_full(&q, &q);
-    let vt = overlap_full(&t_c, &t_c);
+    let (vq, vt) = if opts.screen {
+        (0.0, 0.0) // not needed in screen mode (no IE rescoring at all)
+    } else {
+        (overlap_full(&q, &q), overlap_full(&t_c, &t_c))
+    };
     let n_starts = starts.len();
     let mut best_wt: Option<([f64; 3], [f64; 3])> = None;
     for (w0, t0) in &starts {
@@ -1021,6 +1032,36 @@ pub fn align_colored(
             optimize_pose(&q, &t_c, *w0, *t0, opts.max_iter)
         };
         total_iters += iters;
+        if opts.screen {
+            // screening: rank by the surrogate overlap, no IE/color scoring
+            if o > best.surrogate_overlap {
+                let r = rotmat(&w);
+                let m = [
+                    r[0],
+                    r[1],
+                    r[2],
+                    t[0] + q_com[0] - (r[0] * t_com[0] + r[1] * t_com[1] + r[2] * t_com[2]),
+                    r[3],
+                    r[4],
+                    r[5],
+                    t[1] + q_com[1] - (r[3] * t_com[0] + r[4] * t_com[1] + r[5] * t_com[2]),
+                    r[6],
+                    r[7],
+                    r[8],
+                    t[2] + q_com[2] - (r[6] * t_com[0] + r[7] * t_com[1] + r[8] * t_com[2]),
+                ];
+                best = AlignResult {
+                    tanimoto: 0.0, // not computed in screen mode
+                    color_tanimoto: 0.0,
+                    combo: 0.0,
+                    transform: m,
+                    surrogate_overlap: o,
+                    iterations: iters,
+                    starts: n_starts,
+                };
+            }
+            continue;
+        }
         // full rescoring at this pose (map centered pose back to query frame)
         let posed_rel = pose(&t_c, &w, &t); // aligned onto centered query
         let vab = overlap_full(&q, &posed_rel);
@@ -1068,7 +1109,7 @@ pub fn align_colored(
     // polish: one fresh restart from the best pose (clears L-BFGS history
     // stalls — the rotation-vector 2π flat directions can freeze the line
     // search while the pose is still ~0.3 Å off on symmetric systems)
-    if let Some((w, t)) = best_wt {
+    if let Some((w, t)) = best_wt.filter(|_| !opts.screen) {
         let (o2, w2, t2, it2) = if colored {
             optimize_pose_colored(
                 &q,
@@ -1309,6 +1350,7 @@ mod tests {
             &AlignOptions {
                 random_starts: 6,
                 max_iter: 250,
+                screen: false,
                 seed: 3,
             },
         );
@@ -1510,6 +1552,7 @@ mod tests {
             &AlignOptions {
                 random_starts: 6,
                 max_iter: 250,
+                screen: false,
                 seed: 5,
             },
         );
@@ -1520,6 +1563,37 @@ mod tests {
             res.tanimoto,
             res.color_tanimoto
         );
+    }
+
+    /// Screening mode: surrogate-ranked, no IE scoring, frame starts only.
+    #[test]
+    fn screen_mode_ranking() {
+        let sdf = std::fs::read_to_string("tests/fixtures/conformers/aspirin.sdf").unwrap();
+        let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+        let base = shape_atoms(&mol);
+        let w = [0.9, 0.4, -0.6];
+        let moved: Vec<ShapeAtom> = base
+            .iter()
+            .map(|a| ShapeAtom {
+                c: rodrigues(&w, &[1.0, -2.0, 0.5], &a.c),
+                alpha: a.alpha,
+            })
+            .collect();
+        let opts = AlignOptions {
+            random_starts: 16,
+            max_iter: 200,
+            seed: 42,
+            screen: true,
+        };
+        let res = align_colored(&base, &moved, None, None, &opts);
+        assert!(res.surrogate_overlap > 0.0);
+        assert_eq!(
+            res.tanimoto, 0.0,
+            "screen mode must not compute the IE tanimoto"
+        );
+        // far fewer iterations than the full pipeline (no polish, frame starts)
+        let full = align(&base, &moved, &AlignOptions::default());
+        assert!(res.iterations < full.iterations);
     }
 
     /// Shape Tanimoto is symmetric and bounded.
