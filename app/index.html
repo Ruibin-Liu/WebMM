@@ -1166,6 +1166,7 @@ details {
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
        <input type="text" id="rgdCore" placeholder="Core with attachment labels, e.g. [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
        <button class="action-btn edit" onclick="fillRgdExample()" title="Fill a para-disubstituted benzene example core">Example</button>
+      <button class="action-btn edit" onclick="autoRgdCore()" title="Derive a labeled core automatically: MCS of the most frequent scaffold family, attachment points from the first member">Auto core</button>
        <button id="btnRGD" class="primary" onclick="runRGD()">Decompose library</button>
        <button class="action-btn export" onclick="exportRGDCSV()">Export CSV</button>
      </div>
@@ -2709,6 +2710,119 @@ function rdkitAvailable() {
 
   function fillRgdExample() {
     document.getElementById('rgdCore').value = '[*:1]c1ccc([*:2])cc1';
+  }
+
+
+  /// Auto core: MCS of the most-frequent-scaffold family (<=8 members),
+  /// attachment labels derived from the first member's side-chain
+  /// attachment points via a sub-molblock with R# dummy atoms.
+  function autoRgdCore() {
+    if (!rdkitAvailable()) return;
+    if (!searchLibrary || !searchLibrary.length) {
+      document.getElementById('rgdStatus').textContent = 'Load a library first';
+      return;
+    }
+    const status = (t) => { document.getElementById('rgdStatus').textContent = t; };
+    // 1. scaffold families (cap counting at 500 entries for big libraries)
+    const counts = new Map();
+    const scan = searchLibrary.slice(0, 500);
+    for (const e of scan) {
+      let m = null;
+      try { m = rdkitModule.get_mol(e.smiles); } catch (err) {}
+      if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
+      const sch = murckoScaffold(m);
+      m.delete();
+      if (!sch) continue;
+      if (!counts.has(sch)) counts.set(sch, []);
+      counts.get(sch).push(e);
+    }
+    if (!counts.size) { status('No cyclic molecules in the library — nothing to derive a core from'); return; }
+    const [topScaffold, family] = [...counts.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+    // most-substituted members first (highest MW) — the reference needs
+    // side chains on the scaffold to yield attachment points
+    const members = family.slice().sort((a, b) => (parseFloat(b.MW) || 0) - (parseFloat(a.MW) || 0)).slice(0, 8);
+    // 2. MCS over the family
+    let mcsSmarts = null;
+    try {
+      const mols = members.map(e => { const m = rdkitModule.get_mol(e.smiles); if (!m || !m.is_valid()) { if (m) m.delete(); return null; } return m; }).filter(Boolean);
+      if (!mols.length) throw new Error('no parseable members');
+      const ml = new rdkitModule.MolList();
+      mols.forEach(m => ml.append(m));
+      const mcs = JSON.parse(rdkitModule.get_mcs_as_json(ml));
+      mols.forEach(m => m.delete());
+      if (!mcs || mcs.canceled || !mcs.smarts) throw new Error('MCS failed');
+      mcsSmarts = mcs.smarts;
+    } catch (err) { status('Auto core: ' + (err.message || err)); return; }
+    // 3. reference match
+    const ref = members[0];
+    let refMol = null, matchAtoms = null;
+    try {
+      refMol = rdkitModule.get_mol(ref.smiles);
+      const q = rdkitModule.get_qmol(mcsSmarts);
+      const raw = refMol.get_substruct_matches(q);
+      const arr = JSON.parse(raw);
+      q.delete();
+      if (Array.isArray(arr) && arr.length) matchAtoms = arr[0].atoms;
+    } catch (err) { matchAtoms = null; }
+    if (!refMol || !refMol.is_valid() || !matchAtoms) {
+      if (refMol) refMol.delete();
+      status('Auto core: the reference molecule does not match the MCS');
+      return;
+    }
+    // 4. attachments: matched atoms with heavy neighbours outside the match
+    const mb = refMol.get_molblock();
+    refMol.delete();
+    const L = sdfLines(mb);
+    const na = parseInt((L[3] || '').substring(0, 3)) || 0;
+    const nb = parseInt((L[3] || '').substring(3, 6)) || 0;
+    const adj = Array.from({ length: na }, () => []);
+    const bondLines = [];
+    for (let i = 4 + na; i < 4 + na + nb && i < L.length; i++) {
+      const l = L[i] || '';
+      const a = parseInt(l.substring(0, 3)), b = parseInt(l.substring(3, 6));
+      if (a >= 1 && b >= 1 && a <= na && b <= na) { adj[a - 1].push(b - 1); adj[b - 1].push(a - 1); bondLines.push([a - 1, b - 1, l]); }
+    }
+    const inMatch = new Set(matchAtoms);
+    const attachments = [];
+    for (const a of matchAtoms) {
+      for (const nb2 of adj[a]) if (!inMatch.has(nb2)) { attachments.push(a); break; }
+    }
+    // 5. sub-molblock: matched atoms + one R# dummy per attachment
+    const out = ['WebMM', '  RDKit 3D', '', ''];
+    const remap = new Map();
+    const atomLines = [];
+    for (const a of inMatch) { remap.set(a, remap.size + 1); atomLines.push(L[4 + a]); }
+    const dummyAtoms = [];
+    for (const a of attachments) {
+      dummyAtoms.push(atomLines.length + 1);   // index of the line being added
+      atomLines.push('    0.0000    0.0000    0.0000 R#  0  0  0  0  0  0  0  0  0  0  0  0');
+    }
+    const p3 = (x) => String(x).padStart(3);   // remap values are already 1-based
+    const outBonds = [];
+    for (const [a, b, l] of bondLines) {
+      if (inMatch.has(a) && inMatch.has(b)) outBonds.push(p3(remap.get(a)) + p3(remap.get(b)) + (l.substring(6) || '  1  0  0  0  0'));
+    }
+    attachments.forEach((a, k) => {
+      outBonds.push(p3(remap.get(a)) + p3(dummyAtoms[k]) + '  1  0  0  0  0');
+    });
+    out[3] = String(atomLines.length).padStart(3) + String(outBonds.length).padStart(3) + '  0  0  0  0  0  0  0  0999 V2000';
+    out.push(...atomLines, ...outBonds, 'M  END', '$$$$');
+    // 6. labeled SMILES
+    let coreSmiles = null;
+    try {
+      const cm = rdkitModule.get_mol(out.join('\n'));
+      if (cm && cm.is_valid()) { coreSmiles = cm.get_smiles(); cm.delete(); }
+    } catch (err) { coreSmiles = null; }
+    if (!coreSmiles || !coreSmiles.includes('*')) {
+      status(coreSmiles
+        ? `Auto core: "${coreSmiles}" has no attachment points (the reference is fully covered) — pick another family member or write labels manually`
+        : 'Auto core: could not convert the derived core to SMILES');
+      return;
+    }
+    let k = 0;
+    const labeled = coreSmiles.replace(/\*/g, () => `[*:${++k}]`);
+    document.getElementById('rgdCore').value = labeled;
+    status(`Auto core: family "${topScaffold}" (${family.length} members, MCS over ${members.length}) — ${attachments.length} attachment point(s) from "${ref.name || ref.smiles.slice(0, 20)}" — now Decompose`);
   }
 
   function runRGD() {
