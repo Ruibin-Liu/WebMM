@@ -149,7 +149,7 @@ fn enumerate_specs(atoms: &[ShapeAtom]) -> Vec<TermSpec> {
     };
     let vol_of = |alpha_sum: f64, log_c: f64, cn: [f64; 3], sas: f64| -> f64 {
         let dot = cn[0] * cn[0] + cn[1] * cn[1] + cn[2] * cn[2];
-        let cross = 0.5 * (alpha_sum * sas - dot);
+        let cross = alpha_sum * sas - dot;
         let c = (log_c - cross / alpha_sum).exp();
         let s = std::f64::consts::PI / alpha_sum;
         c * s * s.sqrt()
@@ -227,15 +227,15 @@ fn enumerate_specs(atoms: &[ShapeAtom]) -> Vec<TermSpec> {
 /// Per-pose materialized term: sufficient statistics for O(1) volume evals
 /// and O(1) merges with another term.
 #[derive(Clone, Copy)]
-struct TermPose {
-    alpha_sum: f64,
-    log_c: f64,
-    sign: f64,
-    center: [f64; 3],
+pub struct TermPose {
+    pub alpha_sum: f64,
+    pub log_c: f64,
+    pub sign: f64,
+    pub center: [f64; 3],
     /// α-weighted mean of |c|² (Σα|c|²/Σα) — rebuilds the cross sum.
-    mean_alpha_c_sq: f64,
+    pub mean_alpha_c_sq: f64,
     /// bounding radius over the term's atoms (prefilter).
-    r_bound: f64,
+    pub r_bound: f64,
 }
 
 impl TermPose {
@@ -248,7 +248,12 @@ impl TermPose {
         ];
         let sas = self.alpha_sum * self.mean_alpha_c_sq + o.alpha_sum * o.mean_alpha_c_sq;
         let dot = cn[0] * cn[0] + cn[1] * cn[1] + cn[2] * cn[2];
-        0.5 * (alpha * sas - dot)
+        // NB: the pairwise sum Σ_{i<j}αiαj d² = α·Σα|c|² − |Σαc|² carries NO
+        // ½ — an extra half here had been halving the Gaussian decay of every
+        // inclusion-exclusion term since v1.4.0 (found by the rigorous bound
+        // derivation in v1.6.3; self-consistent identities masked it, but it
+        // disagreed with the pairwise surrogate's β = αiαj/αij).
+        alpha * sas - dot
     }
 
     fn merged_volume(&self, o: &TermPose) -> f64 {
@@ -414,7 +419,11 @@ fn overlap_prepared_view(
 }
 
 /// Overlap of two prepared shapes, materialized at the given (posed) atom
-/// coordinates.
+/// coordinates. v1.6.3 fast path: α-index lookup tables for the pair
+/// prefactors (no per-pair sqrt/div) and a rigorous distance-bound skip
+/// (identity Σ_{i∈S,j∈T}αiαj d² = αS·αT·|cS−cT|² ⇒ V ≤ K·exp(−βd²), so a
+/// table d²max = ln(K/cutoff)/β skips without exp and never drops a
+/// contributing pair) — bit-identical to the reference pair loop.
 pub fn overlap_prepared(
     pa: &PreparedShape,
     a: &[ShapeAtom],
@@ -426,18 +435,70 @@ pub fn overlap_prepared(
     }
     let ta = materialize(&pa.specs, a);
     let tb = materialize(&pb.specs, b);
+    overlap_terms(&ta, &tb)
+}
+
+/// Pair loop over materialized terms with α-index tables and the rigorous
+/// distance bound. `cutoff` uses the same scale heuristic as before.
+pub fn overlap_terms(ta: &[TermPose], tb: &[TermPose]) -> f64 {
+    if ta.is_empty() || tb.is_empty() {
+        return 0.0;
+    }
     let scale: f64 = ta.iter().map(volume_of_term).sum::<f64>().abs().max(1e-12);
     let cutoff = 1e-7 * scale;
+    // α-index tables: collect distinct α values, tabulate K/β/d²max per pair
+    let mut alphas: Vec<f64> = Vec::new();
+    let idx_of = |alphas: &mut Vec<f64>, a: f64| -> usize {
+        for (i, x) in alphas.iter().enumerate() {
+            if (*x - a).abs() < 1e-12 {
+                return i;
+            }
+        }
+        alphas.push(a);
+        alphas.len() - 1
+    };
+    let ia: Vec<usize> = ta
+        .iter()
+        .map(|t| idx_of(&mut alphas, t.alpha_sum))
+        .collect();
+    let ib: Vec<usize> = tb
+        .iter()
+        .map(|t| idx_of(&mut alphas, t.alpha_sum))
+        .collect();
+    let n = alphas.len();
+    // per-α-pair tables: β[i][j] = αiαj/(αi+αj) and ln((π/αij)^{3/2}).
+    // The rigorous skip (per pair): V ≤ exp(lnc_a + lnc_b + lnstab − β·d²),
+    // using cross(S∪T) = crossS + crossT + αSαT·d², so the pair is dropped
+    // exactly when the bound falls below the cutoff — bit-identical totals
+    // (the per-term log_c carries the GCI^{na+nb} prefactor).
+    let mut beta = vec![0.0f64; n * n];
+    let mut lnstab = vec![0.0f64; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            let aij = alphas[i] + alphas[j];
+            beta[i * n + j] = alphas[i] * alphas[j] / aij;
+            let s_ = std::f64::consts::PI / aij;
+            lnstab[i * n + j] = 3.0 * 0.5 * (s_).ln(); // (π/α)^{3/2}
+        }
+    }
+    let lncutoff = cutoff.ln();
     let mut total = 0.0f64;
-    for pa in ta.iter() {
-        for pb in tb.iter() {
+    for (x, pa) in ta.iter().enumerate() {
+        let row = ia[x] * n;
+        for (y, pb) in tb.iter().enumerate() {
+            let col = ib[y];
+            let b = beta[row + col];
+            if b <= 1e-12 {
+                continue;
+            }
             let d = [
                 pa.center[0] - pb.center[0],
                 pa.center[1] - pb.center[1],
                 pa.center[2] - pb.center[2],
             ];
-            if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > (pa.r_bound + pb.r_bound + 7.0).powi(2) {
-                continue;
+            let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            if d2 * b > pa.log_c + pb.log_c + lnstab[row + col] - lncutoff {
+                continue; // rigorous bound: contribution < cutoff
             }
             let v = pa.merged_volume(pb);
             if v.abs() < cutoff {
@@ -1134,6 +1195,13 @@ pub fn align_colored(
     } else {
         (pq.self_overlap, pt.self_overlap)
     };
+    // query term poses are invariant across the whole alignment (the query
+    // never moves) — materialize once (v1.6.3)
+    let q_terms = if opts.screen {
+        Vec::new()
+    } else {
+        materialize(&pq.specs, &q)
+    };
     let n_starts = starts.len();
     let mut best_wt: Option<([f64; 3], [f64; 3])> = None;
     // Phase A: cheap optimization of every start; screen mode finishes here
@@ -1187,7 +1255,10 @@ pub fn align_colored(
     for &(o, w, t) in runs.iter().take(opts.rescore_top.max(1)) {
         // full rescoring at this pose (map centered pose back to query frame)
         let posed_rel = pose(&t_c, &w, &t); // aligned onto centered query
-        let vab = overlap_prepared(pq, &q, pt, &posed_rel);
+        let vab = {
+            let tb = materialize(&pt.specs, &posed_rel);
+            overlap_terms(&q_terms, &tb)
+        };
         let den = vq + vt - vab;
         let tj = if den > 0.0 {
             (vab / den).clamp(0.0, 1.0)
@@ -1247,7 +1318,10 @@ pub fn align_colored(
             optimize_pose(&q, &t_c, w, t, opts.max_iter / 2 + 10)
         };
         let posed_rel = pose(&t_c, &w2, &t2);
-        let vab2 = overlap_prepared(pq, &q, pt, &posed_rel);
+        let vab2 = {
+            let tb = materialize(&pt.specs, &posed_rel);
+            overlap_terms(&q_terms, &tb)
+        };
         let den2 = vq + vt - vab2;
         let tj = if den2 > 0.0 {
             (vab2 / den2).clamp(0.0, 1.0)
@@ -1809,5 +1883,58 @@ mod tests {
         let tba = shape_tanimoto(&b, &a);
         assert!((tab - tba).abs() < 1e-12);
         assert!((0.0..=1.0).contains(&tab));
+    }
+}
+
+#[cfg(test)]
+mod fastloop_tests {
+    use super::*;
+
+    /// Brute-force pair loop (no skips) vs overlap_terms — settles whether
+    /// the rigorous-bound skip changes totals (the 7Å+r_bound prefilter it
+    /// replaced may have been dropping contributing pairs).
+    #[test]
+    fn fast_loop_matches_brute_force() {
+        for name in [
+            "ethanol",
+            "aspirin",
+            "ibuprofen",
+            "naphthalene",
+            "threonine",
+        ] {
+            let sdf =
+                std::fs::read_to_string(format!("tests/fixtures/conformers/{name}.sdf")).unwrap();
+            let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+            let atoms = shape_atoms(&mol);
+            let w = [0.9, 0.4, -0.6];
+            let posed: Vec<ShapeAtom> = atoms
+                .iter()
+                .map(|a| ShapeAtom {
+                    c: rodrigues(&w, &[1.0, -1.0, 0.5], &a.c),
+                    alpha: a.alpha,
+                })
+                .collect();
+            let ta = materialize(&prepare_shape(&atoms).specs, &atoms);
+            let tb = materialize(&prepare_shape(&posed).specs, &posed);
+            let fast = overlap_terms(&ta, &tb);
+            // brute force: same iteration order, no skipping of any kind
+            let scale: f64 = ta.iter().map(volume_of_term).sum::<f64>().abs().max(1e-12);
+            let cutoff = 1e-7 * scale;
+            let mut total = 0.0f64;
+            for pa in ta.iter() {
+                for pb in tb.iter() {
+                    let v = pa.merged_volume(pb);
+                    if v.abs() < cutoff {
+                        continue;
+                    }
+                    total += pa.sign * pb.sign * v;
+                }
+            }
+            assert!(
+                (fast - total).abs() < 1e-9,
+                "{name}: fast {fast} vs brute {total} (delta {})",
+                (fast - total).abs()
+            );
+        }
     }
 }

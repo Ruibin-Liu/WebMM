@@ -1,32 +1,31 @@
-# Plan: 形状预制缓存 —— 项枚举/自体积一次性化(v1.6.2)
+# Plan: 双线性对循环加速 —— α 索引查表 + 严格距离界跳过 + 查询侧物化缓存(v1.6.3)
 
-## 背景与无损性论证
+## 剩余成本解剖(v1.6.2,~229ms 浏览器内)
 
-v1.6.1 成本模型 T ≈ 65(起点)+ 50(自体积)+ 8×25(重打分)+ 25(polish)。
-其中重复计算有二:
-1. **每次重打分**(overlap_full)都对查询与目标**重新枚举项规格**——
-   而项剪枝判据 v/(V_e+V_j−v) ≥ EPS 只依赖原子间距离
-   (cross = ½(αΣα|c|²−|Σαc|²) 平移/旋转不变)→ **刚性姿态下项结构恒同,
-   枚举一次即够,位值不变(无损)**
-2. **自体积 vq/vt**(位形不变量)逐次调用重算;库扫描中查询侧重复 N 次
+- 重打分 ~8×25ms:每对项做 merged_volume = K_ij·exp(−cross/α)(每对一次
+  sqrt+除法+exp),加上粗 heuristic 预滤(7Å+r_bound——对多原子项的
+  r_bound 大,近乎全过)
+- 查询侧 TermPose 每次重打分重新物化——但查询在对齐中不动!
 
-## 设计(引擎,无 API 变化)
+## 三个加速点(全部位值无损,论证见下)
 
-1. `PreparedShape { specs, atoms, self_overlap(惰性) }`:
-   `prepare_shape(&atoms)`;`overlap_prepared(pa, a_atoms, pb, b_atoms)`
-   (materialize 于当前姿态 + 双线性);`overlap_full` 变薄壳(测试/screen 兼容)
-2. align_colored:查询/目标各 prepare 一次,重打分循环只 materialize+双线性;
-   自体积惰性一次
-3. **wasm 层透明缓存**:`Mutex<HashMap<u64, Arc<PreparedShape>>>`(SDF 字符串
-   hash 为键,容量 512 超限清空)——库扫描中查询侧全缓存、重复检索目标侧
-   复用;shape_align_wasm / shape_align_color_wasm 签名不变
-4. 版本 1.6.1 → 1.6.2(纯性能,值位不变)
+1. **α 索引查表**:α 只有元素级离散值(每分子 ~4-6 种);按α值索引建
+   K[i][j] = GCI²(π/αij)^{3/2} 与 β[i][j] = αiαj/(αi+αj) 表(每对齐
+   一次),对循环零 sqrt/除法(查表)
+2. **严格距离界跳过**:恒等式 Σ_{i∈S,j∈T}αiαj d² = αS·αT·|cS−cT|²
+   ⟹ V_pair ≤ K·exp(−β·d²) ⟹ d²max[i][j] = ln(K/cutoff)/β 表化;
+   纯比较跳过,免 exp。**界是精确下界外推 → 永不漏贡献项**;且
+   d²max ≤ ~4.2Å² < 旧 7Å 阈 ⟹ 跳得更准。被旧法"计算后因 <cutoff 丢弃"
+   的对现在被界跳过——两者都不计入总和 ⟹ **位值逐位不变**(求和顺序
+   不变)
+3. **查询侧物化缓存**:align_colored 中查询项的 TermPose 物化一次,
+   重打分循环复用(overlap_prepared_with 变体)
 
 ## 验收
 
-1. **位值无损**:单测 prepare 路径 vs 旧 overlap_full 位值一致(同姿态
-   bit-exact);全部既有测试(自对齐 1.000000、等价性 <0.02 等)不回归
-2. 性能:node bench rescore_top=8 重复调用(查询缓存命中)398ms →
-   预期 ≤300ms;库扫描逐条目耗时再降(实测报告)
-3. 质量回归:浏览器两段式 top-20 召回 19/20 不变;sim/sub/390px/
-   零 page error;294 测试 + 新增;clippy(1.98,-D warnings)、fmt
+1. 位值不变:node 冒烟 tanimoto 逐位(0.689534...);既有 294 测试 +
+   自对齐 1.000000 不回归
+2. 性能:node fixtures 367ms → 预期 ≤220ms;浏览器内 229ms → 预期
+   ≤160ms(实测如实报告)
+3. 质量回归:两段式召回 19/20;sim/sub/390px/零 page error;clippy
+   (1.98,-D warnings)、fmt;版本 1.6.2→1.6.3
