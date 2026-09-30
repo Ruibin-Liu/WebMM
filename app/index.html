@@ -88,6 +88,14 @@
    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
  }
 
+ /* Static guidance/caption prose — sans like the body (mono .version is for
+    version stamps, live status readouts, and aligned numbers/matrices) */
+ .hint {
+   color: var(--muted);
+   font-size: 0.75rem;
+   line-height: 1.45;
+ }
+
  .badges {
    margin-top: 0.75rem;
    display: flex;
@@ -850,7 +858,7 @@ details {
       <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
         <input type="checkbox" id="batch3d"> 3D: embed + MMFF94s optimize
       </label>
-      <span class="version" id="batchInfo">descriptors + drug rules + QED/PAINS · 3D optional · sort/filter · export CSV/SDF</span>
+      <span class="hint" id="batchInfo">descriptors + drug rules + QED/PAINS · 3D optional · sort/filter · export CSV/SDF</span>
     </div>
   </div>
 
@@ -1144,7 +1152,7 @@ details {
        <tbody id="batchRows"></tbody>
      </table>
      </div>
-     <div class="version" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+     <div class="hint" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
    </div>
 
    <div id="searchPanel" class="panel" style="display:none;">
@@ -1158,7 +1166,7 @@ details {
        <tbody id="searchRows"></tbody>
      </table>
      </div>
-     <div class="version" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+     <div class="hint" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
    </div>
 
    <div id="rgdPanel" class="panel" style="display:none;">
@@ -1177,7 +1185,7 @@ details {
        <tbody id="rgdRows"></tbody>
      </table>
      </div>
-     <div class="version" style="margin-top:0.4rem;">the core needs explicit [*:n] attachment labels; molecules not containing the core are skipped; the first match per molecule is used</div>
+     <div class="hint" style="margin-top:0.4rem;">the core needs explicit [*:n] attachment labels; molecules not containing the core are skipped; the first match per molecule is used</div>
    </div>
 
    <div id="scaffoldPanel" class="panel" style="display:none;">
@@ -1193,7 +1201,7 @@ details {
        <tbody id="scaffoldRows"></tbody>
      </table>
      </div>
-     <div class="version" style="margin-top:0.4rem;">click a row to load the scaffold into the single-molecule view</div>
+     <div class="hint" style="margin-top:0.4rem;">click a row to load the scaffold into the single-molecule view</div>
    </div>
 
    <div id="pharmQueryPanel" class="panel" style="display:none;">
@@ -1215,7 +1223,7 @@ details {
        <tbody id="pharmQRows"></tbody>
      </table>
      </div>
-     <div class="version" style="margin-top:0.4rem;">pick 2–6 features, set a distance tolerance and a conformer count; each library molecule is screened across its conformer ensemble (no alignment — pure geometric constraints; conformer 1 ≈ the single-conformer path)</div>
+     <div class="hint" style="margin-top:0.4rem;">pick 2–6 features, set a distance tolerance and a conformer count; each library molecule is screened across its conformer ensemble (no alignment — pure geometric constraints; conformer 1 ≈ the single-conformer path)</div>
    </div>
 
   <div class="crosslinks">
