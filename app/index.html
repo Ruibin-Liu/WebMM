@@ -1906,6 +1906,7 @@ function rdkitAvailable() {
     searchLibrary = null;
     try { localStorage.removeItem(SEARCH_LIB_KEY); } catch (e) {}
     document.getElementById('searchPanel').style.display = 'none';
+    modeShown.search = false;   // cleared library invalidates the stale hit table
     searchStatus('Library cleared');
   }
 
@@ -1982,6 +1983,7 @@ function rdkitAvailable() {
     const r = loadSearchLibraryFrom(items);
     if (!r) return;
     document.getElementById('searchPanel').style.display = 'none';
+    modeShown.search = false;   // a new library invalidates the old hit table
     searchStatus(`Library loaded: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}` +
       (r.skipped ? `, ${r.skipped} skipped (unparseable)` : ''));
   }
@@ -1992,6 +1994,7 @@ function rdkitAvailable() {
     const r = loadSearchLibraryFrom(demo.map(e => ({ smiles: e.smiles, name: e.name })));
     if (!r) return;
     document.getElementById('searchPanel').style.display = 'none';
+    modeShown.search = false;   // a new library invalidates the old hit table
     searchStatus(`Demo library loaded: ${r.lib.length} molecules (repo test set + named drugs)`);
   }
 
@@ -3235,7 +3238,14 @@ function rdkitAvailable() {
     const f = e.dataTransfer.files[0];
     if (!f) return;
     const r = new FileReader();
-    r.onload = () => { document.getElementById("input").value = r.result; process(); };
+    r.onload = () => {
+     // per-mode input box: in batch/search the file fills the box but is not
+     // auto-processed as a single molecule (Run batch / Load library is explicit)
+     document.getElementById("input").value = r.result;
+     if (batchMode) return;
+     if (searchMode) { searchStatus('File loaded into the input box — press Load library'); return; }
+     process();
+   };
      r.readAsText(f);
    };
 
@@ -3862,7 +3872,21 @@ let batchQueue = [];       // pending 3D jobs
 let batchWorkers = [];
 let batchResults = [];
 
+// The textarea and the main result section are PER-MODE: a single-molecule
+// SMILES must never sit in the batch/library box (it would be parsed as a
+// multi-line list there), and the single-molecule output (2D/3D/properties)
+// does not belong to the batch/search views (nor do their result tables in
+// the single view). Each mode's input text and result-section visibility are
+// remembered across tab switches — switching away never destroys the other
+// modes' work (row-click → single view → back keeps the batch table).
+const modeInputs = { single: '', batch: '', search: '' };
+const modeShown = { single: false, batch: false, search: false };
+const MODE_SECTION = { single: 'output', batch: 'batchPanel', search: 'searchPanel' };
+
 function switchMode(m) {
+  const cur = searchMode ? 'search' : batchMode ? 'batch' : 'single';
+  modeInputs[cur] = document.getElementById('input').value;
+  modeShown[cur] = document.getElementById(MODE_SECTION[cur]).style.display === 'block';
   batchMode = (m === 'batch');
   searchMode = (m === 'search');
   const single = !batchMode && !searchMode;
@@ -3874,16 +3898,22 @@ function switchMode(m) {
   document.getElementById('tabSearch').setAttribute('aria-selected', String(searchMode));
   document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
   document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
+  document.getElementById('output').style.display = (single && modeShown.single) ? 'block' : 'none';
+  document.getElementById('batchPanel').style.display = (batchMode && modeShown.batch) ? 'block' : 'none';
+  document.getElementById('searchPanel').style.display = (searchMode && modeShown.search) ? 'block' : 'none';
   document.getElementById('rgdPanel').style.display = searchMode ? (rgdResults ? 'block' : 'none') : 'none';
   document.getElementById('scaffoldPanel').style.display = searchMode ? (scaffoldResults ? 'block' : 'none') : 'none';
   document.getElementById('pharmQueryPanel').style.display = searchMode ? 'block' : 'none';
   if (searchMode) restoreSearchLibrary();
   document.getElementById('singleActions').style.display = single ? 'flex' : 'none';
-  document.getElementById('input').placeholder = batchMode
+  const inputEl = document.getElementById('input');
+  inputEl.value = modeInputs[m];
+  inputEl.placeholder = batchMode
     ? 'One SMILES per line (optionally: SMILES name), or a multi-record SDF'
     : searchMode
     ? 'Library: one SMILES + name per line, or a multi-record SDF'
     : 'Paste SMILES, MolBlock, or SDF here';
+  clearError();   // error text belongs to the mode that produced it
 }
 
 function parseBatchInputs() {
