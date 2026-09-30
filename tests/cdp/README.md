@@ -11,7 +11,7 @@ Headless-Chromium end-to-end suites (Playwright). They need:
 Run all (from this directory):
     node m0_core.test.js && node m1_3d_pipeline.test.js && \
     node m2_conformers.test.js && node m3_site_nav.test.js && \
-    node m4_batch.test.js
+    node m4_batch.test.js && node m5_search_e2e.test.js
 
 Suites:
 - m0_core           2D parse/render, properties, buttons, history, JSME
@@ -19,3 +19,6 @@ Suites:
 - m2_conformers     ensemble ranking, chart, ΔE reopt, cancel path
 - m3_site_nav       URL deep-links, history modal, axe a11y, keyboard nav
 - m4_batch          batch descriptors, CSV, 3D + SDF provenance
+- m5_search_e2e     Search tab: library persistence, similarity/substructure
+                    parity vs tests/fixtures/lbdd (exact), shape+pharm filter,
+                    RGD, scaffold frequency, pharmacophore screen
