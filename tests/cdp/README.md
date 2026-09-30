@@ -18,7 +18,9 @@ Suites:
 - m1_3d_pipeline    embed → optimize → GFN-FF → exports (incl. demo parity)
 - m2_conformers     ensemble ranking, chart, ΔE reopt, cancel path
 - m3_site_nav       URL deep-links, history modal, axe a11y, keyboard nav
-- m4_batch          batch descriptors, CSV, 3D + SDF provenance
+- m4_batch          batch descriptors/QED/PAINS parity vs batch_refs.json,
+                    sort/filter/error-row/SDF-input/cancel/row-reload,
+                    CSV content, 3D + SDF provenance
 - m5_search_e2e     Search tab: library persistence, similarity/substructure
                     parity vs tests/fixtures/lbdd (exact), shape+pharm filter,
                     RGD, scaffold frequency, pharmacophore screen
