@@ -842,7 +842,7 @@ details {
   <div id="batchBar" style="display:none;">
     <div class="separator">-- one SMILES per line, or a multi-record SDF --</div>
     <div class="action-buttons" style="justify-content:flex-start;">
-      <button id="btnBatchRun" class="primary" onclick="runBatch()">
+      <button id="btnBatchRun" class="action-btn primary" style="width:auto;" onclick="runBatch()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,3 19,12 5,21"/></svg>
         Run batch
       </button>
@@ -857,11 +857,11 @@ details {
   <div id="searchBar" style="display:none;">
     <div class="separator">-- library: one SMILES + name per line, or a multi-record SDF · then search below --</div>
     <div class="action-buttons" style="justify-content:flex-start;">
-      <button id="btnLibLoad" class="primary" onclick="loadSearchLibrary()">
+      <button id="btnLibLoad" class="action-btn primary" style="width:auto;" onclick="loadSearchLibrary()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,3 19,12 5,21"/></svg>
         Load library
       </button>
-      <button id="btnLibDemo" class="action-btn edit" onclick="loadDemoLibrary()" title="Load the bundled demo library (repo test molecules + named drugs)">Demo library</button>
+      <button id="btnLibDemo" class="action-btn edit" style="width:auto;" onclick="loadDemoLibrary()" title="Load the bundled demo library (repo test molecules + named drugs)">Demo library</button>
       <button id="btnLibClear" class="action-btn clear" onclick="clearSearchLibrary()" title="Clear the current library and forget the saved one">Clear</button>
       <label class="action-btn export" style="cursor:pointer;" title="Upload a .smi / .txt / .sdf library file">
         Upload file
@@ -892,7 +892,7 @@ details {
         <option value="0.8">≥80%</option>
         <option value="1">all</option>
       </select>
-      <button id="btnSearchRun" class="primary" onclick="runSearch()">Search</button>
+      <button id="btnSearchRun" class="action-btn primary" onclick="runSearch()">Search</button>
     </div>
     <div class="version" id="searchStatus" aria-live="polite" style="margin:0.3rem 0 0;"></div>
   </div>
@@ -1167,7 +1167,7 @@ details {
        <input type="text" id="rgdCore" placeholder="Core with attachment labels, e.g. [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
        <button class="action-btn edit" onclick="fillRgdExample()" title="Fill a para-disubstituted benzene example core">Example</button>
       <button class="action-btn edit" onclick="autoRgdCore()" title="Derive a labeled core automatically: MCS of the most frequent scaffold family, attachment points from the first member">Auto core</button>
-       <button id="btnRGD" class="primary" onclick="runRGD()">Decompose library</button>
+       <button id="btnRGD" class="action-btn primary" style="width:auto;" onclick="runRGD()">Decompose library</button>
        <button class="action-btn export" onclick="exportRGDCSV()">Export CSV</button>
      </div>
      <div class="version" id="rgdStatus" aria-live="polite"></div>
@@ -1183,7 +1183,7 @@ details {
    <div id="scaffoldPanel" class="panel" style="display:none;">
      <strong>Scaffold Frequency</strong>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
-       <button id="btnScaffold" class="primary" onclick="analyzeScaffolds()">Analyze scaffolds</button>
+       <button id="btnScaffold" class="action-btn primary" style="width:auto;" onclick="analyzeScaffolds()">Analyze scaffolds</button>
        <button class="action-btn export" onclick="exportScaffoldCSV()">Export CSV</button>
      </div>
      <div class="version" id="scaffoldStatus" aria-live="polite"></div>
@@ -1199,12 +1199,12 @@ details {
    <div id="pharmQueryPanel" class="panel" style="display:none;">
      <strong>Pharmacophore Query</strong>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
-       <button class="action-btn edit" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">Build from current molecule</button>
+       <button class="action-btn edit" style="width:auto;" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">Build from current molecule</button>
        <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± tolerance (Å)</label>
        <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
        <label for="pharmConfs" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Conformers generated per molecule (more = fewer false negatives, slower)">conformers</label>
        <input type="number" id="pharmConfs" min="1" max="50" value="10" style="width:4rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
-       <button id="btnPharmQ" class="primary" onclick="screenPharmQuery()">Screen library</button>
+       <button id="btnPharmQ" class="action-btn primary" style="width:auto;" onclick="screenPharmQuery()">Screen library</button>
      </div>
      <div class="version" id="pharmQStatus" aria-live="polite"></div>
      <div id="pharmQFeatures" style="max-height:180px; overflow-y:auto; margin:0.3rem 0;"></div>
