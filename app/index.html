@@ -657,6 +657,14 @@ textarea:focus {
     margin-top: 0.75rem;
     margin-bottom: 0.75rem;
   }
+  /* anchors the in-frame view-reset button (a sibling of #viewer3d so the
+     role="img" container holds no interactive content) */
+  .viewer-wrap {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+  }
   #viewer3d {
     position: relative;          /* anchor 3Dmol's absolutely-positioned canvas */
     flex: 1 1 auto;
@@ -1001,8 +1009,13 @@ details {
    <div class="panel">
      <strong>3D Structure</strong>
      <div class="viewer-row">
-       <div id="viewer3d" role="img" aria-label="3D molecule viewer">
-         Embed a 3D structure to begin (ETKDG)
+       <div class="viewer-wrap">
+         <div id="viewer3d" role="img" aria-label="3D molecule viewer">
+           Embed a 3D structure to begin (ETKDG)
+         </div>
+         <!-- sibling of the role="img" container: a button inside it would be
+              a nested-interactive axe violation (the img role truncates the
+              accessibility tree); the wrapper provides the position anchor -->
          <button class="view-reset" id="btn-viewreset" title="Reset view" aria-label="Reset view">⟲</button>
        </div>
        <div id="energyPanel" style="display:none;">
@@ -3781,11 +3794,11 @@ let molEpoch = 0;          // bumped on every process() — stale async results 
 
 function clear3DViewer() {
   const el = document.getElementById('viewer3d');
-  const resetBtn = document.getElementById('btn-viewreset'); // grab before the rewrite drops it
   if (viewer && viewer.clear) { try { viewer.clear(); } catch (e) { /* ignore */ } }
   viewer = null;
+  // the view-reset button is a SIBLING of this container (a11y: no
+  // interactive content inside role="img") — the rewrite cannot drop it
   el.innerHTML = 'Embed a 3D structure to begin (ETKDG)';
-  if (resetBtn) el.appendChild(resetBtn);
 }
 
 // Reset every 3D-panel state when the input molecule changes: structure,
@@ -3826,10 +3839,8 @@ function enable3dActions() {
 function initViewer() {
   if (viewer) return viewer;
   const el = document.getElementById('viewer3d');
-  const resetBtn = document.getElementById('btn-viewreset');
   el.innerHTML = '';
   viewer = $3Dmol.createViewer(el, { backgroundColor: 'white' });
-  if (resetBtn) el.appendChild(resetBtn); // after createViewer: it empties the container itself
   viewer.resize();
   return viewer;
 }

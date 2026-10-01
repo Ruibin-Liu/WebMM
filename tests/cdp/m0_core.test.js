@@ -62,14 +62,21 @@ async function collect(page, smiles) {
     // RDKit 2026.03 revised the Lipinski HBA SMARTS; when the CDN-served MC
     // page runs a newer RDKit than the app's vendored copy, HBA may differ on
     // kekule input. Compare per-key and allow exactly that documented drift.
+    // Key-intersection comparison: the app's props table gained rows the MC
+    // reference never had (QED mean/max, LBDD milestone) — the whole-table
+    // length check failed forever on those. Every row present on BOTH sides
+    // must still match exactly (HBA version drift stays allowed).
     const propsEqual = (pa, pb) => {
-      if (!pa || !pb || pa.length !== pb.length) return false;
-      return pa.every((row, i) => row[0] === pb[i][0] && (row[1] === pb[i][1] ||
-        (row[0] === 'HBA' && mcVersion !== appVersion)));
+      if (!pa || !pb) return false;
+      const mb = Object.fromEntries(pb.map(r => [r[0], r[1]]));
+      return pa.length > 0 && pa.every(row => row[0] in mb &&
+        (row[1] === mb[row[0]] || (row[0] === 'HBA' && mcVersion !== appVersion)));
     };
-    check('props identical', propsEqual(a.props, b.props),
-      JSON.stringify(b.props) + (mcVersion !== appVersion && a.props && b.props &&
-        a.props.some((r, i) => r[0] === 'HBA' && r[1] !== b.props[i][1])
+    const hbaDrift = a.props && b.props && mcVersion !== appVersion &&
+      a.props.some(r => r[0] === 'HBA' && b.props.some(r2 => r2[0] === 'HBA') &&
+        r[1] !== Object.fromEntries(b.props.map(r2 => [r2[0], r2[1]]))['HBA']);
+    check('props identical (shared rows)', propsEqual(a.props, b.props),
+      JSON.stringify(b.props) + (hbaDrift
         ? ` (note: RDKit version drift MC ${mcVersion} vs app ${appVersion} — HBA definition changed in 2026.03, allowed)` : ''));
     check('rules identical', JSON.stringify(a.rules) === JSON.stringify(b.rules), b.rules.map(r => r.join('=')).join(' '));
     check('moreProps identical', JSON.stringify(a.moreProps) === JSON.stringify(b.moreProps), JSON.stringify(b.moreProps));
