@@ -121,7 +121,14 @@ self.onmessage = async (e) => {
         // per conformer makes list / chart / panel / export all report the
         // energy OF the geometry the user sees (see the v1.3.2 fix note).
         let E = energies[i];
-        try { E = JSON.parse(wasm.energy_terms_wasm(sdf, engine)).E; } catch (e) { /* keep batch E */ }
+        try {
+          const e2 = JSON.parse(wasm.energy_terms_wasm(sdf, engine)).E;
+          // a fresh FF built at the quantized geometry can perceive a different
+          // topology (bond detection reads geometry) and blow up (NaN -> JSON
+          // null, e.g. rep sqrt of a negative radius factor) — keep the batch
+          // energy, which comes from the FF that actually optimized this conformer
+          if (Number.isFinite(e2)) E = e2;
+        } catch (e) { /* keep batch E */ }
         self.postMessage({
           type: 'conf', seed: seeds[i], E,
           converged: !!conv[i], iterations: iters[i],

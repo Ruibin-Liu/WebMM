@@ -1832,6 +1832,45 @@ mod conformer_batch_tests {
         assert!(!generate_conformers_wasm(ETHANOL_SDF, 0, 42).get_success());
         assert!(!generate_conformers_wasm(ETHANOL_SDF, 501, 42).get_success());
     }
+
+    /// Regression for the GFN-FF short-range singularity (CLASH_FLOOR
+    /// gates plus the line-search floor): pre-fix, two of the hundred
+    /// optimizations of this 43-heavy-atom drug molecule dived into the
+    /// ATM/HB singular funnels (atom collapse to 0.0009 Å, reported
+    /// E ~ -1e22 kcal/mol), poisoning the ensemble ranking. Every
+    /// conformer must stay in the healthy band now.
+    const CLASH_MOL_SDF: &str = include_str!("../tests/fixtures/gfnff/c30h32cln9o3.mol");
+
+    #[test]
+    fn gfnff_conformers_clash_regression() {
+        let batch = generate_optimized_conformers_wasm(CLASH_MOL_SDF, 3, 42, "GFNFF", 50);
+        assert!(batch.get_success(), "batch failed: {}", batch.get_error());
+        let es = batch.get_energies();
+        assert_eq!(es.len(), 3);
+        for (i, &e) in es.iter().enumerate() {
+            assert!(
+                e.is_finite() && e > -11000.0 && e < -7000.0,
+                "conformer {i} energy out of the healthy band: {e}"
+            );
+        }
+        let na = batch.get_n_atoms();
+        let c = batch.get_coordinates();
+        for i in 0..3 {
+            let mut md = f64::INFINITY;
+            for a in 0..na {
+                for b in (a + 1)..na {
+                    let d = ((c[(i * na + a) * 3] - c[(i * na + b) * 3]).powi(2)
+                        + (c[(i * na + a) * 3 + 1] - c[(i * na + b) * 3 + 1]).powi(2)
+                        + (c[(i * na + a) * 3 + 2] - c[(i * na + b) * 3 + 2]).powi(2))
+                    .sqrt();
+                    if d < md {
+                        md = d;
+                    }
+                }
+            }
+            assert!(md >= 0.4, "conformer {i} collapsed pair: {md} Å");
+        }
+    }
 }
 
 #[cfg(test)]

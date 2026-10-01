@@ -6,7 +6,8 @@ Headless-Chromium end-to-end suites (Playwright). They need:
 - a Chromium binary at the PLAYWRIGHT path hard-coded in each file
   (update after Playwright cache upgrades)
 - /tmp/caff24.sdf for m1 (24-atom caffeine, regenerated via RDKit:
-  AddHs('Cn1c(=O)c2c(ncn2C)n(C)c1=O') → ETKDG(42) → MMFF94s opt)
+  AddHs('Cn1cnc2c1c(=O)n(C)c(=O)n2C') → ETKDG(42) → MMFF94s opt
+  (24-atom caffeine; an earlier recipe here was theophylline (21 atoms))
 
 Run all (from this directory):
     node m0_core.test.js && node m1_3d_pipeline.test.js && \

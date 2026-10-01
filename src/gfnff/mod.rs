@@ -49,6 +49,66 @@ thread_local! {
 } // Angstrom per Bohr (xtb convention)
 const TSQRT2PI: f64 = 0.797884560802866; // sqrt(2/pi)
 
+/// Smooth short-range damping for the inverse-power many-body terms
+/// (ATM c9·(ang+1)/(r_ij·r_jk·r_ik)^3 — a 1/r^9 form unbounded BELOW for
+/// c9<0 — and the HB/XB damp/r^3 forms whose own damping does not fully
+/// cancel the divergence at r→0). D = f(r_ij)·f(r_ik)·f(r_jk) with
+/// f(r) = 1 - exp(-(r/r0)^12) multiplies the term: at healthy distances
+/// f is exactly 1.0 in f64 (X-H bond 0.9 Å → 1 - e^-41), the landscape
+/// stays continuous everywhere (a hard gate was tried first and FAILED —
+/// the ATM/HB terms are still -150..-180 kcal/mol AT an 0.8 Å boundary,
+/// and the reopening discontinuity created an artificial attractor that
+/// the line search harvested for thousands of kcal/mol), and the terms
+/// are dead below ~0.4 Å where the singular funnels used to live
+/// (observed: 2/100 GFN-FF conformers of a 75-atom drug molecule
+/// collapsed atom pairs to 0.0009 Å and reported E ~ -1e22 kcal/mol).
+/// Deviation from upstream xtb (which never enters this region with its
+/// trust-region optimizer); documented as a robustness backstop.
+const CLASH_DAMP_R0: f64 = 0.66 / BOHR;   // 0.66 Å in Bohr
+
+/// f(r) = 1 - exp(-(r/r0)^12): 1.0 (exactly, in f64) at healthy distances,
+/// →0 smoothly as r→0. r in Bohr.
+#[inline]
+fn clash_damp(r: f64) -> f64 {
+    1.0 - (-(r / CLASH_DAMP_R0).powi(12)).exp()
+}
+
+/// f'(r) = exp(-(r/r0)^12)·12·r^11/r0^12 (0 at r = 0). r in Bohr.
+#[inline]
+fn clash_damp_deriv(r: f64) -> f64 {
+    (-(r / CLASH_DAMP_R0).powi(12)).exp() * 12.0 * r.powi(11) / CLASH_DAMP_R0.powi(12)
+}
+
+/// (D, ∂D/∂x_i, ∂D/∂x_j, ∂D/∂x_k) for D = f(r_ij)·f(r_ik)·f(r_jk).
+/// The caller multiplies a term energy E0 by D and its gradient by
+/// D·∇E0 + E0·∇D (the term's own gradient code is untouched). xyz in Bohr.
+fn clash_damp3(
+    xyz: &[[f64; 3]],
+    i: usize,
+    j: usize,
+    k: usize,
+) -> (f64, [[f64; 3]; 3]) {
+    let v = |a: usize, b: usize| [xyz[a][0] - xyz[b][0], xyz[a][1] - xyz[b][1], xyz[a][2] - xyz[b][2]];
+    let rij = dist2(xyz, i, j).sqrt();
+    let rik = dist2(xyz, i, k).sqrt();
+    let rjk = dist2(xyz, j, k).sqrt();
+    let (fij, dij) = (clash_damp(rij), clash_damp_deriv(rij));
+    let (fik, dik) = (clash_damp(rik), clash_damp_deriv(rik));
+    let (fjk, djk) = (clash_damp(rjk), clash_damp_deriv(rjk));
+    let d = fij * fik * fjk;
+    let uij = scale3(v(i, j), 1.0 / rij);
+    let uik = scale3(v(i, k), 1.0 / rik);
+    let ujk = scale3(v(j, k), 1.0 / rjk);
+    let mut g = [[0.0f64; 3]; 3];
+    for t in 0..3 {
+        g[0][t] = dij * fik * fjk * uij[t] + dik * fij * fjk * uik[t];
+        g[1][t] = -dij * fik * fjk * uij[t] + djk * fij * fik * ujk[t];
+        g[2][t] = -dik * fij * fjk * uik[t] - djk * fij * fik * ujk[t];
+    }
+    (d, g)
+}
+
+
 // ---------------------------------------------------------------------------
 // parameters
 // ---------------------------------------------------------------------------
@@ -1758,7 +1818,7 @@ impl Gfnff {
                     }
                 }
             }
-            q = solve_sym(&a2, &x2);
+            q = solve_eeq_kkt(&a2, &x2, n);
             for i in 0..n { for j in 0..i {
                 let g = 1.0 / (self.topo.alpeeq[i] + self.topo.alpeeq[j]).sqrt();
                 let r = dist(i, j);
@@ -1940,6 +2000,8 @@ impl Gfnff {
         let rbh2 = dist2(xyz, b, h); let rbh = rbh2.sqrt();
         let rahprbh = rah + rbh + 1e-12;
         let radab = p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1];
+        // smooth short-range damping (clash_damp3 over A···B / A-H / B···H)
+        let (cdamp, cgd) = clash_damp3(xyz, a, b, h);
         let expo = (p.hbacut / radab) * (rahprbh / rab - 1.0);
         if expo > 15.0 { return 0.0; }
         let ratio2 = expo.exp();
@@ -1965,7 +2027,8 @@ impl Gfnff {
         let aci = (cb2 * rah4 + ca2 * rbh4) * denom;
         let qhoutl = qh * outl;
         let rterm = -aci * rdamp * qhoutl;
-        let energy = bas * rterm;
+        let energy0 = // damped below (clash_damp3)
+        bas * rterm;
         // gradient
         let drah = sub3(xyz, a, h);
         let drbh = sub3(xyz, b, h);
@@ -2007,10 +2070,11 @@ impl Gfnff {
         ga = add3(ga, dga);
         gb = add3(gb, dgb);
         gh = [gh[0] - dga[0] - dgb[0], gh[1] - dga[1] - dgb[1], gh[2] - dga[2] - dgb[2]];
+        let energy = energy0 * cdamp;
         for t in 0..3 {
-            g[a][t] += ga[t];
-            g[b][t] += gb[t];
-            g[h][t] += gh[t];
+            g[a][t] += cdamp * ga[t] + energy0 * cgd[0][t];
+            g[b][t] += cdamp * gb[t] + energy0 * cgd[1][t];
+            g[h][t] += cdamp * gh[t] + energy0 * cgd[2][t];
         }
         energy
     }
@@ -2025,6 +2089,10 @@ impl Gfnff {
         let rbh2 = dist2(xyz, b, h); let rbh = rbh2.sqrt();
         let rahprbh = rah + rbh + 1e-12;
         let radab = p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1];
+        // smooth short-range damping (clash_damp3 over A···B / A-H / B···H):
+        // kills the damp/r^3 divergence below ~0.4 Å, zero drift at healthy
+        // distances; E = D·E0, ∇ = D·∇E0 + E0·∇D
+        let (cdamp, cgd) = clash_damp3(xyz, a, b, h);
         let expo = (p.hbacut / radab) * (rahprbh / rab - 1.0);
         if expo > 15.0 { return 0.0; }
         let ratio2 = expo.exp();
@@ -2064,7 +2132,8 @@ impl Gfnff {
         let qb = Self::csig((-p.hbst * self.topo.qa[b]).exp(), p.hbsf);
         let qhoutl = qh * outl * outl_nb_tot;
         let const_ = self.topo.hbaci[a] * qa * self.topo.hbbas[b] * qb * p.xhaci_globabh;
-        let energy = -rdamp * qhoutl * const_;
+        let energy0 = // damped below (clash_damp3)
+        -rdamp * qhoutl * const_;
         // gradient
         let drah = sub3(xyz, a, h);
         let drbh = sub3(xyz, b, h);
@@ -2103,12 +2172,13 @@ impl Gfnff {
             let dgb = scale3(drbnb[i], tmp2 / rbnb[i]);
             ga = add3(ga, dga); gb = add3(gb, dgb);
             let nbj = self.topo.nb[b][i];
-            for t in 0..3 { g[nbj][t] -= dga[t] + dgb[t]; }
+            for t in 0..3 { g[nbj][t] -= cdamp * (dga[t] + dgb[t]); }
         }
+        let energy = energy0 * cdamp;
         for t in 0..3 {
-            g[a][t] += ga[t];
-            g[b][t] += gb[t];
-            g[h][t] += gh[t];
+            g[a][t] += cdamp * ga[t] + energy0 * cgd[0][t];
+            g[b][t] += cdamp * gb[t] + energy0 * cgd[1][t];
+            g[h][t] += cdamp * gh[t] + energy0 * cgd[2][t];
         }
         energy
     }
@@ -2149,6 +2219,8 @@ impl Gfnff {
         let rbh2 = dist2(xyz, b, h); let rbh = rbh2.sqrt();
         let rahprbh = rah + rbh + 1e-12;
         let radab = p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1];
+        // smooth short-range damping (clash_damp3 over A···B / A-H / B···H)
+        let (cdamp, cgd) = clash_damp3(xyz, a, b, h);
         let expo = (p.hbacut / radab) * (rahprbh / rab - 1.0);
         if expo > 15.0 { return 0.0; }
         let ratio2 = expo.exp();
@@ -2189,7 +2261,8 @@ impl Gfnff {
         let qb = Self::csig((-p.hbst * self.topo.qa[b]).exp(), p.hbsf);
         let qhoutl = qh * outl * outl_nb_tot * outl_lp;
         let const_ = self.topo.hbaci[a] * qa * self.topo.hbbas[b] * qb * p.xhaci_globabh;
-        let energy = -rdamp * qhoutl * const_;
+        let energy0 = // damped below (clash_damp3)
+        -rdamp * qhoutl * const_;
         // gradient
         let drah = sub3(xyz, a, h);
         let drbh = sub3(xyz, b, h);
@@ -2258,14 +2331,15 @@ impl Gfnff {
                 for j in 0..3 { gnb_lp[j] += gii[j] * glp[i]; }
             }
         }
+        let energy = energy0 * cdamp;
         for t in 0..3 {
-            g[a][t] += ga[t];
-            g[b][t] += gb[t] + gnb_lp[t];
-            g[h][t] += gh[t];
+            g[a][t] += cdamp * ga[t] + energy0 * cgd[0][t];
+            g[b][t] += cdamp * (gb[t] + gnb_lp[t]) + energy0 * cgd[1][t];
+            g[h][t] += cdamp * gh[t] + energy0 * cgd[2][t];
         }
         for (i, &nbj) in nbs.iter().enumerate() {
             for t in 0..3 {
-                g[nbj][t] += gnb[i][t] - gnb_lp[t] / nbb as f64;
+                g[nbj][t] += cdamp * (gnb[i][t] - gnb_lp[t] / nbb as f64);
             }
         }
         energy
@@ -2282,6 +2356,8 @@ impl Gfnff {
         let rbh2 = dist2(xyz, b, h); let rbh = rbh2.sqrt();
         let rahprbh = rah + rbh + 1e-12;
         let radab = p.rad[self.at[a] - 1] + p.rad[self.at[b] - 1];
+        // smooth short-range damping (clash_damp3 over A···B / A-H / B···H)
+        let (cdamp, cgd) = clash_damp3(xyz, a, b, h);
         let expo = (p.hbacut / radab) * (rahprbh / rab - 1.0);
         if expo > 15.0 { return 0.0; }
         let ratio2 = expo.exp();
@@ -2324,7 +2400,8 @@ impl Gfnff {
         let qb = Self::csig((-p.hbst * self.topo.qa[b]).exp(), p.hbsf);
         let qhoutl = qh * outl * outl_nb_tot;
         let const_ = self.topo.hbaci[a] * qa * self.topo.hbbas[b] * qb * p.xhaci_coh;
-        let energy = -rdamp * qhoutl * eangl * etors * const_;
+        let energy0 = // damped below (clash_damp3)
+        -rdamp * qhoutl * eangl * etors * const_;
         // gradient
         let drah = sub3(xyz, a, h);
         let drbh = sub3(xyz, b, h);
@@ -2367,22 +2444,23 @@ impl Gfnff {
             let prod_others: f64 = etmp.iter().enumerate()
                 .filter(|&(j, _)| j != i).map(|(_, v)| v).product();
             for t in 0..3 {
-                g[r][t] += g4[i][0][t] * tterm * prod_others;
-                g[b][t] += g4[i][1][t] * tterm * prod_others;
-                g[c][t] += g4[i][2][t] * tterm * prod_others;
-                g[h][t] += g4[i][3][t] * tterm * prod_others;
+                g[r][t] += cdamp * g4[i][0][t] * tterm * prod_others;
+                g[b][t] += cdamp * g4[i][1][t] * tterm * prod_others;
+                g[c][t] += cdamp * g4[i][2][t] * tterm * prod_others;
+                g[h][t] += cdamp * g4[i][3][t] * tterm * prod_others;
             }
         }
         // angle term H...B=C
         for t in 0..3 {
-            g[b][t] += g3[0][t] * bterm;
-            g[c][t] += g3[1][t] * bterm;
-            g[h][t] += g3[2][t] * bterm;
+            g[b][t] += cdamp * g3[0][t] * bterm;
+            g[c][t] += cdamp * g3[1][t] * bterm;
+            g[h][t] += cdamp * g3[2][t] * bterm;
         }
+        let energy = energy0 * cdamp;
         for t in 0..3 {
-            g[a][t] += ga[t];
-            g[b][t] += gb[t];
-            g[h][t] += gh[t];
+            g[a][t] += cdamp * ga[t] + energy0 * cgd[0][t];
+            g[b][t] += cdamp * gb[t] + energy0 * cgd[1][t];
+            g[h][t] += cdamp * gh[t] + energy0 * cgd[2][t];
         }
         energy
     }
@@ -2431,6 +2509,8 @@ impl Gfnff {
         let rax = norm3(drax) + 1e-12;
         let rax2 = rax * rax;
         let rbx = norm3(drbx) + 1e-12;
+        // smooth short-range damping (clash_damp3 over A···B / A-X / B···X)
+        let (cdamp, cgd) = clash_damp3(xyz, a, b, x);
         let rbx2 = rbx * rbx;
         let expo = p.xbacut * ((rax + rbx) / rab - 1.0);
         if expo > 15.0 { return 0.0; }
@@ -2448,7 +2528,7 @@ impl Gfnff {
         let const_ = cb * qb * cx * qx;
         let aterm = -rdamp * const_;
         let dterm = -outl * const_;
-        let energy = -rdamp * outl * const_;
+        let energy0 = -rdamp * outl * const_;
         // damping part: rbx
         let gi = rdamp * (-(2.0 * p.hbalp * ratio1 / (1.0 + ratio1))
             + (2.0 * p.hbalp * ratio3 / (1.0 + ratio3)) - 3.0) / rbx2 * dterm;
@@ -2470,10 +2550,11 @@ impl Gfnff {
         gb = add3(gb, dgb);
         let dgx = [-dga[0] - dgb[0], -dga[1] - dgb[1], -dga[2] - dgb[2]];
         gx = add3(gx, dgx);
+        let energy = energy0 * cdamp;
         for t in 0..3 {
-            g[a][t] += ga[t];
-            g[b][t] += gb[t];
-            g[x][t] += gx[t];
+            g[a][t] += cdamp * ga[t] + energy0 * cgd[0][t];
+            g[b][t] += cdamp * gb[t] + energy0 * cgd[1][t];
+            g[x][t] += cdamp * gx[t] + energy0 * cgd[2][t];
         }
         energy
     }
@@ -2508,20 +2589,32 @@ impl Gfnff {
         let rijk3 = r2ij * r2jk * r2ik;
         let rav3 = rijk3 * sr2ij * sr2jk * sr2ik;   // R^9
         let ang = 0.375 * ijmk * imjk * mijk / rijk3;
-        let energy = c9 * (ang + 1.0) / rav3;
+        // smooth short-range damping (clash_damp over the three pair
+        // distances): the 1/r^9 form is unbounded BELOW for c9<0 and a big
+        // line-search step can jump the repulsion wall into the funnel;
+        // below ~0.4 Å the term is dead, healthy triples keep it exactly
+        let fij = clash_damp(sr2ij);
+        let fik = clash_damp(sr2ik);
+        let fjk = clash_damp(sr2jk);
+        let damp = fij * fik * fjk;
+        let dd_ij = clash_damp_deriv(sr2ij) * fik * fjk;
+        let dd_ik = clash_damp_deriv(sr2ik) * fij * fjk;
+        let dd_jk = clash_damp_deriv(sr2jk) * fij * fik;
+        let energy0 = c9 * (ang + 1.0) / rav3;
+        let energy = energy0 * damp;
         // derivatives of the angular part w.r.t. each pair distance
         let dang_ij = -0.375 * (r2ij.powi(3) + r2ij * r2ij * (r2jk + r2ik)
             + r2ij * (3.0 * r2jk * r2jk + 2.0 * r2jk * r2ik + 3.0 * r2ik * r2ik)
             - 5.0 * (r2jk - r2ik).powi(2) * (r2jk + r2ik)) / (sr2ij * rijk3 * rav3);
-        let drij = -dang_ij * c9;
+        let drij = damp * (-dang_ij * c9) + energy0 * dd_ij;
         let dang_jk = -0.375 * (r2jk.powi(3) + r2jk * r2jk * (r2ik + r2ij)
             + r2jk * (3.0 * r2ik * r2ik + 2.0 * r2ik * r2ij + 3.0 * r2ij * r2ij)
             - 5.0 * (r2ik - r2ij).powi(2) * (r2ik + r2ij)) / (sr2jk * rijk3 * rav3);
-        let drjk = -dang_jk * c9;
+        let drjk = damp * (-dang_jk * c9) + energy0 * dd_jk;
         let dang_ik = -0.375 * (r2ik.powi(3) + r2ik * r2ik * (r2jk + r2ij)
             + r2ik * (3.0 * r2jk * r2jk + 2.0 * r2jk * r2ij + 3.0 * r2ij * r2ij)
             - 5.0 * (r2jk - r2ij).powi(2) * (r2jk + r2ij)) / (sr2ik * rijk3 * rav3);
-        let drik = -dang_ik * c9;
+        let drik = damp * (-dang_ik * c9) + energy0 * dd_ik;
         for t in 0..3 {
             g[iat][t] += drij * rij[t] / sr2ij + drik * rik[t] / sr2ik;
             g[jat][t] += drjk * rjk[t] / sr2jk - drij * rij[t] / sr2ij;
@@ -2703,7 +2796,7 @@ impl Gfnff {
                     }
                 }
             }
-            q = solve_sym(&a2, &x2);
+            q = solve_eeq_kkt(&a2, &x2, n);
         }
 
         // ---------------- repulsion (nb + bonded) ----------------
@@ -3778,6 +3871,67 @@ fn floyd_rabd(p: &Params, at: &[usize], nb: &[Vec<usize>]) -> Vec<Vec<f64>> {
 
 /// solve dense linear system by Gaussian elimination with partial pivoting
 /// (augmented-matrix form, no permutation bookkeeping)
+/// Physical bound for runtime EEQ partial charges: healthy GFN-FF solves
+/// keep |q| well below 2 e. Beyond it the linear solve is exploding on a
+/// near-singular KKT matrix (observed: |q|max = 1.1e4 at a 0.565 Å H···H
+/// clash — the erf-kernel rows of near-coincident atoms become nearly
+/// proportional — feeding an es funnel of -35000 kcal/mol that destroyed
+/// 2/100 conformers of a 75-atom drug molecule).
+const EEQ_QMAX: f64 = 2.0;
+
+/// Runtime EEQ KKT solve with an adaptive Tikhonov ridge. The exact solve
+/// is returned while the charges stay physical (λ = 0 — bit-identical to
+/// the unregularized solve, zero drift on healthy geometries). When |q|
+/// explodes, the ridge is tuned by a coarse ×3 bracket plus bisection until
+/// |q|max ≈ EEQ_QMAX: the charges — and with them the es term — stay
+/// bounded and continuous in the geometry. Deterministic (depends only on
+/// the matrix), so the energy() and energy_and_gradient() paths agree.
+/// Gradient note: the analytic chain treats q as the exact KKT solution,
+/// which holds wherever λ = 0; inside the pathological zone it is an
+/// approximate (bounded) gradient — the documented tradeoff for keeping
+/// the landscape dive-proof.
+fn solve_eeq_kkt(a2: &[Vec<f64>], x2: &[f64], n: usize) -> Vec<f64> {
+    let qmax = |q: &[f64]| q[..n].iter().fold(0.0f64, |m, &v| m.max(v.abs()));
+    let solve_ridged = |lam: f64| -> Vec<f64> {
+        let mut ar = a2.to_vec();
+        for (i, row) in ar.iter_mut().enumerate().take(n) {
+            row[i] += lam;
+        }
+        solve_sym(&ar, x2)
+    };
+    let q0 = solve_sym(a2, x2);
+    if qmax(&q0) <= EEQ_QMAX {
+        return q0;
+    }
+    // coarse ×3 bracket
+    let mut lo = 0.0f64;
+    let mut hi = 1e-7f64;
+    let mut q_hi = q0;
+    for _ in 0..14 {
+        q_hi = solve_ridged(hi);
+        if qmax(&q_hi) <= EEQ_QMAX {
+            break;
+        }
+        lo = hi;
+        hi *= 3.0;
+    }
+    if qmax(&q_hi) > EEQ_QMAX {
+        return q_hi; // absurd input; return the most bounded solve reached
+    }
+    // bisect λ* until |q|max sits just under the bound (continuous in x)
+    for _ in 0..18 {
+        let mid = 0.5 * (lo + hi);
+        let q = solve_ridged(mid);
+        if qmax(&q) > EEQ_QMAX {
+            lo = mid;
+        } else {
+            hi = mid;
+            q_hi = q;
+        }
+    }
+    q_hi
+}
+
 fn solve_sym(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
     let n = b.len();
     let mut m: Vec<Vec<f64>> = a.iter().cloned().zip(b.iter()).map(|(r, &v)| {
@@ -5287,5 +5441,203 @@ mod tests_hb_chain {
             }
         }
         assert!(maxerr < 1e-3, "gradient/energy inconsistency: {maxerr}");
+    }
+}
+
+#[cfg(test)]
+mod tests_clash_gate {
+    use super::*;
+
+    // Regression anchors for the smooth clash damping (clash_damp /
+    // clash_damp3). Healthy geometries must be untouched (pinned by the
+    // xtb-parity tests above — they all stay green); collapsed geometries
+    // must not reach the inverse-power singularities (ATM 1/r^9, HB/XB
+    // damp/r^3), and the landscape must stay CONTINUOUS (a hard 0.8 Å gate
+    // was tried first: the terms are -150..-180 kcal/mol at that boundary
+    // and the reopening jump created an artificial attractor that the line
+    // search harvested for thousands of kcal/mol). Observed production
+    // failure without any protection: 2/100 GFN-FF conformers of a
+    // 75-atom drug molecule collapsed atom pairs to 0.0009 Å and reported
+    // E ~ -1e22 kcal/mol.
+
+    #[test]
+    fn atm_damped_at_collapsed_geometry() {
+        // anti-butane from butane_batm_vs_xtb: one C1···C4 1-4 pair, all
+        // ATM triples flank it — collapsing the pair must zero batm exactly
+        let at = [6usize,6,6,6, 1,1,1,1,1,1,1,1,1,1];
+        let xyz = [
+        [-1.577316, 0.462590, 0.022882],
+        [-0.552469, -0.313498, -0.789867],
+        [0.651782, -0.775632, 0.031048],
+        [1.501331, 0.370708, 0.557691],
+        [-1.170099, 1.413441, 0.378863],
+        [-1.912775, -0.116904, 0.888745],
+        [-2.453322, 0.687572, -0.593991],
+        [-0.215752, 0.300526, -1.633266],
+        [-1.042306, -1.196883, -1.216582],
+        [0.315587, -1.395398, 0.870447],
+        [1.280316, -1.413301, -0.601975],
+        [2.392587, -0.021542, 1.058030],
+        [0.952276, 0.975343, 1.285440],
+        [1.830160, 1.022979, -0.257466],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e0 = g.energy(&xyz);
+        assert!(e0.batm != 0.0, "healthy butane should have a nonzero ATM term");
+        let mut c = xyz;
+        // C4 onto C1 at 0.001 Å (pathological clash)
+        let d = [c[3][0] - c[0][0], c[3][1] - c[0][1], c[3][2] - c[0][2]];
+        let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        for t in 0..3 {
+            c[3][t] = c[0][t] + d[t] / n * 0.001;
+        }
+        let e = g.energy(&c);
+        // butane also carries H···H 1-4 triples (bpair 3 over adjacent
+        // carbons' hydrogens) whose distances the (0,3) collapse does not
+        // touch, so batm is not exactly zero — the regression anchor is
+        // that the collapsed-triple contributions are damped away
+        // (f(0.001 Å) ≈ 0) and the total stays finite/sane.
+        assert!(e.batm.abs() < 0.01, "ATM term exploded at clash geometry: {}", e.batm);
+        assert!(
+            e.total().is_finite() && e.total() > -1e6,
+            "collapsed geometry energy not sane: {}",
+            e.total()
+        );
+    }
+
+    #[test]
+    fn hb_damped_at_collapsed_geometry() {
+        // water dimer from water_dimer_hb_vs_xtb (hb = -0.003319 Eh healthy)
+        let at = [8usize, 1, 1, 8, 1, 1];
+        let xyz = [
+            [0.0, 0.0, 0.0], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692],
+            [0.0, 0.0, 2.926], [0.0, 0.24, 1.966], [0.93, 0.0, 3.166],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let e0 = g.energy(&xyz);
+        assert!(e0.hb < -0.001, "healthy dimer should keep its HB term");
+        // bridging H(4) onto the acceptor O(3) at 0.01 Å -> r_bh collapses
+        let mut c = xyz;
+        let d = [c[4][0] - c[3][0], c[4][1] - c[3][1], c[4][2] - c[3][2]];
+        let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        for t in 0..3 {
+            c[4][t] = c[3][t] + d[t] / n * 0.01;
+        }
+        let e = g.energy(&c);
+        // the bridging-H HB contributions are damped away (f(0.01 Å) ≈ 0);
+        // any residual from other H assignments stays tiny. Regression
+        // anchor: bounded + sane (pre-fix: -2e4 kcal/mol-class blow-up
+        // from the damp/r^3 form).
+        assert!(e.hb.abs() < 0.01, "HB term exploded at clash geometry: {}", e.hb);
+        assert!(
+            e.total().is_finite() && e.total() > -1e6,
+            "collapsed geometry energy not sane: {}",
+            e.total()
+        );
+    }
+
+    #[test]
+    fn clash_damping_is_continuous() {
+        // no reopening jump anywhere in the damping zone: the total energy
+        // changes smoothly across the old hard-gate boundary (the hard gate
+        // showed a ~170 kcal/mol jump at 0.8 Å; the smooth damping must
+        // show only the smooth term slope)
+        let at = [8usize, 1, 1, 8, 1, 1];
+        let xyz = [
+            [0.0, 0.0, 0.0], [0.0, 0.7572, -0.4692], [0.0, -0.7572, -0.4692],
+            [0.0, 0.0, 2.926], [0.0, 0.24, 1.966], [0.93, 0.0, 3.166],
+        ];
+        let g = Gfnff::new(&at, &xyz, 0.0);
+        let eval = |target: f64| -> f64 {
+            let mut c = xyz;
+            let d = [c[4][0] - c[3][0], c[4][1] - c[3][1], c[4][2] - c[3][2]];
+            let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            for t in 0..3 {
+                c[4][t] = c[3][t] + d[t] / n * target;
+            }
+            g.energy(&c).total() * 627.5094740631
+        };
+        // fine ladder through the damping zone: each 0.005 Å step must show
+        // only the smooth term slope (the hard gate jumped ~170 kcal/mol
+        // across ONE such step at 0.8 Å)
+        let mut prev = eval(0.85);
+        let mut max_step = 0.0f64;
+        let mut worst = 0.0f64;
+        let mut r = 0.845;
+        while r >= 0.75 {
+            let e = eval(r);
+            if (e - prev).abs() > max_step {
+                max_step = (e - prev).abs();
+                worst = r;
+            }
+            prev = e;
+            r -= 0.005;
+        }
+        assert!(
+            max_step < 25.0,
+            "damping-zone discontinuity: max per-0.005Å change {max_step} kcal/mol near r={worst}"
+        );
+    }
+
+    #[test]
+    fn eeq_ridge_bounds_collapsed_geometry() {
+        // Regression for the EEQ funnel (solve_eeq_kkt adaptive ridge): the
+        // committed C30H32ClN9O3 drug molecule, seed-134 ETKDG embedding,
+        // with the (71,73) H···H pair crushed to 0.565 Å — pre-ridge the KKT
+        // matrix turns near-singular there (erf-kernel rows of near-
+        // coincident atoms become near-proportional, min pivot 3.5e-4),
+        // |q|max exploded to 1.1e4 and es dived to -35000 kcal/mol,
+        // destroying 2/100 conformers of the GFN-FF ensemble.
+        let sdf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/gfnff/c30h32cln9o3.mol"
+        ))
+        .unwrap();
+        let mol = crate::molecule::parser::parse_sdf(&sdf).unwrap();
+        let cfg = crate::etkdg::ETKDGConfig {
+            random_seed: 134,
+            ..Default::default()
+        };
+        let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &cfg);
+        let mut m2 = mol.clone();
+        for (a, c) in m2.atoms.iter_mut().zip(coords.iter()) {
+            a.position = *c;
+        }
+        let with_h = crate::molecule::hydrogens::add_hydrogens(&m2);
+        let xyz: Vec<[f64; 3]> = with_h.atoms.iter().map(|a| a.position).collect();
+        let n = xyz.len();
+        let at: Vec<usize> = with_h.atoms.iter().map(|a| a.atomic_number as usize).collect();
+        let charge: f64 = with_h.atoms.iter().map(|a| a.charge).sum();
+        let ff = Gfnff::new(&at, &xyz, charge);
+
+        // sanity: the healthy embedding keeps the exact solve
+        let e0 = ff.energy(&xyz);
+        assert!(e0.es * 627.5094740631 > -500.0);
+
+        // crush the (71,73) pair to 0.565 Å (the observed collapse distance)
+        let mut c = xyz;
+        let d = [c[73][0] - c[71][0], c[73][1] - c[71][1], c[73][2] - c[71][2]];
+        let dn = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        for t in 0..3 {
+            c[73][t] = c[71][t] + d[t] / dn * 0.565;
+        }
+        let e = ff.energy(&c);
+        assert!(
+            e.es * 627.5094740631 > -500.0,
+            "es funnel not bounded: {}",
+            e.es * 627.5094740631
+        );
+        assert!(
+            e.total().is_finite() && e.total() * 627.5094740631 > -12000.0,
+            "collapsed geometry energy not sane: {}",
+            e.total() * 627.5094740631
+        );
+        // the two energy paths must still agree exactly at the same point
+        let mut g = vec![[0.0f64; 3]; n];
+        let eb = ff.energy_and_gradient(&c, &mut g);
+        assert!(
+            (e.total() - eb.total()).abs() < 1e-12,
+            "energy paths diverged at collapsed geometry"
+        );
     }
 }

@@ -653,6 +653,14 @@ fn armijo_line_search(
     min_alpha: f64,
 ) -> (f64, bool) {
     const C1: f64 = 1e-4;
+    // Absolute-energy floor: no physical state of any supported system can
+    // reach -1e8 kcal/mol (GFN-FF total energies scale ~ -120 kcal/mol per
+    // atom — the floor needs ~830k atoms). A trial below it (or a non-finite
+    // one) sits inside a singular region of the energy surface; stepping in
+    // would hand the optimizer a garbage gradient and destroy the run.
+    // (Before this guard a -inf trial PASSED `f_new <= rhs` outright, and a
+    // finite-but-singular -1e22 was accepted as a huge "decrease".)
+    const ENERGY_FLOOR: f64 = -1e8;
     let mut alpha = alpha0;
     let n = z.len();
 
@@ -665,6 +673,15 @@ fn armijo_line_search(
 
         // Energy at the trial point (gradient not needed for Armijo)
         let f_new = obj.energy(&z_new);
+        if !f_new.is_finite() || f_new < ENERGY_FLOOR {
+            // singular trial: reject outright (quadratic interpolation across
+            // a singularity is meaningless — plain halving backtracks out)
+            if alpha <= min_alpha {
+                return (0.0, false);
+            }
+            alpha *= 0.5;
+            continue;
+        }
         let rhs = f0 + C1 * alpha * slope;
         if opt_debug() {
             eprintln!(
@@ -752,5 +769,93 @@ mod tests {
             "line search too expensive: {calls} calls over {} iters = {per_iter:.2}/iter",
             r.iterations
         );
+    }
+
+    /// Regression for the line-search energy floor: a trial inside a
+    /// singular region (finite -1e22, or -inf) must be rejected, not
+    /// accepted as a huge "decrease". Before the guard, -inf PASSED
+    /// `f_new <= rhs` outright and a finite singular value destroyed the
+    /// run (GFN-FF conformer collapse, see gfnff tests_clash_gate).
+    struct PitObjective {
+        inf: bool,
+    }
+    impl PitObjective {
+        fn e_at(&self, z: f64) -> f64 {
+            if (z - 1.0).abs() < 0.25 {
+                if self.inf {
+                    f64::NEG_INFINITY
+                } else {
+                    -1e22
+                }
+            } else {
+                -z
+            }
+        }
+    }
+    impl Objective for PitObjective {
+        fn dim(&self) -> usize {
+            1
+        }
+        fn f_and_g(&mut self, z: &[f64]) -> (f64, Vec<f64>) {
+            (self.e_at(z[0]), vec![-1.0])
+        }
+        fn energy(&mut self, z: &[f64]) -> f64 {
+            self.e_at(z[0])
+        }
+        fn force_stats(&self) -> (f64, f64) {
+            (1.0, 1.0)
+        }
+        fn take_reset(&mut self) -> bool {
+            false
+        }
+        fn final_coords(&mut self) -> Vec<[f64; 3]> {
+            vec![[0.0; 3]]
+        }
+    }
+
+    #[test]
+    fn line_search_rejects_singular_trials() {
+        for inf in [false, true] {
+            let mut obj = PitObjective { inf };
+            // f0 = 0 at z = 0, descent direction +z: alpha0 = 1 lands inside
+            // the pit and must backtrack to alpha = 0.5 (E = -0.5)
+            let (alpha, _) = armijo_line_search(&mut obj, &[0.0], &[1.0], 0.0, -1.0, 1.0, 1e-10);
+            assert!(
+                (alpha - 0.5).abs() < 1e-12,
+                "singular trial accepted (inf={inf}): alpha={alpha}"
+            );
+        }
+        // pit spans every reachable trial -> outright failure, no floor accept
+        let mut obj = PitObjective { inf: false };
+        let (alpha, floor) = armijo_line_search(&mut obj, &[0.0], &[1e-13], 0.0, -1.0, 1.0, 1e-10);
+        // 1e-13 steps never reach the pit at z=1: this accepts (sanity that
+        // tiny but sane steps still pass)
+        assert!(alpha > 0.0 || !floor, "tiny sane step rejected");
+        let mut obj2 = UbiquitousPit;
+        let (alpha2, _) = armijo_line_search(&mut obj2, &[0.0], &[1.0], 0.0, -1.0, 1.0, 1e-10);
+        assert_eq!(alpha2, 0.0, "singular-everywhere line search accepted");
+    }
+
+    /// Every trial is singular -> the search must fail (alpha = 0).
+    struct UbiquitousPit;
+    impl Objective for UbiquitousPit {
+        fn dim(&self) -> usize {
+            1
+        }
+        fn f_and_g(&mut self, _z: &[f64]) -> (f64, Vec<f64>) {
+            (-1e22, vec![-1.0])
+        }
+        fn energy(&mut self, _z: &[f64]) -> f64 {
+            -1e22
+        }
+        fn force_stats(&self) -> (f64, f64) {
+            (1.0, 1.0)
+        }
+        fn take_reset(&mut self) -> bool {
+            false
+        }
+        fn final_coords(&mut self) -> Vec<[f64; 3]> {
+            vec![[0.0; 3]]
+        }
     }
 }

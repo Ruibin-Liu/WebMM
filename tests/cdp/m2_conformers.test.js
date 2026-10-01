@@ -5,7 +5,7 @@ const fs = require('fs');
 
 const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 
-setTimeout(() => { console.log('WATCHDOG: test exceeded 240s'); process.exit(2); }, 240000);
+setTimeout(() => { console.log('WATCHDOG: test exceeded 420s'); process.exit(2); }, 420000);
 (async () => {
     const browser = await chromium.launch({
     executablePath: EXE,
@@ -95,6 +95,44 @@ setTimeout(() => { console.log('WATCHDOG: test exceeded 240s'); process.exit(2);
   check('cancel/reopt path leaves UI usable', await page.evaluate(() =>
     !document.getElementById('btnConf').disabled && confEnsemble !== null),
     (await page.evaluate(() => document.getElementById('status3d').textContent)).slice(0, 70));
+
+  // ---- GFN-FF clash-collapse regression (v1.6.4) ----
+  // C30H32ClN9O3 (75 atoms with H): pre-fix, 2/100 GFN-FF conformers dived
+  // into short-range singular funnels (ATM 1/r^9 / HB damp/r^3 / EEQ
+  // near-singular KKT) with E ~ -1e4..-1e22 kcal/mol and atom collapse to
+  // 0.0009 Å, hijacking the ensemble ranking and ΔE window. The engine now
+  // damps the inverse-power terms and adaptively ridges the EEQ solve;
+  // every conformer must stay in the healthy band.
+  const CLASH_SMILES = 'CCc1c(-c2ccn3ncc(C(=O)Nc4cc(-c5nnn(C6CC6)n5)ccc4Cl)c3c2)c(C)nn1C[C@H](O)[C@@H]1CCOC1';
+  await page.evaluate(smiles => {
+    document.getElementById('input').value = smiles;
+    process(true);
+  }, CLASH_SMILES);
+  await page.waitForFunction(() => document.getElementById('output').style.display === 'block', null, { timeout: 60000 });
+  await page.evaluate(() => {
+    document.getElementById('engineSel').value = 'GFNFF';
+    document.getElementById('confN').value = '100';
+    document.getElementById('confWin').value = '0';   // skip reopt for speed
+    runConformers();
+  });
+  await page.waitForFunction(() => document.getElementById('status3d').textContent.includes('Conformers:'), null, { timeout: 300000 });
+  const gf = await page.evaluate(() => {
+    const es = (confEnsemble || []).map(c => c.E);
+    const sorted = [...es].sort((a, b) => a - b);
+    return {
+      n: es.length,
+      axis: document.getElementById('confChartAxis').textContent,
+      min: sorted[0], median: sorted[Math.floor(sorted.length / 2)], max: sorted[sorted.length - 1],
+      shown: typeof displayedConfCount === 'function' ? displayedConfCount() : null,
+      status: document.getElementById('status3d').textContent,
+    };
+  });
+  check('GFN-FF 100-conf clash molecule: no pathological energies',
+    gf.n === 100 && isFinite(gf.min) && gf.min > -10000 && isFinite(gf.max) && gf.max < 0,
+    `min ${gf.min?.toFixed(1)}, median ${gf.median?.toFixed(1)}, max ${gf.max?.toFixed(1)}`);
+  check('ensemble data intact (axis well-formed, ranking readable)',
+    /showing lowest \d+ of 100 conformers|100 conformers/.test(gf.axis),
+    gf.axis.slice(0, 60));
 
   await page.screenshot({ path: '/tmp/app_m2.png', fullPage: true });
   check('zero console errors', errors.length === 0, errors.slice(0, 3).join(' | '));

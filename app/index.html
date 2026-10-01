@@ -4790,7 +4790,23 @@ function finishReopt() {
 }
 
 function finishConformers(engine, rmsdCut, W) {
-  const confs = confRun.confs.slice();
+  let confs = confRun.confs.slice();
+  // engine-level backstop (defense in depth — the engine itself clamps the
+  // clash singularities since v1.6.4): drop conformers with non-finite
+  // energy or a sub-physical closest atom pair before they can poison the
+  // ranking / ΔE re-optimization window / chart
+  let pathological = 0;
+  confs = confs.filter(c => {
+    if (!isFinite(c.E)) { pathological++; return false; }
+    const n = c.coords.length / 3;
+    for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+      if (Math.hypot(c.coords[a*3]-c.coords[b*3], c.coords[a*3+1]-c.coords[b*3+1], c.coords[a*3+2]-c.coords[b*3+2]) < 0.3) {
+        pathological++;
+        return false;
+      }
+    }
+    return true;
+  });
   const dt = ((performance.now() - confRun.t0) / 1000).toFixed(1);
   for (const w of confRun.workers) w.terminate();
   confRun = null;
@@ -4819,11 +4835,11 @@ function finishConformers(engine, rmsdCut, W) {
   drawConformerChart();
   syncConformerEnergy(0);   // energy panel shows rank-1 terms by default
   set3dStatus(`<b>Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ` +
-    `${kept.length} kept after RMSD ≥ ${rmsdCut} Å</b> — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
+    `${kept.length} kept after RMSD ≥ ${rmsdCut} Å${pathological ? ` · ${pathological} pathological dropped` : ''}</b> — lowest E(${engine}) = ${Emin.toFixed(2)} kcal/mol`);
   // ΔE-window re-optimization to full convergence (0 disables)
   const win = parseFloat(document.getElementById('confWin').value);
   if (isFinite(win) && win > 0) {
-    startReopt(win, engine, `Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ${kept.length} kept after RMSD ≥ ${rmsdCut} Å`);
+    startReopt(win, engine, `Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ${kept.length} kept after RMSD ≥ ${rmsdCut} Å${pathological ? ` · ${pathological} pathological dropped` : ''}`);
   }
 }
 
