@@ -106,6 +106,8 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
 
   // ---- Shape (3D) search ----
   console.log('shape (3D) search:');
+  // NOTE: the confs input defaults to 10 (ensemble semantics: entry score =
+  // best over conformers); the single-conformer legacy path is confs=1.
   await page.evaluate((q) => {
     document.getElementById('searchMode').value = 'shape'; onSearchModeChange();
     document.getElementById('searchQuery').value = q; runSearch();
@@ -114,12 +116,16 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   const shape = await page.evaluate(() => ({
     top: document.querySelector('#searchRows tr').children[1].textContent,
     topScore: document.querySelector('#searchRows tr').children[4].textContent,
+    // the ensemble default inserts a Conf column before the score — read the
+    // score from the cell whose header says Shape T
+    topScoreByHeader: [...document.querySelector('#searchRows tr').cells].map(td => td.textContent.trim())[
+      [...document.querySelectorAll('#searchTable th')].findIndex(th => th.textContent.trim() === 'Shape T')],
     colorShown: document.getElementById('colorCol').style.display !== 'none',
     pharmShown: document.getElementById('pharmCol').style.display !== 'none',
     comboShown: document.getElementById('comboCol').style.display !== 'none',
     status: document.getElementById('searchResultStatus').textContent,
   }));
-  check('self-match tops the table at 100.0%', shape.top === 'aspirin' && shape.topScore === '100.0%', shape.top + ' ' + shape.topScore);
+  check('self-match tops the table at 100.0%', shape.top === 'aspirin' && shape.topScoreByHeader === '100.0%', shape.top + ' ' + shape.topScoreByHeader);
   check('Color T / Pharm / Combo columns shown', shape.colorShown && shape.pharmShown && shape.comboShown, shape.status.slice(0, 90));
   await page.evaluate(() => { document.getElementById('pharmFilter').value = '0.6'; runSearch(); });
   await page.waitForFunction(() => /pharm filter/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 180000 });
@@ -136,6 +142,49 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
     feat: document.getElementById('featSpheres').checked,
   }));
   check('row click: single view + aligned pose auto-embedded + Features on', rowLoad.single && rowLoad.output === 'block' && rowLoad.feat, JSON.stringify(rowLoad));
+
+  // ---- multi-conformer shape semantics (default) ----
+  console.log('shape ensemble (10 confs/entry):');
+  const ens = await page.evaluate(() => {
+    document.getElementById('searchQuery').value = 'CC(C)Cc1ccc(cc1)C(C)C(=O)O';
+    document.getElementById('searchResultStatus').textContent = '';
+    runSearch();
+    return null;
+  });
+  await page.waitForFunction(() => /confs\/entry/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+  const ensRes = await page.evaluate(() => ({
+    status: document.getElementById('searchResultStatus').textContent,
+    top: document.querySelector('#searchRows tr') ? {
+      name: document.querySelector('#searchRows tr').children[1].textContent,
+      score: document.querySelector('#searchRows tr').children[5].textContent,
+      conf: document.querySelector('#searchRows tr').children[4].textContent,
+    } : null,
+    confColShown: document.getElementById('confCol').style.display !== 'none',
+    rows: document.getElementById('searchRows').children.length,
+  }));
+  check('ensemble: self-match tops at 100.0% (query-conformer injection)', ensRes.top && ensRes.top.name === 'ibuprofen' && ensRes.top.score === '100.0%' && ensRes.top.conf === '1', JSON.stringify(ensRes.top));
+  check('ensemble: Conf column shown with the winning conformer', ensRes.confColShown && ensRes.top.conf === '1');
+  check('ensemble: status documents confs/entry + two-phase structure', /10 confs\/entry/.test(ensRes.status) && /screen 55×10 → full 50×3/.test(ensRes.status), ensRes.status.slice(0, 100));
+  check('ensemble: rows bounded by the top-50 candidate cap', ensRes.rows >= 40 && ensRes.rows <= 50, 'rows=' + ensRes.rows);
+
+  // ---- single-conformer legacy path (confs=1) is unchanged ----
+  console.log('shape legacy single-conformer (confs=1):');
+  await page.evaluate(() => {
+    document.getElementById('shapeConfs').value = '1';
+    document.getElementById('searchResultStatus').textContent = '';
+    runSearch();
+  });
+  await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent) && !/confs\/entry/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 120000 });
+  const legRes = await page.evaluate(() => ({
+    status: document.getElementById('searchResultStatus').textContent,
+    top: document.querySelector('#searchRows tr').children[1].textContent,
+    confColShown: document.getElementById('confCol').style.display !== 'none',
+    confCell: document.querySelector('#searchRows tr').children[4].textContent,
+  }));
+  check('legacy: self-match still tops, no confs note in status', legRes.top === 'ibuprofen' && !/conf\/entry/.test(legRes.status), legRes.status.slice(0, 80));
+  check('legacy: Conf column hidden at confs=1 (no misaligned empty column)', !legRes.confColShown);
+  // restore the ensemble default for any later steps
+  await page.evaluate(() => { document.getElementById('shapeConfs').value = '10'; });
 
   // ---- RGD ----
   console.log('R-group decomposition:');

@@ -908,6 +908,10 @@ details {
         <option value="0.8">≥80%</option>
         <option value="1">all</option>
       </select>
+      <span id="shapeConfsWrap" style="display:none; white-space:nowrap;">
+        <label for="shapeConfs" style="font-size:0.75rem; color:var(--muted);" title="Conformers generated per library entry (best over conformers scores each entry; 1 = single-conformer legacy path)">confs</label>
+        <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()">
+      </span>
       <button id="btnSearchRun" class="action-btn primary" onclick="runSearch()">Search</button>
     </div>
     <div class="version" id="searchStatus" aria-live="polite" style="margin:0.3rem 0 0;"></div>
@@ -1179,7 +1183,7 @@ details {
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
-         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th></tr>
+         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th></tr>
        </thead>
        <tbody id="searchRows"></tbody>
      </table>
@@ -1944,9 +1948,19 @@ function rdkitAvailable() {
   function onSearchModeChange() {
     const shape = document.getElementById('searchMode').value === 'shape';
     document.getElementById('searchFp').disabled = shape;
+    document.getElementById('shapeConfsWrap').style.display = shape ? '' : 'none';
+    syncShapeConfCol();
     document.getElementById('searchQuery').placeholder = shape
       ? 'Query: SMILES (3D conformers are generated on the fly)'
       : 'Query: SMILES (similarity) or SMILES/SMARTS (substructure)';
+  }
+
+  // the Conf column exists only when rows actually carry conformer indices
+  // (ensemble path, confs >= 2) — the single-conformer legacy path has none
+  function syncShapeConfCol() {
+    const shape = document.getElementById('searchMode').value === 'shape';
+    const n = parseInt(document.getElementById('shapeConfs').value) || 1;
+    document.getElementById('confCol').style.display = shape && n >= 2 ? '' : 'none';
   }
 
   function parseLibraryText(raw) {
@@ -2093,6 +2107,34 @@ function rdkitAvailable() {
     const member = searchLibrary && searchLibrary.find(e => e.smiles === canon);
     if (member) return ensureEntry3D(member);
     return ensureEntry3D({ idx: 999, smiles: canon });
+  }
+
+  /// N-conformer ensemble for shape search (pharm-panel precedent: one
+  /// generate_optimized_conformers_wasm per entry, seed 42+idx, MMFF94s,
+  /// iter 100). Cached per entry; conformer records carry lazily-perceived
+  /// color sites. `injectSdf` replaces conformer 0 (self-match: the query
+  /// member's entry aligns identically -> shape T exactly 1.0).
+  function ensureEntryConfs(e, n, injectSdf) {
+    if (e.confs && e.confsN === n && e.confsInject === (injectSdf || null)) return e.confs;
+    if (!window.webmm) throw new Error('WebMM engine not loaded');
+    const m = rdkitModule.get_mol(e.smiles);
+    if (!m || !m.is_valid()) { if (m) m.delete(); throw new Error('parse'); }
+    const mb = m.get_molblock();
+    m.delete();
+    const r = window.webmm.generate_optimized_conformers_wasm(mb, n, BigInt(42 + e.idx), 'MMFF94s', 100);
+    if (!r.get_success() || !r.get_n_confs()) throw new Error('conformer failed');
+    const flat = r.get_coordinates();
+    const na = r.get_n_atoms();
+    const tpl = r.get_template_sdf();
+    const confs = [];
+    for (let i = 0; i < r.get_n_confs(); i++) {
+      confs.push({ sdf: buildSdfFromCoords(Array.from(flat.slice(i * na * 3, (i + 1) * na * 3)), tpl), sites: null });
+    }
+    if (injectSdf) confs[0] = { sdf: injectSdf, sites: null };
+    e.confs = confs;
+    e.confsN = n;
+    e.confsInject = injectSdf || null;
+    return confs;
   }
 
   function applyTransformToSdf(sdf, m12) {
@@ -2336,9 +2378,12 @@ function rdkitAvailable() {
   async function runShapeSearch(q) {
     if (!window.webmm) { searchStatus('WebMM engine not loaded — shape search unavailable'); return; }
     const thr = parseFloat(document.getElementById('searchThreshold').value);
+    const nConfs = Math.max(1, Math.min(50, Math.round(parseFloat(document.getElementById('shapeConfs').value) || 1)));
+    syncShapeConfCol();   // programmatic value changes don't fire oninput
     let qsdf;
     try { qsdf = ensureQuery3D(q); }
     catch (e) { searchStatus('Query 3D prep failed: ' + e.message); return; }
+    if (nConfs >= 2) return runShapeSearchEnsemble(q, qsdf, thr, nConfs);
     searchStatus('Preparing 3D and aligning…');
     // query color sites (perceived once on the query 3D molblock)
     let qSites = null;
@@ -2436,6 +2481,125 @@ function rdkitAvailable() {
       ` · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   }
 
+  /// Multi-conformer shape search: entry score = BEST over its N conformers.
+  /// Phase 1 screens every conformer of every entry (cheap proxy) -> the
+  /// top SHAPE_TOP_N entries advance; phase 2 full-aligns each survivor's
+  /// top-3 conformers (by proxy) and keeps the winner per entry (combo).
+  /// The query stays single-conformer (ROCS convention).
+  async function runShapeSearchEnsemble(q, qsdf, thr, nConfs) {
+    searchStatus(`Preparing 3D (${nConfs} conformers per entry)…`);
+    let qSites = null;
+    let qCoordsCache = null;
+    try {
+      const qm = rdkitModule.get_mol(qsdf);
+      if (qm && qm.is_valid()) {
+        qSites = colorSites(qsdf, qm);
+        qCoordsCache = sdfCoords(qsdf);
+        qm.delete();
+      }
+    } catch (e) { qSites = null; }
+    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites)) : '';
+    // self-match injection: when the query IS a library member, its entry
+    // gets the query conformer as conformer 0 (identical SDFs -> T = 1.0)
+    let injectSmiles = null;
+    try {
+      const qm = rdkitModule.get_mol(q);
+      if (qm && qm.is_valid()) { injectSmiles = qm.get_smiles(); qm.delete(); }
+    } catch (e) { injectSmiles = null; }
+
+    // ---- phase 1: screen every conformer of every entry ----
+    const t1 = performance.now();
+    const CH1 = 10;
+    const screened = [];
+    for (let i = 0; i < searchLibrary.length; i++) {
+      const e = searchLibrary[i];
+      try {
+        const inject = injectSmiles && e.smiles === injectSmiles ? qsdf : null;
+        const confs = ensureEntryConfs(e, nConfs, inject);
+        const perConf = confs.map(c => -1);
+        let best = -1;
+        for (let ci = 0; ci < confs.length; ci++) {
+          const r = JSON.parse(window.webmm.shape_align_wasm(qsdf, confs[ci].sdf, '{"screen":true}'));
+          perConf[ci] = r.surrogate_overlap;
+          if (r.surrogate_overlap > best) best = r.surrogate_overlap;
+        }
+        screened.push({ e, confs, perConf, sur: best });
+      } catch (err) { /* skip entry */ }
+      if (i % CH1 === CH1 - 1 || i === searchLibrary.length - 1) {
+        searchStatus(`Phase 1 screening: ${i + 1}/${searchLibrary.length} × ${nConfs} confs…`);
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+    const screenMs = performance.now() - t1;
+    screened.sort((a, b) => b.sur - a.sur);
+    const candidates = screened.slice(0, SHAPE_TOP_N);
+    const TOP_CONF = Math.min(3, nConfs);   // phase-2 full rescoring width
+
+    // ---- phase 2: full-quality joint shape+color on top conformers ----
+    const rows = [];
+    const t0 = performance.now();
+    const CH = 5;
+    for (let i = 0; i < candidates.length; i++) {
+      const { e, confs, perConf } = candidates[i];
+      try {
+        // conformer order for phase 2: the phase-1 per-conformer surrogates
+        const ranked = confs.map((_, ci) => ({ ci, sur: perConf[ci] }))
+          .sort((a, b) => b.sur - a.sur);
+        const picked = ranked.slice(0, TOP_CONF);
+        let winner = null;
+        for (const { ci } of picked) {
+          const esdf = confs[ci].sdf;
+          let tSitesJson = '';
+          try {
+            const tm = rdkitModule.get_mol(esdf);
+            if (tm && tm.is_valid()) {
+              const tSites = confs[ci].sites || (confs[ci].sites = colorSites(esdf, tm));
+              tm.delete();
+              if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites));
+            }
+          } catch (err) { tSitesJson = ''; }
+          const useColor = qSitesJson && tSitesJson;
+          const res = JSON.parse(useColor
+            ? window.webmm.shape_align_color_wasm(qsdf, esdf, qSitesJson, tSitesJson, '{"random_starts": 8}')
+            : window.webmm.shape_align_wasm(qsdf, esdf, '{"random_starts": 8}'));
+          const combo = res.tanimoto + (useColor ? res.color_tanimeto ?? res.color_tanimoto : 0);
+          if (!winner || combo > winner.combo) {
+            let pharm = null;
+            if (qSites && qSites.length) {
+              try {
+                const tm = rdkitModule.get_mol(esdf);
+                if (tm && tm.is_valid()) {
+                  const tSites = confs[ci].sites || (confs[ci].sites = colorSites(esdf, tm));
+                  tm.delete();
+                  pharm = pharmMatch(qSites, qCoordsCache, tSites, sdfCoords(esdf), res.transform);
+                }
+              } catch (err) { pharm = null; }
+            }
+            winner = { e, ci, score: res.tanimoto, colorT: useColor ? res.color_tanimoto : null, pharm, combo, aligned: applyTransformToSdf(esdf, res.transform) };
+          }
+        }
+        if (winner && winner.score >= thr) {
+          rows.push({ e: winner.e, score: winner.score, colorT: winner.colorT, pharm: winner.pharm, aligned: winner.aligned, conf: winner.ci });
+        }
+      } catch (err) { /* skip entry */ }
+      if (i % CH === CH - 1 || i === candidates.length - 1) {
+        searchStatus(`Phase 2 aligning: ${i + 1}/${candidates.length} entries × ${TOP_CONF} confs…`);
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+    rows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+    const pharmMin = parseFloat(document.getElementById('pharmFilter').value) || 0;
+    const before = rows.length;
+    const shownRows = pharmMin > 0 && qCoordsCache
+      ? rows.filter(r => r.pharm && r.pharm.total > 0 && r.pharm.matched / r.pharm.total >= pharmMin)
+      : rows;
+    renderSearchResults(shownRows, 'shape',
+      `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo · ${nConfs} confs/entry (best over conformers)` +
+      ` · two-phase (screen ${searchLibrary.length}×${nConfs} → full ${candidates.length}×${TOP_CONF}, screen ${(screenMs / 1000).toFixed(1)} s)` +
+      (pharmMin > 0 && shownRows.length !== before ? ` · pharm filter ${before} → ${shownRows.length}` : '') +
+      ` · ${((performance.now() - t0) / 1000 + screenMs / 1000).toFixed(1)} s`);
+  }
+
   async function runSearch() {
     if (!rdkitAvailable()) return;
     if (!searchLibrary || !searchLibrary.length) { searchStatus('Load a library first (paste + Load library, or Demo library)'); return; }
@@ -2492,8 +2656,9 @@ function rdkitAvailable() {
     document.getElementById('colorCol').style.display = shapeMode ? '' : 'none';
     document.getElementById('pharmCol').style.display = shapeMode ? '' : 'none';
     document.getElementById('comboCol').style.display = shapeMode ? '' : 'none';
+    syncShapeConfCol();   // conf column depends on shape mode AND confs >= 2
     for (let i = 0; i < shown.length; i++) {
-      const { e, score, colorT, pharm, aligned } = shown[i];
+      const { e, score, colorT, pharm, aligned, conf } = shown[i];
       const tr = document.createElement('tr');
       tr.tabIndex = 0;
       tr.setAttribute('role', 'button');
@@ -2508,7 +2673,8 @@ function rdkitAvailable() {
         (mode === 'sub'
           ? `<td><span class="result-badge pass">Match</span></td>`
           : shapeMode
-          ? `<td class="value">${(score * 100).toFixed(1)}%</td>` +
+          ? (conf != null ? `<td class="value" title="entry conformer that produced this score">${conf + 1}</td>` : '') +
+            `<td class="value">${(score * 100).toFixed(1)}%</td>` +
             `<td class="value">${colorT != null ? (colorT * 100).toFixed(1) + '%' : '—'}</td>` +
             `<td class="value" title="pharmacophore features matched">${pharm ? pharm.matched + '/' + pharm.total : '—'}</td>` +
             `<td class="value"><strong>${((score + (colorT || 0)) * 100).toFixed(1)}%</strong></td>`

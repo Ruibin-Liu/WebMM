@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**GFN-FF CH···π 行为 UI 提示完成(app 端标记级):引擎选 GFN-FF 时 3D 面板显示 hint(芳香 C-H···π 为设计内吸引项、H 可压环面 ~2.4 Å、MMFF94s 会推开),GFNFF option 加悬停 title;验收 7/7、m1/m2 回归绿。** 后续候选:ANCopt 评估、多构象 shape 检索、颜色力场权重可调、Playground v1.5、2D CV。
+**多构象 Shape 检索完成(纯 app 端零引擎改动):条目得分 = best over N conformers(默认 10),Conf 列 + 查询构象注入保自匹配精确 1.0,N=1 旧路径逐位保留;柔性分子 Tanimoto 显著修复(warfarin 查询 diclofenac 22.1%→72.0%);m5 32/32,六套件全绿。** 后续候选:ANCopt 评估、颜色力场权重可调、Playground v1.5、2D CV。
 
+## Recently Completed
++- **多构象 Shape 检索(Search 标签,v1.4.0 单构象限制收口)。** 编排:ensureEntryConfs 每条目一次 generate_optimized_conformers_wasm(N 构象,seed 42+idx,MMFF94s iter 100,药效团先例)+ 查询成员构象 0 注入(自匹配恒等对齐→T=1.0 精确);N≥2 恒两段式:phase 1 screen 对齐全部构象(保留逐构象代理分)→ top-50 条目 × 每条目 top-3 构象全量 shape+color 重打分,胜者构象做 pharmMatch/回载姿态/Conf 列(1 基);位点缓存构象级惰性;N=1 走原单构象路径逐位不动(阈值决定两段式)。UI:搜索行 confs 输入(1-50 默认 10,仅 shape 模式)+ Conf 列(仅 shape∧confs≥2——renderSearchResults 覆盖 sync 的 bug 修复后由 syncShapeConfCol 统一裁决,程序化改值由 runShapeSearch 入口兜底同步)。质量:ibuprofen 查询 naproxen 59.7→71.9%、warfarin 查询 diclofenac 22.1→72.0%(单构象系统性低估柔性分子的文档化限制就此收口);≥60% pharm 过滤系综下 salicylic 留/glucose 出保持。性能:55 库@10 构象 14.6s(@5 9.3s、@1 2.2s)。验收:m5 32/32(6 新断言:注入自匹配/Conf 列/状态文档化/上限/旧路径不回归含 Conf 列隐藏);m0-m4 全绿(37/10/11/10/32);390px 无溢出;零 page error。
 ## Recently Completed
 +- **GFN-FF CH···π 行为 UI 提示(上轮诊断的落地,纯标记+监听)。** engineSel 切到 GFNFF 时 3D 面板选项行显示 .hint:"GFN-FF: aromatic C–H···π is attractive by design — H's may press onto ring faces (~2.4 Å); MMFF94s relaxes these",切回 MMFF94s/MMFF94 隐藏(change 监听+初始同步);GFNFF `<option>` 加完整悬停 title;span 与 option 的 title/comment 说明物理来源(HB 受体即低 qa π 碳)。验收:Playwright 7/7(显隐三态、文案、option title、390px 无溢出、零 page error);m1 10/10、m2 11/11 回归。
 ## Recently Completed
