@@ -1,60 +1,69 @@
-# Plan: 颜色力场逐类型权重可调(引擎 v1.6.4→v1.6.5 + app UI)+ ANCopt 评估结案
+# Plan: 优化器几何约束(v1.6.5→v1.7.0,引擎 + WASM additive,app UI 另立项)
 
 ## 背景
 
-形状检索的颜色层(六类特征)自 v1.5.0 起权重统一 1.0(ROCS 官方权重
-闭源,文档化简化)。用户要求可调。ANCopt 为候选清单评估项。
+引擎收尾清单 #3:`OptimizationOptions` 目前只有 engine/coordinates/
+convergence,无任何 restraint——"配体准备(docking prep)"的真实需求是
+保持药效团部分刚性、只松弛其余,或锁定特定二面角/距离优化侧链。
 
-## 引擎(v1.6.5,additive)
+## 引擎设计
 
-1. `ColorSite` 增 `w: f64`(默认 1.0);lib.rs 的 sites JSON 解析接受
-   可选 `"w"`(0–3,越界 clamp;缺省 1.0)
-2. `color_overlap_grad` 同型对项乘 `w_i·w_j`(梯度按链式同乘——
-   线性因子,FH 命名空间不变);`color_tanimoto_at` 的 O_ab/O_aa/O_bb
-   走同一函数自动一致
-3. **零漂移**:w=1 时 `1.0·e` 与现值逐位一致(乘一不改浮点)——
-   现有全部 shape 测试不迁改通过即为证
-4. 单测:①默认权重与现输出逐位;②单类型双位点几何,w=√2 → 该类型
-   对偶恰为 2×(线性语义锚点);③带权重 FD 梯度;④全零权重 →
-   colorT=0(den 0 守卫已在)
+1. **新模块 `src/optimizer/restraints.rs`**
+   - `Restraint` 枚举:Distance{i,j,r0 Å,k,tol}、Angle{i,j,k,a0°,k,tol}、
+     Dihedral{i,j,k,l,a0°,k,tol}(k:kcal/mol/Å² 或 /rad²,默认 10;tol:
+     平底半宽,默认 0——纯谐波)
+   - `RestraintSet{restraints, frozen:Vec<usize>}`;
+     `energy_and_gradient(coords)->(f64, Vec<[f64;3]>)`
+   - 平底语义:|x−x0|≤tol→0,否则 ½k(x−x0∓tol)²;二面角差先包到
+     (−180°,180°](a0 近 ±180 时正确)
+   - 梯度:距离 = r_hat 链式(metad DistanceCV 同式);二面角 = 复用
+     `etkdg::dihedral_gradient_contrib(coords,i,j,k,l,dE/dφ)`(metad 先例);
+     角度 = cos 链式新推导(|sinθ|<1e-8 → 跳过贡献,退化守卫文档化);
+     k=0 → 项跳过
+2. **`optimizer/mod.rs`**:`optimize_with_restraints(ff,coords,conv,
+   Option<&RestraintSet>)`——None/空 → 原 `optimize()` 逐位不动;否则
+   `RestrainedObjective` 装饰 CartesianObjective:f_and_g 加约束 E/g 后
+   冻结行清零,自身 force_stats(FF+约束、排除冻结——受约束面的物理
+   判据);energy() = 同一 energy_and_gradient().0(线搜索路径一致性
+   同 shape color 先例)
+3. **lib.rs**:`OptimizationOptions` 增 `restraints_json: String`
+   (skip)+ `set_restraints(json)` setter(存原文,延迟解析);两引擎
+   dispatch(MMFF94/94s、GFNFF)统一接;解析错/索引越界/internal 坐标
+   组合 → `message:"Restraints error: ..."`(Parse error 先例);
+   JSON schema:{"freeze":[0-based 索引],"distance":[{i,j,r0,k?,tol?}],
+   "angle":[{i,j,k,a0,k?,tol?}],"dihedral":[{i,j,k,l,a0,k?,tol?}]}
+4. 版本 1.7.0(新能力,additive;不设约束的调用逐位不变)
 
-## app
+## 测试
 
-5. shape 模式下搜索栏加六输入(donor/acceptor/pos/neg/hydrophobe/
-   ring,0–3 步长 0.1 默认 1.0,折叠 details 防 390px 溢出);
-   `sitesToEngineJson(sites, weights)` 写 `w = sqrt(u)` 使 **用户权重
-   u 对对偶项线性**(w_i·w_j = u);目标侧位点同权重(对称,类型级)
-6. m5 增补:①六输入在位、默认 1.0;②全零权重 → 所有行 Color T = 0%
-   且 Combo = Shape T;③donor=3 至少改变一行 Color T(与默认对比);
-   ④默认下既有 shape 断言全不回归(零漂移端到端)
-
-## ANCopt 评估(决策记录,不实施)
-
-7. 结论写入 CODE_STATUS:动机(鲁棒性)已被 v1.6.4 三层修复+线搜索
-   地板关闭;性能动机不成立——v1.1.1 DIC 矩阵实测迭代数 0.44–0.66×
-   但墙钟持平或更差(E+G 主导、坐标变换 O(N³) 吃掉收益),ANC 的
-   Lindh 模型 Hessian+特征分解属同一成本类;xtb 对齐不可达(不同
-   最小是混沌而非算法差);实施成本 = 完整里程碑(模型 Hessian/信赖
-   域/收敛判据/重建策略/语料验证)。**重开触发条件**:大规模柔性
-   系统的紧优化 API、或迭代数成为瓶颈的证据。备选廉价路径已在库:
-   internal_opt(DIC)为 API opt-in,如需可暴露为 app 选项
+- 单元:三类 FD 梯度(平底内外两侧、二面角 ±180 包裹、k=0 跳过、
+  共线退化守卫)
+- 集成:①冻结 aspirin 前四原子 → 冻结坐标逐位不变、能量有限;
+  ②二面角约束驱动乙醇/丁胺 φ→a0(|φ_final−a0|<5°);③距离约束
+  |d_final−r0|<0.05 Å;④错误路径(坏 JSON/越界索引/internal 组合);
+  ⑤无约束全路径逐位(既有 305 项不迁改 = 零漂移)
+- node 冒烟:set_restraints → optimize_from_sdf,冻结/二面角各一例,
+  v1.7.0
 
 ## 验收
 
-- cargo test 全绿(301+新增)、clippy -D warnings、fmt;wasm 重建 +
-  node 冒烟 v1.6.5
-- m5 新断言过 + 六套件回归;390px;零 page error;node --check
+- cargo test 全绿(305+新增)、clippy -D warnings 0、fmt;wasm 重建
+  1.7.0;六套件 m0–m5 纯回归全绿(零 app 改动)
 
 ## 验收结果(实施后)
 
-- 引擎:ColorSite.w(additive),sites JSON 可选 "w"(0-3 clamp),
-  对偶项乘 w_i·w_j(梯度线性因子);4 新单测(默认逐位/√u 线性语义
-  锚点/带权 FD 梯度/全零→colorT=0);305 测试全绿(既有 shape 14 项
-  不迁改通过 = 零漂移)、clippy -D warnings 0、fmt;v1.6.5 wasm
-  重建,node 冒烟 1.6.5
-- app:shape 模式折叠 "color weights" 六输入(0-3 步长 0.1 默认 1.0,
-  reset)+ sitesToEngineJson(sites, weights) 写 w=√u(用户权重对对偶
-  项线性),两条路径(单构象/系综)全接
-- m5 **36/36**(+4:六输入在位默认 1.0;全零→Color T 全 0% 且
-  Combo=Shape T;donor=3 改变 Color T;回默认结果不变);六套件
-  全绿(37/10/11/10/32/36);ANCopt 评估结案记录于 CODE_STATUS
+- 引擎:src/optimizer/restraints.rs(Restraint 三类 + RestraintSet,
+  平底谐波,二面角 ±180° 包裹;距离=DistanceCV 同式、二面角=复用
+  etkdg::dihedral_gradient_contrib、角度=cos 链式新推导 + 共线守卫);
+  optimize_with_restraints(None/空 → 原 optimize() 逐位);Restrained
+  Objective 加 E/g 后冻结行清零、force_stats 为受约束面口径;
+  energy() 同一携带函数(线搜索一致性)
+- lib.rs:OptimizationOptions.restraints_json + set_restraints(存原文
+  延迟解析,"k" 为 fc 别名);两入口解析 + "Restraints error: ..."
+  早退(坏 JSON/越界/internal 组合);两引擎 dispatch 接通
+- 测试:**314 全绿**(+9:FD 三类×平底内外/±180 包裹最短弧/k=0/
+  共线守卫/冻结逐位/二面角 0.00°/距离 fc=1000 平衡/four 错误路径);
+  clippy -D warnings 0、fmt;v1.7.0 wasm 重建,node 冒烟(二面角
+  0.00°、越界索引报错);六套件纯回归全绿 37/10/11/10/32/36
+- 实施修正:距离测试初版 fc=100 得 2.22 Å 为正确力平衡(MMFF 键合
+  力顶住)非 bug——fc=1000 平衡点 <0.1 Å,期望收紧后通过

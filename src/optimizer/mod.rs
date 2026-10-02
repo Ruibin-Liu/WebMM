@@ -3,6 +3,9 @@
 pub mod internal_opt;
 pub mod internals;
 pub mod jacobi;
+pub mod restraints;
+
+pub use restraints::RestraintSet;
 
 use crate::forces::ForceField;
 use crate::ConvergenceOptions;
@@ -126,6 +129,95 @@ pub fn optimize(
     let r = lbfgs_core(&mut obj, z, convergence);
     // Cartesian z IS the coordinate vector
     r
+}
+
+/// Cartesian objective plus restraints and frozen atoms (v1.7.0).
+///
+/// f_and_g adds the restraint energy/gradient to the force-field values and
+/// zeroes the gradient rows of frozen atoms (their search-direction
+/// components stay zero, so frozen coordinates never move). Force stats are
+/// computed over the FULL restrained gradient — converged means a minimum of
+/// the surface actually being minimized, with frozen DOF excluded.
+struct RestrainedObjective<'a> {
+    inner: CartesianObjective<'a>,
+    restraints: RestraintSet,
+    n_atoms: usize,
+    last_max: f64,
+    last_rms: f64,
+}
+
+impl Objective for RestrainedObjective<'_> {
+    fn dim(&self) -> usize {
+        self.inner.dim()
+    }
+    fn f_and_g(&mut self, z: &[f64]) -> (f64, Vec<f64>) {
+        let (e_ff, mut g) = self.inner.f_and_g(z);
+        let coords = flatten_to_2d(z, self.n_atoms);
+        let (e_r, g_r) = self.restraints.energy_and_gradient(&coords);
+        for (gi, gr) in g
+            .iter_mut()
+            .zip(g_r.iter().flat_map(|v| [v[0], v[1], v[2]]))
+        {
+            *gi += gr;
+        }
+        for &a in &self.restraints.frozen {
+            for c in 0..3 {
+                g[3 * a + c] = 0.0;
+            }
+        }
+        let nc = g.len();
+        self.last_max = g.iter().fold(0.0f64, |m, gi| m.max(gi.abs()));
+        self.last_rms = (g.iter().map(|gi| gi * gi).sum::<f64>() / nc as f64).sqrt();
+        (e_ff + e_r, g)
+    }
+    fn energy(&mut self, z: &[f64]) -> f64 {
+        let e_ff = self.inner.energy(z);
+        let coords = flatten_to_2d(z, self.n_atoms);
+        // same carrying function as f_and_g — line-search trials cannot
+        // drift from accepted-point energies
+        e_ff + self.restraints.energy_and_gradient(&coords).0
+    }
+    fn force_stats(&self) -> (f64, f64) {
+        (self.last_max, self.last_rms)
+    }
+    fn take_reset(&mut self) -> bool {
+        false
+    }
+    fn final_coords(&mut self) -> Vec<[f64; 3]> {
+        self.inner.final_coords()
+    }
+}
+
+/// `optimize` with optional geometric restraints. `None` or an empty set
+/// takes the plain path bit-for-bit (no wrapper, no added zeros).
+pub fn optimize_with_restraints(
+    ff: &dyn ForceField,
+    initial_coords: &[[f64; 3]],
+    convergence: &ConvergenceOptions,
+    restraints: Option<&RestraintSet>,
+) -> OptimizationResult {
+    let mut z = Vec::with_capacity(3 * initial_coords.len());
+    for coord in initial_coords.iter() {
+        z.push(coord[0]);
+        z.push(coord[1]);
+        z.push(coord[2]);
+    }
+    match restraints {
+        Some(rs) if !rs.is_empty() => {
+            let mut obj = RestrainedObjective {
+                inner: CartesianObjective::new(ff, initial_coords.len()),
+                restraints: rs.clone(),
+                n_atoms: initial_coords.len(),
+                last_max: 0.0,
+                last_rms: 0.0,
+            };
+            lbfgs_core(&mut obj, z, convergence)
+        }
+        _ => {
+            let mut obj = CartesianObjective::new(ff, initial_coords.len());
+            lbfgs_core(&mut obj, z, convergence)
+        }
+    }
 }
 
 /// The variable-space-agnostic L-BFGS loop (line search: energy-only Armijo

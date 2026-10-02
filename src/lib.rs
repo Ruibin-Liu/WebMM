@@ -159,6 +159,13 @@ pub struct OptimizationOptions {
     pub coordinates: String,
     #[wasm_bindgen(skip)]
     pub convergence: ConvergenceOptions,
+    /// Geometric restraints JSON (v1.7.0): {"freeze":[idx...],
+    /// "distance":[{i,j,r0,fc?,tol?}], "angle":[{i,j,k,a0,fc?,tol?}],
+    /// "dihedral":[{i,j,k,l,a0,fc?,tol?}]} — 0-based indices, fc default
+    /// 10.0 (kcal/mol/Å² or /rad²), tol default 0 (flat-bottom half-width).
+    /// Parsed at optimize time; errors surface in the result message.
+    #[wasm_bindgen(skip)]
+    pub restraints_json: String,
 }
 
 #[wasm_bindgen]
@@ -187,6 +194,14 @@ impl OptimizationOptions {
     pub fn set_energy_change(&mut self, val: f64) {
         self.convergence.energy_change = val;
     }
+
+    /// Set the geometric restraints JSON (see `restraints_json`). Stored
+    /// raw; invalid input fails the optimize call with a
+    /// "Restraints error: ..." message.
+    #[wasm_bindgen]
+    pub fn set_restraints(&mut self, val: &str) {
+        self.restraints_json = val.to_string();
+    }
 }
 
 impl Default for OptimizationOptions {
@@ -196,6 +211,7 @@ impl Default for OptimizationOptions {
             engine: String::new(),
             coordinates: "cartesian".to_string(),
             convergence: ConvergenceOptions::default(),
+            restraints_json: String::new(),
         }
     }
 }
@@ -693,10 +709,97 @@ pub fn generate_conformers_wasm(sdf_content: &str, n: usize, seed_base: u64) -> 
 
 /// Shared engine dispatch: optimize + per-term breakdown (kcal/mol) at the
 /// final geometry. Returns (optimizer result, terms JSON, engine label).
+/// Parse the restraints JSON against a molecule size. `Ok(None)` for empty
+/// input. "k" is accepted as an alias for "fc" (force constant).
+fn parse_restraint_set(
+    json: &str,
+    n_atoms: usize,
+) -> Result<Option<crate::optimizer::RestraintSet>, String> {
+    use crate::optimizer::restraints::Restraint;
+    if json.trim().is_empty() {
+        return Ok(None);
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("invalid JSON: {e}"))?;
+    let obj = v.as_object().ok_or("expected an object")?;
+    let idx = |x: &serde_json::Value, what: &str| -> Result<usize, String> {
+        let i = x
+            .as_u64()
+            .ok_or(format!("{what}: expected a 0-based atom index"))? as usize;
+        if i >= n_atoms {
+            Err(format!(
+                "{what}: atom index {i} out of range (0..{n_atoms})"
+            ))
+        } else {
+            Ok(i)
+        }
+    };
+    let mut rs = crate::optimizer::RestraintSet::default();
+    if let Some(f) = obj.get("freeze").and_then(|x| x.as_array()) {
+        for x in f {
+            rs.frozen.push(idx(x, "freeze")?);
+        }
+    }
+    let fc_of = |o: &serde_json::Map<String, serde_json::Value>| -> f64 {
+        o.get("fc")
+            .and_then(|x| x.as_f64())
+            .or_else(|| o.get("k").and_then(|x| x.as_f64()))
+            .unwrap_or(10.0)
+            .max(0.0)
+    };
+    let tol_of = |o: &serde_json::Map<String, serde_json::Value>| -> f64 {
+        o.get("tol")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0)
+            .max(0.0)
+    };
+    if let Some(arr) = obj.get("distance").and_then(|x| x.as_array()) {
+        for x in arr {
+            let o = x.as_object().ok_or("distance: expected objects")?;
+            rs.restraints.push(Restraint::Distance {
+                i: idx(o.get("i").ok_or("distance: missing i")?, "distance i")?,
+                j: idx(o.get("j").ok_or("distance: missing j")?, "distance j")?,
+                r0: o.get("r0").and_then(|x| x.as_f64()).unwrap_or(0.0).max(0.0),
+                fc: fc_of(o),
+                tol: tol_of(o),
+            });
+        }
+    }
+    if let Some(arr) = obj.get("angle").and_then(|x| x.as_array()) {
+        for x in arr {
+            let o = x.as_object().ok_or("angle: expected objects")?;
+            rs.restraints.push(Restraint::Angle {
+                i: idx(o.get("i").ok_or("angle: missing i")?, "angle i")?,
+                j: idx(o.get("j").ok_or("angle: missing j")?, "angle j")?,
+                k: idx(o.get("k").ok_or("angle: missing k")?, "angle k")?,
+                a0: o.get("a0").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                fc: fc_of(o),
+                tol: tol_of(o),
+            });
+        }
+    }
+    if let Some(arr) = obj.get("dihedral").and_then(|x| x.as_array()) {
+        for x in arr {
+            let o = x.as_object().ok_or("dihedral: expected objects")?;
+            rs.restraints.push(Restraint::Dihedral {
+                i: idx(o.get("i").ok_or("dihedral: missing i")?, "dihedral i")?,
+                j: idx(o.get("j").ok_or("dihedral: missing j")?, "dihedral j")?,
+                k: idx(o.get("k").ok_or("dihedral: missing k")?, "dihedral k")?,
+                l: idx(o.get("l").ok_or("dihedral: missing l")?, "dihedral l")?,
+                a0: o.get("a0").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                fc: fc_of(o),
+                tol: tol_of(o),
+            });
+        }
+    }
+    Ok(Some(rs))
+}
+
 fn optimize_dispatch(
     mol: &crate::molecule::Molecule,
     initial_coords: &[[f64; 3]],
     options: &OptimizationOptions,
+    restraints: Option<&crate::optimizer::RestraintSet>,
 ) -> (
     crate::optimizer::OptimizationResult,
     String,
@@ -729,7 +832,7 @@ fn optimize_dispatch(
             let r = if options.coordinates.eq_ignore_ascii_case("internal") {
                 crate::optimizer::internal_opt::optimize_internal(&ff, initial_coords, &at, &conv)
             } else {
-                crate::optimizer::optimize(&ff, initial_coords, &conv)
+                crate::optimizer::optimize_with_restraints(&ff, initial_coords, &conv, restraints)
             };
             let ec = ff.components_at(&r.optimized_coords);
             let terms = serde_json::json!({
@@ -757,7 +860,12 @@ fn optimize_dispatch(
                     &options.convergence,
                 )
             } else {
-                crate::optimizer::optimize(&ff, initial_coords, &options.convergence)
+                crate::optimizer::optimize_with_restraints(
+                    &ff,
+                    initial_coords,
+                    &options.convergence,
+                    restraints,
+                )
             };
             let bd = ff.calculate_energy_breakdown(&r.optimized_coords);
             let terms = serde_json::json!({
@@ -773,6 +881,20 @@ fn optimize_dispatch(
             let charges = ff.charges.clone();
             (r, terms.to_string(), used.to_string(), charges)
         }
+    }
+}
+
+fn restraints_error(msg: String) -> OptimizationResult {
+    OptimizationResult {
+        n_atoms: 0,
+        final_energy: 0.0,
+        converged: false,
+        iterations: 0,
+        message: format!("Restraints error: {msg}"),
+        coordinates: Vec::new(),
+        energy_terms_json: "{}".to_string(),
+        engine_used: String::new(),
+        charges: Vec::new(),
     }
 }
 
@@ -809,8 +931,17 @@ pub fn optimize_from_sdf(sdf_content: &str, options: OptimizationOptions) -> Opt
         crate::etkdg::generate_initial_coords_with_config(&mol, &etkdg_config)
     };
 
+    let rs = match parse_restraint_set(&options.restraints_json, mol.atoms.len()) {
+        Ok(rs) => rs,
+        Err(e) => return restraints_error(e),
+    };
+    if rs.is_some() && options.coordinates.eq_ignore_ascii_case("internal") {
+        return restraints_error(
+            "restraints require cartesian coordinates (coordinates: \"cartesian\")".into(),
+        );
+    }
     let (optimizer_result, terms_json, engine_used, charges) =
-        optimize_dispatch(&mol, &initial_coords, &options);
+        optimize_dispatch(&mol, &initial_coords, &options, rs.as_ref());
 
     let mut flat_coords = Vec::new();
     for coord in &optimizer_result.optimized_coords {
@@ -863,8 +994,17 @@ pub fn optimize_from_sdf_direct(
 
     let initial_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
 
+    let rs = match parse_restraint_set(&options.restraints_json, mol.atoms.len()) {
+        Ok(rs) => rs,
+        Err(e) => return restraints_error(e),
+    };
+    if rs.is_some() && options.coordinates.eq_ignore_ascii_case("internal") {
+        return restraints_error(
+            "restraints require cartesian coordinates (coordinates: \"cartesian\")".into(),
+        );
+    }
     let (optimizer_result, terms_json, engine_used, charges) =
-        optimize_dispatch(&mol, &initial_coords, &options);
+        optimize_dispatch(&mol, &initial_coords, &options, rs.as_ref());
 
     let mut flat_coords = Vec::new();
     for coord in &optimizer_result.optimized_coords {
@@ -1790,6 +1930,128 @@ mod conformer_batch_tests {
         assert_eq!(res.get_charges().len(), 9);
         let sum: f64 = res.get_charges().iter().sum();
         assert!(sum.abs() < 1e-6, "GFN charges sum to ~0, got {}", sum);
+    }
+
+    #[test]
+    fn restraints_freeze_atoms_bit_identical() {
+        // freeze heavy atoms 0-2 (C, C, O): their coordinates must be
+        // bit-identical to the input, hydrogens still relax
+        let opts = OptimizationOptions {
+            restraints_json: r#"{"freeze":[0,1,2]}"#.to_string(),
+            ..Default::default()
+        };
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert!(res.get_converged(), "{}", res.get_message());
+        let mol = crate::molecule::parser::parse_sdf(ETHANOL_SDF).unwrap();
+        for a in 0..3 {
+            for c in 0..3 {
+                assert_eq!(
+                    res.get_coord(a, c),
+                    mol.atoms[a].position[c],
+                    "frozen atom {a} moved"
+                );
+            }
+        }
+        // and hydrogens actually relaxed (at least one moved a little)
+        let mut moved = false;
+        for a in 3..9 {
+            for c in 0..3 {
+                if (res.get_coord(a, c) - mol.atoms[a].position[c]).abs() > 1e-6 {
+                    moved = true;
+                }
+            }
+        }
+        assert!(moved, "hydrogens should have relaxed");
+    }
+
+    #[test]
+    fn restraints_dihedral_drives_target() {
+        // H(8)-O(2)-C(1)-C(0) restrained to 0 deg with a strong constant:
+        // the final dihedral must sit at the target (flat-bottom tol 0)
+        let opts = OptimizationOptions {
+            restraints_json: r#"{"dihedral":[{"i":8,"j":2,"k":1,"l":0,"a0":0,"fc":60,"tol":0}]}"#
+                .to_string(),
+            ..Default::default()
+        };
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert!(res.get_converged(), "{}", res.get_message());
+        let p = |i: usize| {
+            [
+                res.get_coord(i, 0),
+                res.get_coord(i, 1),
+                res.get_coord(i, 2),
+            ]
+        };
+        let phi = crate::etkdg::dihedral_angle4(p(8), p(2), p(1), p(0)).to_degrees();
+        assert!(
+            phi.abs() < 5.0 || (phi - 360.0).abs() < 5.0,
+            "dihedral should be ~0 deg, got {phi}"
+        );
+    }
+
+    #[test]
+    fn restraints_distance_pulls_to_target() {
+        // O(2) and methyl H(4) pulled to 2.0 A: final distance within 0.1
+        let opts = OptimizationOptions {
+            restraints_json: r#"{"distance":[{"i":2,"j":4,"r0":2.0,"fc":1000,"tol":0}]}"#
+                .to_string(),
+            ..Default::default()
+        };
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert!(res.get_converged(), "{}", res.get_message());
+        let dx = res.get_coord(2, 0) - res.get_coord(4, 0);
+        let dy = res.get_coord(2, 1) - res.get_coord(4, 1);
+        let dz = res.get_coord(2, 2) - res.get_coord(4, 2);
+        let d = (dx * dx + dy * dy + dz * dz).sqrt();
+        assert!((d - 2.0).abs() < 0.1, "distance should be ~2.0, got {d}");
+    }
+
+    #[test]
+    fn restraints_error_paths() {
+        // bad JSON
+        let opts = OptimizationOptions {
+            restraints_json: "{not json".to_string(),
+            ..Default::default()
+        };
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert!(
+            res.get_message().starts_with("Restraints error"),
+            "{}",
+            res.get_message()
+        );
+        // index out of range
+        let opts = OptimizationOptions {
+            restraints_json: r#"{"freeze":[9]}"#.to_string(),
+            ..Default::default()
+        };
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert!(
+            res.get_message().contains("out of range"),
+            "{}",
+            res.get_message()
+        );
+        // internal coordinates combo
+        let opts = OptimizationOptions {
+            restraints_json: r#"{"freeze":[0]}"#.to_string(),
+            coordinates: "internal".to_string(),
+            ..Default::default()
+        };
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert!(
+            res.get_message().contains("require cartesian"),
+            "{}",
+            res.get_message()
+        );
+        // GFN-FF engine takes restraints too (freeze path runs)
+        let opts = OptimizationOptions {
+            engine: "GFNFF".to_string(),
+            restraints_json: r#"{"freeze":[0,1,2]}"#.to_string(),
+            ..Default::default()
+        };
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert!(res.get_converged(), "GFNFF: {}", res.get_message());
+        let mol = crate::molecule::parser::parse_sdf(ETHANOL_SDF).unwrap();
+        assert_eq!(res.get_coord(0, 0), mol.atoms[0].position[0]);
     }
 
     #[test]
