@@ -167,6 +167,55 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   check('ensemble: status documents confs/entry + two-phase structure', /10 confs\/entry/.test(ensRes.status) && /screen 55×10 → full 50×3/.test(ensRes.status), ensRes.status.slice(0, 100));
   check('ensemble: rows bounded by the top-50 candidate cap', ensRes.rows >= 40 && ensRes.rows <= 50, 'rows=' + ensRes.rows);
 
+  // ---- color force field weights (v1.6.5) ----
+  console.log('color weights:');
+  const cwUI = await page.evaluate(() => ({
+    wrapShown: document.getElementById('colorWeightsWrap').style.display !== 'none',
+    inputs: document.querySelectorAll('#colorWeightsWrap .cw').length,
+    defaults: [...document.querySelectorAll('#colorWeightsWrap .cw')].every(el => el.value === '1'),
+  }));
+  check('six weight inputs visible in shape mode, default 1.0', cwUI.wrapShown && cwUI.inputs === 6 && cwUI.defaults);
+
+  // all-zero weights: Color T must be 0 everywhere and Combo == Shape T
+  const zeroRun = await page.evaluate(() => {
+    for (const el of document.querySelectorAll('#colorWeightsWrap .cw')) el.value = '0';
+    document.getElementById('searchResultStatus').textContent = '';
+    runSearch();
+    return null;
+  });
+  await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+  const zeroRes = await page.evaluate(() => [...document.querySelectorAll('#searchRows tr')].slice(0, 10).map(tr => ({
+    name: tr.children[1].textContent,
+    shapeT: tr.children[5].textContent, colorT: tr.children[6].textContent, combo: tr.children[8].textContent,
+  })));
+  check('all-zero weights: Color T = 0% everywhere, Combo = Shape T',
+    zeroRes.every(r => r.colorT === '0.0%' && r.combo === r.shapeT),
+    JSON.stringify(zeroRes[0]));
+
+  // donor weight 3 must perturb at least one Color T vs default
+  const donorRun = await page.evaluate(() => {
+    resetColorWeights();
+    document.querySelector('#colorWeightsWrap .cw[data-t="donor"]').value = '3';
+    document.getElementById('searchResultStatus').textContent = '';
+    runSearch();
+    return null;
+  });
+  await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+  const donorRes = await page.evaluate(() => [...document.querySelectorAll('#searchRows tr')].slice(0, 10).map(tr => tr.children[6].textContent));
+  check('donor=3 changes at least one Color T vs all-zero', donorRes.some(c => c !== '0.0%'), donorRes.slice(0, 3).join(','));
+
+  // restore defaults; the default run must match the pre-weights results
+  await page.evaluate(() => resetColorWeights());
+  const defRun = await page.evaluate(() => {
+    document.getElementById('searchResultStatus').textContent = '';
+    runSearch();
+    return null;
+  });
+  await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+  const defTop = await page.evaluate(() => document.querySelector('#searchRows tr').children[1].textContent +
+    ':' + document.querySelector('#searchRows tr').children[5].textContent);
+  check('weights back at 1.0: default results unchanged (zero drift)', defTop === 'ibuprofen:100.0%', defTop);
+
   // ---- single-conformer legacy path (confs=1) is unchanged ----
   console.log('shape legacy single-conformer (confs=1):');
   await page.evaluate(() => {

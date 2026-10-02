@@ -7682,6 +7682,14 @@ pub fn shape_align_color_wasm(
                 .and_then(|v| v.as_str())
                 .ok_or("site missing \"t\"")?;
             let tid = color_type_id(tname).ok_or(format!("unknown color type {tname}"))?;
+            // optional per-site weight (0–3, clamped); default 1.0. Callers
+            // pass sqrt(u) so a feature-type weight u scales its pair
+            // contributions linearly (pair factor is w_i·w_j)
+            let w = it
+                .get("w")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1.0)
+                .clamp(0.0, 3.0);
             if let Some(i) = it.get("i").and_then(|v| v.as_u64()) {
                 let i = i as usize;
                 let a = atoms
@@ -7691,6 +7699,7 @@ pub fn shape_align_color_wasm(
                     c: a.c,
                     alpha: a.alpha,
                     type_id: tid,
+                    w,
                 });
             } else if let Some(list) = it.get("atoms").and_then(|v| v.as_array()) {
                 let idxs: Vec<usize> = list
@@ -7716,6 +7725,7 @@ pub fn shape_align_color_wasm(
                     c: [c[0] / n, c[1] / n, c[2] / n],
                     alpha: alpha / n,
                     type_id: tid,
+                    w,
                 });
             } else {
                 return Err("site needs \"i\" or \"atoms\"".into());

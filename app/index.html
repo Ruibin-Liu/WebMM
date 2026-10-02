@@ -912,6 +912,24 @@ details {
         <label for="shapeConfs" style="font-size:0.75rem; color:var(--muted);" title="Conformers generated per library entry (best over conformers scores each entry; 1 = single-conformer legacy path)">confs</label>
         <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()">
       </span>
+      <details id="colorWeightsWrap" style="display:none; white-space:nowrap;">
+        <summary style="cursor:pointer; font-size:0.75rem; color:var(--muted); display:inline-flex; align-items:center;" title="Per-type color force field weights: how many times each feature type counts in Color T / Combo (1.0 = ROCS-style uniform)">color weights</summary>
+        <div style="position:absolute; z-index:50; background:#fff; border:1px solid var(--border); border-radius:8px; padding:0.6rem; display:flex; flex-wrap:wrap; gap:0.5rem; max-width:340px; box-shadow:0 4px 12px rgba(0,0,0,0.12); white-space:normal;">
+          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">donor
+            <input type="number" class="cw" data-t="donor" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">acceptor
+            <input type="number" class="cw" data-t="acceptor" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">pos
+            <input type="number" class="cw" data-t="pos" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">neg
+            <input type="number" class="cw" data-t="neg" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">hydrophobe
+            <input type="number" class="cw" data-t="hydrophobe" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">ring
+            <input type="number" class="cw" data-t="ring" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+          <button onclick="resetColorWeights()" class="action-btn clear" style="width:auto; padding:0.3rem 0.6rem; font-size:0.72rem;">reset</button>
+        </div>
+      </details>
       <button id="btnSearchRun" class="action-btn primary" onclick="runSearch()">Search</button>
     </div>
     <div class="version" id="searchStatus" aria-live="polite" style="margin:0.3rem 0 0;"></div>
@@ -1949,6 +1967,7 @@ function rdkitAvailable() {
     const shape = document.getElementById('searchMode').value === 'shape';
     document.getElementById('searchFp').disabled = shape;
     document.getElementById('shapeConfsWrap').style.display = shape ? '' : 'none';
+    document.getElementById('colorWeightsWrap').style.display = shape ? '' : 'none';
     syncShapeConfCol();
     document.getElementById('searchQuery').placeholder = shape
       ? 'Query: SMILES (3D conformers are generated on the fly)'
@@ -2289,13 +2308,30 @@ function rdkitAvailable() {
   }
 
   /// Page sites → engine sites JSON ([{i,t}...] + [{atoms,t:"ring"}]).
-  function sitesToEngineJson(sites) {
+  function sitesToEngineJson(sites, weights) {
     const out = [];
     for (const s of sites) {
-      if (s.type === 'ring' && s.ring) out.push({ atoms: s.ring, t: 'ring' });
-      else if (s.i >= 0) out.push({ i: s.i, t: s.type });
+      // per-type weight u -> site w = sqrt(u): the engine's pair factor is
+      // w_i·w_j, so a type's same-type pair contributions scale by exactly u
+      const u = weights ? (weights[s.type] ?? 1) : 1;
+      const w = Math.sqrt(Math.max(0, u));
+      if (s.type === 'ring' && s.ring) out.push({ atoms: s.ring, t: 'ring', w: +w.toFixed(6) });
+      else if (s.i >= 0) out.push({ i: s.i, t: s.type, w: +w.toFixed(6) });
     }
     return out;
+  }
+
+  function colorWeights() {
+    const w = {};
+    for (const el of document.querySelectorAll('#colorWeightsWrap .cw')) {
+      w[el.dataset.t] = Math.max(0, Math.min(3, parseFloat(el.value)));
+      if (!isFinite(w[el.dataset.t])) w[el.dataset.t] = 1;
+    }
+    return w;
+  }
+
+  function resetColorWeights() {
+    for (const el of document.querySelectorAll('#colorWeightsWrap .cw')) el.value = '1';
   }
 
   /// Per-feature pharmacophore matching at the aligned pose: for each
@@ -2369,7 +2405,8 @@ function rdkitAvailable() {
         qm.delete();
       }
     } catch (e) { qSites = null; }
-    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites)) : '';
+    const cw = colorWeights();
+    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites, cw)) : '';
     let candidates = searchLibrary;
     let t1, screenMs = 0;
 
@@ -2409,7 +2446,7 @@ function rdkitAvailable() {
           if (tm && tm.is_valid()) {
             const tSites = e.sites || (e.sites = colorSites(esdf, tm));
             tm.delete();
-            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites));
+            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites, cw));
           }
         } catch (err) { tSitesJson = ''; }
         // joint shape+color optimization when both sides have sites
@@ -2475,7 +2512,8 @@ function rdkitAvailable() {
         qm.delete();
       }
     } catch (e) { qSites = null; }
-    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites)) : '';
+    const cw = colorWeights();
+    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites, cw)) : '';
     let qCanon = null;
     try {
       const qm = rdkitModule.get_mol(q);
@@ -2612,7 +2650,7 @@ function rdkitAvailable() {
           if (tm && tm.is_valid()) {
             const tSites = confs[ci].sites || (confs[ci].sites = colorSites(esdf, tm));
             tm.delete();
-            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites));
+            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites, cw));
           }
         } catch (err) { tSitesJson = ''; }
         jobs.push({ e, confs, ci, esdf, tSitesJson, useColor: !!(qSitesJson && tSitesJson) });

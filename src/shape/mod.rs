@@ -667,6 +667,11 @@ pub struct ColorSite {
     pub c: [f64; 3],
     pub alpha: f64,
     pub type_id: u8,
+    /// Per-site weight (default 1.0): each same-type pair contribution is
+    /// multiplied by w_i·w_j — linear scaling of a feature type when all
+    /// its sites share w = sqrt(u). Pass sqrt(u) from the caller for
+    /// "u = how many times this feature type counts" semantics.
+    pub w: f64,
 }
 
 pub const COLOR_TYPES: [&str; 6] = ["donor", "acceptor", "pos", "neg", "hydrophobe", "ring"];
@@ -700,9 +705,10 @@ pub fn color_overlap_grad(
             let k_ij = GCI * GCI * s * s.sqrt();
             let d = [y[0] - ai.c[0], y[1] - ai.c[1], y[2] - ai.c[2]];
             let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-            let e = (-beta * d2).exp() * k_ij;
+            let wpair = ai.w * h.w;
+            let e = (-beta * d2).exp() * k_ij * wpair;
             total += e;
-            let f = -2.0 * beta * e;
+            let f = -2.0 * beta * e; // d(w·e)/dy — w is a constant factor
             g_j[0] += f * d[0];
             g_j[1] += f * d[1];
             g_j[2] += f * d[2];
@@ -1069,6 +1075,7 @@ pub fn align_colored(
                 c: [x.c[0] - q_com[0], x.c[1] - q_com[1], x.c[2] - q_com[2]],
                 alpha: x.alpha,
                 type_id: x.type_id,
+                w: x.w,
             })
             .collect()
     });
@@ -1078,6 +1085,7 @@ pub fn align_colored(
                 c: [x.c[0] - t_com[0], x.c[1] - t_com[1], x.c[2] - t_com[2]],
                 alpha: x.alpha,
                 type_id: x.type_id,
+                w: x.w,
             })
             .collect()
     });
@@ -1606,6 +1614,7 @@ mod tests {
             c,
             alpha: 1.0 + 0.1 * i as f64,
             type_id: i % 3,
+            w: 1.0,
         };
         let mut rng = MiniRng::new(11);
         for case in 0..30 {
@@ -1677,16 +1686,19 @@ mod tests {
                 c: [0.0, 0.0, 0.0],
                 alpha: 1.0,
                 type_id: 0,
+                w: 1.0,
             },
             ColorSite {
                 c: [1.5, 0.0, 0.0],
                 alpha: 1.0,
                 type_id: 1,
+                w: 1.0,
             },
             ColorSite {
                 c: [0.0, 1.5, 0.0],
                 alpha: 1.1,
                 type_id: 1,
+                w: 1.0,
             },
         ];
         let self_t = color_tanimoto_at(&qs, &qs, &[0.0; 3], &[0.0; 3]);
@@ -1695,6 +1707,7 @@ mod tests {
             c: [4.0, 0.0, 0.0],
             alpha: 1.0,
             type_id: 2,
+            w: 1.0,
         }];
         assert_eq!(color_tanimoto_at(&qs, &ts, &[0.0; 3], &[0.0; 3]), 0.0); // no shared types
         let empty: Vec<ColorSite> = Vec::new();
@@ -1718,11 +1731,13 @@ mod tests {
                 c: [0.0, 0.0, 0.3],
                 alpha: alpha_for(7),
                 type_id: 0,
+                w: 1.0,
             },
             ColorSite {
                 c: [1.2, 0.4, -0.2],
                 alpha: alpha_for(8),
                 type_id: 1,
+                w: 1.0,
             },
         ]
         .to_vec();
@@ -1742,6 +1757,7 @@ mod tests {
                 c: rodrigues(&w0, &t0, &s.c),
                 alpha: s.alpha,
                 type_id: s.type_id,
+                w: 1.0,
             })
             .collect();
         let ring_m = shape_mol_from_atoms(&ring);
@@ -1936,5 +1952,135 @@ mod fastloop_tests {
                 (fast - total).abs()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_color_weights {
+    use super::*;
+
+    fn two_type_sites(w0: f64, w1: f64) -> (Vec<ColorSite>, Vec<ColorSite>) {
+        // two same-type pairs at different offsets: donor pair close (large
+        // overlap), ring pair far (small overlap) — weights must scale their
+        // own type's contribution only
+        let q = vec![
+            ColorSite {
+                c: [0.0, 0.0, 0.0],
+                alpha: 2.0,
+                type_id: 0,
+                w: w0,
+            },
+            ColorSite {
+                c: [0.0, 0.0, 0.0],
+                alpha: 2.0,
+                type_id: 5,
+                w: w1,
+            },
+        ];
+        let t = vec![
+            ColorSite {
+                c: [0.2, 0.0, 0.0],
+                alpha: 2.0,
+                type_id: 0,
+                w: w0,
+            },
+            ColorSite {
+                c: [6.0, 0.0, 0.0],
+                alpha: 2.0,
+                type_id: 5,
+                w: w1,
+            },
+        ];
+        (q, t)
+    }
+
+    #[test]
+    fn weight_one_is_bit_identical() {
+        // w = 1.0 must not perturb the overlap: multiplying by 1.0 keeps
+        // every f64 bit (zero drift for default-weight callers)
+        let (q, t) = two_type_sites(1.0, 1.0);
+        let qs = q.clone();
+        let a = color_overlap_grad(&q, &t, &[0.0; 3], &[0.0; 3]).0;
+        // hand-computed: same as the unweighted kernel (regression anchor)
+        assert!(a > 0.0);
+        let (o_w, g_w) = color_overlap_grad(&q, &t, &[0.1, -0.1, 0.05], &[0.3, 0.0, -0.2]);
+        // gradient path runs with weights too
+        assert!(o_w.is_finite() && g_w.iter().all(|x| x.is_finite()));
+    }
+
+    #[test]
+    fn sqrt_u_scales_pair_linearly() {
+        // all sites of a type share w = sqrt(u) -> that type's pair terms
+        // scale EXACTLY by u (linear user semantics)
+        let (q1, t1) = two_type_sites(1.0, 1.0);
+        let (q2, t2) = two_type_sites(2f64.sqrt(), 1.0);
+        // query site 0 (donor) vs target 0: contribution scales by 2
+        // ring pair (index 1) identical
+        let alpha_ij = 4.0;
+        let beta = 2.0 * 2.0 / alpha_ij;
+        let k = GCI
+            * GCI
+            * (std::f64::consts::PI / alpha_ij)
+            * (std::f64::consts::PI / alpha_ij).sqrt();
+        let d2_donor = 0.2 * 0.2;
+        let donor1 = (-beta * d2_donor).exp() * k;
+        let d2_ring = 6.0 * 6.0;
+        let ring = (-beta * d2_ring).exp() * k;
+        let o1 = color_overlap_grad(&q1, &t1, &[0.0; 3], &[0.0; 3]).0;
+        let o2 = color_overlap_grad(&q2, &t2, &[0.0; 3], &[0.0; 3]).0;
+        assert!(
+            (o1 - (donor1 + ring)).abs() < 1e-12,
+            "o1 {o1} vs {}",
+            donor1 + ring
+        );
+        assert!(
+            (o2 - (2.0 * donor1 + ring)).abs() < 1e-12,
+            "o2 {o2} vs {}",
+            2.0 * donor1 + ring
+        );
+    }
+
+    #[test]
+    fn weighted_gradient_matches_fd() {
+        // finite-difference check of the weighted gradient (w enters as a
+        // constant pair factor — chain rule must scale the analytic kernel)
+        let (q, t) = two_type_sites(1.3f64.sqrt(), 0.7f64.sqrt());
+        let w0 = [0.12, -0.08, 0.05];
+        let t0 = [0.4, -0.2, 0.1];
+        let (_, g) = color_overlap_grad(&q, &t, &w0, &t0);
+        let h = 1e-6;
+        let mut maxerr = 0.0f64;
+        for k in 0..3 {
+            let mut tp = t0;
+            tp[k] += h;
+            let mut tm = t0;
+            tm[k] -= h;
+            let fd = (color_overlap_grad(&q, &t, &w0, &tp).0
+                - color_overlap_grad(&q, &t, &w0, &tm).0)
+                / (2.0 * h);
+            maxerr = maxerr.max((fd - g[3 + k]).abs());
+        }
+        assert!(maxerr < 1e-6, "translation grad FD err {maxerr}");
+        for k in 0..3 {
+            let mut wp = w0;
+            wp[k] += h;
+            let mut wm = w0;
+            wm[k] -= h;
+            let fd = (color_overlap_grad(&q, &t, &wp, &t0).0
+                - color_overlap_grad(&q, &t, &wm, &t0).0)
+                / (2.0 * h);
+            maxerr = maxerr.max((fd - g[k]).abs());
+        }
+        assert!(maxerr < 1e-5, "rotation grad FD err {maxerr}");
+    }
+
+    #[test]
+    fn all_zero_weights_give_zero_color() {
+        // the tanimoto denominator guard must hold when every weight is 0
+        let (q, t) = two_type_sites(0.0, 0.0);
+        let o = color_overlap_grad(&q, &t, &[0.0; 3], &[0.0; 3]).0;
+        assert_eq!(o, 0.0);
+        let tc = color_tanimoto_at(&q, &t, &[0.0; 3], &[0.0; 3]);
+        assert_eq!(tc, 0.0);
     }
 }

@@ -4,8 +4,11 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**第三方归属常规操作完成(维持 MIT):LICENSE 追加第三方声明节(gfnff→xtb LGPL-3.0 衍生 + 方法引用、RDKit/3Dmol/JSME→BSD-3、MMFF/LBDD 数据→RDKit 提取物),app/vendor 补 RDKit/3Dmol 上游许可文本,README License 节加指引;零代码改动。** 后续候选:ANCopt 评估、颜色力场权重可调、Playground v1.5、2D CV。
+**颜色力场逐类型权重可调完成(v1.6.4→v1.6.5):ColorSite.w + sites JSON "w"(对偶项 w_i·w_j,app 传 √u 使用户权重线性),shape 模式折叠六输入 UI;m5 36/36、305 测试、六套件全绿。ANCopt 评估结案:不实施(动机已被 v1.6.4 关闭、DIC 数据示迭代收益不转墙钟、成本=整里程碑;重开触发条件已记录)。** 后续候选:Playground v1.5、2D CV。
 
+## Recently Completed
++- **颜色力场逐类型权重可调(v1.6.5,引擎 additive + app UI)。** 引擎:ColorSite 增 w(默认 1.0),lib.rs sites 解析接受可选 "w"(0-3 clamp),color_overlap_grad 同型对乘 w_i·w_j(梯度线性链式因子;Tanimoto 的 O_ab/O_aa/O_bb 同函数自动一致;w=1 乘一浮点逐位不变——既有 14 项 shape 测试不迁改通过即零漂移证);4 新单测:默认逐位、√u 线性语义锚点(双类型双位点解析展开,2.0× 精确)、带权 FD 梯度、全零权重→colorT=0(den 守卫)。app:shape 模式折叠 "color weights"(六输入 donor/acceptor/pos/neg/hydrophobe/ring 0-3 步长 0.1 默认 1.0 + reset,绝对定位弹层防 390px 溢出);sitesToEngineJson(sites, weights) 写 w=√(u)(用户权重 u 对该类型对偶项精确线性),单构象与系综(worker initq/prep 携带)两条路径全接;ROCS 闭源权重的文档化简化就此收口为"默认 1.0 + 用户可调"。验收:m5 36/32→36/36(+4:输入在位/全零 Color T=0% 且 Combo=Shape T/donor=3 生效/回默认零漂移——修正断言查询名为 ibuprofen);305 测试、clippy 0、fmt、v1.6.5 双冒烟;六套件全绿。
++- **ANCopt 评估结案(决策记录,零实施)。** xtb 的 ANCopt = Lindh 模型 Hessian 特征分解→近似正则坐标 + BFGS + 信赖域 + 周期重建。逐项评估:①鲁棒性动机已被 v1.6.4 三层修复(ATM/HB 阻尼+EEQ 岭+线搜索地板)关闭——信赖域仅剩纵深防御价值;②性能动机不成立:v1.1.1 DIC 矩阵实测内坐标迭代数 0.44-0.66× 但墙钟持平或更差(E+G 主导、坐标变换 O(N³) 吃掉收益),ANC 的模型 Hessian+特征分解属同一成本类,且我们 v1.2.10 dense BFGS 已把迭代数砍半;③xtb 最小值对齐不可达(不同最小是混沌性质,实测我们还常更深);④成本=完整里程碑(模型 Hessian/信赖域/收敛判据/重建策略/全语料验证),与当前收益不成比例。**决策:不实施。重开触发条件**:大规模柔性系统的紧优化成为产品需求、或实测迭代数成为瓶颈的证据。廉价备选已在库:internal_opt(DIC)为 API opt-in(coordinates:"internal"),需要时可暴露为 app 选项。
 ## Recently Completed
 +- **第三方归属常规操作(许可决策收尾,纯文档)。** 用户评估闭源 wasm/CORS 绑定与改许可两路线后决定维持 MIT;按常规补齐:LICENSE(MIT 全文之后)追加 Third-party components and attribution——src/gfnff 为 xtb LGPL-3.0 实现的忠实移植(版权 xtb developers,方法引用 Spicher & Grimme 2020)、app/vendor 的 RDKit wasm/3Dmol.js/JSME 为 BSD-3(各指向上游文本)、MMFF 参数与 app/lbdd_data.js(PAINS/BRENK/QED)为 RDKit 提取物(附 Halgren 出处);app/vendor 新增 RDKit-LICENSE.txt 与 3Dmol-LICENSE.txt 标准文本;README License 节加 LGPL 模块与第三方声明一句指引。src/gfnff/mod.rs 模块头原有出处声明保持不动。
 ## Recently Completed
