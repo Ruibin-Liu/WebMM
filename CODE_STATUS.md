@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**用户报告的"氢往环内挤"诊断闭环(零代码变更):GFN-FF 把芳环 C-H···π 当吸引性"氢键"建模(HB 受体就是 π 碳,setup 代码可证),吡唑 C-H 被拉到氯苯环面上方 H···C=2.36 Å(嵌入 2.58→MMFF94s 2.98→GFN-FF 2.36);官方 xtb 二进制从我们的几何 1 步收敛零位移、且我们的极小比 xtb 自优化还深 2.4 kcal/mol——两实现一致的真极小,非缺陷;要看"常规"几何用 MMFF94s 或换构象。** 后续候选:ANCopt 评估、多构象 shape 检索、颜色力场权重可调、Playground v1.5、2D CV。
+**GFN-FF CH···π 行为 UI 提示完成(app 端标记级):引擎选 GFN-FF 时 3D 面板显示 hint(芳香 C-H···π 为设计内吸引项、H 可压环面 ~2.4 Å、MMFF94s 会推开),GFNFF option 加悬停 title;验收 7/7、m1/m2 回归绿。** 后续候选:ANCopt 评估、多构象 shape 检索、颜色力场权重可调、Playground v1.5、2D CV。
 
+## Recently Completed
++- **GFN-FF CH···π 行为 UI 提示(上轮诊断的落地,纯标记+监听)。** engineSel 切到 GFNFF 时 3D 面板选项行显示 .hint:"GFN-FF: aromatic C–H···π is attractive by design — H's may press onto ring faces (~2.4 Å); MMFF94s relaxes these",切回 MMFF94s/MMFF94 隐藏(change 监听+初始同步);GFNFF `<option>` 加完整悬停 title;span 与 option 的 title/comment 说明物理来源(HB 受体即低 qa π 碳)。验收:Playwright 7/7(显隐三态、文案、option title、390px 无溢出、零 page error);m1 10/10、m2 11/11 回归。
 ## Recently Completed
 +- **"氢往环内挤"诊断(用户分子二次实测,零代码变更)。** 症状:该分子 3D 视图里氢似乎挤向环内。逐层测量(嵌入/MMFF94s/GFN-FF 三阶段 SDF + 环质心/环面几何 + 官方 xtb 交叉验证):所见=吡唑 C9-H50 压在氯苯环面上——H···最近环碳 嵌入 2.58→MMFF94s 2.98(推开)→GFN-FF 2.36 Å(比嵌入更紧);其余全部分析(环内弯 H、面外偏差、H···H 接触、环变形)均正常。归因:GFN-FF 设计上将芳环 C-H···π 建模为吸引性 HB 型相互作用(其 HB 受体集合就是低 qa 的 π 碳——setup hb_ab 仅含 π 碳),MMFF94s 无此项。验证:xtb 官方二进制同起点自优化得 -14.5274 Eh,我们的极小 -14.5312 Eh(更深 2.4 kcal/mol);xtb 从我们的几何再优化 **1 步收敛、全原子位移 0.00 Å**——该几何是两实现一致的 GFN-FF 真极小。结论:视觉上紧凑的 CH···π 接触是力场物理,非引擎缺陷;用户可用 MMFF94s 引擎或装载其他构象获得常规观感。
 ## Recently Completed

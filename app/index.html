@@ -1037,7 +1037,7 @@ details {
          <select id="engineSel" class="engine-sel" aria-label="Force-field engine">
            <option value="MMFF94s" selected>MMFF94s</option>
            <option value="MMFF94">MMFF94</option>
-           <option value="GFNFF">GFN-FF</option>
+           <option value="GFNFF" title="General Force Field (Grimme): includes an attractive aryl C–H···π term — aromatic H's may sit ~2.4 Å over ring faces by design (MMFF94s relaxes these contacts)">GFN-FF</option>
          </select>
          <button id="btnOpt" class="action-btn spatial" onclick="optimize3D()" disabled title="L-BFGS geometry optimization">
            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1090,6 +1090,11 @@ details {
            <span style="width:10px;height:10px;border-radius:2px;background:#ef4444;display:inline-block;"></span>
          </span>
        </label>
+       <!-- GFN-FF models aromatic C–H···π as an attractive HB-type term (its
+            acceptor set IS the low-qa π carbons), so optimized structures may
+            show aromatic H's pressed ~2.4 Å onto ring faces — by design, not
+            a defect; MMFF94s has no such term and relaxes those contacts -->
+       <span id="gfnffHint" class="hint" style="display:none;" title="GFN-FF's hydrogen-bond term uses aromatic π carbons as acceptors: close C–H···π contacts after optimization are expected behavior">GFN-FF: aromatic C–H···π is attractive by design — H's may press onto ring faces (~2.4 Å); MMFF94s relaxes these</span>
      </div>
      <div id="status3d" class="version" aria-live="polite" style="margin-top:0.5rem;">Engine loading…</div>
      <div id="confPanel" style="display:none; margin-top:0.75rem;">
@@ -3848,6 +3853,17 @@ function initViewer() {
 document.getElementById('btn-viewreset').onclick = () => {
   if (viewer && sdf3d) { viewer.zoomTo(); viewer.render(); }
 };
+
+// GFN-FF hint: show only while that engine is selected (see the span's
+// comment for the physics)
+{
+  const es = document.getElementById('engineSel');
+  const sync = () => {
+    document.getElementById('gfnffHint').style.display = es.value === 'GFNFF' ? '' : 'none';
+  };
+  es.addEventListener('change', sync);
+  sync();
+}
 
 function showSdfIn3D(sdf) {
   sdf3d = sdf;
