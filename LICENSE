@@ -19,3 +19,32 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---------------------------------------------------------------------------
+
+Third-party components and attribution
+
+The MIT license above applies to the original work in this project. The
+following components carry their own terms and remain subject to them:
+
+1. GFN-FF force field implementation (`src/gfnff/`) — a faithful Rust port
+   of the GFN-FF implementation in xtb (https://github.com/grimme-lab/xtb),
+   distributed under the GNU Lesser General Public License v3.0 or later.
+   Copyright the xtb developers. Method: Spicher & Grimme,
+   Angew. Chem. Int. Ed. 2020, 59, 15665.
+
+2. RDKit WebAssembly build (`app/vendor/RDKit_minimal.js`,
+   `RDKit_minimal.wasm`) — Copyright the RDKit contributors.
+   BSD-3-Clause; see `app/vendor/RDKit-LICENSE.txt`.
+
+3. 3Dmol.js (`app/vendor/3Dmol-min.js`) — Copyright the 3Dmol.js
+   contributors. BSD-3-Clause; see `app/vendor/3Dmol-LICENSE.txt`.
+
+4. JSME molecule editor (`app/vendor/jsme/`) — Copyright 2017 Novartis
+   Institutes for BioMedical Research Inc and Bruno Bienfait.
+   BSD-3-Clause; see `app/vendor/jsme/license.txt`.
+
+5. MMFF94/MMFF94s parameter data (extracted under `src/mmff/`) and LBDD
+   reference data (`app/lbdd_data.js`: PAINS/BRENK SMARTS catalogs, QED
+   constants) — extracted from the RDKit source tree (BSD-3-Clause);
+   MMFF94 parameters derive from the published work of T. A. Halgren.

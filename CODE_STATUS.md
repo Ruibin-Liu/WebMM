@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**多构象 Shape 检索性能优化完成(shape.worker.js 农场 + 三级缓存):55 库@10 构象冷跑 14.6→5.0s、同查询重跑 1.4s、换查询 2.4s(构象复用只重筛),确定性全等;过程修 3 个真 bug(wasmUrl 缺失/resolve 挂错对象/async onmessage 不排队)。m5 32/32,回归全绿。** 后续候选:ANCopt 评估、颜色力场权重可调、Playground v1.5、2D CV。
+**第三方归属常规操作完成(维持 MIT):LICENSE 追加第三方声明节(gfnff→xtb LGPL-3.0 衍生 + 方法引用、RDKit/3Dmol/JSME→BSD-3、MMFF/LBDD 数据→RDKit 提取物),app/vendor 补 RDKit/3Dmol 上游许可文本,README License 节加指引;零代码改动。** 后续候选:ANCopt 评估、颜色力场权重可调、Playground v1.5、2D CV。
 
+## Recently Completed
++- **第三方归属常规操作(许可决策收尾,纯文档)。** 用户评估闭源 wasm/CORS 绑定与改许可两路线后决定维持 MIT;按常规补齐:LICENSE(MIT 全文之后)追加 Third-party components and attribution——src/gfnff 为 xtb LGPL-3.0 实现的忠实移植(版权 xtb developers,方法引用 Spicher & Grimme 2020)、app/vendor 的 RDKit wasm/3Dmol.js/JSME 为 BSD-3(各指向上游文本)、MMFF 参数与 app/lbdd_data.js(PAINS/BRENK/QED)为 RDKit 提取物(附 Halgren 出处);app/vendor 新增 RDKit-LICENSE.txt 与 3Dmol-LICENSE.txt 标准文本;README License 节加 LGPL 模块与第三方声明一句指引。src/gfnff/mod.rs 模块头原有出处声明保持不动。
 ## Recently Completed
 +- **多构象 Shape 检索性能优化(app/shape.worker.js 新 worker + 农场编排,零引擎改动)。** 形状三段(生成/screen/全量对齐)按条目独立——8-worker 农场并行(phase 1 逐条目动态领活,phase 2 轮转派发);RDKit 侧(重 molblock、胜者 colorSites、pharmMatch、对齐姿态)留主线程。缓存三级:同查询 screen 全缓存(1.4s)、换查询构象复用只重筛(genSdf 保存纯生成构象 0,查询成员重新注入,2.4s)、全新 5.0s;worker 数按库规模(全缓存重跑仍并行 phase 2,'initq' 会话引导);运行令牌防陈旧渲染。**过程三 bug**:worker prep 未携带 wasmUrl(全败空结果);phase-2 resolve 挂 worker 消息而非 waiter 注册表(Promise.all 永挂);async onmessage 不排队——'full' 在 'initq' 的 import 完成前并发执行致 wasm=null(消息队列链串行化)。参数串与顺序版逐字一致→确定性:同查询多次 top-3 全等。性能:冷 14.6→5.0s(3×)、同查询 11.9→1.4s(9×)、换查询 2.4s(不再重新生成)。验收:m5 32/32、m1/m2/m4 全绿(10/11/32)、390px 无溢出、零 page error、node --check 含 worker。
 ## Recently Completed

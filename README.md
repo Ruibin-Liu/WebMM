@@ -279,3 +279,8 @@ MMFF code changes.)
 ## License
 
 [MIT](LICENSE) © 2026 Ruibin Liu
+
+The GFN-FF module (`src/gfnff`) is a port of the xtb implementation and
+remains LGPL-3.0; bundled third-party components (`app/vendor/`, extracted
+parameter/LBDD data) retain their upstream licenses — see the third-party
+notices in [LICENSE](LICENSE).
