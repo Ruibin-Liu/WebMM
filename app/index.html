@@ -2109,34 +2109,6 @@ function rdkitAvailable() {
     return ensureEntry3D({ idx: 999, smiles: canon });
   }
 
-  /// N-conformer ensemble for shape search (pharm-panel precedent: one
-  /// generate_optimized_conformers_wasm per entry, seed 42+idx, MMFF94s,
-  /// iter 100). Cached per entry; conformer records carry lazily-perceived
-  /// color sites. `injectSdf` replaces conformer 0 (self-match: the query
-  /// member's entry aligns identically -> shape T exactly 1.0).
-  function ensureEntryConfs(e, n, injectSdf) {
-    if (e.confs && e.confsN === n && e.confsInject === (injectSdf || null)) return e.confs;
-    if (!window.webmm) throw new Error('WebMM engine not loaded');
-    const m = rdkitModule.get_mol(e.smiles);
-    if (!m || !m.is_valid()) { if (m) m.delete(); throw new Error('parse'); }
-    const mb = m.get_molblock();
-    m.delete();
-    const r = window.webmm.generate_optimized_conformers_wasm(mb, n, BigInt(42 + e.idx), 'MMFF94s', 100);
-    if (!r.get_success() || !r.get_n_confs()) throw new Error('conformer failed');
-    const flat = r.get_coordinates();
-    const na = r.get_n_atoms();
-    const tpl = r.get_template_sdf();
-    const confs = [];
-    for (let i = 0; i < r.get_n_confs(); i++) {
-      confs.push({ sdf: buildSdfFromCoords(Array.from(flat.slice(i * na * 3, (i + 1) * na * 3)), tpl), sites: null });
-    }
-    if (injectSdf) confs[0] = { sdf: injectSdf, sites: null };
-    e.confs = confs;
-    e.confsN = n;
-    e.confsInject = injectSdf || null;
-    return confs;
-  }
-
   function applyTransformToSdf(sdf, m12) {
     const lines = sdfLines(sdf);
     const na = parseInt(lines[3].substring(0, 3));
@@ -2373,6 +2345,7 @@ function rdkitAvailable() {
   }
 
   const SHAPE_SCREEN_THRESHOLD = 300; // entries; above this, two-phase search
+  let shapeRunToken = 0;             // stale async shape runs drop their results
   const SHAPE_TOP_N = 50;              // full-quality re-rank count
 
   async function runShapeSearch(q) {
@@ -2482,10 +2455,14 @@ function rdkitAvailable() {
   }
 
   /// Multi-conformer shape search: entry score = BEST over its N conformers.
-  /// Phase 1 screens every conformer of every entry (cheap proxy) -> the
-  /// top SHAPE_TOP_N entries advance; phase 2 full-aligns each survivor's
-  /// top-3 conformers (by proxy) and keeps the winner per entry (combo).
-  /// The query stays single-conformer (ROCS convention).
+  /// Worker-farm orchestration: phase 1 (generate + screen every conformer)
+  /// and the phase-2 alignments run on shape.worker.js instances (RDKit-side
+  /// work — heavy molblocks, winner colorSites, pharmMatch, the aligned pose —
+  /// stays on the main thread). Entry conformers and per-conformer screen
+  /// proxies are cached per (entry, nConfs, canonical query): re-running the
+  /// same query (threshold / pharm-filter iteration) skips phase 1 entirely.
+  /// Parameters are verbatim-identical to the former sequential path, so the
+  /// results are deterministic across both.
   async function runShapeSearchEnsemble(q, qsdf, thr, nConfs) {
     searchStatus(`Preparing 3D (${nConfs} conformers per entry)…`);
     let qSites = null;
@@ -2499,94 +2476,187 @@ function rdkitAvailable() {
       }
     } catch (e) { qSites = null; }
     const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites)) : '';
-    // self-match injection: when the query IS a library member, its entry
-    // gets the query conformer as conformer 0 (identical SDFs -> T = 1.0)
-    let injectSmiles = null;
+    let qCanon = null;
     try {
       const qm = rdkitModule.get_mol(q);
-      if (qm && qm.is_valid()) { injectSmiles = qm.get_smiles(); qm.delete(); }
-    } catch (e) { injectSmiles = null; }
+      if (qm && qm.is_valid()) { qCanon = qm.get_smiles(); qm.delete(); }
+    } catch (e) { qCanon = null; }
 
-    // ---- phase 1: screen every conformer of every entry ----
-    const t1 = performance.now();
-    const CH1 = 10;
+    // ---- entries: reuse cached screens (same query), reuse cached
+    // conformers with re-screen (new query), else generate+screen ----
     const screened = [];
-    for (let i = 0; i < searchLibrary.length; i++) {
-      const e = searchLibrary[i];
-      try {
-        const inject = injectSmiles && e.smiles === injectSmiles ? qsdf : null;
-        const confs = ensureEntryConfs(e, nConfs, inject);
-        const perConf = confs.map(c => -1);
-        let best = -1;
-        for (let ci = 0; ci < confs.length; ci++) {
-          const r = JSON.parse(window.webmm.shape_align_wasm(qsdf, confs[ci].sdf, '{"screen":true}'));
-          perConf[ci] = r.surrogate_overlap;
-          if (r.surrogate_overlap > best) best = r.surrogate_overlap;
+    const todo = [];          // {e, mb?} — mb absent => screen-only (confs cached)
+    for (const e of searchLibrary) {
+      if (e.confs && e.confsN === nConfs && e.screenProxies) {
+        if (e.screenQ === qCanon) {
+          screened.push({ e, confs: e.confs, perConf: e.screenProxies, sur: Math.max(...e.screenProxies) });
+          continue;
         }
-        screened.push({ e, confs, perConf, sur: best });
-      } catch (err) { /* skip entry */ }
-      if (i % CH1 === CH1 - 1 || i === searchLibrary.length - 1) {
-        searchStatus(`Phase 1 screening: ${i + 1}/${searchLibrary.length} × ${nConfs} confs…`);
-        await new Promise(r => setTimeout(r, 0));
+        // new query: restore the pure generated conformer 0 unless THIS
+        // entry is the query member (then re-inject the new query sdf)
+        e.confs[0].sdf = (qCanon && e.smiles === qCanon) ? qsdf : e.confs[0].genSdf;
+        e.confs[0].sites = null;   // sites perceived on the old sdf are stale
+        todo.push({ e });
+        continue;
       }
+      todo.push({ e, gen: true });
     }
+    const cacheHits = screened.length;
+    const genCount = todo.filter(t => t.gen).length;
+
+    // ---- worker farm: phase 1 (generate + screen) ----
+    const t1 = performance.now();
+    const token = ++shapeRunToken;
+    // key the farm off the LIBRARY size: fully-cached reruns (todo empty)
+    // still parallelize phase 2
+    const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 8, searchLibrary.length));
+    const workers = [];
+    const fullWaiters = [];   // {idx, ci, resolve} — 'fulled' messages route by both
+    let nextJob = 0;
+    const done = new Promise(resolve => {
+      let pending = 0;
+      const maybeDispatch = w => {
+        if (token !== shapeRunToken) return;
+        while (nextJob < todo.length) {
+          const job = todo[nextJob++];
+          const e = job.e;
+          pending++;
+          if (job.gen) {
+            const m = rdkitModule.get_mol(e.smiles);
+            if (!m || !m.is_valid()) { if (m) m.delete(); pending--; screened.push(null); continue; }
+            const mb = m.get_molblock();
+            m.delete();
+            w.postMessage({ type: 'prep', idx: e.idx, mb, n: nConfs, seed: 42 + e.idx,
+              wasmUrl: window.__webmmUrl, qsdf, qSitesJson, inject: !!(qCanon && e.smiles === qCanon) });
+          } else {
+            w.postMessage({ type: 'screen', idx: e.idx,
+              wasmUrl: window.__webmmUrl, qsdf, qSitesJson,
+              confSdfs: e.confs.map(c => c.sdf) });
+          }
+          return;   // one job in flight per worker; re-dispatch on completion
+        }
+        if (pending === 0) resolve();
+      };
+      const started = W;
+      for (let w = 0; w < started; w++) {
+        const wk = new Worker('shape.worker.js', { type: 'module' });
+        workers.push(wk);
+        // session bootstrap: cached reruns never send 'prep' — without this
+        // the phase-2 'full' jobs would land on uninitialized workers
+        wk.postMessage({ type: 'initq', wasmUrl: window.__webmmUrl, qsdf, qSitesJson });
+        wk.onmessage = ev => {
+          if (token !== shapeRunToken) return;
+          const msg = ev.data;
+          if (msg.type === 'prepped') {
+            const job = todo.find(x => x.e.idx === msg.idx);
+            if (job) {
+              const e = job.e;
+              e.confs = msg.confSdfs.map((sdf, i) => ({
+                sdf, sites: null,
+                // keep the pure generated conformer 0 for query switches (a
+                // former query member's slot 0 holds the injected query sdf)
+                genSdf: i === 0 ? (job.gen ? sdf : (e.confs[0] && e.confs[0].genSdf) || sdf) : undefined,
+              }));
+              e.confsN = nConfs;
+              e.screenQ = qCanon;
+              e.screenProxies = msg.proxies;
+              screened.push({ e, confs: e.confs, perConf: msg.proxies, sur: Math.max(...msg.proxies) });
+            }
+            pending--;
+            searchStatus(`Phase 1 screening: ${cacheHits + screened.filter(Boolean).length}/${searchLibrary.length} × ${nConfs} confs…`);
+            maybeDispatch(wk);
+          } else if (msg.type === 'fulled') {
+            const wi = fullWaiters.findIndex(w => w.idx === msg.idx && w.ci === msg.ci);
+            if (wi >= 0) fullWaiters.splice(wi, 1)[0].resolve(msg);
+          } else if (msg.type === 'error') {
+            const job = todo.find(x => x.e.idx === msg.idx);
+            const e = job && job.e;
+            if (e && !e.confs) screened.push(null);   // generation failed: entry skipped
+            // a failed full job must release its waiter (defensive — the
+            // worker already sends a failed sentinel for those)
+            for (let i = fullWaiters.length - 1; i >= 0; i--) {
+              if (fullWaiters[i].idx === msg.idx) fullWaiters.splice(i, 1)[0].resolve({ failed: true });
+            }
+            pending--;
+            maybeDispatch(wk);
+          }
+        };
+      }
+      // kick off (workers with nothing left resolve immediately)
+      for (const wk of workers) maybeDispatch(wk);
+      if (todo.length === 0) resolve();
+    });
+    await done;
+    if (token !== shapeRunToken) { for (const w of workers) w.terminate(); return; }
     const screenMs = performance.now() - t1;
-    screened.sort((a, b) => b.sur - a.sur);
-    const candidates = screened.slice(0, SHAPE_TOP_N);
+    const valid = screened.filter(Boolean);
+    valid.sort((a, b) => b.sur - a.sur);
+    const candidates = valid.slice(0, SHAPE_TOP_N);
     const TOP_CONF = Math.min(3, nConfs);   // phase-2 full rescoring width
 
     // ---- phase 2: full-quality joint shape+color on top conformers ----
+    // colorSites needs RDKit -> perceived on the main thread for the picked
+    // conformers only; the alignments run on the farm
     const rows = [];
     const t0 = performance.now();
-    const CH = 5;
-    for (let i = 0; i < candidates.length; i++) {
-      const { e, confs, perConf } = candidates[i];
-      try {
-        // conformer order for phase 2: the phase-1 per-conformer surrogates
-        const ranked = confs.map((_, ci) => ({ ci, sur: perConf[ci] }))
-          .sort((a, b) => b.sur - a.sur);
-        const picked = ranked.slice(0, TOP_CONF);
-        let winner = null;
-        for (const { ci } of picked) {
-          const esdf = confs[ci].sdf;
-          let tSitesJson = '';
-          try {
-            const tm = rdkitModule.get_mol(esdf);
-            if (tm && tm.is_valid()) {
-              const tSites = confs[ci].sites || (confs[ci].sites = colorSites(esdf, tm));
-              tm.delete();
-              if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites));
-            }
-          } catch (err) { tSitesJson = ''; }
-          const useColor = qSitesJson && tSitesJson;
-          const res = JSON.parse(useColor
-            ? window.webmm.shape_align_color_wasm(qsdf, esdf, qSitesJson, tSitesJson, '{"random_starts": 8}')
-            : window.webmm.shape_align_wasm(qsdf, esdf, '{"random_starts": 8}'));
-          const combo = res.tanimoto + (useColor ? res.color_tanimeto ?? res.color_tanimoto : 0);
-          if (!winner || combo > winner.combo) {
-            let pharm = null;
-            if (qSites && qSites.length) {
-              try {
-                const tm = rdkitModule.get_mol(esdf);
-                if (tm && tm.is_valid()) {
-                  const tSites = confs[ci].sites || (confs[ci].sites = colorSites(esdf, tm));
-                  tm.delete();
-                  pharm = pharmMatch(qSites, qCoordsCache, tSites, sdfCoords(esdf), res.transform);
-                }
-              } catch (err) { pharm = null; }
-            }
-            winner = { e, ci, score: res.tanimoto, colorT: useColor ? res.color_tanimoto : null, pharm, combo, aligned: applyTransformToSdf(esdf, res.transform) };
+    const jobs = [];
+    for (const cand of candidates) {
+      const { e, confs, perConf } = cand;
+      const picked = confs.map((_, ci) => ({ ci, sur: perConf[ci] }))
+        .sort((a, b) => b.sur - a.sur).slice(0, TOP_CONF);
+      for (const { ci } of picked) {
+        const esdf = confs[ci].sdf;
+        let tSitesJson = '';
+        try {
+          const tm = rdkitModule.get_mol(esdf);
+          if (tm && tm.is_valid()) {
+            const tSites = confs[ci].sites || (confs[ci].sites = colorSites(esdf, tm));
+            tm.delete();
+            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites));
           }
-        }
-        if (winner && winner.score >= thr) {
-          rows.push({ e: winner.e, score: winner.score, colorT: winner.colorT, pharm: winner.pharm, aligned: winner.aligned, conf: winner.ci });
-        }
-      } catch (err) { /* skip entry */ }
-      if (i % CH === CH - 1 || i === candidates.length - 1) {
-        searchStatus(`Phase 2 aligning: ${i + 1}/${candidates.length} entries × ${TOP_CONF} confs…`);
-        await new Promise(r => setTimeout(r, 0));
+        } catch (err) { tSitesJson = ''; }
+        jobs.push({ e, confs, ci, esdf, tSitesJson, useColor: !!(qSitesJson && tSitesJson) });
       }
     }
+    // dispatch the alignment jobs round-robin; each resolves a promise
+    const results = await Promise.all(jobs.map((job, i) => new Promise(resolve => {
+      const wk = workers[i % workers.length];
+      fullWaiters.push({ idx: job.e.idx, ci: job.ci, resolve });
+      wk.postMessage({ type: 'full', idx: job.e.idx, ci: job.ci, esdf: job.esdf,
+        tSitesJson: job.tSitesJson, useColor: job.useColor });
+    })));
+    if (token !== shapeRunToken) { for (const w of workers) w.terminate(); return; }
+    // pick the winner per entry (max combo)
+    const byEntry = new Map();
+    for (let i = 0; i < jobs.length; i++) {
+      const job = jobs[i], res = results[i];
+      if (!res || res.failed || res.ci !== job.ci) continue;   // stale/failed slot
+      const combo = res.tanimoto + (job.useColor ? res.color_tanimoto : 0);
+      const cur = byEntry.get(job.e.idx);
+      if (!cur || combo > cur.combo) {
+        let pharm = null;
+        if (qSites && qSites.length) {
+          try {
+            const tm = rdkitModule.get_mol(job.esdf);
+            if (tm && tm.is_valid()) {
+              const tSites = job.confs[job.ci].sites || (job.confs[job.ci].sites = colorSites(job.esdf, tm));
+              tm.delete();
+              pharm = pharmMatch(qSites, qCoordsCache, tSites, sdfCoords(job.esdf), res.transform);
+            }
+          } catch (err) { pharm = null; }
+        }
+        byEntry.set(job.e.idx, { e: job.e, ci: job.ci, score: res.tanimoto,
+          colorT: job.useColor ? res.color_tanimoto : null, pharm, combo,
+          aligned: applyTransformToSdf(job.esdf, res.transform) });
+      }
+    }
+    for (const winner of byEntry.values()) {
+      if (winner.score >= thr) {
+        rows.push({ e: winner.e, score: winner.score, colorT: winner.colorT,
+          pharm: winner.pharm, aligned: winner.aligned, conf: winner.ci });
+      }
+    }
+    for (const w of workers) w.terminate();
     rows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
     const pharmMin = parseFloat(document.getElementById('pharmFilter').value) || 0;
     const before = rows.length;
@@ -2595,6 +2665,8 @@ function rdkitAvailable() {
       : rows;
     renderSearchResults(shownRows, 'shape',
       `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo · ${nConfs} confs/entry (best over conformers)` +
+      (cacheHits ? ` · ${cacheHits} cached` : '') +
+      (cacheHits + todo.length > 0 && genCount < todo.length ? ` · ${todo.length - genCount} rescreened` : '') +
       ` · two-phase (screen ${searchLibrary.length}×${nConfs} → full ${candidates.length}×${TOP_CONF}, screen ${(screenMs / 1000).toFixed(1)} s)` +
       (pharmMin > 0 && shownRows.length !== before ? ` · pharm filter ${before} → ${shownRows.length}` : '') +
       ` · ${((performance.now() - t0) / 1000 + screenMs / 1000).toFixed(1)} s`);

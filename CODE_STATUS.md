@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**多构象 Shape 检索完成(纯 app 端零引擎改动):条目得分 = best over N conformers(默认 10),Conf 列 + 查询构象注入保自匹配精确 1.0,N=1 旧路径逐位保留;柔性分子 Tanimoto 显著修复(warfarin 查询 diclofenac 22.1%→72.0%);m5 32/32,六套件全绿。** 后续候选:ANCopt 评估、颜色力场权重可调、Playground v1.5、2D CV。
+**多构象 Shape 检索性能优化完成(shape.worker.js 农场 + 三级缓存):55 库@10 构象冷跑 14.6→5.0s、同查询重跑 1.4s、换查询 2.4s(构象复用只重筛),确定性全等;过程修 3 个真 bug(wasmUrl 缺失/resolve 挂错对象/async onmessage 不排队)。m5 32/32,回归全绿。** 后续候选:ANCopt 评估、颜色力场权重可调、Playground v1.5、2D CV。
 
+## Recently Completed
++- **多构象 Shape 检索性能优化(app/shape.worker.js 新 worker + 农场编排,零引擎改动)。** 形状三段(生成/screen/全量对齐)按条目独立——8-worker 农场并行(phase 1 逐条目动态领活,phase 2 轮转派发);RDKit 侧(重 molblock、胜者 colorSites、pharmMatch、对齐姿态)留主线程。缓存三级:同查询 screen 全缓存(1.4s)、换查询构象复用只重筛(genSdf 保存纯生成构象 0,查询成员重新注入,2.4s)、全新 5.0s;worker 数按库规模(全缓存重跑仍并行 phase 2,'initq' 会话引导);运行令牌防陈旧渲染。**过程三 bug**:worker prep 未携带 wasmUrl(全败空结果);phase-2 resolve 挂 worker 消息而非 waiter 注册表(Promise.all 永挂);async onmessage 不排队——'full' 在 'initq' 的 import 完成前并发执行致 wasm=null(消息队列链串行化)。参数串与顺序版逐字一致→确定性:同查询多次 top-3 全等。性能:冷 14.6→5.0s(3×)、同查询 11.9→1.4s(9×)、换查询 2.4s(不再重新生成)。验收:m5 32/32、m1/m2/m4 全绿(10/11/32)、390px 无溢出、零 page error、node --check 含 worker。
 ## Recently Completed
 +- **多构象 Shape 检索(Search 标签,v1.4.0 单构象限制收口)。** 编排:ensureEntryConfs 每条目一次 generate_optimized_conformers_wasm(N 构象,seed 42+idx,MMFF94s iter 100,药效团先例)+ 查询成员构象 0 注入(自匹配恒等对齐→T=1.0 精确);N≥2 恒两段式:phase 1 screen 对齐全部构象(保留逐构象代理分)→ top-50 条目 × 每条目 top-3 构象全量 shape+color 重打分,胜者构象做 pharmMatch/回载姿态/Conf 列(1 基);位点缓存构象级惰性;N=1 走原单构象路径逐位不动(阈值决定两段式)。UI:搜索行 confs 输入(1-50 默认 10,仅 shape 模式)+ Conf 列(仅 shape∧confs≥2——renderSearchResults 覆盖 sync 的 bug 修复后由 syncShapeConfCol 统一裁决,程序化改值由 runShapeSearch 入口兜底同步)。质量:ibuprofen 查询 naproxen 59.7→71.9%、warfarin 查询 diclofenac 22.1→72.0%(单构象系统性低估柔性分子的文档化限制就此收口);≥60% pharm 过滤系综下 salicylic 留/glucose 出保持。性能:55 库@10 构象 14.6s(@5 9.3s、@1 2.2s)。验收:m5 32/32(6 新断言:注入自匹配/Conf 列/状态文档化/上限/旧路径不回归含 Conf 列隐藏);m0-m4 全绿(37/10/11/10/32);390px 无溢出;零 page error。
 ## Recently Completed
