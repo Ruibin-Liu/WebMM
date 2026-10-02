@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**存量测试清零完成:m0 props 比对改键交集(MC 无 QED 行致整表恒败)、m3 axe nested-interactive 修复(重置按钮移出 role="img" 为 .viewer-wrap 兄弟节点,容器重写补丁代码随之简化)——m0 37/37 历史首次全绿,m0-m5 六套件首次全部通过。** 后续候选:ANCopt 评估(用户提出;现有 internal_opt 为 DIC+同一L-BFGS 线搜索、无信赖域、未接 app)、多构象 shape 检索、颜色力场权重可调、Playground v1.5、2D CV。
+**用户报告的"氢往环内挤"诊断闭环(零代码变更):GFN-FF 把芳环 C-H···π 当吸引性"氢键"建模(HB 受体就是 π 碳,setup 代码可证),吡唑 C-H 被拉到氯苯环面上方 H···C=2.36 Å(嵌入 2.58→MMFF94s 2.98→GFN-FF 2.36);官方 xtb 二进制从我们的几何 1 步收敛零位移、且我们的极小比 xtb 自优化还深 2.4 kcal/mol——两实现一致的真极小,非缺陷;要看"常规"几何用 MMFF94s 或换构象。** 后续候选:ANCopt 评估、多构象 shape 检索、颜色力场权重可调、Playground v1.5、2D CV。
 
+## Recently Completed
++- **"氢往环内挤"诊断(用户分子二次实测,零代码变更)。** 症状:该分子 3D 视图里氢似乎挤向环内。逐层测量(嵌入/MMFF94s/GFN-FF 三阶段 SDF + 环质心/环面几何 + 官方 xtb 交叉验证):所见=吡唑 C9-H50 压在氯苯环面上——H···最近环碳 嵌入 2.58→MMFF94s 2.98(推开)→GFN-FF 2.36 Å(比嵌入更紧);其余全部分析(环内弯 H、面外偏差、H···H 接触、环变形)均正常。归因:GFN-FF 设计上将芳环 C-H···π 建模为吸引性 HB 型相互作用(其 HB 受体集合就是低 qa 的 π 碳——setup hb_ab 仅含 π 碳),MMFF94s 无此项。验证:xtb 官方二进制同起点自优化得 -14.5274 Eh,我们的极小 -14.5312 Eh(更深 2.4 kcal/mol);xtb 从我们的几何再优化 **1 步收敛、全原子位移 0.00 Å**——该几何是两实现一致的 GFN-FF 真极小。结论:视觉上紧凑的 CH···π 接触是力场物理,非引擎缺陷;用户可用 MMFF94s 引擎或装载其他构象获得常规观感。
 ## Recently Completed
 +- **存量测试清零(m0+m3,测试侧+标记级)。** ①m0 的 propsEqual 从"等长逐行"改"键交集":LBDD 里程碑给 app 加的 QED 行是 MC 参照站没有的,整表长度比对因此恒败——现在共同字段全等才判过(HBA RDKit 2026.03 版本漂移豁免与 detail 提示保留,提示改键查);②m3 的 axe nested-interactive(severe):#viewer3d 标 role="img" 而重置按钮嵌其内——新增 .viewer-wrap(position:relative)承载按钮为兄弟节点(视觉位置实测不变),clear3DViewer/initViewer 里"先取引用再 append"的两处 v1.3.2 补丁删除(按钮移出重写范围自然存活)。验收:m0 37/37(历史首次)、m3 10/10(axe clean);按钮锚定/点击/容器重写存活/390px 带 3D 无溢出实测;m1-m5 回归全绿——**m0-m5 六套件首次全部通过**。
 ## Recently Completed
