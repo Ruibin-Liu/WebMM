@@ -153,7 +153,7 @@ console.log('project (mem storage):');
   const compat = Compat;   // browser-less: init with explicit deps
   await compat.init({ storage: store2, Identity, DB, Project });
   const n = await compat.saveLibraryInputs([{ smiles: 'CCO', name: 'eth' }, { smiles: 'CCC', name: 'pro' }]);
-  check('saveLibraryInputs imports with keys', n === 2);
+  check('saveLibraryInputs returns enriched entries (molIds)', Array.isArray(n) && n.length === 2 && n[0].molId && n[0].structureKey === 'IK-CCO');
   const restored = await compat.restoreInputs(() => null);
   check('restore projects inputs back', restored && restored.length === 2 && restored[0].smiles === 'CCO');
   await compat.clearLibrary();
@@ -164,6 +164,36 @@ console.log('project (mem storage):');
   const store3 = DB.createMemStorage();
   const compat2path = DB.createMemStorage();  // fresh module state not possible (singleton) — simulate via new init on same module not allowed; instead test migrate branch on a fresh storage through Compat internals? Compat is a singleton per page; here verify the migration function contract only.
   check('golden fixture check follows below', true);
+
+  // ---- M1b triage facade ----
+  console.log('triage facade:');
+  {
+    const ts = DB.createMemStorage();
+    await compat.init({ storage: ts, Identity, DB, Project });   // re-init on a fresh store
+    await compat.saveLibraryInputs([{ smiles: 'CCO', name: 'a' }, { smiles: 'CCC', name: 'b' }]);
+    const pins0 = compat.getPins();
+    check('fresh store: no pins/excludes', Object.keys(pins0).length === 0 && Object.keys(compat.getExcludes()).length === 0);
+    // note: compat is a module singleton per module instance — this re-init
+    // shares it; use restoreInputs to learn the molIds on THIS store
+    const ids = (await compat.restoreInputs(() => null)).map(x => x.molId);
+    await compat.pin(ids[0], 'anchor');
+    check('pin stores note', compat.getPins()[ids[0]] && compat.getPins()[ids[0]].note === 'anchor');
+    await compat.pin(ids[0], 'anchor-2');   // note update via re-pin
+    check('re-pin updates note', compat.getPins()[ids[0]].note === 'anchor-2');
+    await compat.exclude(ids[1], 'too small');
+    check('exclude stores reason', compat.getExcludes()[ids[1]].reason === 'too small');
+    let u = await compat.undo();
+    check('undo reverses exclude', u.ok && u.undone.type === 'Exclude' && !compat.getExcludes()[ids[1]]);
+    u = await compat.undo();
+    check('undo2 unpins the re-pin (stack walks DOWN, no ping-pong)', u.ok && u.undone.type === 'Pin' && !compat.getPins()[ids[0]]);
+    u = await compat.undo();
+    check('undo3 unpins the first pin', u.ok && u.undone.type === 'Pin');
+    u = await compat.undo();
+    check('undo stack exhausted after walking the whole triage history', !u.ok && u.reason === 'empty');
+    // redo walk-back: pin comes back with its last note via the log
+    u = await compat.projectApi().redo();
+    check('redo re-applies the LAST undone pin (LIFO)', u.ok && compat.getPins()[ids[0]] && compat.getPins()[ids[0]].note === 'anchor');
+  }
 
   // ---- golden fixture #1 (minted at M1a exit) ----
   console.log('golden fixture #1:');

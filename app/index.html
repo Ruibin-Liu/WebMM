@@ -1207,12 +1207,23 @@ details {
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
-         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th></tr>
+         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th><th title="pin to the working set / exclude from triage (persisted in the project store, undoable)">★</th></tr>
        </thead>
        <tbody id="searchRows"></tbody>
      </table>
      </div>
      <div class="hint" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+     <div id="workSetPanel" style="display:none; margin-top:0.5rem; padding:0.5rem; border:1px solid var(--border); border-radius:8px;">
+       <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+         <strong style="font-size:0.82rem;">Working set</strong>
+         <span id="workSetCounts" class="hint"></span>
+         <button class="action-btn clear" style="width:auto; padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="triageUndo()" title="Undo the last triage action (appends the inverse command — the log is never rewritten)">↶ undo</button>
+         <label class="hint" style="cursor:pointer; display:inline-flex; gap:3px; align-items:center;">
+           <input type="checkbox" id="workSetHideExcluded" onchange="renderSearchResultsCurrent()"> hide excluded
+         </label>
+       </div>
+       <div id="workSetPins" style="margin-top:0.35rem;"></div>
+     </div>
    </div>
 
    <div id="rgdPanel" class="panel" style="display:none;">
@@ -1959,6 +1970,7 @@ function rdkitAvailable() {
         });
         const storage = P.DB.createIdbStorage();
         await P.Compat.init({ storage, Identity: P.Identity, DB: P.DB, Project: P.Project });
+        window.__platformCompat = P.Compat;
         return P.Compat;
       } catch (err) {
         console.warn('[platform] init failed (app continues without the project store):', err);
@@ -1968,11 +1980,22 @@ function rdkitAvailable() {
     return __platformReady;
   }
 
+  // Returns a promise that resolves when the inputs are DURABLE in the
+  // store (the old localStorage write was synchronous; the IDB write is
+  // not — load/clear status messages must not outrun persistence, or a
+  // fast reload loses the library).
   function saveSearchLibrary(lib) {
-    initPlatformStore().then(c => {
-      if (!c) return;
-      c.saveLibraryInputs(lib.map(e => ({ smiles: e.smiles, name: e.name })))
-        .catch(err => console.warn('[platform] library persist failed:', err));
+    return initPlatformStore().then(c => {
+      if (!c) return null;
+      return c.saveLibraryInputs(lib.map(e => ({ smiles: e.smiles, name: e.name })))
+        .then(enriched => {
+          // attach molIds (same order/ordinal) so triage can target rows
+          for (let i = 0; i < lib.length && i < enriched.length; i++) lib[i].molId = enriched[i].molId;
+          renderSearchResultsCurrent();
+          renderWorkSet();
+          return enriched.length;
+        })
+        .catch(err => { console.warn('[platform] library persist failed:', err); return null; });
     });
   }
 
@@ -1991,14 +2014,16 @@ function rdkitAvailable() {
         if (!saved || !saved.length) return;
         const r = loadSearchLibraryFrom(saved.map(x => ({ smiles: x.smiles, name: x.name })));
         if (r && r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
+        renderWorkSet();
       });
     }).catch(err => console.warn('[platform] restore failed:', err));
   }
 
-  function clearSearchLibrary() {
+  async function clearSearchLibrary() {
     searchLibrary = null;
     try { localStorage.removeItem(SEARCH_LIB_KEY); } catch (e) {}
-    initPlatformStore().then(c => { if (c) c.clearLibrary().catch(() => {}); });
+    const c = await initPlatformStore().catch(() => null);
+    if (c) { try { await c.clearLibrary(); } catch (err) {} }
     document.getElementById('searchPanel').style.display = 'none';
     modeShown.search = false;   // cleared library invalidates the stale hit table
     searchStatus('Library cleared');
@@ -2079,28 +2104,30 @@ function rdkitAvailable() {
       } catch (e) { skipped++; }
     }
     searchLibrary = lib;
-    saveSearchLibrary(lib);
-    return { lib, skipped };
+    const persisted = saveSearchLibrary(lib);
+    return { lib, skipped, persisted };
   }
 
-  function loadSearchLibrary() {
+  async function loadSearchLibrary() {
     const items = parseLibraryText(document.getElementById('input').value);
     if (!items.length) { searchStatus('Nothing to load — enter one SMILES per line or a multi-record SDF'); return; }
     const r = loadSearchLibraryFrom(items);
     if (!r) return;
     document.getElementById('searchPanel').style.display = 'none';
     modeShown.search = false;   // a new library invalidates the old hit table
+    await (r.persisted || Promise.resolve());   // status must not outrun durability
     searchStatus(`Library loaded: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}` +
       (r.skipped ? `, ${r.skipped} skipped (unparseable)` : ''));
   }
 
-  function loadDemoLibrary() {
+  async function loadDemoLibrary() {
     const demo = window.DEMO_LIBRARY || [];
     if (!demo.length) { searchStatus('Demo library data missing (app/demo_library.js)'); return; }
     const r = loadSearchLibraryFrom(demo.map(e => ({ smiles: e.smiles, name: e.name })));
     if (!r) return;
     document.getElementById('searchPanel').style.display = 'none';
     modeShown.search = false;   // a new library invalidates the old hit table
+    await (r.persisted || Promise.resolve());   // status must not outrun durability
     searchStatus(`Demo library loaded: ${r.lib.length} molecules (repo test set + named drugs)`);
   }
 
@@ -2987,9 +3014,90 @@ function rdkitAvailable() {
     return { refined, attempted };
   }
 
+  // ---- M1b triage overlay (pin/exclude/notes/undo over the platform store) ----
+  function triageStore() { return window.__platformCompat || null; }
+  window.triageStore = triageStore;
+
+  async function triageTogglePin(molId) {
+    const c = triageStore(); if (!c) return;
+    try {
+      if (c.getPins()[molId]) await c.unpin(molId);
+      else await c.pin(molId, null);
+    } catch (err) { searchStatus('Triage: ' + (err.message || err)); return; }
+    renderSearchResultsCurrent();
+    renderWorkSet();
+  }
+  window.triageTogglePin = triageTogglePin;
+
+  async function triageToggleExclude(molId) {
+    const c = triageStore(); if (!c) return;
+    try {
+      if (c.getExcludes()[molId]) await c.include(molId);
+      else await c.exclude(molId);
+    } catch (err) { searchStatus('Triage: ' + (err.message || err)); return; }
+    renderSearchResultsCurrent();
+    renderWorkSet();
+  }
+  window.triageToggleExclude = triageToggleExclude;
+
+  async function triageSetNote(molId, note) {
+    const c = triageStore(); if (!c) return;
+    try { await c.pin(molId, note || null); } catch (err) { return; }
+    renderWorkSet();
+  }
+  window.triageSetNote = triageSetNote;
+
+  async function triageUndo() {
+    const c = triageStore(); if (!c) return;
+    const r = await c.undo();
+    if (r.ok) searchStatus('Undid: ' + r.undone.type + (r.undone.molId ? ' ' + r.undone.molId.slice(0, 12) : ''));
+    else searchStatus('Undo: ' + (r.reason === 'empty' ? 'nothing to undo' : 'refused — command has dependents'));
+    renderSearchResultsCurrent();
+    renderWorkSet();
+  }
+  window.triageUndo = triageUndo;
+
+  let __lastRenderedRows = null, __lastRenderedMode = null, __lastRenderedMsg = null;
+  function renderSearchResultsCurrent() {
+    if (__lastRenderedRows) renderSearchResults(__lastRenderedRows, __lastRenderedMode, __lastRenderedMsg);
+  }
+
+  function renderWorkSet() {
+    const host = document.getElementById('workSetPanel');
+    if (!host) return;
+    const c = triageStore();
+    if (!c || !searchLibrary) { host.style.display = 'none'; return; }
+    const pins = c.getPins(), excl = c.getExcludes();
+    const byId = new Map((searchLibrary || []).map(e => [e.molId, e]));
+    host.style.display = '';
+    document.getElementById('workSetCounts').textContent =
+      Object.keys(pins).length + ' pinned · ' + Object.keys(excl).length + ' excluded';
+    const pinsHost = document.getElementById('workSetPins');
+    const keys = Object.keys(pins).filter(id => byId.has(id));
+    const orphaned = Object.keys(pins).length - keys.length;
+    pinsHost.innerHTML = keys.map(id => {
+      const e = byId.get(id);
+      const note = (pins[id].note || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      return '<div style="display:flex; gap:0.4rem; align-items:center; margin:2px 0;">' +
+        '<span style="font-size:0.78rem;">★ ' + escHtml(e.name) + '</span>' +
+        '<input type="text" value="' + note + '" placeholder="note…" ' +
+        'style="flex:1; min-width:120px; padding:0.2rem 0.4rem; font-size:0.75rem; border:1px solid var(--border); border-radius:6px;" ' +
+        'onchange="triageSetNote(\'' + id + '\', this.value)">' +
+        '<button class="action-btn clear" style="width:auto; padding:0.15rem 0.5rem; font-size:0.7rem;" onclick="triageTogglePin(\'' + id + '\')">unpin</button></div>';
+    }).join('') + (orphaned > 0 ? '<div class="hint">' + orphaned + ' pinned elsewhere (not in this library)</div>' : '');
+  }
+
   function renderSearchResults(rows, mode, statusMsg) {
+    __lastRenderedRows = rows; __lastRenderedMode = mode; __lastRenderedMsg = statusMsg;
     const cap = 500;
-    const shown = rows.slice(0, cap);
+    const hideExcl = document.getElementById('workSetHideExcluded') && document.getElementById('workSetHideExcluded').checked;
+    const tc = triageStore();
+    const exclSet = tc ? new Set(Object.keys(tc.getExcludes())) : null;
+    let shown = rows.slice(0, cap);
+    if (exclSet && hideExcl) {
+      const filtered = shown.filter(r => !(r.e && r.e.molId && exclSet.has(r.e.molId)));
+      if (filtered.length) shown = filtered;
+    }
     const tb = document.getElementById('searchRows');
     tb.innerHTML = '';
     const shapeMode = mode === 'shape';
@@ -3012,6 +3120,13 @@ function rdkitAvailable() {
       tr.addEventListener('keydown', ev => {
         if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e, aligned, pharm); }
       });
+      const molId = e.molId || null;
+      const isPinned = !!(tc && molId && tc.getPins()[molId]);
+      const isExcl = !!(tc && molId && exclSet && exclSet.has(molId));
+      if (isExcl) { tr.style.opacity = '0.45'; tr.title = 'excluded from triage'; }
+      const triageCell = molId
+        ? `<td style="white-space:nowrap;"><span role="button" tabindex="0" title="${isPinned ? 'unpin from working set' : 'pin to working set'}" style="cursor:pointer; font-size:0.95rem; ${isPinned ? '' : 'opacity:0.35;'}" onclick="triageTogglePin('${molId}')" onkeydown="if(event.key==='Enter')triageTogglePin('${molId}')">${isPinned ? '★' : '☆'}</span> <span role="button" tabindex="0" title="${isExcl ? 'include back' : 'exclude from triage'}" style="cursor:pointer; font-size:0.85rem; ${isExcl ? 'color:#b91c1c;' : 'opacity:0.35;'}" onclick="triageToggleExclude('${molId}')" onkeydown="if(event.key==='Enter')triageToggleExclude('${molId}')">${isExcl ? '✕' : '·'}</span></td>`
+        : '<td></td>';
       tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}${flexBadge}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
         `<td class="value">${e.MW}</td>` +
@@ -3023,12 +3138,13 @@ function rdkitAvailable() {
             `<td class="value">${colorT != null ? (colorT * 100).toFixed(1) + '%' : '—'}</td>` +
             `<td class="value" title="pharmacophore features matched">${pharm ? pharm.matched + '/' + pharm.total : '—'}</td>` +
             `<td class="value"><strong>${((score + (colorT || 0)) * 100).toFixed(1)}%</strong></td>`
-          : `<td class="value">${(score * 100).toFixed(1)}%</td>`);
+          : `<td class="value">${(score * 100).toFixed(1)}%</td>`) + triageCell;
       tb.appendChild(tr);
     }
     document.getElementById('searchPanel').style.display = 'block';
     document.getElementById('searchResultStatus').textContent =
       statusMsg + (rows.length > cap ? ` · showing top ${cap}` : '');
+    renderWorkSet();
   }
 
   function loadSearchRow(e, alignedSdf, pharm) {

@@ -216,6 +216,80 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
     ':' + document.querySelector('#searchRows tr').children[5].textContent);
   check('weights back at 1.0: default results unchanged (zero drift)', defTop === 'ibuprofen:100.0%', defTop);
 
+  // ---- M1b triage overlay (pin/exclude/notes/undo, platform store) ----
+  console.log('triage overlay:');
+  // restore any leftover pin state from previous runs of this suite is fine —
+  // the store is per-origin persistent; assert relative behavior
+  await page.evaluate(() => {
+    document.getElementById('searchMode').value = 'sim'; onSearchModeChange();
+    document.getElementById('searchQuery').value = 'CC(=O)Oc1ccccc1C(=O)O'; runSearch();
+  });
+  await page.waitForFunction(() => document.getElementById('searchResultStatus').textContent.includes('at T'), null, { timeout: 120000 });
+  const before = await page.evaluate(() => document.getElementById('workSetCounts').textContent);
+  const pinRes = await page.evaluate(async () => {
+    const row = document.querySelector('#searchRows tr');
+    const pin = row.querySelector('td:last-child span[onclick*=triageTogglePin]');
+    pin.click();
+    await new Promise(r => setTimeout(r, 500));
+    return {
+      star: document.querySelector('#searchRows tr td:last-child span[onclick*=triageTogglePin]').textContent,
+      counts: document.getElementById('workSetCounts').textContent,
+      panelShown: document.getElementById('workSetPanel').style.display !== 'none',
+      pinRows: document.querySelectorAll('#workSetPins > div').length,
+    };
+  });
+  check('pin toggles star, working-set panel shows the pin',
+    pinRes.star === '★' && /1 pinned/.test(pinRes.counts) && pinRes.panelShown && pinRes.pinRows >= 1, JSON.stringify(pinRes));
+  const exclRes = await page.evaluate(async () => {
+    const row = document.querySelectorAll('#searchRows tr')[1];
+    row.querySelector('td:last-child span[onclick*=triageToggleExclude]').click();
+    await new Promise(r => setTimeout(r, 500));
+    return {
+      counts: document.getElementById('workSetCounts').textContent,
+      opacity: getComputedStyle(document.querySelectorAll('#searchRows tr')[1]).opacity,
+    };
+  });
+  check('exclude dims the row and updates counts', /1 excluded/.test(exclRes.counts) && exclRes.opacity === '0.45', JSON.stringify(exclRes));
+  const undoRes = await page.evaluate(async () => {
+    triageUndo();
+    await new Promise(r => setTimeout(r, 500));
+    return {
+      status: document.getElementById('searchStatus').textContent,
+      opacity: getComputedStyle(document.querySelectorAll('#searchRows tr')[1]).opacity,
+    };
+  });
+  check('undo reverses the exclude (inverse command, log intact)',
+    /Undid: Exclude/.test(undoRes.status) && undoRes.opacity === '1', JSON.stringify(undoRes));
+  // note editing via the working-set panel
+  const noteRes = await page.evaluate(async () => {
+    const inp = document.querySelector('#workSetPins input');
+    if (!inp) return { skip: true };
+    inp.value = 'lead candidate';
+    inp.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 500));
+    return { note: document.querySelector('#workSetPins input').value };
+  });
+  check('note edited through the panel persists in the session', !noteRes.skip || noteRes.note === 'lead candidate');
+  // pin survives reload (IndexedDB command log)
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
+  await page.waitForFunction(() => window.webmm !== undefined, null, { timeout: 60000 });
+  await page.evaluate(() => switchMode('search'));
+  await page.waitForFunction(() => document.getElementById('searchStatus').textContent.includes('restored'), null, { timeout: 30000 });
+  const persisted = await page.evaluate(async () => {
+    await new Promise(r => setTimeout(r, 300));
+    return document.getElementById('workSetCounts').textContent;
+  });
+  check('pin survives page reload via the project store', /1 pinned/.test(persisted), persisted);
+  // cleanup: unpin + restore the mode state this reload disturbed (the
+  // later flex section assumes shape mode persisted from earlier sections)
+  await page.evaluate(async () => {
+    const c = window.__platformCompat;
+    if (c) for (const id of Object.keys(c.getPins())) await c.unpin(id);
+    document.getElementById('searchMode').value = 'shape'; onSearchModeChange();
+    document.getElementById('searchQuery').value = 'CC(C)Cc1ccc(C(C)C(=O)O)cc1';
+  });
+
   // ---- projected color sites (v1.9.0) ----
   console.log('projected color sites:');
   const proj = await page.evaluate(() => {

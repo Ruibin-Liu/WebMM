@@ -37,6 +37,7 @@
       storage, meta, state,
       _commandsSinceSnapshot: tail.length,
       _undoStack: [],           // {inverse, describes} of undoable commands
+      _redoStack: [],           // undone commands, redoable in order
       _cmdId: cmdRecs.length ? cmdRecs[cmdRecs.length - 1].key : 0,
       _hadData: cmdRecs.length > 0 || snaps.length > 0,
     };
@@ -49,41 +50,37 @@
       get state() { return p.state; },
       get schemaVersion() { return p.state.schemaVersion; },
 
-      // apply a command: validate -> reduce -> persist -> snapshot trigger
+      // apply a user command: validate -> reduce -> persist -> snapshot.
+      // A new user action clears the redo stack (standard undo/redo model).
       async apply(cmd) {
-        // prior-value capture for inverses that need it (Unpin needs the old
-        // pin, Include the old exclude) — BEFORE the reduce (spec §4)
-        let pre = null;
-        if (cmd.type === 'Unpin' && p.state.pins[cmd.molId]) {
-          pre = { type: 'Pin', molId: cmd.molId, ...p.state.pins[cmd.molId] };
-        } else if (cmd.type === 'Include' && p.state.excludes[cmd.molId]) {
-          pre = { type: 'Exclude', molId: cmd.molId, ...p.state.excludes[cmd.molId] };
-        }
-        const res = State.applyCommand(p.state, cmd);
-        if (res.error) throw new Error('command rejected: ' + res.error);
-        p._cmdId += 1;
-        p.state = res.state;
-        await p.storage.put('commands', p._cmdId, cmd);
-        if (!p._hadData) { p._hadData = true; try { await p.storage.put('meta', 'hadData', true); } catch (e) {} }
-        const inv = pre || State.inverse(cmd, res.state);
-        if (inv) p._undoStack.push({ inverse: inv, describes: cmd });
-        p._commandsSinceSnapshot += 1;
-        if (p._commandsSinceSnapshot >= SNAPSHOT_EVERY) await snapshot(p);
-        return { commandId: p._cmdId };
+        const r = await applyInternal(p, cmd, { pushUndo: true });
+        p._redoStack = [];
+        return r;
       },
 
-      // Undo = append an inverse command (spec §4). Structural commands
-      // with dependents are refused with their dependent list.
+      // Undo = append the inverse command to the LOG (never truncate), but
+      // the undo STACK bookkeeping is separate: the inverse application must
+      // not push itself back (that would ping-pong forever). The undone
+      // command moves to the redo stack.
       async undo() {
         while (p._undoStack.length) {
           const top = p._undoStack.pop();
           if (State.hasDependents(top.describes, p.state)) {
+            p._undoStack.push(top);      // put it back — refusal is not consumption
             return { ok: false, reason: 'has-dependents', describes: top.describes };
           }
-          await this.apply(top.inverse);
+          await applyInternal(p, top.inverse, { pushUndo: false });
+          p._redoStack.push(top.describes);
           return { ok: true, undone: top.describes };
         }
         return { ok: false, reason: 'empty' };
+      },
+
+      async redo() {
+        const cmd = p._redoStack.pop();
+        if (!cmd) return { ok: false, reason: 'empty' };
+        await applyInternal(p, cmd, { pushUndo: true });
+        return { ok: true, redone: cmd };
       },
 
       // checkpoint events (import/reconcile/round complete) also trigger
@@ -103,6 +100,30 @@
       // inline on a hot interaction path beyond M1a's trivial sizes.
       snapshot: () => snapshot(p),
     };
+  }
+
+  // shared application path: prior-value capture for Unpin/Include inverses,
+  // reduce, persist to the command log, optional undo-stack push
+  async function applyInternal(p, cmd, opts) {
+    let pre = null;
+    if (cmd.type === 'Unpin' && p.state.pins[cmd.molId]) {
+      pre = { type: 'Pin', molId: cmd.molId, ...p.state.pins[cmd.molId] };
+    } else if (cmd.type === 'Include' && p.state.excludes[cmd.molId]) {
+      pre = { type: 'Exclude', molId: cmd.molId, ...p.state.excludes[cmd.molId] };
+    }
+    const res = State.applyCommand(p.state, cmd);
+    if (res.error) throw new Error('command rejected: ' + res.error);
+    p._cmdId += 1;
+    p.state = res.state;
+    await p.storage.put('commands', p._cmdId, cmd);
+    if (!p._hadData) { p._hadData = true; try { await p.storage.put('meta', 'hadData', true); } catch (e) {} }
+    if (opts && opts.pushUndo) {
+      const inv = pre || State.inverse(cmd, res.state);
+      if (inv) p._undoStack.push({ inverse: inv, describes: cmd });
+    }
+    p._commandsSinceSnapshot += 1;
+    if (p._commandsSinceSnapshot >= SNAPSHOT_EVERY) await snapshot(p);
+    return { commandId: p._cmdId };
   }
 
   async function snapshot(p) {

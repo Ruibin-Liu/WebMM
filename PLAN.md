@@ -1,6 +1,37 @@
-# Plan: M1a — 隐形店(身份 + IndexedDB + 命令日志,旧 UI 经新 store 写)(explore/lbdd-platform)
+# Plan: M1b — 现有标签上的甄别覆盖层(pin/exclude/备注/撤销)(explore/lbdd-platform)
 
-> M0 已完成(见 git 历史);本 PLAN 为 M1a 实施轮。
+> M0/M1a 已完成(见 git 历史);本 PLAN 为 M1b 实施轮。
+> 在表格固化语义前先验证甄别语义(v0.5 §5)。
+
+## 范围
+
+检索结果表三态操作列(末列,不扰动既有列索引)+ 工作集面板
+(计数/固定列表+备注编辑/unhide-excluded/undo)+ compat 甄别门面;
+批量表不在此轮(文档化)。轮次/DAG 传播留 M1c。
+
+## 实施记录
+
+1. compat.js 甄别门面:pin/unpin/exclude/include/undo/getPins/
+   getExcludes/projectApi;saveLibraryInputs 返回富化条目(molId
+   附着进内存库)
+2. app:★/✕ 末列(☆→★ 翻转、排除行 0.45 透明)、工作集面板
+   (pinned elsewhere 孤儿计数)、renderSearchResultsCurrent 重渲染
+3. **undo/redo 双栈修复**:初版 undo 的逆命令又压回撤销栈 →
+   undo/redo 永久乒乓栈走不下去;正解 = undo 应用逆命令不压栈入
+   redo 栈、新用户命令清空 redo(命令日志仍追加逆命令,replay
+   不变);拒绝性 undo 不消费栈顶
+4. **耐久性竞态修复(真回归)**:旧 localStorage 写同步、IDB 异步
+   ——demo 装载后立刻 reload 丢库;修 = 装载/清除状态行等持久化
+   落地再报(loadDemoLibrary/loadSearchLibrary/clearSearchLibrary
+   转 async + await persisted)
+
+## 验收结果
+
+- 平台 Node 测试 **33/33**(+9:门面 6 含 undo 栈下行不乒乓/redo
+  LIFO 重钉带最后备注/拒绝不消费/先值捕获往返)
+- 浏览器实测:pin→★+面板 1 pinned、exclude→0.45 透明+计数、
+  undo→"Undid: Exclude" 行恢复、**reload 后 pin 存活**
+- m5 **49/49**(+5);六套件 37/10/11/10/32/49 全绿;零 page error
 
 ## 范围
 

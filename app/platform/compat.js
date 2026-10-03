@@ -45,8 +45,24 @@
     });
     await project.apply({ type: 'ImportLibrary', libraryId: LIB_ID, name: 'Working library', entries: withIds });
     await project.checkpoint();      // import complete = checkpoint event (spec §4)
-    return withIds.length;
+    return withIds;                  // enriched: caller attaches molId to in-memory entries
   }
+
+  // ---- M1b triage facade (pin/exclude/notes/undo over the command log) ----
+  // Molecule-level overlay + provenance; rounds/propagation arrive in M1c.
+  async function pin(molId, note, provenanceRound) {
+    await project.apply({ type: 'Pin', molId, note: note || null, provenanceRound: provenanceRound || null });
+  }
+  async function unpin(molId) { await project.apply({ type: 'Unpin', molId }); }
+  async function exclude(molId, reason) {
+    await project.apply({ type: 'Exclude', molId, reason: reason || null });
+  }
+  async function include(molId) { await project.apply({ type: 'Include', molId }); }
+  async function undo() { return project.undo(); }
+  function getPins() { return project ? project.state.pins : {}; }
+  function getExcludes() { return project ? project.state.excludes : {}; }
+  function ready() { return !!project; }
+  function projectApi() { return project; }
 
   // Restore on startup: IndexedDB projection first; if never-had, one-time
   // read-only migration from the legacy localStorage key.
@@ -84,5 +100,6 @@
     }
   }
 
-  return { init, saveLibraryInputs, restoreInputs, clearLibrary, LEGACY_KEY, LIB_ID };
+  return { init, saveLibraryInputs, restoreInputs, clearLibrary, LEGACY_KEY, LIB_ID,
+    pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi };
 });
