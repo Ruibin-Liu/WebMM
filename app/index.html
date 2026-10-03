@@ -1233,6 +1233,24 @@ details {
      </div>
    </div>
 
+   <div id="analogPanel" class="panel" style="display:none;">
+     <strong>Neighborhood explorer</strong> <span class="hint">(M3 — single-site group swaps, shape-rescored)</span>
+     <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin:0.4rem 0;">
+       <span id="analogParent" class="hint" style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="analogDetectSites()" title="Detect replaceable terminal groups on the CURRENT single-view molecule">use current molecule</button>
+       <select id="analogSite" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);"><option value="">— site —</option></select>
+       <select id="analogFragCat" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);" title="Fragment category (built-in set, ≤150 per run)">
+         <option value="all">all fragments</option><option value="alkyl">alkyl</option><option value="halo">halogen / CFx</option>
+         <option value="O">O-linked</option><option value="N">N-linked</option><option value="acyl">carbonyl-attached</option><option value="aryl">aryl / heteroaryl</option>
+       </select>
+       <button class="action-btn primary" style="width:auto;" onclick="runAnalogExplorer()">Explore</button>
+       <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">Cancel</button>
+     </div>
+     <div class="hint" id="analogStatus"></div>
+     <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
+       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
+     </div>
+   </div>
    <div id="rgdPanel" class="panel" style="display:none;">
      <strong>R-Group Decomposition</strong>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
@@ -3297,6 +3315,291 @@ function rdkitAvailable() {
     return searchLibrary;
   }
 
+  // ===================== Neighborhood explorer (M3) =====================
+  // Single-site group swaps from a built-in fragment set, conformer-
+  // ensemble shape-rescored against the parent's reference conformer on a
+  // worker farm. Hard caps per the M0 spec §7: ONE site per run, ≤150
+  // fragments, ≤400 products after filters, rotor cap 10. Flex refinement
+  // of top hits (stage D) lands in M3b.
+  const ANALOG_FRAGMENTS = [
+    // alkyl (attachment at the left, e.g. body 'C' => *-CH3)
+    ['C', 'alkyl'], ['CC', 'alkyl'], ['CCC', 'alkyl'], ['C(C)C', 'alkyl'], ['C(C)(C)C', 'alkyl'],
+    ['C1CC1', 'alkyl'], ['C1CCC1', 'alkyl'], ['CC(F)(F)F', 'halo'],
+    // halogens / CFx
+    ['F', 'halo'], ['Cl', 'halo'], ['Br', 'halo'], ['C(F)(F)F', 'halo'], ['C#N', 'halo'],
+    // O-linked (attachment via O)
+    ['O', 'O'], ['OC', 'O'], ['OCC', 'O'], ['OC(F)(F)F', 'O'], ['SC', 'O'], ['S', 'O'],
+    // N-linked (attachment via N)
+    ['N', 'N'], ['NC', 'N'], ['N(C)C', 'N'], ['NC(C)=O', 'N'], ['NN', 'N'],
+    // carbonyl-attached (attachment via the carbonyl C)
+    ['C(=O)O', 'acyl'], ['C(=O)N', 'acyl'], ['C(=O)NC', 'acyl'], ['C(=O)OC', 'acyl'], ['C(=O)c1ccccc1', 'acyl'],
+    // aryl / heteroaryl (attachment via aromatic C)
+    ['c1ccccc1', 'aryl'], ['c1ccncc1', 'aryl'], ['c1ccc(F)cc1', 'aryl'], ['c1ccc(Cl)cc1', 'aryl'],
+    ['c1ccnc1', 'aryl'], ['c1ccsc1', 'aryl'], ['c1ccoc1', 'aryl'], ['c1ccc(OC)cc1', 'aryl'],
+    ['c1ccc(C)cc1', 'aryl'], ['c1cnncc1', 'aryl'], ['c1ccc(N)cc1', 'aryl'], ['c1ccc(C#N)cc1', 'aryl'],
+  ];
+  const ANALOG_SITES = [
+    // [label, SMARTS for the replaceable terminal group]
+    ['terminal halogen', '[F,Cl,Br;!$(*~[F,Cl,Br])]'],
+    ['methyl', '[CX4;H3;!$([CX4](~[CH3])~[CH3])]'],
+    ['hydroxyl', '[OX2;H1]'],
+    ['primary amine', '[NX3;H2;!$(N[OX2])]'],
+    ['methoxy', '[OX2;H0]([CX4;H3])'],
+    ['nitrile', '[CX3](=N)'],
+  ];
+  let analogParentSdf = null;      // the parent's 3D conformer (scoring ref)
+  let analogParentMolblock = null; // for site detection + core surgery
+  let analogRunToken = 0;
+
+  function analogStatus(msg) { document.getElementById('analogStatus').textContent = msg; }
+
+  function analogDetectSites() {
+    if (!rdkitAvailable()) return;
+    if (!sdf3d || !sdf3d.trim()) { analogStatus('Load a molecule into the single view (and embed 3D) first'); return; }
+    analogParentSdf = sdf3d;
+    const m = rdkitModule.get_mol(sdf3d);
+    if (!m || !m.is_valid()) { if (m) m.delete(); analogStatus('Current molecule unparseable'); return; }
+    // NB: use sdf3d VERBATIM — the minimal build's get_molblock() re-write
+    // can drop aromatic bond orders (type 4), which would saturate rings on
+    // re-parse. sdf3d itself carries proper orders (verified).
+    analogParentMolblock = sdf3d;
+    const sel = document.getElementById('analogSite');
+    sel.innerHTML = '<option value="">— site —</option>';
+    let found = 0;
+    for (const [label, sma] of ANALOG_SITES) {
+      let q = null;
+      try { q = rdkitModule.get_qmol(sma); } catch (e) { continue; }
+      if (!q || !q.is_valid()) { if (q) q.delete(); continue; }
+      let arr = [];
+      try { arr = JSON.parse(m.get_substruct_matches(q)); } catch (e) {}
+      q.delete();
+      if (Array.isArray(arr)) {
+        for (const mt of arr) {
+          if (!mt.atoms || mt.atoms.length > 6) continue;
+          sel.innerHTML += '<option value="' + mt.atoms.join(',') + '">' + label + ' @atoms ' + mt.atoms.join(',') + '</option>';
+          found++;
+        }
+      }
+    }
+    m.delete();
+    const lbl = (document.getElementById('smiles') && document.getElementById('smiles').textContent || '').trim();
+    document.getElementById('analogParent').textContent = 'parent: ' + (lbl || 'current molecule').slice(0, 34);
+    document.getElementById('analogParent').title = analogParentSdf.slice(0, 200);
+    analogStatus(found ? found + ' replaceable site(s) found — pick one (single-site per run)' : 'No replaceable terminal groups found');
+  }
+  window.analogDetectSites = analogDetectSites;
+
+  // core surgery: remove the site atoms from the parent molblock and cap the
+  // single attachment with an R# dummy (the Auto-core precedent)
+  function analogCoreMolblock(siteAtoms) {
+    const lines = sdfLines(analogParentMolblock);
+    const na = parseInt(lines[3].substring(0, 3));
+    const nb = parseInt(lines[3].substring(3, 6));
+    const rm = new Set(siteAtoms);   // already 0-based
+    // the group's hydrogens go WITH it (a CH3 site = C + its 3 H; leaving
+    // them behind yields disconnected [HH] fragments that trap the engine)
+    const elAt = (i) => ((lines[4 + i] || '').substring(31, 34) || '').trim();
+    for (let i = 4 + na; i < 4 + na + nb; i++) {
+      const l = lines[i];
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      if (isNaN(a) || isNaN(b)) continue;
+      if (rm.has(a) && elAt(b) === 'H') rm.add(b);
+      else if (rm.has(b) && elAt(a) === 'H') rm.add(a);
+    }
+    // the attachment atom: a non-removed HEAVY neighbor of the removed set
+    // (explicit-H molblocks: the methyl's H neighbors would steal it)
+    const isH = (i) => ((lines[4 + i] || '').substring(31, 34) || '').trim() === 'H';
+    let attach = -1;
+    for (let i = 4 + na; i < 4 + na + nb; i++) {
+      const l = lines[i];
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      if (rm.has(a) && !rm.has(b) && !isH(b)) attach = b;
+      else if (rm.has(b) && !rm.has(a) && !isH(a)) attach = a;
+    }
+    if (attach < 0) return null;
+    // drop removed atoms; renumber
+    const remap = new Map();
+    let n = 0;
+    for (let i = 0; i < na; i++) if (!rm.has(i)) remap.set(i, n++);
+    const dummyIdx = n + 1;      // 1-based
+    const atomsOut = [];
+    for (let i = 0; i < na; i++) {
+      if (rm.has(i)) continue;
+      atomsOut.push(lines[4 + i].substring(0, 34).padEnd(34) + '\n');
+    }
+    atomsOut.push('    0.0000    0.0000    0.0000 R#  0  0\n');
+    const bondsOut = [];
+    for (let i = 4 + na; i < 4 + na + nb; i++) {
+      const l = lines[i];
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      if (rm.has(a) || rm.has(b)) continue;
+      const ord = l.substring(6, 9) || '  1';   // PRESERVE the original bond order (aromatic 4, double 2)
+      bondsOut.push(String(remap.get(a) + 1).padStart(3) + String(remap.get(b) + 1).padStart(3) + ord + '  0\n');
+    }
+    bondsOut.push(String(remap.get(attach) + 1).padStart(3) + String(dummyIdx).padStart(3) + '  1  0\n');
+    const cnt = String(atomsOut.length).padStart(3) + String(bondsOut.length).padStart(3);
+    return lines[0] + '\n' + lines[1] + '\n' + lines[2] + '\n' + (cnt + '  0  0  0  0  0  0  0  0999 V2000\n') +
+      atomsOut.join('') + bondsOut.join('') + 'M  END';
+  }
+
+  function analogCancelRun() { analogRunToken++; }
+
+  async function runAnalogExplorer() {
+    if (!rdkitAvailable() || !window.webmm) { analogStatus('Engine not ready'); return; }
+    const siteVal = document.getElementById('analogSite').value;
+    if (!siteVal || !analogParentMolblock) { analogStatus('Pick a site first (use current molecule → site)'); return; }
+    const cat = document.getElementById('analogFragCat').value;
+    const frags = ANALOG_FRAGMENTS.filter(f => cat === 'all' || f[1] === cat);
+    if (!frags.length) { analogStatus('No fragments in category'); return; }
+    // --- stage A: enumerate + filter (hard caps: ≤400 products, rotor ≤10)
+    analogRunToken++;
+    const token = analogRunToken;
+    analogStatus('Enumerating…');
+    const coreMb = analogCoreMolblock(siteVal.split(',').map(Number));   // 0-based (matches get_substruct_matches convention)
+    if (!coreMb) { analogStatus('Site surgery failed (multi-attachment?)'); return; }
+    const cm = rdkitModule.get_mol(coreMb);
+    if (!cm || !cm.is_valid()) { if (cm) cm.delete(); analogStatus('Core (capped with R#) unparseable'); return; }
+    const coreSmiles = cm.get_smiles();
+    cm.delete();
+    if (!coreSmiles.includes('*')) { analogStatus('Core SMILES lacks the attachment dummy'); return; }
+    const parentMol = rdkitModule.get_mol(analogParentMolblock);
+    const pDesc = JSON.parse(parentMol.get_descriptors());
+    const pHeavy = pDesc.NumHeavyAtoms || 0;
+    parentMol.delete();
+    const cands = [];
+    for (const [body, fcat] of frags) {
+      if (cands.length >= 400) break;
+      // plain replace, NO added parens: the core SMILES already carries the
+      // grouping it needs ('c1ccc(*)cc1' -> 'c1ccc(C)cc1'; tail '*' chains
+      // on: 'CC(=O)*' + 'OC' -> 'CC(=O)OC'). Invalid combinations are
+      // skipped honestly by the sanitize filter below.
+      const smi = coreSmiles.replace('*', body);
+      let m = null;
+      try { m = rdkitModule.get_mol(smi); } catch (e) { continue; }
+      if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
+      const d = JSON.parse(m.get_descriptors());
+      const rotb = d.NumRotatableBonds ?? 0;
+      const heavy = d.NumHeavyAtoms || 0;
+      if (rotb > 10 || heavy > pHeavy + 9 || heavy < Math.max(1, pHeavy - 6)) { m.delete(); continue; }
+      let canon = m.get_smiles();
+      m.delete();
+      // the surgical core carries explicit [H] literals (sdf3d heritage);
+      // the engine's conformer entry only ever receives H-FREE molblocks
+      // (every existing pipeline strips them) — mixed-H input traps it.
+      // Strip [H] literals and re-sanitize; invalid results drop out here.
+      const canonClean = canon.replace(/\[H\]/g, '').replace(/\(\)/g, '');
+      let m2 = null;
+      try { m2 = rdkitModule.get_mol(canonClean); } catch (e) {}
+      if (!m2 || !m2.is_valid()) { if (m2) m2.delete(); continue; }
+      canon = m2.get_smiles();
+      const mb = m2.get_molblock();
+      m2.delete();
+      cands.push({ smiles: canon, molblock: mb, mw: +d.amw.toFixed(2), rotb });
+    }
+    if (!cands.length) { analogStatus('No candidates passed the sanity filters'); return; }
+    // --- stage B: worker farm, conformers + rigid overlay (streamed)
+    const cores = (navigator.hardwareConcurrency || 4);
+    const NW = Math.max(1, Math.min(cores - 1, 8));
+    const est = Math.round(cands.length * 10 * 0.05 / NW * 10);   // ~50ms/conf rough
+    analogStatus(cands.length + ' candidates · ' + NW + ' workers · est ~' + Math.min(90, Math.max(5, est)) + 's — streaming…');
+    document.getElementById('analogCancel').style.display = '';
+    document.getElementById('analogResultsWrap').style.display = '';
+    const tb = document.getElementById('analogRows');
+    tb.innerHTML = '';
+    const wasmUrl = window.__webmmUrl;
+    const workers = [];
+    const waiters = [];
+    let nextJob = 0, doneCount = 0;
+    const t0 = performance.now();
+    const results = [];
+    const ensure = (w) => new Promise(res => {
+      const iv = setInterval(() => { if (w.__ready) { clearInterval(iv); res(); } }, 30);
+    });
+    for (let i = 0; i < NW; i++) {
+      const w = new Worker('analog.worker.js', { type: 'module' });
+      w.__ready = false;
+      w.onmessage = (ev) => {
+        const msg = ev.data;
+        if (msg.type === 'ready') { w.__ready = true; return; }
+        if (msg.type === 'done') {
+          const waiter = waiters.shift();
+          if (waiter) waiter(msg);
+        }
+      };
+      w.postMessage({ type: 'init', wasmUrl });
+      workers.push(w);
+    }
+    await Promise.all(workers.map(ensure));
+    if (token !== analogRunToken) { for (const w of workers) w.terminate(); return; }
+    const scoreOne = (cand, idx) => new Promise(res => {
+      const w = workers[idx % NW];
+      waiters.push(res);
+      w.postMessage({
+        type: 'score', idx, molblock: cand.molblock, nConfs: 10,
+        seed: 4200 + idx, parentSdf: analogParentSdf,
+      });
+    });
+    let INFLIGHT = 0;
+    const pump = () => {
+      while (INFLIGHT < NW * 2 && nextJob < cands.length) {
+        const i = nextJob++;
+        INFLIGHT++;
+        scoreOne(cands[i], i).then(msg => {
+          INFLIGHT--;
+          doneCount++;
+          if (token !== analogRunToken) return;
+          if (msg.tanimoto != null) {
+            results.push({ ...cands[msg.idx], tanimoto: msg.tanimoto, idx: msg.idx });
+            results.sort((a, b) => b.tanimoto - a.tanimoto);
+            renderAnalogRows(results, token);
+          }
+          if (doneCount % 10 === 0 || doneCount === cands.length) {
+            analogStatus(doneCount + '/' + cands.length + ' scored · top: ' +
+              (results[0] ? (results[0].tanimoto * 100).toFixed(1) + '%' : '—') +
+              ' · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's');
+          }
+          pump();
+          if (doneCount === cands.length) {
+            for (const w of workers) w.terminate();
+            document.getElementById('analogCancel').style.display = 'none';
+            analogStatus('Done: ' + results.length + ' scored in ' + ((performance.now() - t0) / 1000).toFixed(0) + 's (flex refinement of the top hits lands in M3b)');
+          }
+        });
+      }
+    };
+    pump();
+  }
+  window.runAnalogExplorer = runAnalogExplorer;
+
+  function renderAnalogRows(results, token) {
+    if (token !== analogRunToken) return;
+    const tb = document.getElementById('analogRows');
+    tb.innerHTML = results.slice(0, 200).map((r, i) => {
+      const mid = window.Platform ? window.Platform.Identity.syntheticMolId('analog', r.idx, r.smiles, 'builtin-v1', r.smiles) : null;
+      const pinned = mid && window.__platformCompat && window.__platformCompat.getPins()[mid];
+      return '<tr><td>' + (i + 1) + '</td>' +
+        '<td class="value" style="font-family:ui-monospace,Menlo,monospace; font-size:0.75rem; max-width:280px; overflow:hidden; text-overflow:ellipsis;" title="' + r.smiles + '">' + r.smiles + '</td>' +
+        '<td class="value">' + r.mw + '</td>' +
+        '<td class="value"><strong>' + (r.tanimoto * 100).toFixed(1) + '%</strong></td>' +
+        '<td class="value">' + r.rotb + '</td>' +
+        '<td>' + (mid ? '<span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem; ' + (pinned ? '' : 'opacity:0.35;') + '" title="pin (synthetic-library identity)" onclick="analogPin(\'' + r.idx + '\',\'' + mid + '\')">' + (pinned ? '★' : '☆') + '</span>' : '') + '</td></tr>';
+    }).join('');
+  }
+
+  async function analogPin(idx, mid) {
+    const c = window.__platformCompat;
+    if (!c) return;
+    if (c.getPins()[mid]) await c.unpin(mid);
+    else await c.pin(mid, 'analog #' + idx);
+    renderAnalogRows(analogLastResults(), analogRunToken);
+    renderWorkSet();
+  }
+  window.analogPin = analogPin;
+  let __analogResults = [];
+  const _origRender = renderAnalogRows;
+  renderAnalogRows = function (results, token) { __analogResults = results; _origRender(results, token); };
+  function analogLastResults() { return __analogResults; }
+
   // provenance-rich CSV export: per-round ranks + consensus + triage state
   // (M2; the exit path to other tools, M0 spec §6)
   function exportResultsCSV() {
@@ -4816,6 +5119,7 @@ function switchMode(m) {
   document.getElementById('batchPanel').style.display = (batchMode && modeShown.batch) ? 'block' : 'none';
   document.getElementById('searchPanel').style.display = (searchMode && modeShown.search) ? 'block' : 'none';
   document.getElementById('rgdPanel').style.display = searchMode ? (rgdResults ? 'block' : 'none') : 'none';
+  document.getElementById('analogPanel').style.display = searchMode ? 'block' : 'none';
   document.getElementById('scaffoldPanel').style.display = searchMode ? (scaffoldResults ? 'block' : 'none') : 'none';
   document.getElementById('pharmQueryPanel').style.display = searchMode ? 'block' : 'none';
   if (searchMode) restoreSearchLibrary();

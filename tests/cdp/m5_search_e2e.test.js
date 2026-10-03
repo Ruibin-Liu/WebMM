@@ -358,6 +358,51 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
     for (const id of Object.keys(c.getPins())) await c.unpin(id);
   });
 
+  // ---- M3: neighborhood explorer (analog enumeration + shape rescoring) ----
+  console.log('M3 neighborhood explorer:');
+  await page.evaluate(() => { switchMode('single'); document.getElementById('input').value = 'CC(=O)Nc1ccc(O)cc1'; process(true); });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => embed3D());
+  await page.waitForFunction(() => !!document.querySelector('#viewer3d canvas'), null, { timeout: 60000 });
+  await page.evaluate(() => { switchMode('search'); analogDetectSites(); });
+  await page.waitForTimeout(600);
+  const sites = await page.evaluate(() => [...document.getElementById('analogSite').options].filter(o => o.value).length);
+  check('replaceable sites detected on paracetamol (>=2)', sites >= 2, 'sites=' + sites);
+  await page.evaluate(() => {
+    const sel = document.getElementById('analogSite');
+    const opt = [...sel.options].find(o => o.textContent.includes('methyl'));
+    sel.value = opt.value;
+    document.getElementById('analogFragCat').value = 'alkyl';
+    runAnalogExplorer();
+  });
+  await page.waitForFunction(() => /Done:|No candidates/.test(document.getElementById('analogStatus').textContent), null, { timeout: 300000 });
+  const exp = await page.evaluate(() => ({
+    status: document.getElementById('analogStatus').textContent,
+    rows: [...document.querySelectorAll('#analogRows tr')].map(tr => ({
+      smi: tr.children[1].textContent, T: tr.children[3].textContent,
+    })),
+  }));
+  check('alkyl category scores analogs (parent among them, sensible order)',
+    /Done: \d+ scored/.test(exp.status) && exp.rows.length >= 5 &&
+    exp.rows.some(r => r.smi === 'CC(=O)Nc1ccc(O)cc1') &&
+    exp.rows.every(r => parseFloat(r.T) > 0), exp.status.slice(0, 60));
+  const parentRow = exp.rows.find(r => r.smi === 'CC(=O)Nc1ccc(O)cc1');
+  check('parent-swap-to-methyl scores high (rigid self-analog)', parentRow && parseFloat(parentRow.T) >= 0.8, parentRow && parentRow.T);
+  // pin an analog = synthetic-library identity
+  await page.evaluate(() => document.querySelector('#analogRows span[onclick*=analogPin]').click());
+  await page.waitForTimeout(500);
+  const analogPin = await page.evaluate(() => ({
+    counts: document.getElementById('workSetCounts').textContent,
+    star: document.querySelector('#analogRows span[onclick*=analogPin]').textContent,
+  }));
+  check('analog pins via synthetic-library identity (star fills, counts update)',
+    analogPin.star === '★' && /1 pinned/.test(analogPin.counts), JSON.stringify(analogPin));
+  await page.evaluate(async () => {
+    const c = window.__platformCompat;
+    for (const id of Object.keys(c.getPins())) await c.unpin(id);
+  });
+  await page.evaluate(() => { switchMode('single'); });   // leave the mode tidy
+
   // ---- M1b triage overlay (pin/exclude/notes/undo, platform store) ----
   console.log('triage overlay:');
   // restore any leftover pin state from previous runs of this suite is fine —

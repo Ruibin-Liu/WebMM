@@ -106,7 +106,10 @@
         return { state: s };
       }
       case 'Pin': {
-        if (!findEntry(s, cmd.molId) && !s.pins[cmd.molId]) return { state: prev, error: 'Pin: unknown molId' };
+        // ANY molId may be pinned: synthetic-library molecules (the analog
+        // explorer) and orphaned ids (removed libraries) are legitimate
+        // triage targets — library membership is not a precondition
+        if (!cmd.molId) return { state: prev, error: 'Pin: molId required' };
         s.pins[cmd.molId] = { note: cmd.note || null, provenanceRound: cmd.provenanceRound || null };
         return { state: s };
       }
@@ -115,7 +118,7 @@
         return { state: s };
       }
       case 'Exclude': {
-        if (!findEntry(s, cmd.molId) && !s.excludes[cmd.molId]) return { state: prev, error: 'Exclude: unknown molId' };
+        if (!cmd.molId) return { state: prev, error: 'Exclude: molId required' };
         s.excludes[cmd.molId] = { reason: cmd.reason || null };
         return { state: s };
       }

@@ -52,8 +52,10 @@ console.log('reducer:');
   st = r.state;
   r = State.applyCommand(st, { type: 'RemoveLibrary', libraryId: 'L' });
   check('RemoveLibrary removes but pin provenance decision consistent', !r.error && !r.state.libraries.L);
-  r = State.applyCommand(State.initialState(), { type: 'Pin', molId: 'nope' });
-  check('unknown molId Pin rejected', !!r.error);
+  r = State.applyCommand(State.initialState(), { type: 'Pin', molId: 'synthetic-xyz' });
+  check('synthetic/unknown molId Pin ALLOWED (triage is molId-first)', !r.error && r.state.pins['synthetic-xyz']);
+  r = State.applyCommand(State.initialState(), { type: 'Pin', molId: null });
+  check('Pin without molId rejected', !!r.error);
   // archive subtree
   let s2 = State.initialState();
   s2 = State.applyCommand(s2, { type: 'CreateRound', roundId: 'r1', parentId: null }).state;
