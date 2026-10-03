@@ -1110,7 +1110,8 @@ details {
      <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
        <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
          <input type="checkbox" id="chargeColor" disabled> Color atoms by partial charge
-         <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" title="Pharmacophore features: red donor, blue acceptor, purple positive, orange negative, grey hydrophobe, yellow-green ring centroid"> Features
+         <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" title="Pharmacophore features (same sites the shape Color T / pharmacophore screen use): red donor, blue acceptor, purple positive, orange negative, amber hydrophobe, yellow-green ring centroid. Sites sit at atom centers (single-point model, no projected direction). After a shape-search row click: bright = matched to the query, dim = unmatched."> Features
+         <span id="featLegend" class="hint" style="display:inline-flex; gap:0.55rem; flex-wrap:wrap;"></span>
          <span title="blue = positive, red = negative; white = neutral" style="display:inline-flex; gap:2px;">
            <span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
            <span style="width:10px;height:10px;border-radius:2px;background:#f1f5f9;border:1px solid var(--border);display:inline-block;"></span>
@@ -4074,13 +4075,17 @@ const FEATURE_COLORS = {
   acceptor: '#3b82f6',   // blue
   pos: '#a855f7',        // purple
   neg: '#f97316',        // orange
-  hydrophobe: '#94a3b8', // grey
+  hydrophobe: '#a16207', // amber — grey sat invisible on carbon spheres
   ring: '#84cc16',       // yellow-green (centroid)
 };
 
+/// Per-type default sphere alpha (visibility-tuned): atom-centered features
+/// are small and need more presence than the large ring sphere.
+const FEATURE_ALPHA = { donor: 0.55, acceptor: 0.55, pos: 0.55, neg: 0.55, ring: 0.45 };
+
 /// Overlay the current molecule's color sites as spheres in the 3D viewer.
 function addFeatureSpheres() {
-  if (!viewer || !sdf3d) return;
+  if (!viewer || !sdf3d) { renderFeatureLegend(null); return; }
   let sites = null;
   try {
     const m = rdkitModule.get_mol(sdf3d);
@@ -4088,7 +4093,8 @@ function addFeatureSpheres() {
       sites = colorSites(sdf3d, m);
       m.delete();
     }
-  } catch (e) { return; }
+  } catch (e) { renderFeatureLegend(null); return; }
+  renderFeatureLegend(sites);
   if (!sites || !sites.length) return;
   const coords = sdfCoords(sdf3d);
   const fm = pendingFeatureMatch;
@@ -4096,7 +4102,7 @@ function addFeatureSpheres() {
   for (let i = 0; i < sites.length; i++) {
     const s = sites[i];
     const p = sitePos(s, coords);
-    let alpha = 0.45, radius = s.type === 'ring' ? 0.85 : 0.5;
+    let alpha = FEATURE_ALPHA[s.type] || 0.55, radius = s.type === 'ring' ? 0.85 : 0.5;
     if (fm && fm.tBest) {
       const t = fm.tBest[i];
       if (t != null && t >= 0.5) { alpha = 0.6; matchedCount++; }
@@ -4121,7 +4127,26 @@ function addFeatureSpheres() {
 
 function onFeatureSpheres() {
   // re-applying the style rebuilds the shapes (spheres only re-added when on)
+  if (!document.getElementById('featSpheres').checked) renderFeatureLegend(null);
   applyStyle();
+}
+
+/// Legend = the molecule's feature-type census (same sites the algorithms
+/// use), rendered as color-dot chips with counts while Features is on.
+function renderFeatureLegend(sites) {
+  const host = document.getElementById('featLegend');
+  if (!host) return;
+  const on = document.getElementById('featSpheres') && document.getElementById('featSpheres').checked;
+  if (!on || !sites || !sites.length) { host.innerHTML = ''; return; }
+  const counts = {};
+  for (const s of sites) counts[s.type] = (counts[s.type] || 0) + 1;
+  host.innerHTML = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t, n]) =>
+      `<span title="${t}" style="display:inline-flex; align-items:center; gap:3px;">` +
+      `<span style="width:9px; height:9px; border-radius:50%; background:${FEATURE_COLORS[t] || '#94a3b8'}; display:inline-block;"></span>` +
+      `${t} ×${n}</span>`)
+    .join('');
 }
 
 // Number of conformers the chart displays: the lowest 100, or everything
