@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebMM Workbench</title>
+<title>WebMM Platform — LBDD workbench (explorer)</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='10' r='6' fill='%232563eb'/%3E%3Ccircle cx='23' cy='14' r='5' fill='%23ef4444'/%3E%3Ccircle cx='15' cy='24' r='5' fill='%2322c55e'/%3E%3Cpath d='M10 10L23 14L15 24L10 10' stroke='%23334155' stroke-width='2' fill='none'/%3E%3C/svg%3E">
 <meta name="description" content="A lightweight, ligand-based CADD workbench: draw, inspect, embed 3D, optimize, and enumerate conformers — all locally in your browser. Powered by RDKit, JSME, and the WebMM force-field engine.">
 <meta property="og:title" content="WebMM Workbench">
@@ -1207,21 +1207,61 @@ details {
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
-         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th></tr>
+         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th><th title="consensus = mean rank across every recorded round that scored this molecule (explicit rank-fusion column; lower is better; needs >= 2 rounds)">Cons.</th><th title="pin to the working set / exclude from triage (persisted in the project store, undoable)">★</th></tr>
        </thead>
        <tbody id="searchRows"></tbody>
      </table>
      </div>
      <div class="hint" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+     <div id="queryHistoryPanel" style="display:none; margin-top:0.5rem; padding:0.5rem 0.6rem; border:1px solid var(--border); border-radius:8px;"></div>
+     <div id="workSetPanel" style="display:none; margin-top:0.5rem; padding:0.5rem; border:1px solid var(--border); border-radius:8px;">
+       <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+         <strong style="font-size:0.82rem;">Working set</strong>
+         <span id="workSetCounts" class="hint"></span>
+         <button class="action-btn clear" style="width:auto; padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="triageUndo()" title="Undo the last triage action (appends the inverse command — the log is never rewritten)">↶ undo</button>
+         <label class="hint" style="cursor:pointer; display:inline-flex; gap:3px; align-items:center;">
+           <input type="checkbox" id="workSetHideExcluded" onchange="renderSearchResultsCurrent()"> hide excluded
+         </label>
+       </div>
+       <div id="workSetPins" style="margin-top:0.35rem;"></div>
+     </div>
+     <div style="margin-top:0.4rem;">
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportResultsCSV()" title="CSV with per-round ranks, consensus, pins and notes — the exit path to other tools">⬇ results CSV</button>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportProjectFile()" title="The whole project as JSON (libraries, query rounds, triage — the command log itself). Import restores everything on any machine">⬇ project</button>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="document.getElementById('projectImportFile').click()" title="Replace the current project with an exported .webmm-project.json (the page reloads after import)">⬆ import project</button>
+       <input type="file" id="projectImportFile" accept=".json,application/json" style="display:none;" onchange="importProjectFile(this)">
+     </div>
    </div>
 
+   <div id="analogPanel" class="panel" style="display:none;">
+     <strong>Neighborhood explorer</strong> <span class="hint">(M3 — single-site group swaps, shape-rescored)</span>
+     <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin:0.4rem 0;">
+       <span id="analogParent" class="hint" style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="analogDetectSites()" title="Detect replaceable terminal groups on the CURRENT single-view molecule">use current molecule</button>
+       <select id="analogSite" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);"><option value="">— site —</option></select>
+       <select id="analogFragCat" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);" title="Fragment category (built-in set, ≤150 per run)">
+         <option value="all">all fragments</option><option value="alkyl">alkyl</option><option value="halo">halogen / CFx</option>
+         <option value="O">O-linked</option><option value="N">N-linked</option><option value="acyl">carbonyl-attached</option><option value="aryl">aryl / heteroaryl</option>
+       </select>
+       <button class="action-btn primary" style="width:auto;" onclick="runAnalogExplorer()">Explore</button>
+       <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">Cancel</button>
+     </div>
+     <div class="hint" id="analogStatus"></div>
+     <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
+       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
+     </div>
+   </div>
    <div id="rgdPanel" class="panel" style="display:none;">
      <strong>R-Group Decomposition</strong>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
        <input type="text" id="rgdCore" placeholder="Core with attachment labels, e.g. [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
        <button class="action-btn edit" onclick="fillRgdExample()" title="Fill a para-disubstituted benzene example core">Example</button>
       <button class="action-btn edit" onclick="autoRgdCore()" title="Derive a labeled core automatically: MCS of the most frequent scaffold family, attachment points from the first member">Auto core</button>
-       <button id="btnRGD" class="action-btn primary" style="width:auto;" onclick="runRGD()">Decompose library</button>
+       <select id="rgdScope" title="Run over the whole library or the current search results" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);">
+         <option value="library">whole library</option>
+         <option value="hits">current results</option>
+       </select>
+       <button id="btnRGD" class="action-btn primary" style="width:auto;" onclick="runRGD()">Decompose</button>
        <button class="action-btn export" onclick="exportRGDCSV()">Export CSV</button>
      </div>
      <div class="version" id="rgdStatus" aria-live="polite"></div>
@@ -1237,7 +1277,10 @@ details {
    <div id="scaffoldPanel" class="panel" style="display:none;">
      <strong>Scaffold Frequency</strong>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
-       <button id="btnScaffold" class="action-btn primary" style="width:auto;" onclick="analyzeScaffolds()">Analyze scaffolds</button>
+       <select id="scaffoldScope" title="Run over the whole library or the current search results" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);">
+         <option value="library">whole library</option>
+         <option value="hits">current results</option>
+       </select><button id="btnScaffold" class="action-btn primary" style="width:auto;" onclick="analyzeScaffolds()">Analyze scaffolds</button>
        <button class="action-btn export" onclick="exportScaffoldCSV()">Export CSV</button>
      </div>
      <div class="version" id="scaffoldStatus" aria-live="polite"></div>
@@ -1383,6 +1426,11 @@ function rdkitAvailable() {
 <script src="vendor/RDKit_minimal.js"></script>
 <script defer src="lbdd_data.js"></script>
 <script defer src="demo_library.js"></script>
+<script src="platform/identity.js"></script>
+<script src="platform/state.js"></script>
+<script src="platform/db.js"></script>
+<script src="platform/project.js"></script>
+<script src="platform/compat.js"></script>
 <script>initRDKit();</script>
 
 <script>
@@ -1935,30 +1983,81 @@ function rdkitAvailable() {
     document.getElementById('searchStatus').textContent = msg;
   }
 
-  // Persist the parsed input (canonical SMILES + names), not the fingerprint
-  // cache: 2000 x 5 x 2048-bit vectors would blow the ~5MB localStorage quota,
-  // while the input is ~100-200KB and re-derives everything in ~1s.
+  // ---- platform store (M1a): the library path writes THROUGH the new
+  // command-log store; localStorage is retired to a read-only one-time
+  // migration source. Fingerprints are L2 deterministic caches and never
+  // persist (inputs-only, per M0 spec §3). ----
+  let __platformReady = null;
+  function initPlatformStore() {
+    if (__platformReady) return __platformReady;
+    __platformReady = (async () => {
+      try {
+        const P = window.Platform;
+        P.Identity.setKeyFn((smi) => {
+          const m = rdkitModule.get_mol(smi);
+          if (!m || !m.is_valid()) { if (m) m.delete(); return null; }
+          const ik = rdkitModule.get_inchikey_for_inchi(m.get_inchi());
+          m.delete();
+          return ik;
+        });
+        const storage = P.DB.createIdbStorage();
+        await P.Compat.init({ storage, Identity: P.Identity, DB: P.DB, Project: P.Project });
+        window.__platformCompat = P.Compat;
+        return P.Compat;
+      } catch (err) {
+        console.warn('[platform] init failed (app continues without the project store):', err);
+        return null;
+      }
+    })();
+    return __platformReady;
+  }
+
+  // Returns a promise that resolves when the inputs are DURABLE in the
+  // store (the old localStorage write was synchronous; the IDB write is
+  // not — load/clear status messages must not outrun persistence, or a
+  // fast reload loses the library).
   function saveSearchLibrary(lib) {
-    try {
-      localStorage.setItem(SEARCH_LIB_KEY, JSON.stringify(lib.map(e => ({ name: e.name, smiles: e.smiles }))));
-    } catch (e) {
-      searchStatus('Library loaded but too large to persist across sessions');
-    }
+    return initPlatformStore().then(c => {
+      if (!c) return null;
+      return c.saveLibraryInputs(lib.map(e => ({ smiles: e.smiles, name: e.name })))
+        .then(enriched => {
+          // attach molIds (same order/ordinal) so triage can target rows
+          for (let i = 0; i < lib.length && i < enriched.length; i++) lib[i].molId = enriched[i].molId;
+          renderSearchResultsCurrent();
+          renderWorkSet();
+          renderQueryHistory();
+          return enriched.length;
+        })
+        .catch(err => { console.warn('[platform] library persist failed:', err); return null; });
+    });
   }
 
   function restoreSearchLibrary() {
     if (searchLibRestored || searchLibrary) return;
     searchLibRestored = true;
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(SEARCH_LIB_KEY) || 'null'); } catch (e) { saved = null; }
-    if (!Array.isArray(saved) || !saved.length) return;
-    const r = loadSearchLibraryFrom(saved);
-    if (r && r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
+    initPlatformStore().then(c => {
+      if (!c) return;
+      // one-time read-only migration from the legacy localStorage key
+      c.restoreInputs(() => {
+        try {
+          const v = JSON.parse(localStorage.getItem(SEARCH_LIB_KEY) || 'null');
+          return Array.isArray(v) && v.length ? v : null;
+        } catch (e) { return null; }
+      }).then(saved => {
+        if (!saved || !saved.length) return;
+        const r = loadSearchLibraryFrom(saved.map(x => ({ smiles: x.smiles, name: x.name })));
+        if (r && r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
+        renderWorkSet();
+        renderQueryHistory();
+      });
+    }).catch(err => console.warn('[platform] restore failed:', err));
   }
 
-  function clearSearchLibrary() {
+  async function clearSearchLibrary() {
     searchLibrary = null;
     try { localStorage.removeItem(SEARCH_LIB_KEY); } catch (e) {}
+    const c = await initPlatformStore().catch(() => null);
+    if (c) { try { await c.clearLibrary(); } catch (err) {} }
     document.getElementById('searchPanel').style.display = 'none';
     modeShown.search = false;   // cleared library invalidates the stale hit table
     searchStatus('Library cleared');
@@ -2039,28 +2138,30 @@ function rdkitAvailable() {
       } catch (e) { skipped++; }
     }
     searchLibrary = lib;
-    saveSearchLibrary(lib);
-    return { lib, skipped };
+    const persisted = saveSearchLibrary(lib);
+    return { lib, skipped, persisted };
   }
 
-  function loadSearchLibrary() {
+  async function loadSearchLibrary() {
     const items = parseLibraryText(document.getElementById('input').value);
     if (!items.length) { searchStatus('Nothing to load — enter one SMILES per line or a multi-record SDF'); return; }
     const r = loadSearchLibraryFrom(items);
     if (!r) return;
     document.getElementById('searchPanel').style.display = 'none';
     modeShown.search = false;   // a new library invalidates the old hit table
+    await (r.persisted || Promise.resolve());   // status must not outrun durability
     searchStatus(`Library loaded: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}` +
       (r.skipped ? `, ${r.skipped} skipped (unparseable)` : ''));
   }
 
-  function loadDemoLibrary() {
+  async function loadDemoLibrary() {
     const demo = window.DEMO_LIBRARY || [];
     if (!demo.length) { searchStatus('Demo library data missing (app/demo_library.js)'); return; }
     const r = loadSearchLibraryFrom(demo.map(e => ({ smiles: e.smiles, name: e.name })));
     if (!r) return;
     document.getElementById('searchPanel').style.display = 'none';
     modeShown.search = false;   // a new library invalidates the old hit table
+    await (r.persisted || Promise.resolve());   // status must not outrun durability
     searchStatus(`Demo library loaded: ${r.lib.length} molecules (repo test set + named drugs)`);
   }
 
@@ -2576,6 +2677,7 @@ function rdkitAvailable() {
       shownRows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
       flexMsg = ` · flex refined ${fr.refined}/${fr.attempted}`;
     }
+    await recordSearchRound('shape', shownRows);
     renderSearchResults(shownRows, 'shape',
       `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${phases}${flexMsg}` +
       (pharmMin > 0 && shownRows.length !== before ? ` · pharm filter ${before} → ${shownRows.length}` : '') +
@@ -2798,6 +2900,7 @@ function rdkitAvailable() {
       shownRows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
       flexMsg = ` · flex refined ${fr.refined}/${fr.attempted}`;
     }
+    await recordSearchRound('shape', shownRows);
     renderSearchResults(shownRows, 'shape',
       `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${flexMsg} · ${nConfs} confs/entry (best over conformers)` +
       (cacheHits ? ` · ${cacheHits} cached` : '') +
@@ -2832,6 +2935,7 @@ function rdkitAvailable() {
         if (t >= thr) rows.push({ e, score: t });
       }
       rows.sort((a, b) => b.score - a.score);
+      await recordSearchRound('sim', rows);
       renderSearchResults(rows, 'sim', `${rows.length}/${searchLibrary.length} at T ≥ ${thr.toFixed(2)}`);
     } else {
       let qq = null;
@@ -2849,6 +2953,7 @@ function rdkitAvailable() {
         m.delete();
       }
       qq.delete();
+      await recordSearchRound('sub', rows);
       renderSearchResults(rows, 'sub', `${rows.length}/${searchLibrary.length} matching the substructure`);
     }
   }
@@ -2947,9 +3052,201 @@ function rdkitAvailable() {
     return { refined, attempted };
   }
 
+  // ---- M1b triage overlay (pin/exclude/notes/undo over the platform store) ----
+  function triageStore() { return window.__platformCompat || null; }
+  window.triageStore = triageStore;
+
+  async function triageTogglePin(molId) {
+    const c = triageStore(); if (!c) return;
+    try {
+      if (c.getPins()[molId]) await c.unpin(molId);
+      else await c.pin(molId, null);
+    } catch (err) { searchStatus('Triage: ' + (err.message || err)); return; }
+    renderSearchResultsCurrent();
+    renderWorkSet();
+  }
+  window.triageTogglePin = triageTogglePin;
+
+  async function triageToggleExclude(molId) {
+    const c = triageStore(); if (!c) return;
+    try {
+      if (c.getExcludes()[molId]) await c.include(molId);
+      else await c.exclude(molId);
+    } catch (err) { searchStatus('Triage: ' + (err.message || err)); return; }
+    renderSearchResultsCurrent();
+    renderWorkSet();
+  }
+  window.triageToggleExclude = triageToggleExclude;
+
+  async function triageSetNote(molId, note) {
+    const c = triageStore(); if (!c) return;
+    try { await c.pin(molId, note || null); } catch (err) { return; }
+    renderWorkSet();
+  }
+  window.triageSetNote = triageSetNote;
+
+  async function triageUndo() {
+    const c = triageStore(); if (!c) return;
+    const r = await c.undo();
+    if (r.ok) searchStatus('Undid: ' + r.undone.type + (r.undone.molId ? ' ' + r.undone.molId.slice(0, 12) : ''));
+    else searchStatus('Undo: ' + (r.reason === 'empty' ? 'nothing to undo' : 'refused — command has dependents'));
+    renderSearchResultsCurrent();
+    renderWorkSet();
+  }
+  window.triageUndo = triageUndo;
+
+  // ---- M1c rounds: every search becomes a DAG node in the project store;
+  // hit-as-query creates the child edge (baseline C: 11 actions -> 1) ----
+  let __currentRoundId = null;
+  let __nextRoundParent = null;
+
+  async function recordSearchRound(mode, rows) {
+    const c = triageStore();
+    if (!c || !searchLibrary) return null;
+    const roundId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const parentId = __nextRoundParent || null;
+    __nextRoundParent = null;
+    const qEl = document.getElementById('searchQuery');
+    const tEl = document.getElementById('searchThreshold');
+    const cEl = document.getElementById('shapeConfs');
+    const fEl = document.getElementById('shapeFlex');
+    const querySpec = {
+      mode,
+      query: qEl ? qEl.value.trim() : null,
+      threshold: tEl ? parseFloat(tEl.value) : null,
+      confs: cEl ? parseInt(cEl.value) || null : null,
+      flex: fEl ? !!fEl.checked : null,
+      hitAsQuery: !!parentId,
+    };
+    try {
+      await c.projectApi().apply({ type: 'CreateRound', roundId, parentId, inputRef: 'lib:main', querySpec });
+      __currentRoundId = roundId;
+      // L3 fact: the round's scores with their provenance (M2)
+      const hits = (rows || [])
+        .filter(r => r.e && r.e.molId && isFinite(r.score))
+        .map(r => ({ molId: r.e.molId, score: +r.score.toFixed(6), colorT: r.colorT != null ? +r.colorT.toFixed(6) : null, conf: r.conf ?? null }));
+      c.saveRoundScores(roundId, hits);
+      renderQueryHistory();
+    } catch (err) { console.warn('[platform] round not recorded:', err); return null; }
+    return roundId;
+  }
+
+  function hitAsQuery(molId) {
+    const e = (searchLibrary || []).find(x => x.molId === molId);
+    if (!e) return;
+    __nextRoundParent = __currentRoundId;    // the child edge
+    document.getElementById('searchQuery').value = e.smiles;
+    runSearch();
+  }
+  window.hitAsQuery = hitAsQuery;
+
+  function renderQueryHistory() {
+    const host = document.getElementById('queryHistoryPanel');
+    if (!host) return;
+    const c = triageStore();
+    if (!c || !searchLibrary) { host.style.display = 'none'; return; }
+    const rounds = c.projectApi().state.rounds;
+    const keys = Object.keys(rounds);
+    host.style.display = keys.length ? '' : 'none';
+    const depth = {};
+    const calcDepth = (id, d) => {
+      if (depth[id] !== undefined) return;
+      depth[id] = d;
+      for (const k of keys) if (rounds[k].parentId === id) calcDepth(k, d + 1);
+    };
+    for (const k of keys) if (!rounds[k].parentId) calcDepth(k, 0);
+    for (const k of keys) if (depth[k] === undefined) depth[k] = 0;
+    keys.sort((a, b) => a.slice(1).localeCompare(b.slice(1)));
+    const shown = keys.slice(-12);
+    host.innerHTML = '<strong style="font-size:0.82rem;">Queries</strong>' +
+      '<div style="max-height:150px; overflow-y:auto; margin-top:0.3rem;">' +
+      shown.map(k => {
+        const r = rounds[k];
+        const q = r.querySpec || {};
+        const qs = String(q.query || '');
+        const sc = c.cachedRoundScores().get(k);
+        const label = (q.mode || '?') + ': ' + qs.slice(0, 24) + (qs.length > 24 ? '…' : '') +
+          (sc && sc.length ? ' (' + sc.length + ')' : '');
+        const isCur = k === __currentRoundId;
+        const tip = escHtml(label);
+        return '<div title="' + tip + '" style="padding:1px 0 1px ' + (depth[k] * 14 + 4) +
+          'px; font-size:0.74rem; cursor:pointer; ' + (isCur ? 'font-weight:600;' : 'color:var(--muted);') +
+          '" onclick="rerunRound(\'' + k + '\')">' + (depth[k] > 0 ? '↳ ' : '') + tip + (isCur ? ' ◂' : '') + '</div>';
+      }).join('') + '</div>';
+  }
+
+  function rerunRound(roundId) {
+    const c = triageStore();
+    if (!c) return;
+    const r = c.projectApi().state.rounds[roundId];
+    if (!r || !r.querySpec) return;
+    const q = r.querySpec;
+    __nextRoundParent = r.parentId;
+    document.getElementById('searchMode').value = q.mode; onSearchModeChange();
+    if (q.threshold != null) { const t = document.getElementById('searchThreshold'); if (t) t.value = q.threshold; }
+    document.getElementById('searchQuery').value = q.query || '';
+    runSearch();
+  }
+  window.rerunRound = rerunRound;
+
+  // consensus = mean rank across all RECORDED rounds that scored the
+  // molecule (explicit fusion column, formula in the tooltip — M0 spec §3)
+  function consensusFor(molId) {
+    const c = triageStore();
+    if (!c) return null;
+    const cache = c.cachedRoundScores();
+    const ranks = [];
+    for (const [rid, hits] of cache.entries()) {
+      const sorted = [...hits].sort((a, b) => b.score - a.score);
+      const idx = sorted.findIndex(h => h.molId === molId);
+      if (idx >= 0) ranks.push({ rid, rank: idx + 1, n: sorted.length });
+    }
+    if (ranks.length < 2) return null;
+    const mean = ranks.reduce((a, r) => a + r.rank, 0) / ranks.length;
+    return { mean, ranks };
+  }
+
+  let __lastRenderedRows = null, __lastRenderedMode = null, __lastRenderedMsg = null;
+  function renderSearchResultsCurrent() {
+    if (__lastRenderedRows) renderSearchResults(__lastRenderedRows, __lastRenderedMode, __lastRenderedMsg);
+  }
+
+  function renderWorkSet() {
+    const host = document.getElementById('workSetPanel');
+    if (!host) return;
+    const c = triageStore();
+    if (!c || !searchLibrary) { host.style.display = 'none'; return; }
+    const pins = c.getPins(), excl = c.getExcludes();
+    const byId = new Map((searchLibrary || []).map(e => [e.molId, e]));
+    host.style.display = '';
+    document.getElementById('workSetCounts').textContent =
+      Object.keys(pins).length + ' pinned · ' + Object.keys(excl).length + ' excluded';
+    const pinsHost = document.getElementById('workSetPins');
+    const keys = Object.keys(pins).filter(id => byId.has(id));
+    const orphaned = Object.keys(pins).length - keys.length;
+    pinsHost.innerHTML = keys.map(id => {
+      const e = byId.get(id);
+      const note = (pins[id].note || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      return '<div style="display:flex; gap:0.4rem; align-items:center; margin:2px 0;">' +
+        '<span style="font-size:0.78rem;">★ ' + escHtml(e.name) + '</span>' +
+        '<input type="text" value="' + note + '" placeholder="note…" ' +
+        'style="flex:1; min-width:120px; padding:0.2rem 0.4rem; font-size:0.75rem; border:1px solid var(--border); border-radius:6px;" ' +
+        'onchange="triageSetNote(\'' + id + '\', this.value)">' +
+        '<button class="action-btn clear" style="width:auto; padding:0.15rem 0.5rem; font-size:0.7rem;" onclick="triageTogglePin(\'' + id + '\')">unpin</button></div>';
+    }).join('') + (orphaned > 0 ? '<div class="hint">' + orphaned + ' pinned elsewhere (not in this library)</div>' : '');
+  }
+
   function renderSearchResults(rows, mode, statusMsg) {
+    __lastRenderedRows = rows; __lastRenderedMode = mode; __lastRenderedMsg = statusMsg;
     const cap = 500;
-    const shown = rows.slice(0, cap);
+    const hideExcl = document.getElementById('workSetHideExcluded') && document.getElementById('workSetHideExcluded').checked;
+    const tc = triageStore();
+    const exclSet = tc ? new Set(Object.keys(tc.getExcludes())) : null;
+    let shown = rows.slice(0, cap);
+    if (exclSet && hideExcl) {
+      const filtered = shown.filter(r => !(r.e && r.e.molId && exclSet.has(r.e.molId)));
+      if (filtered.length) shown = filtered;
+    }
     const tb = document.getElementById('searchRows');
     tb.innerHTML = '';
     const shapeMode = mode === 'shape';
@@ -2972,24 +3269,489 @@ function rdkitAvailable() {
       tr.addEventListener('keydown', ev => {
         if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e, aligned, pharm); }
       });
+      const molId = e.molId || null;
+      const isPinned = !!(tc && molId && tc.getPins()[molId]);
+      const isExcl = !!(tc && molId && exclSet && exclSet.has(molId));
+      if (isExcl) { tr.style.opacity = '0.45'; tr.title = 'excluded from triage'; }
+      const triageCell = molId
+        ? `<td style="white-space:nowrap;"><span role="button" tabindex="0" title="${isPinned ? 'unpin from working set' : 'pin to working set'}" style="cursor:pointer; font-size:0.95rem; ${isPinned ? '' : 'opacity:0.35;'}" onclick="triageTogglePin('${molId}')" onkeydown="if(event.key==='Enter')triageTogglePin('${molId}')">${isPinned ? '★' : '☆'}</span> <span role="button" tabindex="0" title="${isExcl ? 'include back' : 'exclude from triage'}" style="cursor:pointer; font-size:0.85rem; ${isExcl ? 'color:#b91c1c;' : 'opacity:0.35;'}" onclick="triageToggleExclude('${molId}')" onkeydown="if(event.key==='Enter')triageToggleExclude('${molId}')">${isExcl ? '✕' : '·'}</span> <span role="button" tabindex="0" title="use as query — lead hop (creates a child round)" style="cursor:pointer; font-size:0.85rem; opacity:0.45;" onclick="event.stopPropagation(); hitAsQuery('${molId}')" onkeydown="if(event.key==='Enter'){event.stopPropagation(); hitAsQuery('${molId}')}">⇄</span></td>`
+        : '<td></td>';
+      const cons = molId ? consensusFor(molId) : null;
+      const consCell = cons
+        ? `<td class="value" title="${escHtml(cons.ranks.map(r => r.rid.slice(1, 7) + ': #' + r.rank + '/' + r.n).join(' · '))}"><strong>${cons.mean.toFixed(1)}</strong></td>`
+        : '<td class="value">—</td>';
       tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}${flexBadge}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
         `<td class="value">${e.MW}</td>` +
         (mode === 'sub'
-          ? `<td><span class="result-badge pass">Match</span></td>`
+          ? `<td><span class="result-badge pass">Match</span></td>` + consCell
           : shapeMode
           ? (conf != null ? `<td class="value" title="entry conformer that produced this score">${conf + 1}</td>` : '') +
             `<td class="value">${(score * 100).toFixed(1)}%</td>` +
             `<td class="value">${colorT != null ? (colorT * 100).toFixed(1) + '%' : '—'}</td>` +
             `<td class="value" title="pharmacophore features matched">${pharm ? pharm.matched + '/' + pharm.total : '—'}</td>` +
             `<td class="value"><strong>${((score + (colorT || 0)) * 100).toFixed(1)}%</strong></td>`
-          : `<td class="value">${(score * 100).toFixed(1)}%</td>`);
+          : `<td class="value">${(score * 100).toFixed(1)}%</td>`) + consCell + triageCell;
       tb.appendChild(tr);
     }
     document.getElementById('searchPanel').style.display = 'block';
     document.getElementById('searchResultStatus').textContent =
       statusMsg + (rows.length > cap ? ` · showing top ${cap}` : '');
+    renderWorkSet();
+    renderQueryHistory();
   }
+
+  // SAR scope (M2): RGD / scaffold analysis can run over the whole
+  // library or the CURRENT hit set (the displayed rows) — the hit set is
+  // the natural SAR input after a search (M0 spec B1)
+  function sarScopeEntries(scopeId) {
+    const sel = document.getElementById(scopeId);
+    const scope = sel ? sel.value : 'library';
+    if (scope === 'hits') {
+      const entries = (__lastRenderedRows || []).map(r => r.e).filter(Boolean);
+      if (!entries.length) { searchStatus('No current results — run a search first'); return null; }
+      return entries;
+    }
+    return searchLibrary;
+  }
+
+  // ===================== Neighborhood explorer (M3) =====================
+  // Single-site group swaps from a built-in fragment set, conformer-
+  // ensemble shape-rescored against the parent's reference conformer on a
+  // worker farm. Hard caps per the M0 spec §7: ONE site per run, ≤150
+  // fragments, ≤400 products after filters, rotor cap 10. Flex refinement
+  // of top hits (stage D) lands in M3b.
+  const ANALOG_FRAGMENTS = [
+    // alkyl (attachment at the left, e.g. body 'C' => *-CH3)
+    ['C', 'alkyl'], ['CC', 'alkyl'], ['CCC', 'alkyl'], ['C(C)C', 'alkyl'], ['C(C)(C)C', 'alkyl'],
+    ['C1CC1', 'alkyl'], ['C1CCC1', 'alkyl'], ['CC(F)(F)F', 'halo'],
+    // halogens / CFx
+    ['F', 'halo'], ['Cl', 'halo'], ['Br', 'halo'], ['C(F)(F)F', 'halo'], ['C#N', 'halo'],
+    // O-linked (attachment via O)
+    ['O', 'O'], ['OC', 'O'], ['OCC', 'O'], ['OC(F)(F)F', 'O'], ['SC', 'O'], ['S', 'O'],
+    // N-linked (attachment via N)
+    ['N', 'N'], ['NC', 'N'], ['N(C)C', 'N'], ['NC(C)=O', 'N'], ['NN', 'N'],
+    // carbonyl-attached (attachment via the carbonyl C)
+    ['C(=O)O', 'acyl'], ['C(=O)N', 'acyl'], ['C(=O)NC', 'acyl'], ['C(=O)OC', 'acyl'], ['C(=O)c1ccccc1', 'acyl'],
+    // aryl / heteroaryl (attachment via aromatic C)
+    ['c1ccccc1', 'aryl'], ['c1ccncc1', 'aryl'], ['c1ccc(F)cc1', 'aryl'], ['c1ccc(Cl)cc1', 'aryl'],
+    ['c1ccnc1', 'aryl'], ['c1ccsc1', 'aryl'], ['c1ccoc1', 'aryl'], ['c1ccc(OC)cc1', 'aryl'],
+    ['c1ccc(C)cc1', 'aryl'], ['c1cnncc1', 'aryl'], ['c1ccc(N)cc1', 'aryl'], ['c1ccc(C#N)cc1', 'aryl'],
+  ];
+  const ANALOG_SITES = [
+    // [label, SMARTS for the replaceable terminal group]
+    ['terminal halogen', '[F,Cl,Br;!$(*~[F,Cl,Br])]'],
+    ['methyl', '[CX4;H3;!$([CX4](~[CH3])~[CH3])]'],
+    ['hydroxyl', '[OX2;H1]'],
+    ['primary amine', '[NX3;H2;!$(N[OX2])]'],
+    ['methoxy', '[OX2;H0]([CX4;H3])'],
+    ['nitrile', '[CX3](=N)'],
+  ];
+  let analogParentSdf = null;      // the parent's 3D conformer (scoring ref)
+  let analogParentMolblock = null; // for site detection + core surgery
+  let analogRunToken = 0;
+
+  function analogStatus(msg) { document.getElementById('analogStatus').textContent = msg; }
+
+  function analogDetectSites() {
+    if (!rdkitAvailable()) return;
+    if (!sdf3d || !sdf3d.trim()) { analogStatus('Load a molecule into the single view (and embed 3D) first'); return; }
+    analogParentSdf = sdf3d;
+    const m = rdkitModule.get_mol(sdf3d);
+    if (!m || !m.is_valid()) { if (m) m.delete(); analogStatus('Current molecule unparseable'); return; }
+    // NB: use sdf3d VERBATIM — the minimal build's get_molblock() re-write
+    // can drop aromatic bond orders (type 4), which would saturate rings on
+    // re-parse. sdf3d itself carries proper orders (verified).
+    analogParentMolblock = sdf3d;
+    const sel = document.getElementById('analogSite');
+    sel.innerHTML = '<option value="">— site —</option>';
+    let found = 0;
+    for (const [label, sma] of ANALOG_SITES) {
+      let q = null;
+      try { q = rdkitModule.get_qmol(sma); } catch (e) { continue; }
+      if (!q || !q.is_valid()) { if (q) q.delete(); continue; }
+      let arr = [];
+      try { arr = JSON.parse(m.get_substruct_matches(q)); } catch (e) {}
+      q.delete();
+      if (Array.isArray(arr)) {
+        for (const mt of arr) {
+          if (!mt.atoms || mt.atoms.length > 6) continue;
+          sel.innerHTML += '<option value="' + mt.atoms.join(',') + '">' + label + ' @atoms ' + mt.atoms.join(',') + '</option>';
+          found++;
+        }
+      }
+    }
+    m.delete();
+    const lbl = (document.getElementById('smiles') && document.getElementById('smiles').textContent || '').trim();
+    document.getElementById('analogParent').textContent = 'parent: ' + (lbl || 'current molecule').slice(0, 34);
+    document.getElementById('analogParent').title = analogParentSdf.slice(0, 200);
+    analogStatus(found ? found + ' replaceable site(s) found — pick one (single-site per run)' : 'No replaceable terminal groups found');
+  }
+  window.analogDetectSites = analogDetectSites;
+
+  // core surgery: remove the site atoms from the parent molblock and cap the
+  // single attachment with an R# dummy (the Auto-core precedent)
+  function analogCoreMolblock(siteAtoms) {
+    const lines = sdfLines(analogParentMolblock);
+    const na = parseInt(lines[3].substring(0, 3));
+    const nb = parseInt(lines[3].substring(3, 6));
+    const rm = new Set(siteAtoms);   // already 0-based
+    // the group's hydrogens go WITH it (a CH3 site = C + its 3 H; leaving
+    // them behind yields disconnected [HH] fragments that trap the engine)
+    const elAt = (i) => ((lines[4 + i] || '').substring(31, 34) || '').trim();
+    for (let i = 4 + na; i < 4 + na + nb; i++) {
+      const l = lines[i];
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      if (isNaN(a) || isNaN(b)) continue;
+      if (rm.has(a) && elAt(b) === 'H') rm.add(b);
+      else if (rm.has(b) && elAt(a) === 'H') rm.add(a);
+    }
+    // the attachment atom: a non-removed HEAVY neighbor of the removed set
+    // (explicit-H molblocks: the methyl's H neighbors would steal it)
+    const isH = (i) => ((lines[4 + i] || '').substring(31, 34) || '').trim() === 'H';
+    let attach = -1;
+    for (let i = 4 + na; i < 4 + na + nb; i++) {
+      const l = lines[i];
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      if (rm.has(a) && !rm.has(b) && !isH(b)) attach = b;
+      else if (rm.has(b) && !rm.has(a) && !isH(a)) attach = a;
+    }
+    if (attach < 0) return null;
+    // drop removed atoms; renumber
+    const remap = new Map();
+    let n = 0;
+    for (let i = 0; i < na; i++) if (!rm.has(i)) remap.set(i, n++);
+    const dummyIdx = n + 1;      // 1-based
+    const atomsOut = [];
+    for (let i = 0; i < na; i++) {
+      if (rm.has(i)) continue;
+      atomsOut.push(lines[4 + i].substring(0, 34).padEnd(34) + '\n');
+    }
+    atomsOut.push('    0.0000    0.0000    0.0000 R#  0  0\n');
+    const bondsOut = [];
+    for (let i = 4 + na; i < 4 + na + nb; i++) {
+      const l = lines[i];
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      if (rm.has(a) || rm.has(b)) continue;
+      const ord = l.substring(6, 9) || '  1';   // PRESERVE the original bond order (aromatic 4, double 2)
+      bondsOut.push(String(remap.get(a) + 1).padStart(3) + String(remap.get(b) + 1).padStart(3) + ord + '  0\n');
+    }
+    bondsOut.push(String(remap.get(attach) + 1).padStart(3) + String(dummyIdx).padStart(3) + '  1  0\n');
+    const cnt = String(atomsOut.length).padStart(3) + String(bondsOut.length).padStart(3);
+    return lines[0] + '\n' + lines[1] + '\n' + lines[2] + '\n' + (cnt + '  0  0  0  0  0  0  0  0999 V2000\n') +
+      atomsOut.join('') + bondsOut.join('') + 'M  END';
+  }
+
+  function analogCancelRun() { analogRunToken++; }
+
+  async function runAnalogExplorer() {
+    if (!rdkitAvailable() || !window.webmm) { analogStatus('Engine not ready'); return; }
+    const siteVal = document.getElementById('analogSite').value;
+    if (!siteVal || !analogParentMolblock) { analogStatus('Pick a site first (use current molecule → site)'); return; }
+    const cat = document.getElementById('analogFragCat').value;
+    const frags = ANALOG_FRAGMENTS.filter(f => cat === 'all' || f[1] === cat);
+    if (!frags.length) { analogStatus('No fragments in category'); return; }
+    // --- stage A: enumerate + filter (hard caps: ≤400 products, rotor ≤10)
+    analogRunToken++;
+    const token = analogRunToken;
+    analogStatus('Enumerating…');
+    const coreMb = analogCoreMolblock(siteVal.split(',').map(Number));   // 0-based (matches get_substruct_matches convention)
+    if (!coreMb) { analogStatus('Site surgery failed (multi-attachment?)'); return; }
+    const cm = rdkitModule.get_mol(coreMb);
+    if (!cm || !cm.is_valid()) { if (cm) cm.delete(); analogStatus('Core (capped with R#) unparseable'); return; }
+    const coreSmiles = cm.get_smiles();
+    cm.delete();
+    if (!coreSmiles.includes('*')) { analogStatus('Core SMILES lacks the attachment dummy'); return; }
+    const parentMol = rdkitModule.get_mol(analogParentMolblock);
+    const pDesc = JSON.parse(parentMol.get_descriptors());
+    const pHeavy = pDesc.NumHeavyAtoms || 0;
+    parentMol.delete();
+    const cands = [];
+    for (const [body, fcat] of frags) {
+      if (cands.length >= 400) break;
+      // plain replace, NO added parens: the core SMILES already carries the
+      // grouping it needs ('c1ccc(*)cc1' -> 'c1ccc(C)cc1'; tail '*' chains
+      // on: 'CC(=O)*' + 'OC' -> 'CC(=O)OC'). Invalid combinations are
+      // skipped honestly by the sanitize filter below.
+      const smi = coreSmiles.replace('*', body);
+      let m = null;
+      try { m = rdkitModule.get_mol(smi); } catch (e) { continue; }
+      if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
+      const d = JSON.parse(m.get_descriptors());
+      const rotb = d.NumRotatableBonds ?? 0;
+      const heavy = d.NumHeavyAtoms || 0;
+      if (rotb > 10 || heavy > pHeavy + 9 || heavy < Math.max(1, pHeavy - 6)) { m.delete(); continue; }
+      let canon = m.get_smiles();
+      m.delete();
+      // the surgical core carries explicit [H] literals (sdf3d heritage);
+      // the engine's conformer entry only ever receives H-FREE molblocks
+      // (every existing pipeline strips them) — mixed-H input traps it.
+      // Strip [H] literals and re-sanitize; invalid results drop out here.
+      const canonClean = canon.replace(/\[H\]/g, '').replace(/\(\)/g, '');
+      let m2 = null;
+      try { m2 = rdkitModule.get_mol(canonClean); } catch (e) {}
+      if (!m2 || !m2.is_valid()) { if (m2) m2.delete(); continue; }
+      canon = m2.get_smiles();
+      const mb = m2.get_molblock();
+      m2.delete();
+      cands.push({ smiles: canon, molblock: mb, mw: +d.amw.toFixed(2), rotb });
+    }
+    if (!cands.length) { analogStatus('No candidates passed the sanity filters'); return; }
+    // --- stage B: worker farm, conformers + rigid overlay (streamed)
+    const cores = (navigator.hardwareConcurrency || 4);
+    const NW = Math.max(1, Math.min(cores - 1, 8));
+    const est = Math.round(cands.length * 10 * 0.05 / NW * 10);   // ~50ms/conf rough
+    analogStatus(cands.length + ' candidates · ' + NW + ' workers · est ~' + Math.min(90, Math.max(5, est)) + 's — streaming…');
+    document.getElementById('analogCancel').style.display = '';
+    document.getElementById('analogResultsWrap').style.display = '';
+    const tb = document.getElementById('analogRows');
+    tb.innerHTML = '';
+    const wasmUrl = window.__webmmUrl;
+    const workers = [];
+    const waiters = [];
+    let nextJob = 0, doneCount = 0;
+    const t0 = performance.now();
+    const results = [];
+    const ensure = (w) => new Promise(res => {
+      const iv = setInterval(() => { if (w.__ready) { clearInterval(iv); res(); } }, 30);
+    });
+    for (let i = 0; i < NW; i++) {
+      const w = new Worker('analog.worker.js', { type: 'module' });
+      w.__ready = false;
+      w.onmessage = (ev) => {
+        const msg = ev.data;
+        if (msg.type === 'ready') { w.__ready = true; return; }
+        if (msg.type === 'done') {
+          const waiter = waiters.shift();
+          if (waiter) waiter(msg);
+        }
+      };
+      w.postMessage({ type: 'init', wasmUrl });
+      workers.push(w);
+    }
+    await Promise.all(workers.map(ensure));
+    if (token !== analogRunToken) { for (const w of workers) w.terminate(); return; }
+    const scoreOne = (cand, idx) => new Promise(res => {
+      const w = workers[idx % NW];
+      waiters.push(res);
+      w.postMessage({
+        type: 'score', idx, molblock: cand.molblock, nConfs: 10,
+        seed: 4200 + idx, parentSdf: analogParentSdf,
+      });
+    });
+    let INFLIGHT = 0;
+    const pump = () => {
+      while (INFLIGHT < NW * 2 && nextJob < cands.length) {
+        const i = nextJob++;
+        INFLIGHT++;
+        scoreOne(cands[i], i).then(msg => {
+          INFLIGHT--;
+          doneCount++;
+          if (token !== analogRunToken) return;
+          if (msg.tanimoto != null) {
+            results.push({ ...cands[msg.idx], tanimoto: msg.tanimoto, idx: msg.idx });
+            results.sort((a, b) => b.tanimoto - a.tanimoto);
+            renderAnalogRows(results, token);
+          }
+          if (doneCount % 10 === 0 || doneCount === cands.length) {
+            analogStatus(doneCount + '/' + cands.length + ' scored · top: ' +
+              (results[0] ? (results[0].tanimoto * 100).toFixed(1) + '%' : '—') +
+              ' · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's');
+          }
+          pump();
+          if (doneCount === cands.length) {
+            // ---- stage C: refine the top-30 with a 30-conformer ensemble ----
+            analogStatus('B done (' + results.length + ' scored) — C: refining top-30 with 30 conformers…');
+            const top30 = results.slice(0, 30);
+            let cDone = 0;
+            Promise.all(top30.map((cand, k) => new Promise(res => {
+              const w = workers[k % NW];
+              waiters.push(msg => res(msg));
+              w.postMessage({ type: 'score', idx: cand.idx, molblock: cand.molblock, nConfs: 30,
+                seed: 4200 + 10000 + cand.idx, parentSdf: analogParentSdf, returnBest: true });
+            }))).then(msgs => {
+              if (token !== analogRunToken) return;
+              for (const msg of msgs) {
+                if (msg.tanimoto == null) continue;
+                const r = results.find(x => x.idx === msg.idx);
+                if (r && msg.tanimoto > r.tanimoto) r.tanimoto = msg.tanimoto;   // max over both ensembles
+                if (msg.bestSdf) { const r2 = results.find(x => x.idx === msg.idx); if (r2) r2.bestSdf = msg.bestSdf; }
+              }
+              results.sort((a, b) => b.tanimoto - a.tanimoto);
+              renderAnalogRows(results, token);
+              // ---- stage D: flexible refinement of the top-10 ----
+              analogStatus('C done — D: flexible refinement of the top-10…');
+              return (async () => {
+                for (const r of results.slice(0, 10)) {
+                  if (token !== analogRunToken) return;
+                  if (!r.bestSdf || r.tanimoto >= 0.9995) continue;   // exact self-superposition: nothing to gain
+                  try { r.flexT = await flexAnalogCandidate(r.bestSdf); } catch (e) { /* keep rigid */ }
+                  renderAnalogRows(results, token);
+                }
+                for (const w of workers) w.terminate();
+                document.getElementById('analogCancel').style.display = 'none';
+                const nFlex = results.filter(r => r.flexT != null).length;
+                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total');
+              })();
+            });
+          }
+        });
+      }
+    };
+    pump();
+  }
+  window.runAnalogExplorer = runAnalogExplorer;
+
+  // stage D: flexible refinement of ONE analog at its best rigid pose —
+  // the shared core is found by MCS (parent vs analog), snapped by Kabsch,
+  // then the analog torsionally relaxes under position restraints onto the
+  // parent frame (the v1.8.0 flex machinery, applied to a generated molecule)
+  async function flexAnalogCandidate(bestSdf) {
+    // re-run the winning alignment deterministically to get its pose transform
+    let res = null;
+    try { res = JSON.parse(window.webmm.shape_align_wasm(analogParentSdf, bestSdf, '')); } catch (e) { return null; }
+    let posed = bestSdf;
+    if (res && res.transform) posed = applyTransformToSdf(bestSdf, res.transform);
+    // MCS pairs parent<->posed
+    const qm = rdkitModule.get_mol(analogParentSdf);
+    const tm = rdkitModule.get_mol(posed);
+    if (!qm || !qm.is_valid() || !tm || !tm.is_valid()) { if (qm) qm.delete(); if (tm) tm.delete(); return null; }
+    const ml = new rdkitModule.MolList(); ml.append(qm); ml.append(tm);
+    let pairs = null;
+    try {
+      const mcs = JSON.parse(rdkitModule.get_mcs_as_json(ml));
+      if (mcs && !mcs.canceled && mcs.smarts) {
+        const qmol = rdkitModule.get_qmol(mcs.smarts);
+        if (qmol && qmol.is_valid()) {
+          const mqArr = JSON.parse(qm.get_substruct_matches(qmol));
+          const mtArr = JSON.parse(tm.get_substruct_matches(qmol));
+          qmol.delete();
+          const mq = Array.isArray(mqArr) && mqArr.length ? mqArr[0].atoms : null;
+          const mt = Array.isArray(mtArr) && mtArr.length ? mtArr[0].atoms : null;
+          if (mq && mt && mq.length === mt.length && mq.length >= 6) pairs = mq.map((qi, k) => [mt[k], qi]);
+        }
+      }
+    } catch (e) { pairs = null; }
+    qm.delete(); tm.delete();
+    if (!pairs) return null;
+    const kres = JSON.parse(window.webmm.kabsch_align_wasm(posed, analogParentSdf, JSON.stringify(pairs)));
+    const snapped = applyTransformToSdf(posed, kres.transform);
+    const qco = sdfCoords(analogParentSdf);
+    const opts = new window.webmm.OptimizationOptions();
+    opts.set_restraints(JSON.stringify({ position: pairs.map(([ti, qi]) => ({ i: ti, xyz: [qco[3 * qi], qco[3 * qi + 1], qco[3 * qi + 2]], fc: 25, tol: 0.5 })) }));
+    const ores = window.webmm.optimize_from_sdf(snapped, opts);
+    if (!ores.converged) return null;
+    const flexed = replaceCoordsInSdf(snapped, ores);
+    let res2 = null;
+    try { res2 = JSON.parse(window.webmm.shape_align_wasm(analogParentSdf, flexed, '')); } catch (e) { return null; }
+    return res2 ? res2.tanimoto : null;
+  }
+
+  function renderAnalogRows(results, token) {
+    if (token !== analogRunToken) return;
+    const tb = document.getElementById('analogRows');
+    tb.innerHTML = results.slice(0, 200).map((r, i) => {
+      const mid = window.Platform ? window.Platform.Identity.syntheticMolId('analog', r.idx, r.smiles, 'builtin-v1', r.smiles) : null;
+      const pinned = mid && window.__platformCompat && window.__platformCompat.getPins()[mid];
+      return '<tr><td>' + (i + 1) + '</td>' +
+        '<td class="value" style="font-family:ui-monospace,Menlo,monospace; font-size:0.75rem; max-width:280px; overflow:hidden; text-overflow:ellipsis;" title="' + r.smiles + '">' + r.smiles + '</td>' +
+        '<td class="value">' + r.mw + '</td>' +
+        '<td class="value"><strong>' + (r.tanimoto * 100).toFixed(1) + '%</strong></td>' +
+        '<td class="value">' + r.rotb + '</td>' +
+        '<td class="value">' + (r.flexT != null ? '<strong>' + (r.flexT * 100).toFixed(1) + '%</strong>' : '—') + '</td>' +
+        '<td>' + (mid ? '<span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem; ' + (pinned ? '' : 'opacity:0.35;') + '" title="pin (synthetic-library identity)" onclick="analogPin(\'' + r.idx + '\',\'' + mid + '\')">' + (pinned ? '★' : '☆') + '</span>' : '') + '</td></tr>';
+    }).join('');
+  }
+
+  async function analogPin(idx, mid) {
+    const c = window.__platformCompat;
+    if (!c) return;
+    if (c.getPins()[mid]) await c.unpin(mid);
+    else await c.pin(mid, 'analog #' + idx);
+    renderAnalogRows(analogLastResults(), analogRunToken);
+    renderWorkSet();
+  }
+  window.analogPin = analogPin;
+  let __analogResults = [];
+  const _origRender = renderAnalogRows;
+  renderAnalogRows = function (results, token) { __analogResults = results; _origRender(results, token); };
+  function analogLastResults() { return __analogResults; }
+
+  // provenance-rich CSV export: per-round ranks + consensus + triage state
+  // (M2; the exit path to other tools, M0 spec §6)
+  function exportResultsCSV() {
+    if (!__lastRenderedRows || !__lastRenderedRows.length) { searchStatus('Nothing to export — run a search first'); return; }
+    const c = triageStore();
+    const cache = c ? c.cachedRoundScores() : new Map();
+    const rounds = c ? c.projectApi().state.rounds : {};
+    const roundIds = [...cache.keys()].sort((a, b) => a.slice(1).localeCompare(b.slice(1)));
+    const header = ['name', 'smiles', 'MW'].concat(roundIds.map(rid => {
+      const q = (rounds[rid] && rounds[rid].querySpec) || {};
+      return 'rank:' + (q.mode || '?') + ':' + String(q.query || '').slice(0, 18).replace(/[",\n]/g, ' ');
+    })).concat(['consensus_mean_rank', 'pinned', 'note', 'excluded']);
+    const lines = [header.join(',')];
+    const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    for (const r of __lastRenderedRows.slice(0, 500)) {
+      const e = r.e;
+      const cells = [q(e.name), q(e.smiles), e.MW];
+      for (const rid of roundIds) {
+        const hits = cache.get(rid) || [];
+        const sorted = [...hits].sort((a, b) => b.score - a.score);
+        const idx = sorted.findIndex(h => h.molId === e.molId);
+        cells.push(idx >= 0 ? idx + 1 : '');
+      }
+      const cons = consensusFor(e.molId);
+      cells.push(cons ? cons.mean.toFixed(2) : '');
+      cells.push(c && c.getPins()[e.molId] ? 'yes' : '');
+      cells.push(q(c && c.getPins()[e.molId] ? c.getPins()[e.molId].note : ''));
+      cells.push(c && c.getExcludes()[e.molId] ? 'yes' : '');
+      lines.push(cells.join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'webmm-results-provenance.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    searchStatus('Exported ' + Math.min(__lastRenderedRows.length, 500) + ' rows with provenance (' + roundIds.length + ' rounds)');
+  }
+  window.exportResultsCSV = exportResultsCSV;
+
+  // M2b: project export/import (facts only — the command log; deterministic
+  // derivatives recompute on load, stochastic facts ride in 'facts')
+  async function exportProjectFile() {
+    const c = triageStore();
+    if (!c) { searchStatus('Project store not available'); return; }
+    const data = await c.exportProjectData();
+    if (!data) { searchStatus('Nothing to export'); return; }
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'webmm-project-v' + data.schemaVersion + '-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    searchStatus('Project exported: ' + data.commands.length + ' commands (schema v' + data.schemaVersion + ')');
+  }
+  window.exportProjectFile = exportProjectFile;
+
+  async function importProjectFile(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    const c = triageStore();
+    if (!c) { searchStatus('Project store not available'); return; }
+    try {
+      const data = JSON.parse(await f.text());
+      if (!confirm('Import this project? This REPLACES the current one (' +
+        (data.commands ? data.commands.length : 0) + ' commands). The page will reload.')) return;
+      const r = await c.importProject(data);
+      searchStatus('Project imported (' + r.applied + ' commands) — reloading…');
+      setTimeout(() => location.reload(), 600);
+    } catch (err) {
+      searchStatus('Import failed: ' + (err.message || err));
+    }
+  }
+  window.importProjectFile = importProjectFile;
 
   function loadSearchRow(e, alignedSdf, pharm) {
     switchMode('single');
@@ -3353,7 +4115,8 @@ function rdkitAvailable() {
 
   function runRGD() {
     if (!rdkitAvailable()) return;
-    if (!searchLibrary || !searchLibrary.length) {
+    const scopeEntries = sarScopeEntries('rgdScope');
+    if (!scopeEntries || !scopeEntries.length) {
       document.getElementById('rgdStatus').textContent = 'Load a library first (Demo library or paste/upload)';
       return;
     }
@@ -3373,7 +4136,7 @@ function rdkitAvailable() {
     }
     rgdResults = [];
     let skipped = 0;
-    for (const e of searchLibrary) {
+    for (const e of scopeEntries) {
       let m = null;
       try { m = rdkitModule.get_mol(e.smiles); } catch (err) {}
       if (!m || !m.is_valid()) { if (m) m.delete(); skipped++; continue; }
@@ -3397,7 +4160,7 @@ function rdkitAvailable() {
     }
     document.getElementById('rgdPanel').style.display = 'block';
     document.getElementById('rgdStatus').textContent =
-      `${rgdResults.length}/${searchLibrary.length} molecules contain the core` +
+      `${rgdResults.length}/${scopeEntries.length} molecules contain the core` +
       (skipped ? ` · ${skipped} skipped (no core or unparseable)` : '');
     // header + rows
     const head = document.getElementById('rgdHead');
@@ -3432,13 +4195,14 @@ function rdkitAvailable() {
 
   function analyzeScaffolds() {
     if (!rdkitAvailable()) return;
-    if (!searchLibrary || !searchLibrary.length) {
+    const scopeEntries = sarScopeEntries('scaffoldScope');
+    if (!scopeEntries || !scopeEntries.length) {
       document.getElementById('scaffoldStatus').textContent = 'Load a library first';
       return;
     }
     const counts = new Map();
     let acyclic = 0;
-    for (const e of searchLibrary) {
+    for (const e of scopeEntries) {
       let m = null;
       try { m = rdkitModule.get_mol(e.smiles); } catch (err) {}
       if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
@@ -4432,6 +5196,7 @@ function switchMode(m) {
   document.getElementById('batchPanel').style.display = (batchMode && modeShown.batch) ? 'block' : 'none';
   document.getElementById('searchPanel').style.display = (searchMode && modeShown.search) ? 'block' : 'none';
   document.getElementById('rgdPanel').style.display = searchMode ? (rgdResults ? 'block' : 'none') : 'none';
+  document.getElementById('analogPanel').style.display = searchMode ? 'block' : 'none';
   document.getElementById('scaffoldPanel').style.display = searchMode ? (scaffoldResults ? 'block' : 'none') : 'none';
   document.getElementById('pharmQueryPanel').style.display = searchMode ? 'block' : 'none';
   if (searchMode) restoreSearchLibrary();

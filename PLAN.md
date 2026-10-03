@@ -1,4 +1,28 @@
-# Plan: M3b — 漏斗 C 级(扩构象精化)+ D 级(flex 精修 top-10)(explore/lbdd-platform,M3 漏斗收口)
+# Plan: 平台独立成页(explore/lbdd-platform;用户决策:并行页,不合入 Workbench)
+
+> M0-M3 已完成于 Workbench 之内(绞杀者路线);用户定夺:平台
+> 特性迁至独立新页 app/platform.html,Workbench(app/index.html)
+> 回退到分支点状态——与 main 字节一致,合并零风险。
+
+## 实施
+
+1. 当前(含平台)index.html → app/platform.html(标题改
+   "WebMM Platform — LBDD workbench (explorer)")
+2. app/index.html 与 tests/cdp/m5_search_e2e.test.js 以
+   `git show cdec869:` 回退——**git diff 对 main 零差异**(验证)
+3. m5 的五段平台测试(M1c/M2a/M2b/M1b/M3)提取为
+   tests/cdp/m6_platform.test.js(独立 preamble + 库装载 + 零
+   page error + RESULT 行,URL 打 app/platform.html;M2b 第二页
+   硬编码 URL 改常量——首跑超时的教训)
+4. 两页同源共享 IndexedDB:回退后的 Workbench 不触碰
+   'webmm-platform'(平台页独占,无冲突)
+
+## 验收结果
+
+- Workbench m0-m5 全绿(37/10/11/10/32/44,index.html == main)
+- **m6 平台页 23/23**(库装载/轮次 DAG+hit-as-query/共识+溯源
+  CSV+SAR 命中集/项目导入导出+多标签/甄别/邻域探索器全漏斗)
+- 平台 Node 34/34;7 内联脚本 node --check ×两页;零 page error
 
 > M3a 已完成;本 PLAN 为 M3 第二轮。SA score Rust 移植独立立项
 > (需 Rust 侧展开型 Morgan + fpscores 数据表 + Python 对拍,~2-3 天,

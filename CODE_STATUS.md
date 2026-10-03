@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**M3 漏斗收口(M3b 完成,explore/lbdd-platform):B 刚体 → C 扩构象精化(top-30×30 构象,两系综取 max)→ D flex 精修(top-10:MCS-Kabsch 入位+位置约束 MMFF+重打分,Flex T 独立列与刚体并陈)全通;paracetamol 35 计分+10 flex 于 10s(规范预算 45-60s 内)。SA score Rust 移植独立立项待做。m5 65/65、六套件全绿。平台重设计 M0-M3 漏斗全落地——待用户定夺:合回 main。**
+**平台独立成页完成(explore/lbdd-platform):平台特性(M1-M3 全部)迁至 app/platform.html;Workbench(app/index.html)与 m5 以 git show 回退——对 main 字节零差异,合并即纯增量。m0-m5 全绿打 Workbench,m6(新)23/23 打平台页,平台 Node 34/34。分支可随时并入 main(Workbench 零风险);后续:SA score Rust 移植(独立项)、scaffold-hop spike、平台页入口链接待定。**
 
+## Recently Completed
++- **平台独立成页(用户决策落地:并行页不合入 Workbench——M0 分叉 1 的另一分支现在生效)。** 绞杀者路线下 M1-M3 全部织入过 app/index.html;本轮将其整体迁至 **app/platform.html**(标题 "WebMM Platform — LBDD workbench (explorer)"),app/index.html 与 tests/cdp/m5_search_e2e.test.js 以 `git show cdec869:` 回退到分支点——**git diff 对 main 零差异**(字节级验证),合并分支对 Workbench 变为纯增量文件(platform.html + app/platform/ 五模块 + analog.worker.js + m6)。平台五段测试(M1c 轮次 DAG+hit-as-query/M2a 共识+溯源+SAR 命中集/M2b 项目导入导出+多标签/M1b 甄别/M3 探索器全漏斗)提取为 tests/cdp/m6_platform.test.js(独立 preamble+库装载+零 page error+RESULT 行惯例);提取时 M2b 第二页的硬编码 index.html URL 改为常量(首跑 15s 超时教训:第二页开在已回退的 Workbench 上,平台永不在场)。两页同源共享 IndexedDB 但回退后的 Workbench 不触碰 'webmm-platform'(平台页独占)。验收:Workbench m0-m5 全绿(37/10/11/10/32/44,index==main);**m6 平台页 23/23**;平台 Node 34/34;两页各 7 内联脚本 node --check;零 page error。
 ## Recently Completed
 +- **M3b 漏斗 C+D 级(explore/lbdd-platform,M3 探索器漏斗收口)。** worker 增 returnBest(回传最优构象 SDF+变换,向后兼容);C 级:B 完成后 top-30 以 30 构象系综重评(seed 偏移 10000,两轮系综分数取 max 并更新胜者姿态);D 级 flexAnalogCandidate——确定性重跑胜者对齐取姿态变换(与 worker 同参数串保证同值)→ MCS 配对(≥6 原子门控)→ kabsch_align_wasm 核心入位 → 位置约束(fc25/tol0.5,v1.8.0 机器全复用)MMFF 扭转松弛 → shape 重打分;**Flex T 独立列**(升降与刚体并陈——羧酸 83.8→86.9/母体 83.5→88.6/硫代氨基甲酸 82.3→88.0 向上=扭转向母体框架适应,Br 90.5→87.1 向下=MMFF 松弛偏离最优刚体姿态,两向都诚实显示);≥0.9995 自叠合跳过守卫沿用;状态行叙述漏斗阶段。SA score Rust 移植独立立项(需 Rust 侧展开型 Morgan+fpscores 表+Python 对拍 ~2-3 天,不塞本轮;合理性启发式维持 RotB+ΔMW 列,组合分留显式融合列设计)。验收:paracetamol 全类别 **35 计分+top-10 flex 全成,10s 总墙钟**(M0 规范预算 45-60s 内);m5 **65/65**(+1:漏斗 B→C→D 全通且 flex 列有值);六套件 37/10/11/10/32/65;平台 34/34;零 page error。教训两条:python 转义把测试正则 \d 写成字面 \\d(永不匹配→600s 超时,诊断看锚点行号);修批命令尾部的服务器 kill 误杀后续测试批次。
 ## Recently Completed
