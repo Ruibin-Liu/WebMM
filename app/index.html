@@ -912,6 +912,11 @@ details {
         <label for="shapeConfs" style="font-size:0.75rem; color:var(--muted);" title="Conformers generated per library entry (best over conformers scores each entry; 1 = single-conformer legacy path)">confs</label>
         <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()">
       </span>
+      <span id="shapeFlexWrap" style="display:none; white-space:nowrap;">
+        <label style="font-size:0.75rem; color:var(--muted); cursor:pointer;" title="Flexible alignment: after rigid scoring the top 10 rows are torsionally refined onto the query — MCS-matched atoms restrained to the query frame (flat-bottom 0.5 Å, fc 25), MMFF94s relaxation, then rescored. Schrödinger Ligand-Alignment-style flex fit; rows without a ≥6-atom MCS keep their rigid pose.">
+          <input type="checkbox" id="shapeFlex"> flex top 10
+        </label>
+      </span>
       <details id="colorWeightsWrap" style="display:none; white-space:nowrap;">
         <summary style="cursor:pointer; font-size:0.75rem; color:var(--muted); display:inline-flex; align-items:center;" title="Per-type color force field weights: how many times each feature type counts in Color T / Combo (1.0 = ROCS-style uniform)">color weights</summary>
         <div style="position:absolute; z-index:50; background:#fff; border:1px solid var(--border); border-radius:8px; padding:0.6rem; display:flex; flex-wrap:wrap; gap:0.5rem; max-width:340px; box-shadow:0 4px 12px rgba(0,0,0,0.12); white-space:normal;">
@@ -1967,6 +1972,7 @@ function rdkitAvailable() {
     const shape = document.getElementById('searchMode').value === 'shape';
     document.getElementById('searchFp').disabled = shape;
     document.getElementById('shapeConfsWrap').style.display = shape ? '' : 'none';
+    document.getElementById('shapeFlexWrap').style.display = shape ? '' : 'none';
     document.getElementById('colorWeightsWrap').style.display = shape ? '' : 'none';
     syncShapeConfCol();
     document.getElementById('searchQuery').placeholder = shape
@@ -2485,8 +2491,14 @@ function rdkitAvailable() {
     const phases = candidates.length !== searchLibrary.length
       ? ` · two-phase (screen ${searchLibrary.length} → full ${candidates.length}, screen ${(screenMs / 1000).toFixed(1)} s)`
       : '';
+    let flexMsg = '';
+    if (document.getElementById('shapeFlex').checked && shownRows.length) {
+      const fr = await flexRefineTop(shownRows, qsdf, qSites, qCoordsCache, cw);
+      shownRows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+      flexMsg = ` · flex refined ${fr.refined}/${fr.attempted}`;
+    }
     renderSearchResults(shownRows, 'shape',
-      `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${phases}` +
+      `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${phases}${flexMsg}` +
       (pharmMin > 0 && shownRows.length !== before ? ` · pharm filter ${before} → ${shownRows.length}` : '') +
       ` · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   }
@@ -2701,8 +2713,14 @@ function rdkitAvailable() {
     const shownRows = pharmMin > 0 && qCoordsCache
       ? rows.filter(r => r.pharm && r.pharm.total > 0 && r.pharm.matched / r.pharm.total >= pharmMin)
       : rows;
+    let flexMsg = '';
+    if (document.getElementById('shapeFlex').checked && shownRows.length) {
+      const fr = await flexRefineTop(shownRows, qsdf, qSites, qCoordsCache, cw);
+      shownRows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+      flexMsg = ` · flex refined ${fr.refined}/${fr.attempted}`;
+    }
     renderSearchResults(shownRows, 'shape',
-      `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo · ${nConfs} confs/entry (best over conformers)` +
+      `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${flexMsg} · ${nConfs} confs/entry (best over conformers)` +
       (cacheHits ? ` · ${cacheHits} cached` : '') +
       (cacheHits + todo.length > 0 && genCount < todo.length ? ` · ${todo.length - genCount} rescreened` : '') +
       ` · two-phase (screen ${searchLibrary.length}×${nConfs} → full ${candidates.length}×${TOP_CONF}, screen ${(screenMs / 1000).toFixed(1)} s)` +
@@ -2756,6 +2774,100 @@ function rdkitAvailable() {
     }
   }
 
+  function replaceCoordsInSdf(sdf, res) {
+    const lines = sdfLines(sdf);
+    const na = parseInt(lines[3].substring(0, 3));
+    const out = lines.slice(0, 4);
+    for (let i = 0; i < na; i++) {
+      const l = lines[4 + i] || '';
+      out.push(res.get_coord(i, 0).toFixed(4).padStart(10) +
+        res.get_coord(i, 1).toFixed(4).padStart(10) +
+        res.get_coord(i, 2).toFixed(4).padStart(10) + l.substring(30));
+    }
+    out.push(...lines.slice(4 + na));
+    return out.join('\n');
+  }
+
+  // Flexible-alignment refinement (v1.8.0): rigid winners are torsionally
+  // relaxed onto the query — MCS pairs gate, Kabsch core snap, position
+  // restraints to query-frame atom targets, MMFF94s optimize, rescore.
+  // Deterministic; yields between rows to keep the page responsive.
+  async function flexRefineTop(rows, qSdf, qSites, qCoordsCache, cw) {
+    const FLEX_FC = 25, FLEX_TOL = 0.5, FLEX_MIN_MCS = 6;
+    const qco = sdfCoords(qSdf);
+    let refined = 0, attempted = 0;
+    for (const row of rows.slice(0, 10)) {
+      attempted++;
+      // exact self-superpositions have nothing to gain from torsional
+      // refinement (a fresh MMFF pass can only round geometry away from a
+      // already-perfect overlay) — keep them bit-exact
+      if (row.score >= 0.9995) continue;
+      let qm = null, tm = null;
+      try {
+        qm = rdkitModule.get_mol(qSdf);
+        tm = rdkitModule.get_mol(row.aligned);
+        if (!qm || !qm.is_valid() || !tm || !tm.is_valid()) continue;
+        const ml = new rdkitModule.MolList();
+        ml.append(qm); ml.append(tm);
+        const mcs = JSON.parse(rdkitModule.get_mcs_as_json(ml));
+        if (!mcs || mcs.canceled || !mcs.smarts) continue;
+        const qmol = rdkitModule.get_qmol(mcs.smarts);
+        if (!qmol || !qmol.is_valid()) continue;
+        const mqArr = JSON.parse(qm.get_substruct_matches(qmol));
+        const mtArr = JSON.parse(tm.get_substruct_matches(qmol));
+        qmol.delete();
+        const mq = Array.isArray(mqArr) && mqArr.length ? mqArr[0].atoms : null;
+        const mt = Array.isArray(mtArr) && mtArr.length ? mtArr[0].atoms : null;
+        if (!Array.isArray(mq) || !Array.isArray(mt) || mq.length !== mt.length || mq.length < FLEX_MIN_MCS) continue;
+        const pairs = mq.map((qi, k) => [mt[k], qi]);   // [mobile(target), ref(query)]
+        // core snap: Kabsch the aligned pose onto the matched query atoms
+        const kres = JSON.parse(window.webmm.kabsch_align_wasm(row.aligned, qSdf, JSON.stringify(pairs)));
+        const snapped = applyTransformToSdf(row.aligned, kres.transform);
+        // torsional relaxation under position restraints (query frame)
+        const opts = new window.webmm.OptimizationOptions();
+        opts.set_restraints(JSON.stringify({ position: pairs.map(([ti, qi]) => ({ i: ti, xyz: [qco[3 * qi], qco[3 * qi + 1], qco[3 * qi + 2]], fc: FLEX_FC, tol: FLEX_TOL })) }));
+        const ores = window.webmm.optimize_from_sdf(snapped, opts);
+        if (!ores.converged) continue;
+        const flexed = replaceCoordsInSdf(snapped, ores);
+        // rescore at the flexed geometry (same call as the rigid path)
+        let res2, tSites2 = null;
+        if (qSites && qSites.length) {
+          const tm2 = rdkitModule.get_mol(flexed);
+          if (tm2 && tm2.is_valid()) { tSites2 = colorSites(flexed, tm2); tm2.delete(); }
+        }
+        const useColor = !!(qSites && qSites.length && tSites2 && tSites2.length);
+        if (useColor) {
+          res2 = JSON.parse(window.webmm.shape_align_color_wasm(qSdf, flexed,
+            JSON.stringify(sitesToEngineJson(qSites, cw)),
+            JSON.stringify(sitesToEngineJson(tSites2, cw)), ''));
+        } else {
+          res2 = JSON.parse(window.webmm.shape_align_wasm(qSdf, flexed, ''));
+        }
+        row.aligned = applyTransformToSdf(flexed, res2.transform);
+        row.score = res2.tanimoto;
+        if (row.colorT != null && useColor) row.colorT = res2.color_tanimoto;
+        if (qSites && qSites.length && tSites2) {
+          try {
+            row.pharm = pharmMatch(qSites, qCoordsCache, tSites2, sdfCoords(row.aligned),
+              [1,0,0,0, 0,1,0,0, 0,0,1,0]);
+          } catch (err) { /* keep rigid pharm */ }
+        }
+        // post-flex matched-atom RMSD (already in the query frame)
+        const aco = sdfCoords(row.aligned);
+        let msd = 0;
+        for (const [ti, qi] of pairs) {
+          const dx = aco[3 * ti] - qco[3 * qi], dy = aco[3 * ti + 1] - qco[3 * qi + 1], dz = aco[3 * ti + 2] - qco[3 * qi + 2];
+          msd += dx * dx + dy * dy + dz * dz;
+        }
+        row.flex = { n: pairs.length, rmsd: Math.sqrt(msd / pairs.length) };
+        refined++;
+      } catch (err) { /* flex is best-effort: row keeps rigid pose/scores */ }
+      finally { if (qm) qm.delete(); if (tm) tm.delete(); }
+      await new Promise(r => setTimeout(r, 0));   // yield to the UI
+    }
+    return { refined, attempted };
+  }
+
   function renderSearchResults(rows, mode, statusMsg) {
     const cap = 500;
     const shown = rows.slice(0, cap);
@@ -2769,6 +2881,10 @@ function rdkitAvailable() {
     syncShapeConfCol();   // conf column depends on shape mode AND confs >= 2
     for (let i = 0; i < shown.length; i++) {
       const { e, score, colorT, pharm, aligned, conf } = shown[i];
+      const flexInfo = shown[i].flex;
+      const flexBadge = flexInfo != null
+        ? ` <span class="result-badge" title="flexible alignment: MCS ${flexInfo.n} atoms · matched RMSD ${flexInfo.rmsd.toFixed(2)} Å">flex</span>`
+        : '';
       const tr = document.createElement('tr');
       tr.tabIndex = 0;
       tr.setAttribute('role', 'button');
@@ -2777,7 +2893,7 @@ function rdkitAvailable() {
       tr.addEventListener('keydown', ev => {
         if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(e, aligned, pharm); }
       });
-      tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}</td>` +
+      tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}${flexBadge}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
         `<td class="value">${e.MW}</td>` +
         (mode === 'sub'

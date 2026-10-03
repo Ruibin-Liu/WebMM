@@ -778,6 +778,28 @@ fn parse_restraint_set(
             });
         }
     }
+    if let Some(arr) = obj.get("position").and_then(|x| x.as_array()) {
+        for x in arr {
+            let o = x.as_object().ok_or("position: expected objects")?;
+            let xyz = o
+                .get("xyz")
+                .and_then(|x| x.as_array())
+                .ok_or("position: missing xyz [x,y,z]")?;
+            if xyz.len() != 3 {
+                return Err("position: xyz must have 3 numbers".into());
+            }
+            let mut target = [0.0f64; 3];
+            for (c, v) in target.iter_mut().enumerate() {
+                *v = xyz[c].as_f64().ok_or("position: xyz must be numbers")?;
+            }
+            rs.restraints.push(Restraint::Position {
+                i: idx(o.get("i").ok_or("position: missing i")?, "position i")?,
+                target,
+                fc: fc_of(o),
+                tol: tol_of(o),
+            });
+        }
+    }
     if let Some(arr) = obj.get("dihedral").and_then(|x| x.as_array()) {
         for x in arr {
             let o = x.as_object().ok_or("dihedral: expected objects")?;
@@ -1932,6 +1954,123 @@ mod conformer_batch_tests {
         assert!(sum.abs() < 1e-6, "GFN charges sum to ~0, got {}", sum);
     }
 
+    // --- kabsch_align_wasm (v1.8.0) ---
+    fn mini_sdf(coords: &[[f64; 3]]) -> String {
+        let mut out = format!(
+            "mini\n  test\n\n{:>3}{:>3}  0  0  0  0  0  0  0  0999 V2000\n",
+            coords.len(),
+            coords.len() - 1
+        );
+        for c in coords {
+            out.push_str(&format!(
+                "{:>10.4}{:>10.4}{:>10.4} C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+                c[0], c[1], c[2]
+            ));
+        }
+        for b in 0..coords.len() - 1 {
+            out.push_str(&format!("{:>3}{:>3}  1  0\n", b + 1, b + 2));
+        }
+        out.push_str("M  END");
+        out
+    }
+
+    #[test]
+    fn kabsch_recovers_known_rotation() {
+        let p = [
+            [0.0, 0.0, 0.0],
+            [1.5, 0.2, -0.3],
+            [-0.6, 1.4, 0.5],
+            [0.3, -1.1, 1.7],
+        ];
+        // 90° about z, then translate
+        let q: Vec<[f64; 3]> = p
+            .iter()
+            .map(|c| [-c[1] + 1.0, c[0] + 2.0, c[2] + 3.0])
+            .collect();
+        let pairs = "[[0,0],[1,1],[2,2],[3,3]]";
+        let res = kabsch_align(&mini_sdf(&p), &mini_sdf(&q), pairs).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert!(v["rmsd"].as_f64().unwrap() < 1e-9, "rmsd {}", v["rmsd"]);
+        let t: Vec<f64> = v["transform"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_f64().unwrap())
+            .collect();
+        // transform maps mobile atom 0 onto ref atom 0
+        let m = |x: f64, y: f64, z: f64| {
+            [
+                t[0] * x + t[1] * y + t[2] * z + t[3],
+                t[4] * x + t[5] * y + t[6] * z + t[7],
+                t[8] * x + t[9] * y + t[10] * z + t[11],
+            ]
+        };
+        for i in 0..4 {
+            let got = m(p[i][0], p[i][1], p[i][2]);
+            for c in 0..3 {
+                assert!((got[c] - q[i][c]).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn kabsch_noise_beats_identity_and_mirror_is_proper() {
+        let p = [
+            [0.0, 0.0, 0.0],
+            [1.5, 0.1, 0.0],
+            [0.2, 1.3, -0.4],
+            [-0.8, -0.5, 1.2],
+        ];
+        // noisy correspondence
+        let q: Vec<[f64; 3]> = p
+            .iter()
+            .enumerate()
+            .map(|(i, c)| [c[0] + 0.05 * (i as f64), c[1] - 0.04, c[2] + 0.03])
+            .collect();
+        let pairs = "[[0,0],[1,1],[2,2],[3,3]]";
+        let res = kabsch_align(&mini_sdf(&p), &mini_sdf(&q), pairs).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&res).unwrap();
+        let rmsd = v["rmsd"].as_f64().unwrap();
+        // identity-transform rmsd for comparison
+        let id_rmsd = (p
+            .iter()
+            .zip(&q)
+            .map(|(a, b)| (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2))
+            .sum::<f64>()
+            / p.len() as f64)
+            .sqrt();
+        assert!(
+            rmsd < id_rmsd,
+            "kabsch {rmsd} should beat identity {id_rmsd}"
+        );
+        // mirrored reference: Horn must return a PROPER rotation (rmsd stays high)
+        let m: Vec<[f64; 3]> = p.iter().map(|c| [-c[0], c[1], c[2]]).collect();
+        let res2 = kabsch_align(&mini_sdf(&p), &mini_sdf(&m), "[[0,0],[1,1],[2,2],[3,3]]").unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&res2).unwrap();
+        assert!(
+            v2["rmsd"].as_f64().unwrap() > 0.1,
+            "mirror needs nonzero rmsd"
+        );
+    }
+
+    #[test]
+    fn kabsch_error_paths() {
+        let p = [[0.0, 0.0, 0.0], [1.5, 0.1, 0.0], [0.2, 1.3, -0.4]];
+        let sdf = mini_sdf(&p);
+        assert!(
+            kabsch_align(&sdf, &sdf, "[[0,0],[1,1]]").is_err(),
+            "2 pairs"
+        );
+        assert!(
+            kabsch_align(&sdf, &sdf, "[[0,0],[1,1],[9,2]]").is_err(),
+            "bad index"
+        );
+        assert!(
+            kabsch_align(&sdf, "not an sdf", "[[0,0],[1,1],[2,2]]").is_err(),
+            "bad sdf"
+        );
+    }
+
     #[test]
     fn restraints_freeze_atoms_bit_identical() {
         // freeze heavy atoms 0-2 (C, C, O): their coordinates must be
@@ -2004,6 +2143,24 @@ mod conformer_batch_tests {
         let dz = res.get_coord(2, 2) - res.get_coord(4, 2);
         let d = (dx * dx + dy * dy + dz * dz).sqrt();
         assert!((d - 2.0).abs() < 0.1, "distance should be ~2.0, got {d}");
+    }
+
+    #[test]
+    fn restraints_position_pulls_atom_to_point() {
+        // pull ethanol's hydroxyl H (atom 8) to a fixed point in space:
+        // flat-bottom tol 0.3 with fc 200 — final |x−target| ≤ 0.3 + slack
+        let opts = OptimizationOptions {
+            restraints_json: r#"{"position":[{"i":8,"xyz":[-2.5,1.2,1.0],"fc":200,"tol":0.3}]}"#
+                .to_string(),
+            ..Default::default()
+        };
+        let res = optimize_from_sdf(ETHANOL_SDF, opts);
+        assert!(res.get_converged(), "{}", res.get_message());
+        let dx = res.get_coord(8, 0) + 2.5;
+        let dy = res.get_coord(8, 1) - 1.2;
+        let dz = res.get_coord(8, 2) - 1.0;
+        let r = (dx * dx + dy * dy + dz * dz).sqrt();
+        assert!(r < 0.45, "H should sit within tol of target, got {r}");
     }
 
     #[test]
@@ -7917,6 +8074,142 @@ fn shape_mol_cached(sdf: &str) -> Result<std::sync::Arc<crate::shape::ShapeMol>,
 /// Returns the `shape_align_wasm` JSON plus `"color_tanimoto"` and
 /// `"combo"` (Shape T + Color T). The optimization objective is
 /// O_shape + O_color (unit weights).
+/// Kabsch superposition via Horn's quaternion method (v1.8.0): find the
+/// proper rotation R + translation t minimizing Σ|R·p + t − q|² over matched
+/// atom pairs (MCS-scaffold alignment primitive). `pairs_json` =
+/// [[mobile_idx, ref_idx], ...] (0-based, ≥ 3 pairs). Returns
+/// {"rmsd": f64, "transform": [12 row-major r|t]} — same layout the app's
+/// applyTransformToSdf consumes. Reflections are never returned (molecules
+/// are proper objects); a mirrored reference set yields rmsd > 0.
+pub fn kabsch_align(mobile_sdf: &str, ref_sdf: &str, pairs_json: &str) -> Result<String, String> {
+    let parse = |sdf: &str| -> Result<Vec<[f64; 3]>, String> {
+        let mol = crate::molecule::parser::parse_sdf(sdf)?;
+        Ok(mol.atoms.iter().map(|a| a.position).collect())
+    };
+    let p_all = parse(mobile_sdf)?;
+    let q_all = parse(ref_sdf)?;
+    let pairs: Vec<(usize, usize)> =
+        serde_json::from_str(pairs_json).map_err(|e| format!("pairs: {e}"))?;
+    if pairs.len() < 3 {
+        return Err("pairs: need at least 3 atom pairs".to_string());
+    }
+    let mut p = Vec::with_capacity(pairs.len());
+    let mut q = Vec::with_capacity(pairs.len());
+    for &(pi, qi) in &pairs {
+        if pi >= p_all.len() || qi >= q_all.len() {
+            return Err(format!(
+                "pairs: index out of range ({pi} vs {} atoms, {qi} vs {})",
+                p_all.len(),
+                q_all.len()
+            ));
+        }
+        p.push(p_all[pi]);
+        q.push(q_all[qi]);
+    }
+    // centroids
+    let n = p.len() as f64;
+    let mut pc = [0.0f64; 3];
+    let mut qc = [0.0f64; 3];
+    for i in 0..p.len() {
+        for c in 0..3 {
+            pc[c] += p[i][c] / n;
+            qc[c] += q[i][c] / n;
+        }
+    }
+    // cross-covariance S = Σ p̃ q̃ᵀ
+    let mut sxx = 0.0;
+    let mut sxy = 0.0;
+    let mut sxz = 0.0;
+    let mut syx = 0.0;
+    let mut syy = 0.0;
+    let mut syz = 0.0;
+    let mut szx = 0.0;
+    let mut szy = 0.0;
+    let mut szz = 0.0;
+    for i in 0..p.len() {
+        let a = [p[i][0] - pc[0], p[i][1] - pc[1], p[i][2] - pc[2]];
+        let b = [q[i][0] - qc[0], q[i][1] - qc[1], q[i][2] - qc[2]];
+        sxx += a[0] * b[0];
+        sxy += a[0] * b[1];
+        sxz += a[0] * b[2];
+        syx += a[1] * b[0];
+        syy += a[1] * b[1];
+        syz += a[1] * b[2];
+        szx += a[2] * b[0];
+        szy += a[2] * b[1];
+        szz += a[2] * b[2];
+    }
+    // Horn's 4×4 symmetric matrix; largest eigenvector = optimal quaternion
+    let mut nm = [
+        sxx + syy + szz,
+        syz - szy,
+        szx - sxz,
+        sxy - syx,
+        syz - szy,
+        sxx - syy - szz,
+        sxy + syx,
+        szx + sxz,
+        szx - sxz,
+        sxy + syx,
+        -sxx + syy - szz,
+        syz + szy,
+        sxy - syx,
+        szx + sxz,
+        syz + szy,
+        -sxx - syy + szz,
+    ];
+    let mut vec = [0.0f64; 16];
+    crate::optimizer::jacobi::sym_jacobi(&mut nm, &mut vec, 4);
+    let mut best = 0usize;
+    for k in 1..4 {
+        if nm[k * 4 + k] > nm[best * 4 + best] {
+            best = k;
+        }
+    }
+    let qw = vec[best];
+    let qx = vec[4 + best];
+    let qy = vec[8 + best];
+    let qz = vec[12 + best];
+    let r = [
+        1.0 - 2.0 * (qy * qy + qz * qz),
+        2.0 * (qx * qy - qw * qz),
+        2.0 * (qx * qz + qw * qy),
+        2.0 * (qx * qy + qw * qz),
+        1.0 - 2.0 * (qx * qx + qz * qz),
+        2.0 * (qy * qz - qw * qx),
+        2.0 * (qx * qz - qw * qy),
+        2.0 * (qy * qz + qw * qx),
+        1.0 - 2.0 * (qx * qx + qy * qy),
+    ];
+    // t = qc − R·pc; rmsd over the pairs
+    let tx = qc[0] - (r[0] * pc[0] + r[1] * pc[1] + r[2] * pc[2]);
+    let ty = qc[1] - (r[3] * pc[0] + r[4] * pc[1] + r[5] * pc[2]);
+    let tz = qc[2] - (r[6] * pc[0] + r[7] * pc[1] + r[8] * pc[2]);
+    let mut msd = 0.0f64;
+    for i in 0..p.len() {
+        let x = r[0] * p[i][0] + r[1] * p[i][1] + r[2] * p[i][2] + tx - q[i][0];
+        let y = r[3] * p[i][0] + r[4] * p[i][1] + r[5] * p[i][2] + ty - q[i][1];
+        let z = r[6] * p[i][0] + r[7] * p[i][1] + r[8] * p[i][2] + tz - q[i][2];
+        msd += (x * x + y * y + z * z) / n;
+    }
+    let out = serde_json::json!({
+        "rmsd": msd.sqrt(),
+        "transform": [r[0], r[1], r[2], tx, r[3], r[4], r[5], ty, r[6], r[7], r[8], tz],
+    });
+    Ok(out.to_string())
+}
+
+/// WASM shell (JsValue errors) around the native `kabsch_align`.
+#[wasm_bindgen]
+pub fn kabsch_align_wasm(
+    mobile_sdf: &str,
+    ref_sdf: &str,
+    pairs_json: &str,
+) -> Result<String, JsValue> {
+    console_error_panic_hook::set_once();
+    kabsch_align(mobile_sdf, ref_sdf, pairs_json).map_err(|e| JsValue::from_str(&e))
+}
+
 #[wasm_bindgen]
 pub fn shape_align_color_wasm(
     query_sdf: &str,

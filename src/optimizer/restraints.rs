@@ -44,6 +44,15 @@ pub enum Restraint {
         fc: f64,
         tol: f64,
     },
+    /// Harmonically pull atom i toward a fixed point in space (POSRES —
+    /// the flexible-alignment primitive: map probe atoms onto reference
+    /// coordinates).
+    Position {
+        i: usize,
+        target: [f64; 3],
+        fc: f64,
+        tol: f64,
+    },
 }
 
 /// A restraint set plus frozen atom indices. Frozen atoms are implemented by
@@ -69,6 +78,7 @@ impl RestraintSet {
                 Restraint::Distance { i, j, .. } => v.extend_from_slice(&[i, j]),
                 Restraint::Angle { i, j, k, .. } => v.extend_from_slice(&[i, j, k]),
                 Restraint::Dihedral { i, j, k, l, .. } => v.extend_from_slice(&[i, j, k, l]),
+                Restraint::Position { i, .. } => v.push(i),
             }
         }
         v
@@ -172,6 +182,27 @@ impl RestraintSet {
                     g[j][0] -= c * (du[0] + dv[0]);
                     g[j][1] -= c * (du[1] + dv[1]);
                     g[j][2] -= c * (du[2] + dv[2]);
+                }
+                Restraint::Position { i, target, fc, tol } => {
+                    if fc == 0.0 {
+                        continue;
+                    }
+                    let d = [
+                        coords[i][0] - target[0],
+                        coords[i][1] - target[1],
+                        coords[i][2] - target[2],
+                    ];
+                    let r = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                    let dev = r - tol;
+                    if dev <= 0.0 {
+                        continue; // inside the flat bottom
+                    }
+                    e += 0.5 * fc * dev * dev;
+                    // dE/dx_i = fc·dev·(x_i−target)/r
+                    let f = fc * dev / r;
+                    g[i][0] += f * d[0];
+                    g[i][1] += f * d[1];
+                    g[i][2] += f * d[2];
                 }
                 Restraint::Dihedral {
                     i,
@@ -353,6 +384,26 @@ mod tests {
         ];
         let (e, _) = rs.energy_and_gradient(&x);
         assert!(e < 0.2, "wrapped energy should be small, got {e}");
+    }
+
+    #[test]
+    fn position_gradient_fd_and_flat_bottom() {
+        let rs = RestraintSet {
+            restraints: vec![Restraint::Position {
+                i: 1,
+                target: [1.5, -0.4, 0.8],
+                fc: 25.0,
+                tol: 0.5,
+            }],
+            frozen: vec![],
+        };
+        let mut x = [[0.0, 0.0, 0.0], [2.9, 0.3, -0.4], [5.0, 5.0, 5.0]];
+        fd_check(&rs, &mut x, "position-outside");
+        // inside the flat bottom (|x−target| < tol): exactly zero
+        let x2 = [[0.0; 3], [1.6, -0.2, 0.7], [9.0; 3]];
+        let (e, g) = rs.energy_and_gradient(&x2);
+        assert_eq!(e, 0.0);
+        assert!(g.iter().flatten().all(|&v| v == 0.0));
     }
 
     #[test]

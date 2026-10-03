@@ -216,6 +216,48 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
     ':' + document.querySelector('#searchRows tr').children[5].textContent);
   check('weights back at 1.0: default results unchanged (zero drift)', defTop === 'ibuprofen:100.0%', defTop);
 
+  // ---- flexible alignment (v1.8.0) ----
+  console.log('flexible alignment:');
+  const flexUI = await page.evaluate(() => ({
+    shown: document.getElementById('shapeFlexWrap').style.display !== 'none',
+    checked: document.getElementById('shapeFlex').checked,
+  }));
+  check('flex toggle visible in shape mode, default off', flexUI.shown && !flexUI.checked, JSON.stringify(flexUI));
+
+  await page.evaluate(() => {
+    document.getElementById('shapeFlex').checked = true;
+    document.getElementById('searchResultStatus').textContent = '';
+    runSearch();
+  });
+  await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+  const flexRun = await page.evaluate(() => ({
+    status: document.getElementById('searchResultStatus').textContent,
+    badges: document.querySelectorAll('#searchRows .result-badge').length,
+    top: document.querySelector('#searchRows tr').children[1].textContent,
+    topTitle: document.querySelector('#searchRows tr .result-badge') ? document.querySelector('#searchRows tr .result-badge').title : '',
+  }));
+  check('flex on: status reports refinement', /flex refined \/?\d+\/10/.test(flexRun.status), flexRun.status.slice(0, 80));
+  check('flex on: top rows carry flex badges (MCS anchors)', flexRun.badges >= 1 && flexRun.top.startsWith('ibuprofen') && /MCS \d+ atoms/.test(flexRun.topTitle), flexRun.top + ' ' + flexRun.topTitle);
+  const selfFlex = await page.evaluate(() => [...document.querySelectorAll('#searchRows tr')].slice(0, 3).map(tr => [...tr.cells].map(td => td.textContent.trim())));
+  check('flex never degrades an exact self-match below 100.0%',
+    selfFlex.some(cells => cells[1].startsWith('ibuprofen') ? cells.includes('100.0%') : true) &&
+    selfFlex.every(cells => !cells[1].startsWith('ibuprofen') || cells.some(c => parseFloat(c) >= 99.9)),
+    JSON.stringify(selfFlex.map(c => c.slice(0, 2))));
+
+  await page.evaluate(() => {
+    document.getElementById('shapeFlex').checked = false;
+    document.getElementById('searchResultStatus').textContent = '';
+    runSearch();
+  });
+  await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+  const offRun = await page.evaluate(() => ({
+    badges: document.querySelectorAll('#searchRows .result-badge').length,
+    status: document.getElementById('searchResultStatus').textContent,
+    top: document.querySelector('#searchRows tr').children[1].textContent + ':' +
+      [...document.querySelector('#searchRows tr').cells].map(td => td.textContent.trim()).find(t => t.endsWith('%') && parseFloat(t) >= 100),
+  }));
+  check('flex off: no badges, results back to rigid (zero drift)', offRun.badges === 0 && !/flex refined/.test(offRun.status) && offRun.top === 'ibuprofen:100.0%', offRun.top + ' badges=' + offRun.badges);
+
   // ---- single-conformer legacy path (confs=1) is unchanged ----
   console.log('shape legacy single-conformer (confs=1):');
   await page.evaluate(() => {

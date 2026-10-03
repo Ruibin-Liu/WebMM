@@ -212,11 +212,16 @@ const INPUT = [
   // 11. cancel path (3D batch cancelled immediately after kick-off: the
   // descriptor phase is synchronous, so the worker farm is always mid-flight
   // here — no timing window)
+  // double the molecule list: the 10-line run can complete inside the
+  // 100 ms timer on a warm page (synchronous descriptor phase ~100 ms —
+  // knife-edge, flipped by load/wasm import timing); ~19 lines of real
+  // conformer work make mid-flight unambiguous
+  const PINPUT2 = PINPUT + '\n' + PINPUT;
   await page.evaluate((s) => {
     document.getElementById('batch3d').checked = true;
     document.getElementById('input').value = s;
     runBatch();
-  }, PINPUT);
+  }, PINPUT2);
   await page.waitForTimeout(100);
   await page.evaluate(() => cancelBatch());
   const cc = await page.evaluate(() => ({
@@ -227,6 +232,7 @@ const INPUT = [
   }));
   check('cancel stops the run and restores the buttons', cc.status === 'Cancelled' && !cc.running && cc.btnRun !== 'none' && cc.btnCancel === 'none', JSON.stringify(cc));
   await page.evaluate(() => { document.getElementById('batch3d').checked = false; });
+  await page.evaluate((s) => { document.getElementById('input').value = s; }, PINPUT);
 
   // 12. mode isolation: batch input + panel leave and return intact
   const iso = await page.evaluate(() => {
