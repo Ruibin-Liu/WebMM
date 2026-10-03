@@ -388,6 +388,15 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
     exp.rows.every(r => parseFloat(r.T) > 0), exp.status.slice(0, 60));
   const parentRow = exp.rows.find(r => r.smi === 'CC(=O)Nc1ccc(O)cc1');
   check('parent-swap-to-methyl scores high (rigid self-analog)', parentRow && parseFloat(parentRow.T) >= 0.8, parentRow && parentRow.T);
+  // full funnel: wait for stage C (30-conf refinement) + D (flex top-10)
+  await page.waitForFunction(() => /Done: \d+ scored .*flex-refined/.test(document.getElementById('analogStatus').textContent), null, { timeout: 600000 });
+  const analogFlex = await page.evaluate(() => ({
+    status: document.getElementById('analogStatus').textContent,
+    top: [...document.querySelectorAll('#analogRows tr')].slice(0, 6).map(tr => ({
+      smi: tr.children[1].textContent.slice(0, 30), rigid: tr.children[3].textContent, flex: tr.children[5].textContent })),
+  }));
+  check('funnel completes B->C->D with flex-refined top rows',
+    /flex-refined/.test(analogFlex.status) && analogFlex.top.some(r => parseFloat(r.flex) > 0), analogFlex.status.slice(0, 70));
   // pin an analog = synthetic-library identity
   await page.evaluate(() => document.querySelector('#analogRows span[onclick*=analogPin]').click());
   await page.waitForTimeout(500);

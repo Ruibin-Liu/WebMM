@@ -57,13 +57,20 @@ async function handle(msg) {
     const template = r.get_template_sdf();
     const coords = r.get_coordinates();
     const nAtoms = parseInt(sdfLines(template)[3].substring(0, 3));
-    let best = null;
+    let best = null, bestSdf = null;
     for (let j = 0; j < r.get_n_confs(); j++) {
       const csdf = buildSdfFromCoords(Array.from(coords.slice(j * nAtoms * 3, (j + 1) * nAtoms * 3)), template);
       let res = null;
       try { res = JSON.parse(wasm.shape_align_wasm(msg.parentSdf, csdf, '')); } catch (e) { continue; }
-      if (res && (best === null || res.tanimoto > best.tanimoto)) best = res;
+      if (res && (best === null || res.tanimoto > best.tanimoto)) { best = res; bestSdf = csdf; }
     }
-    self.postMessage({ type: 'done', idx: msg.idx, tanimoto: best ? best.tanimoto : null, nConfs: r.get_n_confs() });
+    // stage D (flex) needs the winning pose: hand back the raw conformer
+    // SDF and its align transform when asked (backward compatible without)
+    self.postMessage({
+      type: 'done', idx: msg.idx, tanimoto: best ? best.tanimoto : null,
+      nConfs: r.get_n_confs(),
+      bestSdf: msg.returnBest ? bestSdf : undefined,
+      transform: msg.returnBest && best ? best.transform : undefined,
+    });
   }
 }

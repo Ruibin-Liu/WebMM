@@ -1,4 +1,30 @@
-# Plan: M3a — 邻域探索器(类似物枚举 + 构象系综 shape 重打分,worker 农场)(explore/lbdd-platform)
+# Plan: M3b — 漏斗 C 级(扩构象精化)+ D 级(flex 精修 top-10)(explore/lbdd-platform,M3 漏斗收口)
+
+> M3a 已完成;本 PLAN 为 M3 第二轮。SA score Rust 移植独立立项
+> (需 Rust 侧展开型 Morgan + fpscores 数据表 + Python 对拍,~2-3 天,
+> 不塞本轮;合理性启发式维持 RotB+ΔMW 列)。
+
+## 实施
+
+1. worker 增 returnBest:回传最优构象 SDF + 变换(向后兼容)
+2. C 级:B 完成后 top-30 以 30 构象重评(seed 偏移 +10000),两轮
+   系综取 max,更新 bestSdf
+3. D 级:flexAnalogCandidate——确定性重跑胜者对齐取姿态变换 →
+   MCS 配对(≥6)→ Kabsch 核心入位 → 位置约束(fc25/tol0.5)
+   MMFF 松弛 → 重打分;Flex T 独立列(与刚体并陈,升降都诚实
+   显示);自叠合 ≥0.9995 跳过守卫沿用
+4. 状态行叙述漏斗阶段(B done→C refining→D→Done with N flexed)
+
+## 验收结果
+
+- paracetamol 全类别:**35 计分 + top-10 flex 全成,10s 总墙钟**
+  (规范预算 45-60s 内);flex 化学有信息量:羧酸 83.8→86.9、
+  母体 83.5→88.6、硫代氨基甲酸 82.3→88.0 向上(扭转适应),
+  Br 90.5→87.1 向下(MMFF 松弛偏离最优刚体姿态)——两列并陈
+- m5 **65/65**(+1 漏斗全通断言);六套件 37/10/11/10/32/65;
+  平台 34/34;零 page error
+- 教训:测试文件里 python 转义把 \d 写成字面反斜杠-d(正则永不
+  匹配→超时);修批量的服务器 kill 误杀后续批次
 
 > M0/M1/M2 已完成;本 PLAN 为 M3 第一轮(M3a)。M3b(flex 精修 top-K、
 > C 精化扩构象、SA score Rust 移植)另轮。

@@ -1248,7 +1248,7 @@ details {
      </div>
      <div class="hint" id="analogStatus"></div>
      <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
-       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
+       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
      </div>
    </div>
    <div id="rgdPanel" class="panel" style="display:none;">
@@ -3560,9 +3560,40 @@ function rdkitAvailable() {
           }
           pump();
           if (doneCount === cands.length) {
-            for (const w of workers) w.terminate();
-            document.getElementById('analogCancel').style.display = 'none';
-            analogStatus('Done: ' + results.length + ' scored in ' + ((performance.now() - t0) / 1000).toFixed(0) + 's (flex refinement of the top hits lands in M3b)');
+            // ---- stage C: refine the top-30 with a 30-conformer ensemble ----
+            analogStatus('B done (' + results.length + ' scored) — C: refining top-30 with 30 conformers…');
+            const top30 = results.slice(0, 30);
+            let cDone = 0;
+            Promise.all(top30.map((cand, k) => new Promise(res => {
+              const w = workers[k % NW];
+              waiters.push(msg => res(msg));
+              w.postMessage({ type: 'score', idx: cand.idx, molblock: cand.molblock, nConfs: 30,
+                seed: 4200 + 10000 + cand.idx, parentSdf: analogParentSdf, returnBest: true });
+            }))).then(msgs => {
+              if (token !== analogRunToken) return;
+              for (const msg of msgs) {
+                if (msg.tanimoto == null) continue;
+                const r = results.find(x => x.idx === msg.idx);
+                if (r && msg.tanimoto > r.tanimoto) r.tanimoto = msg.tanimoto;   // max over both ensembles
+                if (msg.bestSdf) { const r2 = results.find(x => x.idx === msg.idx); if (r2) r2.bestSdf = msg.bestSdf; }
+              }
+              results.sort((a, b) => b.tanimoto - a.tanimoto);
+              renderAnalogRows(results, token);
+              // ---- stage D: flexible refinement of the top-10 ----
+              analogStatus('C done — D: flexible refinement of the top-10…');
+              return (async () => {
+                for (const r of results.slice(0, 10)) {
+                  if (token !== analogRunToken) return;
+                  if (!r.bestSdf || r.tanimoto >= 0.9995) continue;   // exact self-superposition: nothing to gain
+                  try { r.flexT = await flexAnalogCandidate(r.bestSdf); } catch (e) { /* keep rigid */ }
+                  renderAnalogRows(results, token);
+                }
+                for (const w of workers) w.terminate();
+                document.getElementById('analogCancel').style.display = 'none';
+                const nFlex = results.filter(r => r.flexT != null).length;
+                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total');
+              })();
+            });
           }
         });
       }
@@ -3570,6 +3601,51 @@ function rdkitAvailable() {
     pump();
   }
   window.runAnalogExplorer = runAnalogExplorer;
+
+  // stage D: flexible refinement of ONE analog at its best rigid pose —
+  // the shared core is found by MCS (parent vs analog), snapped by Kabsch,
+  // then the analog torsionally relaxes under position restraints onto the
+  // parent frame (the v1.8.0 flex machinery, applied to a generated molecule)
+  async function flexAnalogCandidate(bestSdf) {
+    // re-run the winning alignment deterministically to get its pose transform
+    let res = null;
+    try { res = JSON.parse(window.webmm.shape_align_wasm(analogParentSdf, bestSdf, '')); } catch (e) { return null; }
+    let posed = bestSdf;
+    if (res && res.transform) posed = applyTransformToSdf(bestSdf, res.transform);
+    // MCS pairs parent<->posed
+    const qm = rdkitModule.get_mol(analogParentSdf);
+    const tm = rdkitModule.get_mol(posed);
+    if (!qm || !qm.is_valid() || !tm || !tm.is_valid()) { if (qm) qm.delete(); if (tm) tm.delete(); return null; }
+    const ml = new rdkitModule.MolList(); ml.append(qm); ml.append(tm);
+    let pairs = null;
+    try {
+      const mcs = JSON.parse(rdkitModule.get_mcs_as_json(ml));
+      if (mcs && !mcs.canceled && mcs.smarts) {
+        const qmol = rdkitModule.get_qmol(mcs.smarts);
+        if (qmol && qmol.is_valid()) {
+          const mqArr = JSON.parse(qm.get_substruct_matches(qmol));
+          const mtArr = JSON.parse(tm.get_substruct_matches(qmol));
+          qmol.delete();
+          const mq = Array.isArray(mqArr) && mqArr.length ? mqArr[0].atoms : null;
+          const mt = Array.isArray(mtArr) && mtArr.length ? mtArr[0].atoms : null;
+          if (mq && mt && mq.length === mt.length && mq.length >= 6) pairs = mq.map((qi, k) => [mt[k], qi]);
+        }
+      }
+    } catch (e) { pairs = null; }
+    qm.delete(); tm.delete();
+    if (!pairs) return null;
+    const kres = JSON.parse(window.webmm.kabsch_align_wasm(posed, analogParentSdf, JSON.stringify(pairs)));
+    const snapped = applyTransformToSdf(posed, kres.transform);
+    const qco = sdfCoords(analogParentSdf);
+    const opts = new window.webmm.OptimizationOptions();
+    opts.set_restraints(JSON.stringify({ position: pairs.map(([ti, qi]) => ({ i: ti, xyz: [qco[3 * qi], qco[3 * qi + 1], qco[3 * qi + 2]], fc: 25, tol: 0.5 })) }));
+    const ores = window.webmm.optimize_from_sdf(snapped, opts);
+    if (!ores.converged) return null;
+    const flexed = replaceCoordsInSdf(snapped, ores);
+    let res2 = null;
+    try { res2 = JSON.parse(window.webmm.shape_align_wasm(analogParentSdf, flexed, '')); } catch (e) { return null; }
+    return res2 ? res2.tanimoto : null;
+  }
 
   function renderAnalogRows(results, token) {
     if (token !== analogRunToken) return;
@@ -3582,6 +3658,7 @@ function rdkitAvailable() {
         '<td class="value">' + r.mw + '</td>' +
         '<td class="value"><strong>' + (r.tanimoto * 100).toFixed(1) + '%</strong></td>' +
         '<td class="value">' + r.rotb + '</td>' +
+        '<td class="value">' + (r.flexT != null ? '<strong>' + (r.flexT * 100).toFixed(1) + '%</strong>' : '—') + '</td>' +
         '<td>' + (mid ? '<span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem; ' + (pinned ? '' : 'opacity:0.35;') + '" title="pin (synthetic-library identity)" onclick="analogPin(\'' + r.idx + '\',\'' + mid + '\')">' + (pinned ? '★' : '☆') + '</span>' : '') + '</td></tr>';
     }).join('');
   }
