@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**Review 轮完成:抓到并修复 v1.9.0 唯一真缺陷——芳香 sp2 N 受体误投影(分类顺序:重键外延误优先于邻居数,吡啶型 N 偏 ~60°);修后吡啶 N 投影背向环心 180.0°、aspirin 不变、六套件全绿 37/10/11/10/32/44。其余 review 面(flex/pharmMatch/约束/Kabsch/零漂移)核实无恙。**
+**分支 explore/lbdd-platform:LBDD 平台重设计探索启动,产出 docs/lbdd-platform-redesign.md(能力审计/断点分析/IA 提案/三阶段路线图/四个待决策分叉),零产品代码,方向与用户对齐后再立 M1 实施计划。main 线保持在 cdec869(review 轮热修)。**
 
+## Recently Completed
++- **LBDD 平台重设计探索启动(explore/lbdd-platform 分支,设计文档先行,零产品代码)。** 现状能力审计:引擎层(MMFF/ETKDG/GFN-FF/约束优化/shape+color 投影位点/柔性叠合/MD/元动力学)×RDKit 层(描述符/QED/PAINS/Murcko/MCS/反应 SMARTS/五指纹)×app 层(三标签八种检索)——结论"缺的不是特性是平台性"。六断点:命中不流动(B1)/无甄别层(B2)/无项目持久化(B3)/检索模式割裂(B4)/无迭代捷径(B5)/表能力不统一(B6)。IA 提案:项目(可序列化)—左栏(库/查询历史/工作集)—统一命中表(列可配+排序过滤收藏)—右侧检查器(现有 Single 能力迁入);递进检索下钻解 B4/B5,SAR 以命中集为输入解 B1。三阶段路线:M1 统一命中表+工作集(纯 app 地基)→M2 项目+递进检索+SAR 管道(平台性)→M3 类似物枚举器(反应 SMARTS+ETKDG+shape,Spark/BROOD 的浏览器内简化版,独门)——引擎层零改动。四分叉待用户决策:改造 vs 并行新页(倾向改造)/递进形态(倾向下钻)/片段库来源(倾向内置+导入)/项目格式(倾向存输入不存指纹,沿用库持久化先例)。
 ## Recently Completed
 +- **Review 轮 + 芳香 N 投影热修(v1.9.0 后自查,用户驱动)。** 四轮改动(v1.6.5 色权重→v1.9.0 投影)系统自查,发现一个真缺陷:**projFor 分类顺序错误**——"重键→轴外延"优先于邻居数判定,而模板 SDF 实测携带 Kekulé 双键与 type-4 芳香键(咖啡因 N-C:4 证实),导致吡啶/嘧啶/咪唑型 2 配位芳香 N 被投影到一条 C-N 键轴延长线(孤对实际指向环面内角平分线,偏差 ~60°——含芳香 N 的药物分子色分全部带病)。修复:邻居数优先——≥2 邻居取全部取代基单位向量和的负向(2 邻居=角平分线 ✓,3 邻居=对称背向取代基云),仅单邻居重键(羰基/硝基/腈)保留轴外延;sitePos 加退化守卫(|Σû|<0.1 回退原子中心)。验证:吡啶 N 投影与"指向环心"向量反平行(180.0°=背向环心,方向正确);aspirin 2ext(羰基)+2nb(酯/羟)不受影响;吡啶/嘧啶/1-甲基咪唑全部转 NB;六套件全绿 37/10/11/10/32/44。附带核实无恙:flex 五 coords 调用点/identity pharmMatch、pharmMatch 逐构象重算、m4 cancel 加固、Kabsch 确定性、色权重×投影正交、全部零漂移路径逐位保持;记录:3 配位甲基芳 N 入受体集为 v1.5.0 既有宽口径(Jaccard 0.86 文档化),其投影现为对称 nb(3);模板 SDF 含 type-4 芳香键入库为知识。
 ## Recently Completed
