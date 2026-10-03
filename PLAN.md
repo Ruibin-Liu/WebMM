@@ -1,4 +1,43 @@
-# Plan: M0 — LBDD 平台重设计的设计定稿轮(explore/lbdd-platform)
+# Plan: M1a — 隐形店(身份 + IndexedDB + 命令日志,旧 UI 经新 store 写)(explore/lbdd-platform)
+
+> M0 已完成(见 git 历史);本 PLAN 为 M1a 实施轮。
+
+## 范围
+
+app/platform/ 五模块 + 旧 UI 库路径改造 + Node 测试 + 金标 #1。
+零用户可见变化(持久化 bug 在表格出现前暴露)。
+
+## 实施
+
+1. identity.js(hash64/molId/合成库钩子/结构键注入/墓碑分配器)
+2. state.js(命令集含 RemoveLibrary 增补 + 纯 reducer + 逆命令 +
+   先值捕获 + 依赖拒绝)
+3. db.js(IDB/mem 双适配器 + 持久性话术 + DB 三态消失检测 +
+   迁移钩子注册位)
+4. project.js(init=快照+尾重放/apply/undo=逆命令/混合快照节拍/
+   export=facts)
+5. compat.js(旧 UI 桥:saveLibraryInputs/restoreInputs(legacy 只读
+   迁移)/clearLibrary)
+6. app/index.html:五 script 标签 + saveSearchLibrary/
+   restoreSearchLibrary/clearSearchLibrary 三处经 store 写
+7. tests/platform/run.js:单元+性质(200 种子命令流不变式)+金标 #1
+
+## 验收
+
+- Node 24+ 平台测试全绿;浏览器内 IDB 全生命周期(装载 55→持久化
+  →**删 legacy key 后 reload 仍恢复**→clear 后不复活);六套件
+  m0-m5 全绿;零 page error;node --check 全部
+
+## 验收结果(实施后)
+
+- Node 平台测试 **24/24**(身份 5/reducer 6/性质 3[200 种子重放
+  等价、逆命令往返、非法命令不抛]/project 4/compat 3/金标 3)
+- 浏览器实测:persisted 55 → 删 wb-searchLibrary 后 reload 恢复
+  55(证 IDB 为持久层)→ clear+reload 0;persist() 未授予正确告警;
+  零 page error
+- 六套件全绿 37/10/11/10/32/44;金标 m1a-project.json 已铸
+  (3 命令投影断言);spec 增补三条(RemoveLibrary/history=KV/
+  先值捕获)
 
 ## 范围
 

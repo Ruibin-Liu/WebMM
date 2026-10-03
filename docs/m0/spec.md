@@ -84,6 +84,12 @@ querySpec, params} · SetThreshold{roundId, value} · Pin{molId, note?} ·
 Unpin · Exclude{molId, provenanceReason} · Include(override) ·
 ArchiveSubtree{roundId} · RenameRound · Snapshot{…}(系统命令)`
 
+**M1a 实施增补**(实施中发现的规范缺口,如实记录):
+- `RemoveLibrary{libraryId}` 加入冻结清单(原 11 型漏了库移除)
+- 单视图 history 等非项目语义状态 = IndexedDB **键值事实**,不入命令
+  日志(命令日志只承载需要撤销/血缘/回放的语义变更);M2 再评估迁入
+- `Unpin`/`Include` 的逆命令需**先值捕获**(apply 前存下旧 pin/exclude)
+
 - **甄别规则**:分子级覆盖层 + 溯源 + DAG 前向传播 + 轮内覆写;
   融合轮多亲冲突 = **最新命令胜**(在命令内,不在视图);传播值
   永不存储(每轮派生列)

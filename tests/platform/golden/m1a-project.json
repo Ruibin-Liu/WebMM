@@ -1,0 +1,58 @@
+{
+ "schemaVersion": 1,
+ "meta": {
+  "schemaVersion": 1,
+  "createdAt": 1791007270008
+ },
+ "commands": [
+  {
+   "type": "ImportLibrary",
+   "libraryId": "golden-demo",
+   "name": "Golden demo",
+   "entries": [
+    {
+     "molId": "g1",
+     "ordinal": 0,
+     "raw": {
+      "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+      "name": "aspirin"
+     },
+     "structureKey": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N"
+    },
+    {
+     "molId": "g2",
+     "ordinal": 1,
+     "raw": {
+      "smiles": "Oc1ccccc1C(=O)O",
+      "name": "salicylic acid"
+     },
+     "structureKey": "UBQKCCHYAOITMY-UHFFFAOYSA-N"
+    },
+    {
+     "molId": "g3",
+     "ordinal": 2,
+     "raw": {
+      "smiles": "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+      "name": "caffeine"
+     },
+     "structureKey": "RYYVLZVUVIJVGH-UHFFFAOYSA-N"
+    }
+   ]
+  },
+  {
+   "type": "Pin",
+   "molId": "g1",
+   "note": "anchor"
+  },
+  {
+   "type": "Exclude",
+   "molId": "g3",
+   "reason": "too small"
+  }
+ ],
+ "expect": {
+  "libraries": 1,
+  "entries": 3,
+  "pins": 1
+ }
+}

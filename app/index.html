@@ -1383,6 +1383,11 @@ function rdkitAvailable() {
 <script src="vendor/RDKit_minimal.js"></script>
 <script defer src="lbdd_data.js"></script>
 <script defer src="demo_library.js"></script>
+<script src="platform/identity.js"></script>
+<script src="platform/state.js"></script>
+<script src="platform/db.js"></script>
+<script src="platform/project.js"></script>
+<script src="platform/compat.js"></script>
 <script>initRDKit();</script>
 
 <script>
@@ -1935,30 +1940,65 @@ function rdkitAvailable() {
     document.getElementById('searchStatus').textContent = msg;
   }
 
-  // Persist the parsed input (canonical SMILES + names), not the fingerprint
-  // cache: 2000 x 5 x 2048-bit vectors would blow the ~5MB localStorage quota,
-  // while the input is ~100-200KB and re-derives everything in ~1s.
+  // ---- platform store (M1a): the library path writes THROUGH the new
+  // command-log store; localStorage is retired to a read-only one-time
+  // migration source. Fingerprints are L2 deterministic caches and never
+  // persist (inputs-only, per M0 spec §3). ----
+  let __platformReady = null;
+  function initPlatformStore() {
+    if (__platformReady) return __platformReady;
+    __platformReady = (async () => {
+      try {
+        const P = window.Platform;
+        P.Identity.setKeyFn((smi) => {
+          const m = rdkitModule.get_mol(smi);
+          if (!m || !m.is_valid()) { if (m) m.delete(); return null; }
+          const ik = rdkitModule.get_inchikey_for_inchi(m.get_inchi());
+          m.delete();
+          return ik;
+        });
+        const storage = P.DB.createIdbStorage();
+        await P.Compat.init({ storage, Identity: P.Identity, DB: P.DB, Project: P.Project });
+        return P.Compat;
+      } catch (err) {
+        console.warn('[platform] init failed (app continues without the project store):', err);
+        return null;
+      }
+    })();
+    return __platformReady;
+  }
+
   function saveSearchLibrary(lib) {
-    try {
-      localStorage.setItem(SEARCH_LIB_KEY, JSON.stringify(lib.map(e => ({ name: e.name, smiles: e.smiles }))));
-    } catch (e) {
-      searchStatus('Library loaded but too large to persist across sessions');
-    }
+    initPlatformStore().then(c => {
+      if (!c) return;
+      c.saveLibraryInputs(lib.map(e => ({ smiles: e.smiles, name: e.name })))
+        .catch(err => console.warn('[platform] library persist failed:', err));
+    });
   }
 
   function restoreSearchLibrary() {
     if (searchLibRestored || searchLibrary) return;
     searchLibRestored = true;
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(SEARCH_LIB_KEY) || 'null'); } catch (e) { saved = null; }
-    if (!Array.isArray(saved) || !saved.length) return;
-    const r = loadSearchLibraryFrom(saved);
-    if (r && r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
+    initPlatformStore().then(c => {
+      if (!c) return;
+      // one-time read-only migration from the legacy localStorage key
+      c.restoreInputs(() => {
+        try {
+          const v = JSON.parse(localStorage.getItem(SEARCH_LIB_KEY) || 'null');
+          return Array.isArray(v) && v.length ? v : null;
+        } catch (e) { return null; }
+      }).then(saved => {
+        if (!saved || !saved.length) return;
+        const r = loadSearchLibraryFrom(saved.map(x => ({ smiles: x.smiles, name: x.name })));
+        if (r && r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
+      });
+    }).catch(err => console.warn('[platform] restore failed:', err));
   }
 
   function clearSearchLibrary() {
     searchLibrary = null;
     try { localStorage.removeItem(SEARCH_LIB_KEY); } catch (e) {}
+    initPlatformStore().then(c => { if (c) c.clearLibrary().catch(() => {}); });
     document.getElementById('searchPanel').style.display = 'none';
     modeShown.search = false;   // cleared library invalidates the stale hit table
     searchStatus('Library cleared');
