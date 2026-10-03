@@ -13,6 +13,7 @@ Run all (from this directory):
     node m0_core.test.js && node m1_3d_pipeline.test.js && \
     node m2_conformers.test.js && node m3_site_nav.test.js && \
     node m4_batch.test.js && node m5_search_e2e.test.js
+- m6_platform.test.js — the LBDD platform page (app/platform.html): rounds DAG + hit-as-query, consensus + provenance CSV, project export/import + multi-tab broadcast, triage overlay, neighborhood explorer (full funnel)
 
 Suites:
 - m0_core           2D parse/render, properties, buttons, history, JSME
