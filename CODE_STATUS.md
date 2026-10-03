@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**M2a 完成并全绿(explore/lbdd-platform):轮次分数入 L3 事实(facts 库 DB v2)、共识=全轮平均秩显式融合列(tooltip 公式)、溯源 CSV(逐轮 rank+consensus+甄别态)、RGD/骨架以命中集为输入(scope 下拉,分母随 scope)。m5 57/57、六套件全绿、平台 33/33。M2b 待做:项目导入导出 UI/Web Locks 多标签/血缘栏升级。**
+**M2 两轮全部完成(explore/lbdd-platform):M2a(轮次分数事实/共识融合列/溯源 CSV/SAR 命中集)+ M2b(项目导入导出/Web Locks 序列化追加+广播/血缘计数)。m5 60/60、六套件全绿、平台 33/33。M2 收口——平台重设计 M0-M2 全落地,唯 M3(worker 池+片段替换探索器)与合回 main 待定。**
 
+## Recently Completed
++- **M2b 项目可携带性 + 多标签安全(explore/lbdd-platform,M2 收口)。** 项目导出=命令日志本体(JSON,schemaVersion+meta+commands;确定性衍生加载重算,随机事实在 facts);导入=校验(新 schema 显式拒绝)→Web Lock 内清 commands/snapshots/facts→顺序重写→meta 项目戳→**显式 reload**(投影不可热换,不做静默);UI:⬇project/⬆import 按钮(confirm 说明替换语义)。多标签:applyInternal 的追加在锁内取**店的 cmdSeq** 定命令 id(双标签各自发散的内存计数不再碰撞/覆写日志尾)+BroadcastChannel 'applied' 通知→已开店的只读标签 needsReinit/stale() 标志(通道做通知,锁做互斥——规范原话落地);withLock 无 navigator.locks 时回退直执行(Node/旧浏览器单写者假设)。血缘条目增 (N) 命中计数。验证:导出 3 命令→清库→导入→reload 后 55 库+1 轮次+pin+备注全部恢复;双标签同 context A 写 B 收广播 stale=true;A/B 各写日志无 id 碰撞。m5 **60/60**(+3);六套件 37/10/11/10/32/60;平台 33/33;零 page error。测试方法两教训:**Playwright 新 context=隔离存储分区**(IDB/BroadcastChannel 不跨 context——多标签测试必须同 context,且该版本默认 context 不允许 newPage,m5 启动改为显式 browser.newContext());**段落间状态污染**(M2b 段的 pin 泄漏进甄别段——节末清理)。
 ## Recently Completed
 +- **M2a 平台性四件套(explore/lbdd-platform)。** ①轮次分数 L3 事实:db.js v2 增 facts 库(keyed 'scores:<roundId>',带构建溯源),compat 事实门面(内存缓存+getRoundScores),recordSearchRound 于 CreateRound 后记分(hits={molId,score,colorT,conf});②共识列:consensusFor=**全部已记轮**平均秩(<2 轮显 —;公式与逐轮 #rank/n 进 tooltip),Cons. 列插 Combo 后(既有 m5 行索引 ≤8 零扰动;隐藏列表头不进行——cons 单元按倒数第二格寻址);③溯源 CSV:exportResultsCSV=name/smiles/MW+逐轮 `rank:<mode>:<query>` 列+consensus_mean_rank+pinned/note/excluded,500 行截断,下载事件;④SAR 命中集:sarScopeEntries+rgdScope/scaffoldScope 下拉(whole library/current results),runRGD/analyzeScaffolds 主循环与分母切换(6/50 非 6/55),Auto core 辅助仍全库(文档化)。验证:两轮重叠查询 cons 1.5/1.5、scaffold(hits) 19/39 环状、RGD(hits) 分母正确;m5 **57/57**(+4,断言修正两处:consensus 聚合全历史轮非仅新两轮——机制本然;RGD 命中数取决于取代化学,断言改分母证明 scope)。实施三教训:**多步补丁步骤间逐段落盘**(两次全批断言失败整批回退的教训)、**ternary 真分支尾不可插语句**(行级手术修复+去杂散分号)、**测试断言勿写死复合数值**。
 ## Recently Completed

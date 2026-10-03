@@ -1226,7 +1226,10 @@ details {
        <div id="workSetPins" style="margin-top:0.35rem;"></div>
      </div>
      <div style="margin-top:0.4rem;">
-       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportResultsCSV()" title="CSV with per-round ranks, consensus, pins and notes — the exit path to other tools">⬇ export results (provenance CSV)</button>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportResultsCSV()" title="CSV with per-round ranks, consensus, pins and notes — the exit path to other tools">⬇ results CSV</button>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportProjectFile()" title="The whole project as JSON (libraries, query rounds, triage — the command log itself). Import restores everything on any machine">⬇ project</button>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="document.getElementById('projectImportFile').click()" title="Replace the current project with an exported .webmm-project.json (the page reloads after import)">⬆ import project</button>
+       <input type="file" id="projectImportFile" accept=".json,application/json" style="display:none;" onchange="importProjectFile(this)">
      </div>
    </div>
 
@@ -3143,7 +3146,9 @@ function rdkitAvailable() {
         const r = rounds[k];
         const q = r.querySpec || {};
         const qs = String(q.query || '');
-        const label = (q.mode || '?') + ': ' + qs.slice(0, 28) + (qs.length > 28 ? '…' : '');
+        const sc = c.cachedRoundScores().get(k);
+        const label = (q.mode || '?') + ': ' + qs.slice(0, 24) + (qs.length > 24 ? '…' : '') +
+          (sc && sc.length ? ' (' + sc.length + ')' : '');
         const isCur = k === __currentRoundId;
         const tip = escHtml(label);
         return '<div title="' + tip + '" style="padding:1px 0 1px ' + (depth[k] * 14 + 4) +
@@ -3331,6 +3336,42 @@ function rdkitAvailable() {
     searchStatus('Exported ' + Math.min(__lastRenderedRows.length, 500) + ' rows with provenance (' + roundIds.length + ' rounds)');
   }
   window.exportResultsCSV = exportResultsCSV;
+
+  // M2b: project export/import (facts only — the command log; deterministic
+  // derivatives recompute on load, stochastic facts ride in 'facts')
+  async function exportProjectFile() {
+    const c = triageStore();
+    if (!c) { searchStatus('Project store not available'); return; }
+    const data = await c.exportProjectData();
+    if (!data) { searchStatus('Nothing to export'); return; }
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'webmm-project-v' + data.schemaVersion + '-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    searchStatus('Project exported: ' + data.commands.length + ' commands (schema v' + data.schemaVersion + ')');
+  }
+  window.exportProjectFile = exportProjectFile;
+
+  async function importProjectFile(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    const c = triageStore();
+    if (!c) { searchStatus('Project store not available'); return; }
+    try {
+      const data = JSON.parse(await f.text());
+      if (!confirm('Import this project? This REPLACES the current one (' +
+        (data.commands ? data.commands.length : 0) + ' commands). The page will reload.')) return;
+      const r = await c.importProject(data);
+      searchStatus('Project imported (' + r.applied + ' commands) — reloading…');
+      setTimeout(() => location.reload(), 600);
+    } catch (err) {
+      searchStatus('Import failed: ' + (err.message || err));
+    }
+  }
+  window.importProjectFile = importProjectFile;
 
   function loadSearchRow(e, alignedSdf, pharm) {
     switchMode('single');

@@ -1,7 +1,34 @@
-# Plan: M2a — 轮次分数事实 + 共识融合 + 溯源导出 + SAR 命中集(explore/lbdd-platform)
+# Plan: M2b — 项目导入导出 + Web Locks 多标签 + 血缘升级(explore/lbdd-platform,M2 收口)
 
-> M0/M1 已完成;本 PLAN 为 M2 第一轮(M2a)。M2b(项目导入导出/
-> Web Locks/血缘升级)另轮。
+> M0/M1/M2a 已完成;本 PLAN 为 M2 第二轮(M2b,收口)。
+
+## 范围
+
+项目 JSON 导出(命令日志本体)/导入(校验 schemaVersion→锁内清库
+重写→显式 reload);Web Locks 序列化追加(cmdSeq 取自店非本地计数,
+双标签发散内存态不再碰撞命令 id)+ BroadcastChannel 通知只读标签
+(stale 标志);血缘条目带命中计数。
+
+## 实施记录
+
+1. db.js:withLock(navigator.locks 回退直执行)+ createStoreChannel
+2. project.js:applyInternal 锁内取店 cmdSeq 定 id(双标签安全)+
+   广播 applied;replaceProject(校验/清 commands+snapshots+facts/
+   顺序重写/meta 项目戳)
+3. compat.js:activeStorage/activeLock/projectModule 记录,import/
+   exportProjectData 门面,channel.onmessage→needsReinit+stale()
+4. app:⬇project/⬆import 按钮(confirm 后 reload);血缘条目 (N) 计数
+5. 测试教训:Playwright 新 context=隔离存储(广播/IDB 不跨)——
+   多标签测试须同 context,且默认 context 不许 newPage→m5 启动改
+   显式 newContext;段落 pin 污染后续段→节末清理
+
+## 验收结果
+
+- 浏览器实测:导出 3 命令(ImportLibrary/CreateRound/Pin)→清库→
+  导入→reload 后 **55 库+1 轮次+pin+备注全部回来**;双标签:A 写
+  →B(同 context)stale=true 广播达;A/B 各写 log 无 id 碰撞
+- m5 **60/60**(+3);六套件 37/10/11/10/32/60;平台 33/33;
+  零 page error
 
 ## 范围
 

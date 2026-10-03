@@ -131,5 +131,19 @@
     return report;
   }
 
-  return { DB_NAME, DB_VERSION, STORES, MIGRATIONS, createMemStorage, createIdbStorage, durability };
+  // ---- M2b multi-tab safety (M0 spec §3): Web Locks serialize writes;
+  // BroadcastChannel notifies read-only tabs (a messaging primitive is NOT
+  // a lock — the lock does exclusion, the channel does notification) ----
+  async function withLock(name, fn) {
+    if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
+      return navigator.locks.request('webmm:' + name, { mode: 'exclusive' }, () => fn());
+    }
+    return fn();   // Node / old browsers: single-writer assumption
+  }
+  function createStoreChannel() {
+    try { return new BroadcastChannel('webmm-platform-store'); }
+    catch (e) { return null; }   // Node: no BroadcastChannel
+  }
+
+  return { DB_NAME, DB_VERSION, STORES, MIGRATIONS, createMemStorage, createIdbStorage, durability, withLock, createStoreChannel };
 });

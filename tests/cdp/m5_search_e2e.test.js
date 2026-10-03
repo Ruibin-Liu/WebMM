@@ -26,7 +26,8 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
 
 (async () => {
   const browser = await chromium.launch({ executablePath: EXE });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
   const errors = [];
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
   page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message.slice(0, 300)));
@@ -297,6 +298,65 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   check('RGD denominator reflects the hit-set scope (runs over the sim hits, not /55)', /\/3 molecules/.test(rgdScope), rgdScope.slice(0, 60));
   // restore defaults for later sections
   await page.evaluate(() => { document.getElementById('scaffoldScope').value = 'library'; document.getElementById('rgdScope').value = 'library'; });
+
+  // ---- M2b: project export/import + multi-tab broadcast ----
+  console.log('M2b project portability / multi-tab:');
+  // export (needs a search + a pin so the project is non-trivial)
+  await page.evaluate(() => {
+    document.getElementById('searchMode').value = 'sim'; onSearchModeChange();
+    document.getElementById('searchQuery').value = 'CC(=O)Oc1ccccc1C(=O)O'; runSearch();
+  });
+  await page.waitForFunction(() => document.getElementById('searchResultStatus').textContent.includes('at T'), null, { timeout: 120000 });
+  await page.evaluate(async () => {
+    const id = window.__search.getState()[0].molId;
+    await window.__platformCompat.pin(id, 'exported-pin');
+  });
+  await page.waitForTimeout(300);
+  const dlP2 = page.waitForEvent('download', { timeout: 15000 });
+  await page.evaluate(() => exportProjectFile());
+  await (await dlP2).saveAs('/tmp/m5-project.json');
+  const projData = JSON.parse(fs.readFileSync('/tmp/m5-project.json', 'utf8'));
+  check('project export = command log with library + round + pin',
+    projData.schemaVersion === 1 && projData.commands.some(c => c.type === 'ImportLibrary') &&
+    projData.commands.some(c => c.type === 'CreateRound') && projData.commands.some(c => c.type === 'Pin'),
+    'commands=' + projData.commands.length);
+  // clear, then import back; the page reloads (confirm dialog auto-accepted)
+  await page.evaluate(() => clearSearchLibrary());
+  await page.waitForTimeout(500);
+  page.once('dialog', d => d.accept());
+  await page.setInputFiles('#projectImportFile', '/tmp/m5-project.json');
+  await page.waitForFunction(() => document.readyState === 'complete', null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => switchMode('search'));
+  await page.waitForFunction(() => /restored/.test(document.getElementById('searchStatus').textContent), null, { timeout: 30000 });
+  const imported = await page.evaluate(() => ({
+    lib: (window.__search.getState() || []).length,
+    hist: document.querySelectorAll('#queryHistoryPanel div[onclick]').length,
+    pins: document.getElementById('workSetCounts').textContent,
+  }));
+  check('import restores library + rounds + pins after reload',
+    imported.lib === 55 && imported.hist >= 1 && /1 pinned/.test(imported.pins), JSON.stringify(imported));
+  // multi-tab: a second page in the same context hears the broadcast
+  const page2 = await ctx.newPage();   // SAME context: shared storage + broadcast
+  await page2.goto('http://localhost:8901/app/index.html', { waitUntil: 'load' });
+  await page2.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
+  await page2.waitForFunction(() => window.webmm !== undefined, null, { timeout: 60000 });
+  await page2.evaluate(() => switchMode('search'));
+  await page2.waitForFunction(() => window.__platformCompat, null, { timeout: 15000 });
+  await page2.evaluate(() => { window.__platformCompat_pinProbe = true; });
+  await page.evaluate(async () => {
+    const id = window.__search.getState()[0].molId;
+    await window.__platformCompat.pin(id, null);   // any write broadcasts
+  });
+  await page2.waitForFunction(() => window.__platformCompat.stale() === true, null, { timeout: 8000 }).catch(() => {});
+  const bStale = await page2.evaluate(() => window.__platformCompat.stale());
+  await page2.close();
+  check('multi-tab: second page is notified (stale flag) when this tab writes', bStale === true, 'stale=' + bStale);
+  // cleanup: this section's pins must not leak into the triage section
+  await page.evaluate(async () => {
+    const c = window.__platformCompat;
+    for (const id of Object.keys(c.getPins())) await c.unpin(id);
+  });
 
   // ---- M1b triage overlay (pin/exclude/notes/undo, platform store) ----
   console.log('triage overlay:');

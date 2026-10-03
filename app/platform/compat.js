@@ -12,6 +12,18 @@
   let project = null;
   let identity = null;
   let initPromise = null;
+  let activeStorage = null;
+  let activeLock = null;
+  let projectModule = null;
+  let needsReinit = false;   // another tab wrote; callers may poll stale()
+
+  // M2b import: replace the whole project with an exported one; the caller
+  // then reloads the page (explicit, not silent — the in-memory projection
+  // cannot be hot-swapped safely). Uses the storage opened at init.
+  async function importProject(data) {
+    if (!activeStorage || !projectModule) throw new Error('compat: not initialized');
+    return projectModule.replaceProject(activeStorage, data, { withLock: activeLock });
+  }
 
   // deps: { storage, Identity } — browser passes the IDB adapter and the
   // Identity module (with the InChIKey chain already injected).
@@ -23,7 +35,12 @@
       const storage = deps.storage || (DB ? DB.createIdbStorage() : null);
       if (!storage) throw new Error('compat: no storage');
       if (storage.open) await storage.open();
-      project = await deps.Project.init(storage);
+      const withLock = DB ? DB.withLock : null;
+      const channel = DB ? DB.createStoreChannel() : null;
+      activeStorage = storage; activeLock = withLock; projectModule = deps.Project;
+      // M2b: read-only tabs re-init their projection when another tab writes
+      if (channel) channel.onmessage = () => { needsReinit = true; };
+      project = await deps.Project.init(storage, { withLock, channel });
       // durability script (persist/estimate/vanish-detect) — surfaced to
       // console + meta in M1a; the UI banner is M1b
       if (DB) { try { await DB.durability(storage); } catch (e) {} }
@@ -85,6 +102,12 @@
   }
   function cachedRoundScores() { return __scoreCache; }
   function projectApi() { return project; }
+  function stale() { return needsReinit; }
+
+  async function exportProjectData() {
+    if (!project) return null;
+    return project.exportProject();
+  }
 
   // Restore on startup: IndexedDB projection first; if never-had, one-time
   // read-only migration from the legacy localStorage key.
@@ -124,5 +147,6 @@
 
   return { init, saveLibraryInputs, restoreInputs, clearLibrary, LEGACY_KEY, LIB_ID,
     pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi,
-    saveRoundScores, getRoundScores, cachedRoundScores };
+    saveRoundScores, getRoundScores, cachedRoundScores, exportProjectData,
+    importProject, stale };
 });

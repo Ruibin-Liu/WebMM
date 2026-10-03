@@ -11,7 +11,7 @@
   const SNAPSHOT_EVERY = 500;       // hybrid trigger: command count (spec §4)
   const KEEP_SNAPSHOTS = 3;
 
-  async function init(storage) {
+  async function init(storage, opts) {
     const meta = (await storage.get('meta', 'project')) || { schemaVersion: State.SCHEMA_VERSION, createdAt: Date.now() };
     if (meta.schemaVersion > State.SCHEMA_VERSION) {
       throw new Error('project schema v' + meta.schemaVersion + ' newer than this build (v' + State.SCHEMA_VERSION + ') — update the app');
@@ -33,12 +33,16 @@
       if (res.error) { console.warn('[platform] replay skipped illegal command #' + r.key + ':', res.error); continue; }
       state = res.state;
     }
+    const seqRec = await storage.get('meta', 'cmdSeq');
+    const lastSeq = seqRec || (cmdRecs.length ? cmdRecs[cmdRecs.length - 1].key : 0);
     const p = {
       storage, meta, state,
+      withLock: opts && opts.withLock ? opts.withLock : (async (n, fn) => fn()),
+      channel: opts && opts.channel ? opts.channel : null,
       _commandsSinceSnapshot: tail.length,
       _undoStack: [],           // {inverse, describes} of undoable commands
       _redoStack: [],           // undone commands, redoable in order
-      _cmdId: cmdRecs.length ? cmdRecs[cmdRecs.length - 1].key : 0,
+      _cmdId: lastSeq,
       _hadData: cmdRecs.length > 0 || snaps.length > 0,
     };
     try { await storage.put('meta', 'project', meta); } catch (e) {}
@@ -105,7 +109,11 @@
   }
 
   // shared application path: prior-value capture for Unpin/Include inverses,
-  // reduce, persist to the command log, optional undo-stack push
+  // reduce, persist to the command log, optional undo-stack push.
+  // M2b: the append is SERIALIZED under the Web Lock and takes its id from
+  // the STORE's cmdSeq (not the local counter) — two tabs with divergent
+  // in-memory states can no longer collide on command ids or clobber the
+  // log tail. Read-only tabs learn about the change via the broadcast.
   async function applyInternal(p, cmd, opts) {
     let pre = null;
     if (cmd.type === 'Unpin' && p.state.pins[cmd.molId]) {
@@ -115,17 +123,24 @@
     }
     const res = State.applyCommand(p.state, cmd);
     if (res.error) throw new Error('command rejected: ' + res.error);
-    p._cmdId += 1;
     p.state = res.state;
-    await p.storage.put('commands', p._cmdId, cmd);
-    if (!p._hadData) { p._hadData = true; try { await p.storage.put('meta', 'hadData', true); } catch (e) {} }
+    const id = await p.withLock('project', async () => {
+      const seqRec = await p.storage.get('meta', 'cmdSeq');
+      const seq = (seqRec || 0) + 1;
+      await p.storage.put('commands', seq, cmd);
+      await p.storage.put('meta', 'cmdSeq', seq);
+      if (!p._hadData) { p._hadData = true; try { await p.storage.put('meta', 'hadData', true); } catch (e) {} }
+      return seq;
+    });
+    p._cmdId = id;
+    try { if (p.channel) p.channel.postMessage({ kind: 'applied', commandId: id }); } catch (e) {}
     if (opts && opts.pushUndo) {
       const inv = pre || State.inverse(cmd, res.state);
       if (inv) p._undoStack.push({ inverse: inv, describes: cmd });
     }
     p._commandsSinceSnapshot += 1;
     if (p._commandsSinceSnapshot >= SNAPSHOT_EVERY) await snapshot(p);
-    return { commandId: p._cmdId };
+    return { commandId: id };
   }
 
   async function snapshot(p) {
@@ -153,5 +168,30 @@
   }
   init._deserializeState = deserializeState;
 
-  return { init, serializeState, deserializeState, SNAPSHOT_EVERY, KEEP_SNAPSHOTS };
+  // M2b import: replace the whole project with an exported one. Validates
+  // the schema version (explicit refusal, never silent), clears all stores
+  // (commands/snapshots/facts — a new project, not a merge), then writes
+  // the commands sequentially under the lock.
+  async function replaceProject(storage, data, opts) {
+    if (!data || !Array.isArray(data.commands)) throw new Error('import: no commands array');
+    if (data.schemaVersion > State.SCHEMA_VERSION) {
+      throw new Error('import: project schema v' + data.schemaVersion + ' is newer than this build (v' + State.SCHEMA_VERSION + ')');
+    }
+    const withLock = opts && opts.withLock ? opts.withLock : (async (n, fn) => fn());
+    return withLock('project', async () => {
+      for (const store of ['commands', 'snapshots', 'facts']) {
+        const all = await storage.all(store);
+        for (const rec of all) await storage.del(store, rec.key);
+      }
+      await storage.del('meta', 'cmdSeq');
+      let seq = 0;
+      for (const cmd of data.commands) await storage.put('commands', ++seq, cmd);
+      await storage.put('meta', 'cmdSeq', seq);
+      await storage.put('meta', 'project', { schemaVersion: State.SCHEMA_VERSION, createdAt: Date.now(), importedAt: Date.now() });
+      await storage.put('meta', 'hadData', true);
+      return { applied: seq };
+    });
+  }
+
+  return { init, serializeState, deserializeState, replaceProject, SNAPSHOT_EVERY, KEEP_SNAPSHOTS };
 });
