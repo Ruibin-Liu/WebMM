@@ -99,6 +99,8 @@
       // (spec §4). Runs on the caller's context (a worker in M1c); never
       // inline on a hot interaction path beyond M1a's trivial sizes.
       snapshot: () => snapshot(p),
+      storagePut: (store, key, val) => p.storage.put(store, key, val),
+      storageGet: (store, key) => p.storage.get(store, key),
     };
   }
 

@@ -8,8 +8,8 @@
   'use strict';
 
   const DB_NAME = 'webmm-platform';
-  const DB_VERSION = 1;
-  const STORES = ['meta', 'commands', 'snapshots'];
+  const DB_VERSION = 2;
+  const STORES = ['meta', 'commands', 'snapshots', 'facts'];  // facts: L3 results (round scores), keyed 'scores:<roundId>'
 
   // MIGRATIONS: Map<fromVersion, (txHelpers) => Promise> — the registered
   // hook pattern (M0 spec §5). v1 has none; the registry exists from the

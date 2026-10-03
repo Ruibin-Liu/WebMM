@@ -1,6 +1,36 @@
-# Plan: M1c — 轮次 DAG + hit-as-query + 血缘视图(explore/lbdd-platform)
+# Plan: M2a — 轮次分数事实 + 共识融合 + 溯源导出 + SAR 命中集(explore/lbdd-platform)
 
-> M0/M1a/M1b 已完成(见 git 历史);本 PLAN 为 M1c 实施轮(M1 收口)。
+> M0/M1 已完成;本 PLAN 为 M2 第一轮(M2a)。M2b(项目导入导出/
+> Web Locks/血缘升级)另轮。
+
+## 范围
+
+四件套:轮次分数入 L3 事实(facts 库,DB v2)→ 共识=全轮平均秩
+显式融合列(公式进 tooltip)→ 溯源 CSV(逐轮 rank+consensus+甄别
+态)→ RGD/骨架以命中集为输入(scope 下拉)。
+
+## 实施记录
+
+1. db.js v2 增 facts 库;compat 事实门面(内存缓存+持久化带构建
+   溯源);project 暴露 storagePut/Get
+2. recordSearchRound 记分(rows→hits 过滤 molId/score);consensusFor
+   = 全部已记轮平均秩(<2 轮显 — );Cons. 列插 Combo 后(行索引
+   ≤8 不扰动)
+3. exportResultsCSV:name/smiles/MW + 逐轮 rank:sim:query 列 +
+   consensus + pinned/note/excluded
+4. sarScopeEntries + rgdScope/scaffoldScope 下拉;runRGD/
+   analyzeScaffolds 主循环与分母文案切换
+5. 实施三教训:多步补丁整批失败时步骤间必须逐段落盘(两次全批
+   回退);ternary 中间不可插语句(行级手术修复);m5 断言勿写死
+   数值(consensus 聚合全历史轮、RGD 命中数取决于取代模式化学)
+
+## 验收结果
+
+- 浏览器实测:两轮重叠查询(aspirin/salicylic)→ cons 1.5/1.5
+  公式 tooltip 正确;CSV 表头 rank:sim:×2+consensus+甄别四列;
+  scaffold(hits) 19 scaffolds/39 环状;RGD(hits) 6/50 分母正确
+- m5 **57/57**(+4);六套件 37/10/11/10/32/57;平台 33/33;
+  零 page error
 
 ## 范围
 

@@ -1207,7 +1207,7 @@ details {
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
-         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th><th title="pin to the working set / exclude from triage (persisted in the project store, undoable)">★</th></tr>
+         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th><th title="consensus = mean rank across every recorded round that scored this molecule (explicit rank-fusion column; lower is better; needs >= 2 rounds)">Cons.</th><th title="pin to the working set / exclude from triage (persisted in the project store, undoable)">★</th></tr>
        </thead>
        <tbody id="searchRows"></tbody>
      </table>
@@ -1225,6 +1225,9 @@ details {
        </div>
        <div id="workSetPins" style="margin-top:0.35rem;"></div>
      </div>
+     <div style="margin-top:0.4rem;">
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportResultsCSV()" title="CSV with per-round ranks, consensus, pins and notes — the exit path to other tools">⬇ export results (provenance CSV)</button>
+     </div>
    </div>
 
    <div id="rgdPanel" class="panel" style="display:none;">
@@ -1233,7 +1236,11 @@ details {
        <input type="text" id="rgdCore" placeholder="Core with attachment labels, e.g. [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
        <button class="action-btn edit" onclick="fillRgdExample()" title="Fill a para-disubstituted benzene example core">Example</button>
       <button class="action-btn edit" onclick="autoRgdCore()" title="Derive a labeled core automatically: MCS of the most frequent scaffold family, attachment points from the first member">Auto core</button>
-       <button id="btnRGD" class="action-btn primary" style="width:auto;" onclick="runRGD()">Decompose library</button>
+       <select id="rgdScope" title="Run over the whole library or the current search results" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);">
+         <option value="library">whole library</option>
+         <option value="hits">current results</option>
+       </select>
+       <button id="btnRGD" class="action-btn primary" style="width:auto;" onclick="runRGD()">Decompose</button>
        <button class="action-btn export" onclick="exportRGDCSV()">Export CSV</button>
      </div>
      <div class="version" id="rgdStatus" aria-live="polite"></div>
@@ -1249,7 +1256,10 @@ details {
    <div id="scaffoldPanel" class="panel" style="display:none;">
      <strong>Scaffold Frequency</strong>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
-       <button id="btnScaffold" class="action-btn primary" style="width:auto;" onclick="analyzeScaffolds()">Analyze scaffolds</button>
+       <select id="scaffoldScope" title="Run over the whole library or the current search results" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);">
+         <option value="library">whole library</option>
+         <option value="hits">current results</option>
+       </select><button id="btnScaffold" class="action-btn primary" style="width:auto;" onclick="analyzeScaffolds()">Analyze scaffolds</button>
        <button class="action-btn export" onclick="exportScaffoldCSV()">Export CSV</button>
      </div>
      <div class="version" id="scaffoldStatus" aria-live="polite"></div>
@@ -3090,6 +3100,11 @@ function rdkitAvailable() {
     try {
       await c.projectApi().apply({ type: 'CreateRound', roundId, parentId, inputRef: 'lib:main', querySpec });
       __currentRoundId = roundId;
+      // L3 fact: the round's scores with their provenance (M2)
+      const hits = (rows || [])
+        .filter(r => r.e && r.e.molId && isFinite(r.score))
+        .map(r => ({ molId: r.e.molId, score: +r.score.toFixed(6), colorT: r.colorT != null ? +r.colorT.toFixed(6) : null, conf: r.conf ?? null }));
+      c.saveRoundScores(roundId, hits);
       renderQueryHistory();
     } catch (err) { console.warn('[platform] round not recorded:', err); return null; }
     return roundId;
@@ -3150,6 +3165,23 @@ function rdkitAvailable() {
     runSearch();
   }
   window.rerunRound = rerunRound;
+
+  // consensus = mean rank across all RECORDED rounds that scored the
+  // molecule (explicit fusion column, formula in the tooltip — M0 spec §3)
+  function consensusFor(molId) {
+    const c = triageStore();
+    if (!c) return null;
+    const cache = c.cachedRoundScores();
+    const ranks = [];
+    for (const [rid, hits] of cache.entries()) {
+      const sorted = [...hits].sort((a, b) => b.score - a.score);
+      const idx = sorted.findIndex(h => h.molId === molId);
+      if (idx >= 0) ranks.push({ rid, rank: idx + 1, n: sorted.length });
+    }
+    if (ranks.length < 2) return null;
+    const mean = ranks.reduce((a, r) => a + r.rank, 0) / ranks.length;
+    return { mean, ranks };
+  }
 
   let __lastRenderedRows = null, __lastRenderedMode = null, __lastRenderedMsg = null;
   function renderSearchResultsCurrent() {
@@ -3221,18 +3253,22 @@ function rdkitAvailable() {
       const triageCell = molId
         ? `<td style="white-space:nowrap;"><span role="button" tabindex="0" title="${isPinned ? 'unpin from working set' : 'pin to working set'}" style="cursor:pointer; font-size:0.95rem; ${isPinned ? '' : 'opacity:0.35;'}" onclick="triageTogglePin('${molId}')" onkeydown="if(event.key==='Enter')triageTogglePin('${molId}')">${isPinned ? '★' : '☆'}</span> <span role="button" tabindex="0" title="${isExcl ? 'include back' : 'exclude from triage'}" style="cursor:pointer; font-size:0.85rem; ${isExcl ? 'color:#b91c1c;' : 'opacity:0.35;'}" onclick="triageToggleExclude('${molId}')" onkeydown="if(event.key==='Enter')triageToggleExclude('${molId}')">${isExcl ? '✕' : '·'}</span> <span role="button" tabindex="0" title="use as query — lead hop (creates a child round)" style="cursor:pointer; font-size:0.85rem; opacity:0.45;" onclick="event.stopPropagation(); hitAsQuery('${molId}')" onkeydown="if(event.key==='Enter'){event.stopPropagation(); hitAsQuery('${molId}')}">⇄</span></td>`
         : '<td></td>';
+      const cons = molId ? consensusFor(molId) : null;
+      const consCell = cons
+        ? `<td class="value" title="${escHtml(cons.ranks.map(r => r.rid.slice(1, 7) + ': #' + r.rank + '/' + r.n).join(' · '))}"><strong>${cons.mean.toFixed(1)}</strong></td>`
+        : '<td class="value">—</td>';
       tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}${flexBadge}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
         `<td class="value">${e.MW}</td>` +
         (mode === 'sub'
-          ? `<td><span class="result-badge pass">Match</span></td>`
+          ? `<td><span class="result-badge pass">Match</span></td>` + consCell
           : shapeMode
           ? (conf != null ? `<td class="value" title="entry conformer that produced this score">${conf + 1}</td>` : '') +
             `<td class="value">${(score * 100).toFixed(1)}%</td>` +
             `<td class="value">${colorT != null ? (colorT * 100).toFixed(1) + '%' : '—'}</td>` +
             `<td class="value" title="pharmacophore features matched">${pharm ? pharm.matched + '/' + pharm.total : '—'}</td>` +
             `<td class="value"><strong>${((score + (colorT || 0)) * 100).toFixed(1)}%</strong></td>`
-          : `<td class="value">${(score * 100).toFixed(1)}%</td>`) + triageCell;
+          : `<td class="value">${(score * 100).toFixed(1)}%</td>`) + consCell + triageCell;
       tb.appendChild(tr);
     }
     document.getElementById('searchPanel').style.display = 'block';
@@ -3241,6 +3277,60 @@ function rdkitAvailable() {
     renderWorkSet();
     renderQueryHistory();
   }
+
+  // SAR scope (M2): RGD / scaffold analysis can run over the whole
+  // library or the CURRENT hit set (the displayed rows) — the hit set is
+  // the natural SAR input after a search (M0 spec B1)
+  function sarScopeEntries(scopeId) {
+    const sel = document.getElementById(scopeId);
+    const scope = sel ? sel.value : 'library';
+    if (scope === 'hits') {
+      const entries = (__lastRenderedRows || []).map(r => r.e).filter(Boolean);
+      if (!entries.length) { searchStatus('No current results — run a search first'); return null; }
+      return entries;
+    }
+    return searchLibrary;
+  }
+
+  // provenance-rich CSV export: per-round ranks + consensus + triage state
+  // (M2; the exit path to other tools, M0 spec §6)
+  function exportResultsCSV() {
+    if (!__lastRenderedRows || !__lastRenderedRows.length) { searchStatus('Nothing to export — run a search first'); return; }
+    const c = triageStore();
+    const cache = c ? c.cachedRoundScores() : new Map();
+    const rounds = c ? c.projectApi().state.rounds : {};
+    const roundIds = [...cache.keys()].sort((a, b) => a.slice(1).localeCompare(b.slice(1)));
+    const header = ['name', 'smiles', 'MW'].concat(roundIds.map(rid => {
+      const q = (rounds[rid] && rounds[rid].querySpec) || {};
+      return 'rank:' + (q.mode || '?') + ':' + String(q.query || '').slice(0, 18).replace(/[",\n]/g, ' ');
+    })).concat(['consensus_mean_rank', 'pinned', 'note', 'excluded']);
+    const lines = [header.join(',')];
+    const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    for (const r of __lastRenderedRows.slice(0, 500)) {
+      const e = r.e;
+      const cells = [q(e.name), q(e.smiles), e.MW];
+      for (const rid of roundIds) {
+        const hits = cache.get(rid) || [];
+        const sorted = [...hits].sort((a, b) => b.score - a.score);
+        const idx = sorted.findIndex(h => h.molId === e.molId);
+        cells.push(idx >= 0 ? idx + 1 : '');
+      }
+      const cons = consensusFor(e.molId);
+      cells.push(cons ? cons.mean.toFixed(2) : '');
+      cells.push(c && c.getPins()[e.molId] ? 'yes' : '');
+      cells.push(q(c && c.getPins()[e.molId] ? c.getPins()[e.molId].note : ''));
+      cells.push(c && c.getExcludes()[e.molId] ? 'yes' : '');
+      lines.push(cells.join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'webmm-results-provenance.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    searchStatus('Exported ' + Math.min(__lastRenderedRows.length, 500) + ' rows with provenance (' + roundIds.length + ' rounds)');
+  }
+  window.exportResultsCSV = exportResultsCSV;
 
   function loadSearchRow(e, alignedSdf, pharm) {
     switchMode('single');
@@ -3604,7 +3694,8 @@ function rdkitAvailable() {
 
   function runRGD() {
     if (!rdkitAvailable()) return;
-    if (!searchLibrary || !searchLibrary.length) {
+    const scopeEntries = sarScopeEntries('rgdScope');
+    if (!scopeEntries || !scopeEntries.length) {
       document.getElementById('rgdStatus').textContent = 'Load a library first (Demo library or paste/upload)';
       return;
     }
@@ -3624,7 +3715,7 @@ function rdkitAvailable() {
     }
     rgdResults = [];
     let skipped = 0;
-    for (const e of searchLibrary) {
+    for (const e of scopeEntries) {
       let m = null;
       try { m = rdkitModule.get_mol(e.smiles); } catch (err) {}
       if (!m || !m.is_valid()) { if (m) m.delete(); skipped++; continue; }
@@ -3648,7 +3739,7 @@ function rdkitAvailable() {
     }
     document.getElementById('rgdPanel').style.display = 'block';
     document.getElementById('rgdStatus').textContent =
-      `${rgdResults.length}/${searchLibrary.length} molecules contain the core` +
+      `${rgdResults.length}/${scopeEntries.length} molecules contain the core` +
       (skipped ? ` · ${skipped} skipped (no core or unparseable)` : '');
     // header + rows
     const head = document.getElementById('rgdHead');
@@ -3683,13 +3774,14 @@ function rdkitAvailable() {
 
   function analyzeScaffolds() {
     if (!rdkitAvailable()) return;
-    if (!searchLibrary || !searchLibrary.length) {
+    const scopeEntries = sarScopeEntries('scaffoldScope');
+    if (!scopeEntries || !scopeEntries.length) {
       document.getElementById('scaffoldStatus').textContent = 'Load a library first';
       return;
     }
     const counts = new Map();
     let acyclic = 0;
-    for (const e of searchLibrary) {
+    for (const e of scopeEntries) {
       let m = null;
       try { m = rdkitModule.get_mol(e.smiles); } catch (err) {}
       if (!m || !m.is_valid()) { if (m) m.delete(); continue; }

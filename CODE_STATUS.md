@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**M1 三段全部完成(explore/lbdd-platform,M1 收口于 8b0528a):M1a 隐形店(身份+IndexedDB+命令日志)→ M1b 甄别覆盖层(★✕备注撤销+undo/redo 双栈+耐久性竞态修复)→ M1c 轮次 DAG+hit-as-query+血缘持久。平台测试 33/33、m5 53/53、六套件全绿;基线 C 判据达成(11 动作 hop→1)。下一步 M2:项目导入导出/血缘栏完整视图/SAR 以命中集为输入/共识秩融合/溯源导出/多标签 Web Locks——或先合回 main。**
+**M2a 完成并全绿(explore/lbdd-platform):轮次分数入 L3 事实(facts 库 DB v2)、共识=全轮平均秩显式融合列(tooltip 公式)、溯源 CSV(逐轮 rank+consensus+甄别态)、RGD/骨架以命中集为输入(scope 下拉,分母随 scope)。m5 57/57、六套件全绿、平台 33/33。M2b 待做:项目导入导出 UI/Web Locks 多标签/血缘栏升级。**
 
+## Recently Completed
++- **M2a 平台性四件套(explore/lbdd-platform)。** ①轮次分数 L3 事实:db.js v2 增 facts 库(keyed 'scores:<roundId>',带构建溯源),compat 事实门面(内存缓存+getRoundScores),recordSearchRound 于 CreateRound 后记分(hits={molId,score,colorT,conf});②共识列:consensusFor=**全部已记轮**平均秩(<2 轮显 —;公式与逐轮 #rank/n 进 tooltip),Cons. 列插 Combo 后(既有 m5 行索引 ≤8 零扰动;隐藏列表头不进行——cons 单元按倒数第二格寻址);③溯源 CSV:exportResultsCSV=name/smiles/MW+逐轮 `rank:<mode>:<query>` 列+consensus_mean_rank+pinned/note/excluded,500 行截断,下载事件;④SAR 命中集:sarScopeEntries+rgdScope/scaffoldScope 下拉(whole library/current results),runRGD/analyzeScaffolds 主循环与分母切换(6/50 非 6/55),Auto core 辅助仍全库(文档化)。验证:两轮重叠查询 cons 1.5/1.5、scaffold(hits) 19/39 环状、RGD(hits) 分母正确;m5 **57/57**(+4,断言修正两处:consensus 聚合全历史轮非仅新两轮——机制本然;RGD 命中数取决于取代化学,断言改分母证明 scope)。实施三教训:**多步补丁步骤间逐段落盘**(两次全批断言失败整批回退的教训)、**ternary 真分支尾不可插语句**(行级手术修复+去杂散分号)、**测试断言勿写死复合数值**。
 ## Recently Completed
 +- **M1c 轮次 DAG + hit-as-query + 血缘(explore/lbdd-platform,M1 收口)。** 每次检索(sim/sub/shape×2 完成点)记 CreateRound 命令入店(querySpec 从 DOM 读:mode/query/threshold/confs/flex,parentId 取待定边);行级 ⇄ 一次动作 lead hop(设父边+查询+runSearch;stopPropagation 防行点击)——**基线 C 判据达成:同会话 6 动作(旧 11),hop 本身 1 动作,墙钟 8.6→8.3s,top5 重叠不变**;血缘面板(深度缩进/↳ 子轮/当前 ◂/末 12 条/点击重执行保 DAG 位置)库装载与恢复后渲染,reload 经命令日志持久。范围纪律:批量表与药效团面板不入轮(文档化);每轮分数的 L3 事实持久化留 M2 溯源列。验收:m5 **53/53**(+4:轮入史+⇄ 在位/一次动作 hop 带缩进子轮/DAG reload 持久/rerun 重执行——rerun 点末条目,history[0] 可能是 sim 轮完成态为 'at T');六套件 37/10/11/10/32/53;平台 33/33;零 page error;基线脚本增 C' 会话(docs/m0/baseline.md 更新)。实施教训:**chromium.launch 每次全新临时 profile,IndexedDB 不跨浏览器进程——持久化只能同浏览器内 reload 验证**(探针方法错误一次存档)。M1 全景:M1a 店(9ed2231)→M1b 甄别+双栈 undo+耐久性(76a7e15)→M1c DAG(8b0528a),平台重设计三段式地基落地,引擎层零改动。
 ## Recently Completed

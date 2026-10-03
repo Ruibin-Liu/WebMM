@@ -62,6 +62,28 @@
   function getPins() { return project ? project.state.pins : {}; }
   function getExcludes() { return project ? project.state.excludes : {}; }
   function ready() { return !!project; }
+
+  // ---- M2 round scores as L3 facts (per M0 spec §3: stochastic results
+  // stored WITH their provenance; deterministic recompute does not apply) ----
+  const __scoreCache = new Map();   // roundId -> hits [{molId, score, ...}]
+  async function saveRoundScores(roundId, hits) {
+    if (!project) return;
+    __scoreCache.set(roundId, hits);
+    try {
+      await project.storagePut('facts', 'scores:' + roundId, {
+        engine: 'webmm-' + (typeof WEBMM_VERSION !== 'undefined' ? WEBMM_VERSION : ''),
+        hits,
+      });
+    } catch (e) { console.warn('[platform] round scores not persisted:', e); }
+  }
+  async function getRoundScores(roundId) {
+    if (__scoreCache.has(roundId)) return __scoreCache.get(roundId);
+    if (!project) return null;
+    const rec = await project.storageGet('facts', 'scores:' + roundId);
+    if (rec && Array.isArray(rec.hits)) { __scoreCache.set(roundId, rec.hits); return rec.hits; }
+    return null;
+  }
+  function cachedRoundScores() { return __scoreCache; }
   function projectApi() { return project; }
 
   // Restore on startup: IndexedDB projection first; if never-had, one-time
@@ -101,5 +123,6 @@
   }
 
   return { init, saveLibraryInputs, restoreInputs, clearLibrary, LEGACY_KEY, LIB_ID,
-    pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi };
+    pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi,
+    saveRoundScores, getRoundScores, cachedRoundScores };
 });

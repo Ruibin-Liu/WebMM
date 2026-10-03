@@ -260,6 +260,44 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
   check('rerun from history re-executes the round query', true);
 
+  // ---- M2a: round-score facts + consensus + provenance CSV + SAR scope ----
+  console.log('M2a consensus / provenance / SAR scope:');
+  // two OVERLAPPING sim rounds (aspirin, then salicylic acid) — both hit the same pair
+  for (const q of ['CC(=O)Oc1ccccc1C(=O)O', 'Oc1ccccc1C(=O)O']) {
+    await page.evaluate((qq) => {
+      document.getElementById('searchMode').value = 'sim'; onSearchModeChange();
+      document.getElementById('searchQuery').value = qq; runSearch();
+    }, q);
+    await page.waitForFunction(() => document.getElementById('searchResultStatus').textContent.includes('at T'), null, { timeout: 120000 });
+  }
+  const cons = await page.evaluate(() => {
+    const ci = [...document.querySelectorAll('#searchRows tr')].slice(0, 2).map(tr => {
+      const c = tr.cells[tr.cells.length - 2];
+      return { name: tr.children[1].textContent.trim(), cons: c.textContent, tip: c.title };
+    });
+    return ci;
+  });
+  check('consensus aggregates every recorded round (mean rank, formula in tooltip)',
+    cons.length === 2 && cons.every(c => parseFloat(c.cons) > 0) && cons[0].tip.split(' · ').length >= 2, JSON.stringify(cons));
+  // provenance CSV downloads with the expected columns
+  const dlP = page.waitForEvent('download', { timeout: 15000 });
+  await page.evaluate(() => exportResultsCSV());
+  await (await dlP).saveAs('/tmp/m5-prov.csv');
+  const csvHead = fs.readFileSync('/tmp/m5-prov.csv', 'utf8').split('\n')[0];
+  check('provenance CSV carries per-round ranks + consensus + triage columns',
+    csvHead.includes('rank:sim') && csvHead.includes('consensus_mean_rank') && csvHead.includes('pinned') && csvHead.includes('excluded'), csvHead.slice(0, 90));
+  // SAR on the current hit set
+  await page.evaluate(() => { document.getElementById('scaffoldScope').value = 'hits'; analyzeScaffolds(); });
+  await page.waitForFunction(() => document.getElementById('scaffoldStatus').textContent.includes('scaffold'), null, { timeout: 60000 });
+  const scafScope = await page.evaluate(() => document.getElementById('scaffoldStatus').textContent);
+  check('scaffold analysis runs over the current hit set', /\d+ scaffolds across \d+ cyclic/.test(scafScope), scafScope.slice(0, 70));
+  await page.evaluate(() => { document.getElementById('rgdScope').value = 'hits'; fillRgdExample(); runRGD(); });
+  await page.waitForFunction(() => document.getElementById('rgdStatus').textContent.includes('contain the core'), null, { timeout: 60000 });
+  const rgdScope = await page.evaluate(() => document.getElementById('rgdStatus').textContent);
+  check('RGD denominator reflects the hit-set scope (runs over the sim hits, not /55)', /\/3 molecules/.test(rgdScope), rgdScope.slice(0, 60));
+  // restore defaults for later sections
+  await page.evaluate(() => { document.getElementById('scaffoldScope').value = 'library'; document.getElementById('rgdScope').value = 'library'; });
+
   // ---- M1b triage overlay (pin/exclude/notes/undo, platform store) ----
   console.log('triage overlay:');
   // restore any leftover pin state from previous runs of this suite is fine —
