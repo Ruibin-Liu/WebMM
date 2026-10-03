@@ -1213,6 +1213,7 @@ details {
      </table>
      </div>
      <div class="hint" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+     <div id="queryHistoryPanel" style="display:none; margin-top:0.5rem; padding:0.5rem 0.6rem; border:1px solid var(--border); border-radius:8px;"></div>
      <div id="workSetPanel" style="display:none; margin-top:0.5rem; padding:0.5rem; border:1px solid var(--border); border-radius:8px;">
        <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
          <strong style="font-size:0.82rem;">Working set</strong>
@@ -1993,6 +1994,7 @@ function rdkitAvailable() {
           for (let i = 0; i < lib.length && i < enriched.length; i++) lib[i].molId = enriched[i].molId;
           renderSearchResultsCurrent();
           renderWorkSet();
+          renderQueryHistory();
           return enriched.length;
         })
         .catch(err => { console.warn('[platform] library persist failed:', err); return null; });
@@ -2015,6 +2017,7 @@ function rdkitAvailable() {
         const r = loadSearchLibraryFrom(saved.map(x => ({ smiles: x.smiles, name: x.name })));
         if (r && r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
         renderWorkSet();
+        renderQueryHistory();
       });
     }).catch(err => console.warn('[platform] restore failed:', err));
   }
@@ -2643,6 +2646,7 @@ function rdkitAvailable() {
       shownRows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
       flexMsg = ` · flex refined ${fr.refined}/${fr.attempted}`;
     }
+    await recordSearchRound('shape', shownRows);
     renderSearchResults(shownRows, 'shape',
       `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${phases}${flexMsg}` +
       (pharmMin > 0 && shownRows.length !== before ? ` · pharm filter ${before} → ${shownRows.length}` : '') +
@@ -2865,6 +2869,7 @@ function rdkitAvailable() {
       shownRows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
       flexMsg = ` · flex refined ${fr.refined}/${fr.attempted}`;
     }
+    await recordSearchRound('shape', shownRows);
     renderSearchResults(shownRows, 'shape',
       `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${flexMsg} · ${nConfs} confs/entry (best over conformers)` +
       (cacheHits ? ` · ${cacheHits} cached` : '') +
@@ -2899,6 +2904,7 @@ function rdkitAvailable() {
         if (t >= thr) rows.push({ e, score: t });
       }
       rows.sort((a, b) => b.score - a.score);
+      await recordSearchRound('sim', rows);
       renderSearchResults(rows, 'sim', `${rows.length}/${searchLibrary.length} at T ≥ ${thr.toFixed(2)}`);
     } else {
       let qq = null;
@@ -2916,6 +2922,7 @@ function rdkitAvailable() {
         m.delete();
       }
       qq.delete();
+      await recordSearchRound('sub', rows);
       renderSearchResults(rows, 'sub', `${rows.length}/${searchLibrary.length} matching the substructure`);
     }
   }
@@ -3057,6 +3064,93 @@ function rdkitAvailable() {
   }
   window.triageUndo = triageUndo;
 
+  // ---- M1c rounds: every search becomes a DAG node in the project store;
+  // hit-as-query creates the child edge (baseline C: 11 actions -> 1) ----
+  let __currentRoundId = null;
+  let __nextRoundParent = null;
+
+  async function recordSearchRound(mode, rows) {
+    const c = triageStore();
+    if (!c || !searchLibrary) return null;
+    const roundId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const parentId = __nextRoundParent || null;
+    __nextRoundParent = null;
+    const qEl = document.getElementById('searchQuery');
+    const tEl = document.getElementById('searchThreshold');
+    const cEl = document.getElementById('shapeConfs');
+    const fEl = document.getElementById('shapeFlex');
+    const querySpec = {
+      mode,
+      query: qEl ? qEl.value.trim() : null,
+      threshold: tEl ? parseFloat(tEl.value) : null,
+      confs: cEl ? parseInt(cEl.value) || null : null,
+      flex: fEl ? !!fEl.checked : null,
+      hitAsQuery: !!parentId,
+    };
+    try {
+      await c.projectApi().apply({ type: 'CreateRound', roundId, parentId, inputRef: 'lib:main', querySpec });
+      __currentRoundId = roundId;
+      renderQueryHistory();
+    } catch (err) { console.warn('[platform] round not recorded:', err); return null; }
+    return roundId;
+  }
+
+  function hitAsQuery(molId) {
+    const e = (searchLibrary || []).find(x => x.molId === molId);
+    if (!e) return;
+    __nextRoundParent = __currentRoundId;    // the child edge
+    document.getElementById('searchQuery').value = e.smiles;
+    runSearch();
+  }
+  window.hitAsQuery = hitAsQuery;
+
+  function renderQueryHistory() {
+    const host = document.getElementById('queryHistoryPanel');
+    if (!host) return;
+    const c = triageStore();
+    if (!c || !searchLibrary) { host.style.display = 'none'; return; }
+    const rounds = c.projectApi().state.rounds;
+    const keys = Object.keys(rounds);
+    host.style.display = keys.length ? '' : 'none';
+    const depth = {};
+    const calcDepth = (id, d) => {
+      if (depth[id] !== undefined) return;
+      depth[id] = d;
+      for (const k of keys) if (rounds[k].parentId === id) calcDepth(k, d + 1);
+    };
+    for (const k of keys) if (!rounds[k].parentId) calcDepth(k, 0);
+    for (const k of keys) if (depth[k] === undefined) depth[k] = 0;
+    keys.sort((a, b) => a.slice(1).localeCompare(b.slice(1)));
+    const shown = keys.slice(-12);
+    host.innerHTML = '<strong style="font-size:0.82rem;">Queries</strong>' +
+      '<div style="max-height:150px; overflow-y:auto; margin-top:0.3rem;">' +
+      shown.map(k => {
+        const r = rounds[k];
+        const q = r.querySpec || {};
+        const qs = String(q.query || '');
+        const label = (q.mode || '?') + ': ' + qs.slice(0, 28) + (qs.length > 28 ? '…' : '');
+        const isCur = k === __currentRoundId;
+        const tip = escHtml(label);
+        return '<div title="' + tip + '" style="padding:1px 0 1px ' + (depth[k] * 14 + 4) +
+          'px; font-size:0.74rem; cursor:pointer; ' + (isCur ? 'font-weight:600;' : 'color:var(--muted);') +
+          '" onclick="rerunRound(\'' + k + '\')">' + (depth[k] > 0 ? '↳ ' : '') + tip + (isCur ? ' ◂' : '') + '</div>';
+      }).join('') + '</div>';
+  }
+
+  function rerunRound(roundId) {
+    const c = triageStore();
+    if (!c) return;
+    const r = c.projectApi().state.rounds[roundId];
+    if (!r || !r.querySpec) return;
+    const q = r.querySpec;
+    __nextRoundParent = r.parentId;
+    document.getElementById('searchMode').value = q.mode; onSearchModeChange();
+    if (q.threshold != null) { const t = document.getElementById('searchThreshold'); if (t) t.value = q.threshold; }
+    document.getElementById('searchQuery').value = q.query || '';
+    runSearch();
+  }
+  window.rerunRound = rerunRound;
+
   let __lastRenderedRows = null, __lastRenderedMode = null, __lastRenderedMsg = null;
   function renderSearchResultsCurrent() {
     if (__lastRenderedRows) renderSearchResults(__lastRenderedRows, __lastRenderedMode, __lastRenderedMsg);
@@ -3125,7 +3219,7 @@ function rdkitAvailable() {
       const isExcl = !!(tc && molId && exclSet && exclSet.has(molId));
       if (isExcl) { tr.style.opacity = '0.45'; tr.title = 'excluded from triage'; }
       const triageCell = molId
-        ? `<td style="white-space:nowrap;"><span role="button" tabindex="0" title="${isPinned ? 'unpin from working set' : 'pin to working set'}" style="cursor:pointer; font-size:0.95rem; ${isPinned ? '' : 'opacity:0.35;'}" onclick="triageTogglePin('${molId}')" onkeydown="if(event.key==='Enter')triageTogglePin('${molId}')">${isPinned ? '★' : '☆'}</span> <span role="button" tabindex="0" title="${isExcl ? 'include back' : 'exclude from triage'}" style="cursor:pointer; font-size:0.85rem; ${isExcl ? 'color:#b91c1c;' : 'opacity:0.35;'}" onclick="triageToggleExclude('${molId}')" onkeydown="if(event.key==='Enter')triageToggleExclude('${molId}')">${isExcl ? '✕' : '·'}</span></td>`
+        ? `<td style="white-space:nowrap;"><span role="button" tabindex="0" title="${isPinned ? 'unpin from working set' : 'pin to working set'}" style="cursor:pointer; font-size:0.95rem; ${isPinned ? '' : 'opacity:0.35;'}" onclick="triageTogglePin('${molId}')" onkeydown="if(event.key==='Enter')triageTogglePin('${molId}')">${isPinned ? '★' : '☆'}</span> <span role="button" tabindex="0" title="${isExcl ? 'include back' : 'exclude from triage'}" style="cursor:pointer; font-size:0.85rem; ${isExcl ? 'color:#b91c1c;' : 'opacity:0.35;'}" onclick="triageToggleExclude('${molId}')" onkeydown="if(event.key==='Enter')triageToggleExclude('${molId}')">${isExcl ? '✕' : '·'}</span> <span role="button" tabindex="0" title="use as query — lead hop (creates a child round)" style="cursor:pointer; font-size:0.85rem; opacity:0.45;" onclick="event.stopPropagation(); hitAsQuery('${molId}')" onkeydown="if(event.key==='Enter'){event.stopPropagation(); hitAsQuery('${molId}')}">⇄</span></td>`
         : '<td></td>';
       tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}${flexBadge}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
@@ -3145,6 +3239,7 @@ function rdkitAvailable() {
     document.getElementById('searchResultStatus').textContent =
       statusMsg + (rows.length > cap ? ` · showing top ${cap}` : '');
     renderWorkSet();
+    renderQueryHistory();
   }
 
   function loadSearchRow(e, alignedSdf, pharm) {

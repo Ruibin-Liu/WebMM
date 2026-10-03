@@ -117,6 +117,35 @@ async function newPage(b) {
     await pg.close();
   }
 
+  // ---------- Session C': lead hopping AFTER M1c (hit-as-query) ----------
+  {
+    const pg = await newPage(b);
+    let actions = 0; const t0 = Date.now(); let tShort = null;
+    const act = () => actions++;
+    await pg.evaluate(() => { switchMode('search'); loadDemoLibrary(); }); act(); act();
+    await pg.waitForFunction(() => document.getElementById('searchStatus').textContent.includes('55'), null, { timeout: 60000 });
+    await pg.evaluate(() => {
+      document.getElementById('searchMode').value = 'shape'; onSearchModeChange();
+      document.getElementById('searchQuery').value = 'CC(C)Cc1ccc(C(C)C(=O)O)cc1'; runSearch();
+    }); act(); act(); act();
+    await pg.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+    const r1 = await pg.evaluate(() => [...document.querySelectorAll('#searchRows tr')].slice(0, 3).map(tr => tr.children[1].textContent.trim()));
+    // ONE-ACTION lead hop via ⇄
+    await pg.evaluate(() => document.querySelectorAll('#searchRows tr')[1].querySelector('span[onclick*=hitAsQuery]').click()); act();
+    await pg.waitForFunction(() => {
+      const es = [...document.querySelectorAll('#queryHistoryPanel div[onclick]')];
+      return es.length >= 2 && es[es.length - 1].textContent.includes('↳');
+    }, null, { timeout: 300000 });
+    const r2 = await pg.evaluate(() => [...document.querySelectorAll('#searchRows tr')].slice(0, 5).map(tr => tr.children[1].textContent.trim()));
+    tShort = Date.now() - t0;
+    out.C_prime_hit_as_query = {
+      actions, wall_s: +((Date.now() - t0) / 1000).toFixed(1), time_to_shortlist_s: +(tShort / 1000).toFixed(1),
+      round1_top3: r1, round2_top5: r2, overlap_top5: r2.filter(x => r1.includes(x)).length,
+      hop_actions: 1, hop_via: r1[1],
+    };
+    await pg.close();
+  }
+
   await b.close();
   console.log(JSON.stringify(out, null, 1));
 })().catch(e => { console.error('BASELINE ERR', e.message); process.exit(1); });

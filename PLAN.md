@@ -1,6 +1,34 @@
-# Plan: M1b — 现有标签上的甄别覆盖层(pin/exclude/备注/撤销)(explore/lbdd-platform)
+# Plan: M1c — 轮次 DAG + hit-as-query + 血缘视图(explore/lbdd-platform)
 
-> M0/M1a 已完成(见 git 历史);本 PLAN 为 M1b 实施轮。
+> M0/M1a/M1b 已完成(见 git 历史);本 PLAN 为 M1c 实施轮(M1 收口)。
+
+## 范围
+
+每次检索 = CreateRound 命令入 DAG(spec 从 DOM 读,含 mode/query/
+threshold/confs/flex);行级 ⇄ hit-as-query 一次动作建子轮(基线 C
+的 11 动作 → 1);血缘面板(缩进树,点击重执行,reload 持久);
+批量表/pharm 面板不入轮(文档化)。分数列为 L3 事实持久化留给 M2
+溯源列。
+
+## 实施记录
+
+1. recordSearchRound(四个检索完成点接线:sim/sub/shape×2)
+2. hitAsQuery(molId):设父边+查询+runSearch;⇄ 图标挂甄别列
+   (stopPropagation 防行点击)
+3. renderQueryHistory:深度缩进血缘,↳ 子轮,当前轮 ◂ 标记,
+   末 12 条;rerunRound 保 DAG 位置重执行
+4. 库装载/恢复后渲染血缘(与 renderWorkSet 同点)
+
+## 验收结果
+
+- 浏览器实测:round1 入史+⇄ 在位;⇄ 一次点击 → ↳ 子轮 + 查询
+  自动设为命中;**reload 后 DAG 持久**(命令日志);rerun 重执行
+- m5 **53/53**(+4);六套件 37/10/11/10/32/53 全绿;平台 33/33;
+  零 page error
+- **基线 C' 复测**:同会话 6 动作(旧 11),hop 本身 = **1 动作**,
+  墙钟 8.6→8.3s,top5 重叠不变(3/5)——成功判据 C 达成 ✓
+- 实施教训:探针方法错误一次(chromium.launch 每次全新临时 profile,
+  IndexedDB 不跨浏览器进程——持久化只能同浏览器内 reload 验证)
 > 在表格固化语义前先验证甄别语义(v0.5 §5)。
 
 ## 范围

@@ -216,6 +216,50 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
     ':' + document.querySelector('#searchRows tr').children[5].textContent);
   check('weights back at 1.0: default results unchanged (zero drift)', defTop === 'ibuprofen:100.0%', defTop);
 
+  // ---- M1c rounds: DAG + hit-as-query + lineage persistence ----
+  console.log('rounds / hit-as-query:');
+  await page.evaluate(() => {
+    document.getElementById('searchMode').value = 'shape'; onSearchModeChange();
+    document.getElementById('searchQuery').value = 'CC(C)Cc1ccc(C(C)C(=O)O)cc1'; runSearch();
+  });
+  await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+  const hist1 = await page.evaluate(() => ({
+    shown: document.getElementById('queryHistoryPanel').style.display !== 'none',
+    entries: [...document.querySelectorAll('#queryHistoryPanel div[onclick]')].length,
+    hasSwap: !!document.querySelector('#searchRows tr span[onclick*=hitAsQuery]'),
+  }));
+  check('search records a round; lineage panel + ⇄ action present',
+    hist1.shown && hist1.entries >= 1 && hist1.hasSwap, JSON.stringify(hist1));
+  // ONE-ACTION lead hop (baseline C: 11 actions)
+  await page.evaluate(() => document.querySelectorAll('#searchRows tr')[1].querySelector('span[onclick*=hitAsQuery]').click());
+  await page.waitForFunction(() => {
+    const es = [...document.querySelectorAll('#queryHistoryPanel div[onclick]')];
+    return es.length >= 2 && es[es.length - 1].textContent.includes('↳') && document.getElementById('searchQuery').value.includes('COc1ccc');
+  }, null, { timeout: 300000 });
+  const hop = await page.evaluate(() => ({
+    entries: [...document.querySelectorAll('#queryHistoryPanel div[onclick]')].map(d => d.textContent.trim()),
+    query: document.getElementById('searchQuery').value,
+  }));
+  check('hit-as-query = ONE action, child round indented (↳), query set to the hit',
+    hop.entries.length >= 2 && hop.entries[hop.entries.length - 1].includes('↳') && hop.query.includes('COc1ccc'), JSON.stringify(hop.entries));
+  // reload: the DAG persists
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
+  await page.waitForFunction(() => window.webmm !== undefined, null, { timeout: 60000 });
+  await page.evaluate(() => switchMode('search'));
+  await page.waitForFunction(() => document.getElementById('searchStatus').textContent.includes('restored'), null, { timeout: 30000 });
+  const histReload = await page.evaluate(() => [...document.querySelectorAll('#queryHistoryPanel div[onclick]')].map(d => d.textContent.trim()));
+  check('lineage persists across reload via the command log',
+    histReload.length >= 2 && histReload.some(x => x.includes('↳')), JSON.stringify(histReload));
+  // rerun a historical round — the LAST entry is the ↳ shape child
+  // (history[0] may be a sim round whose completion status is 'at T', not 'sorted by combo')
+  await page.evaluate(() => {
+    const es = [...document.querySelectorAll('#queryHistoryPanel div[onclick]')];
+    es[es.length - 1].click();
+  });
+  await page.waitForFunction(() => /sorted by combo/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 300000 });
+  check('rerun from history re-executes the round query', true);
+
   // ---- M1b triage overlay (pin/exclude/notes/undo, platform store) ----
   console.log('triage overlay:');
   // restore any leftover pin state from previous runs of this suite is fine —
