@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**投影位点法完成(v1.8.0→v1.9.0,Color T 打分语义变更):donor 投影至氢实位、acceptor 沿孤对 1.0 Å(羰基反轴/角平分线反向,逐构象重算),引擎 sites JSON additive "off";色重叠获得方向敏感性,Features 球有指向。320 测试、六套件全绿。剩余按需项:GFN-FF MD EEQ 提速、setup-qloop、2D CV、flex 与投影的协同量化。**
+**Review 轮完成:抓到并修复 v1.9.0 唯一真缺陷——芳香 sp2 N 受体误投影(分类顺序:重键外延误优先于邻居数,吡啶型 N 偏 ~60°);修后吡啶 N 投影背向环心 180.0°、aspirin 不变、六套件全绿 37/10/11/10/32/44。其余 review 面(flex/pharmMatch/约束/Kabsch/零漂移)核实无恙。**
 
+## Recently Completed
++- **Review 轮 + 芳香 N 投影热修(v1.9.0 后自查,用户驱动)。** 四轮改动(v1.6.5 色权重→v1.9.0 投影)系统自查,发现一个真缺陷:**projFor 分类顺序错误**——"重键→轴外延"优先于邻居数判定,而模板 SDF 实测携带 Kekulé 双键与 type-4 芳香键(咖啡因 N-C:4 证实),导致吡啶/嘧啶/咪唑型 2 配位芳香 N 被投影到一条 C-N 键轴延长线(孤对实际指向环面内角平分线,偏差 ~60°——含芳香 N 的药物分子色分全部带病)。修复:邻居数优先——≥2 邻居取全部取代基单位向量和的负向(2 邻居=角平分线 ✓,3 邻居=对称背向取代基云),仅单邻居重键(羰基/硝基/腈)保留轴外延;sitePos 加退化守卫(|Σû|<0.1 回退原子中心)。验证:吡啶 N 投影与"指向环心"向量反平行(180.0°=背向环心,方向正确);aspirin 2ext(羰基)+2nb(酯/羟)不受影响;吡啶/嘧啶/1-甲基咪唑全部转 NB;六套件全绿 37/10/11/10/32/44。附带核实无恙:flex 五 coords 调用点/identity pharmMatch、pharmMatch 逐构象重算、m4 cancel 加固、Kabsch 确定性、色权重×投影正交、全部零漂移路径逐位保持;记录:3 配位甲基芳 N 入受体集为 v1.5.0 既有宽口径(Jaccard 0.86 文档化),其投影现为对称 nb(3);模板 SDF 含 type-4 芳香键入库为知识。
 ## Recently Completed
 +- **投影位点法(v1.9.0,Color T 打分语义变更立项;调研→实施一气呵成)。** 调研结论(知识库+aspirin 夹具实证,外部工具未登录已注明):ROCS 隐氢 donor 投影缺氢位置 ~1 Å(显氢模式@H 原子)、默认 acceptor 原子中心;LigandScout donor@H+acceptor@孤对;Catalyst 2.4-3 Å 搭档位置是口袋查询口径不适用叠合打分。采纳 LigandScout 式双投影(我们显氢构象 donor 零几何估计,只有 acceptor 需虚拟几何)。引擎:parse_sites 原子位点可选 "off":[dx,dy,dz](c=atom.c+off;α 仍取锚原子保守;ring 不变;无 off 逐位零漂移)。app:colorSites 增键级邻接(提升至函数首——projFor const TDZ 实施教训),donor/acceptor 位点带 proj{h:氢索引|ext:重键邻居|nb:角平分线对}——sitePos 逐构象重算(不烘焙绝对坐标,构象精确),pharmMatch/药效团编辑器/Features 可视化自动获得投影位置;sitesToEngineJson 五调用点接 coords 发 off(1e-6)。**验证实验(aspirin 查询,原子中心→投影)**:自匹配 100.0 恒;方向不一致对受罚(salicylic 55.6→39.8、benzocaine 32.6→25.5)——即方向敏感性语义;方向一致不受罚(ibuprofen 15.2→15.6);与 flex 精修协同(torsional 对齐方向可追回)。Features 球有指向(donor 球在氢上/acceptor 球在孤对侧),title 语义更新。验收:320 测试(+1)、clippy 0、fmt、v1.9.0 双重建 node 冒烟(off 自对齐 1.000000/交叉 0.4493);m5 44/44(+3 投影语义断言;±1.5 Å 药效团容差吸收位移、命中集不变)、六套件全绿 37/10/11/10/32/44;390px;零 page error。
 ## Recently Completed

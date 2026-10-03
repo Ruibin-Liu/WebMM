@@ -2207,16 +2207,18 @@ function rdkitAvailable() {
         return hs.length ? { h: hs } : null;
       }
       if (type === 'acceptor') {
-        // multiple bond to a neighbor: project along the axis, away from it
-        for (const j of adj[idx]) {
-          if ((bondOrd.get(idx + ',' + j) || 1) >= 2) return { ext: j };
+        // NEIGHBOR COUNT decides first: 2+ substituents always take the
+        // negated sum of the substituent directions (the bisector for two,
+        // symmetric away-from-substituents for three). Kekulé/aromatic bond
+        // orders must NOT route 2-coordinate aromatic N (pyridine) onto a
+        // bond-axis extension — its lone pair points along the in-plane
+        // bisector, away from the ring center.
+        if (adj[idx].length >= 2) return { nb: adj[idx].slice() };
+        if (adj[idx].length === 1) {
+          // terminal atom: carbonyl O / nitro O / nitrile N — extend the
+          // (multiple-)bond axis away from the single neighbor
+          return { ext: adj[idx][0] };
         }
-        if (adj[idx].length >= 2) {
-          // sp3/sp2 with 2+ substituents: opposite the bisector (ether O,
-          // hydroxyl O with C+H, aromatic N)
-          return { nb: [adj[idx][0], adj[idx][1]] };
-        }
-        if (adj[idx].length === 1) return { ext: adj[idx][0] };  // nitrile N
         return null;
       }
       return null;
@@ -2300,14 +2302,17 @@ function rdkitAvailable() {
         const n = Math.hypot(dx, dy, dz) || 1;
         p = [ax + PROJ_DIST * dx / n, ay + PROJ_DIST * dy / n, az + PROJ_DIST * dz / n];
       } else if (s.proj.nb) {
-        const [j, k] = s.proj.nb;
-        let ux = coords[j * 3] - ax, uy = coords[j * 3 + 1] - ay, uz = coords[j * 3 + 2] - az;
-        let un = Math.hypot(ux, uy, uz) || 1; ux /= un; uy /= un; uz /= un;
-        let vx = coords[k * 3] - ax, vy = coords[k * 3 + 1] - ay, vz = coords[k * 3 + 2] - az;
-        let vn = Math.hypot(vx, vy, vz) || 1; vx /= vn; vy /= vn; vz /= vn;
-        let dx = -(ux + vx), dy = -(uy + vy), dz = -(uz + vz);
-        const n = Math.hypot(dx, dy, dz) || 1;
-        p = [ax + PROJ_DIST * dx / n, ay + PROJ_DIST * dy / n, az + PROJ_DIST * dz / n];
+        // negated sum of ALL substituent unit vectors: the bisector for two
+        // neighbors, symmetric away-from-substituents for three
+        let dx = 0, dy = 0, dz = 0;
+        for (const j of s.proj.nb) {
+          let ux = coords[j * 3] - ax, uy = coords[j * 3 + 1] - ay, uz = coords[j * 3 + 2] - az;
+          const un = Math.hypot(ux, uy, uz) || 1;
+          dx += ux / un; dy += uy / un; dz += uz / un;
+        }
+        const n = Math.hypot(dx, dy, dz);
+        if (n < 0.1) { p = [ax, ay, az]; }   // symmetric/degenerate: stay on the atom
+        else p = [ax - PROJ_DIST * dx / n, ay - PROJ_DIST * dy / n, az - PROJ_DIST * dz / n];
       } else {
         p = [ax, ay, az];
       }
