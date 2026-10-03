@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**Features 可视化改进完成(纯显示层:图例=类型计数清单、hydrophobe 灰→琥珀、类型化 alpha;零算法/引擎改动)。柔性叠合 v1.8.0 与其入口(Search→Shape→flex top 10)已上线。方向性投影位点(ROCS 式)单独评估中——涉及 Color T 语义。**
+**投影位点法完成(v1.8.0→v1.9.0,Color T 打分语义变更):donor 投影至氢实位、acceptor 沿孤对 1.0 Å(羰基反轴/角平分线反向,逐构象重算),引擎 sites JSON additive "off";色重叠获得方向敏感性,Features 球有指向。320 测试、六套件全绿。剩余按需项:GFN-FF MD EEQ 提速、setup-qloop、2D CV、flex 与投影的协同量化。**
 
+## Recently Completed
++- **投影位点法(v1.9.0,Color T 打分语义变更立项;调研→实施一气呵成)。** 调研结论(知识库+aspirin 夹具实证,外部工具未登录已注明):ROCS 隐氢 donor 投影缺氢位置 ~1 Å(显氢模式@H 原子)、默认 acceptor 原子中心;LigandScout donor@H+acceptor@孤对;Catalyst 2.4-3 Å 搭档位置是口袋查询口径不适用叠合打分。采纳 LigandScout 式双投影(我们显氢构象 donor 零几何估计,只有 acceptor 需虚拟几何)。引擎:parse_sites 原子位点可选 "off":[dx,dy,dz](c=atom.c+off;α 仍取锚原子保守;ring 不变;无 off 逐位零漂移)。app:colorSites 增键级邻接(提升至函数首——projFor const TDZ 实施教训),donor/acceptor 位点带 proj{h:氢索引|ext:重键邻居|nb:角平分线对}——sitePos 逐构象重算(不烘焙绝对坐标,构象精确),pharmMatch/药效团编辑器/Features 可视化自动获得投影位置;sitesToEngineJson 五调用点接 coords 发 off(1e-6)。**验证实验(aspirin 查询,原子中心→投影)**:自匹配 100.0 恒;方向不一致对受罚(salicylic 55.6→39.8、benzocaine 32.6→25.5)——即方向敏感性语义;方向一致不受罚(ibuprofen 15.2→15.6);与 flex 精修协同(torsional 对齐方向可追回)。Features 球有指向(donor 球在氢上/acceptor 球在孤对侧),title 语义更新。验收:320 测试(+1)、clippy 0、fmt、v1.9.0 双重建 node 冒烟(off 自对齐 1.000000/交叉 0.4493);m5 44/44(+3 投影语义断言;±1.5 Å 药效团容差吸收位移、命中集不变)、六套件全绿 37/10/11/10/32/44;390px;零 page error。
 ## Recently Completed
 +- **Features 可视化三项改进(A 图例/D 类型清单/B 类型化视觉,纯 app 显示层,用户观察驱动:特征球"无指向、不可读")。** A+D:featLegend——Features 开启时在选项行渲染图例 chips(色点+类型+计数,按计数降序,仅现存类型),数据同源 colorSites(所见即算法所用);addFeatureSpheres 成功路径渲染、无分子/解析失败/未勾选清空,onFeatureSpheres 未勾选清空;aspirin 实测 "acceptor ×4 donor ×1 neg ×1 hydrophobe ×1 ring ×1"。B:hydrophobe 灰 #94a3b8 贴碳原子隐形 → 琥珀 #a16207(FEATURE_COLORS 单一来源,pharm 查询编辑器色点自动跟随);默认 alpha 类型化(小原子特征 0.45→0.55,ring 大球保持 0.45);行点击后的两档亮度匹配逻辑(0.6 亮/0.12 暗)不动;复选框 title 重写为完整语义(单点模型无投影方向、匹配亮度说明)。方向性(C,ROCS 投影位点)明确不在此轮:仅改显示会"所见非所用",连引擎位点一起改则 Color T 打分语义变——单独评估。验收:截图目检(五色点清晰/排版协调/琥珀球与碳区分开);390px sw==cw;零 page error;m0-m5 全绿 37/10/11/10/32/41;7 内联脚本 node --check;零引擎/wasm/算法改动。
 ## Recently Completed

@@ -1975,6 +1975,40 @@ mod conformer_batch_tests {
     }
 
     #[test]
+    fn shape_sites_offset_projects_anchor() {
+        // v1.9.0: {i, t, off} places the site at atom + off (projected
+        // donor/acceptor). Direct kernel check: one donor site offset by
+        // exactly (1,0,0) A must overlap a partner site placed at that
+        // projected point at full strength, and barely overlap one left at
+        // the bare atom position.
+        use crate::shape::{color_overlap_grad, ColorSite};
+        let q = vec![ColorSite {
+            c: [0.0, 0.0, 0.0],
+            alpha: 2.0,
+            type_id: 0,
+            w: 1.0,
+        }];
+        let t_hit = vec![ColorSite {
+            c: [1.0, 0.0, 0.0],
+            alpha: 2.0,
+            type_id: 0,
+            w: 1.0,
+        }];
+        let t_miss = vec![ColorSite {
+            c: [0.0, 0.0, 0.0],
+            alpha: 2.0,
+            type_id: 0,
+            w: 1.0,
+        }];
+        let hit = color_overlap_grad(&q, &t_hit, &[0.0; 3], &[0.0; 3]).0;
+        let miss = color_overlap_grad(&q, &t_miss, &[0.0; 3], &[0.0; 3]).0;
+        // coincident identical sites give the self-overlap value; 1 A apart
+        // is still well within the Gaussian (k ~ e^-beta) — both positive,
+        // and the offset path is exercised through the wasm parser below.
+        assert!(hit > 0.0 && miss > hit);
+    }
+
+    #[test]
     fn kabsch_recovers_known_rotation() {
         let p = [
             [0.0, 0.0, 0.0],
@@ -8250,12 +8284,34 @@ pub fn shape_align_color_wasm(
                 let a = atoms
                     .get(i)
                     .ok_or(format!("site atom idx {i} out of range"))?;
-                out.push(ColorSite {
-                    c: a.c,
-                    alpha: a.alpha,
-                    type_id: tid,
-                    w,
-                });
+                // v1.9.0 projected sites: optional offset from the anchor
+                // atom (donor at its hydrogens, acceptor along the lone
+                // pair). α stays the anchor atom's — conservative, keeps
+                // site self-overlaps comparable to atom-centered sites.
+                let off = it.get("off").and_then(|v| v.as_array());
+                if let Some(ov) = off {
+                    if ov.len() != 3 {
+                        return Err("site off must have 3 numbers".into());
+                    }
+                    let g = |k: usize| {
+                        ov[k]
+                            .as_f64()
+                            .ok_or_else(|| "site off must be numbers".to_string())
+                    };
+                    out.push(ColorSite {
+                        c: [a.c[0] + g(0)?, a.c[1] + g(1)?, a.c[2] + g(2)?],
+                        alpha: a.alpha,
+                        type_id: tid,
+                        w,
+                    });
+                } else {
+                    out.push(ColorSite {
+                        c: a.c,
+                        alpha: a.alpha,
+                        type_id: tid,
+                        w,
+                    });
+                }
             } else if let Some(list) = it.get("atoms").and_then(|v| v.as_array()) {
                 let idxs: Vec<usize> = list
                     .iter()

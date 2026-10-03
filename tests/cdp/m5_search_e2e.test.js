@@ -216,6 +216,32 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
     ':' + document.querySelector('#searchRows tr').children[5].textContent);
   check('weights back at 1.0: default results unchanged (zero drift)', defTop === 'ibuprofen:100.0%', defTop);
 
+  // ---- projected color sites (v1.9.0) ----
+  console.log('projected color sites:');
+  const proj = await page.evaluate(() => {
+    const m = rdkitModule.get_mol('CC(=O)Oc1ccccc1C(=O)O');
+    const mb = m.get_molblock(); m.delete();
+    const r = window.webmm.generate_optimized_conformers_wasm(mb, 1, BigInt(7), 'MMFF94s', 250);
+    const sdf = buildSdfFromCoords(r.get_coordinates(), r.get_template_sdf());
+    const sm = rdkitModule.get_mol(sdf);
+    const sites = colorSites(sdf, sm); sm.delete();
+    const json = sitesToEngineJson(sites, null, sdfCoords(sdf));
+    return {
+      donors: sites.filter(x => x.type === 'donor').length,
+      donorsAtH: sites.filter(x => x.type === 'donor' && x.proj && x.proj.h).length,
+      acceptors: sites.filter(x => x.type === 'acceptor').length,
+      acceptorsProj: sites.filter(x => x.type === 'acceptor' && x.proj).length,
+      offLen: json.filter(x => x.off).length,
+      offNorm: json.filter(x => x.off).every(x => Math.hypot(...x.off) > 0.5 && Math.hypot(...x.off) < 1.5),
+      // unprojected types must stay atom-centered (zero drift for them)
+      hydroAtAtom: sites.filter(x => x.type === 'hydrophobe').every(x => !x.proj),
+    };
+  });
+  check('aspirin: every donor site projected onto its hydrogens', proj.donors >= 1 && proj.donors === proj.donorsAtH, JSON.stringify(proj).slice(0, 90));
+  check('aspirin: every acceptor site carries a lone-pair projection', proj.acceptors >= 3 && proj.acceptors === proj.acceptorsProj);
+  check('engine JSON carries ~1 A offsets; hydrophobe/ring stay atom-centered',
+    proj.offLen === proj.donors + proj.acceptors && proj.offNorm && proj.hydroAtAtom);
+
   // ---- flexible alignment (v1.8.0) ----
   console.log('flexible alignment:');
   const flexUI = await page.evaluate(() => ({

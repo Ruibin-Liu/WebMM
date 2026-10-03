@@ -1110,7 +1110,7 @@ details {
      <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
        <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
          <input type="checkbox" id="chargeColor" disabled> Color atoms by partial charge
-         <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" title="Pharmacophore features (same sites the shape Color T / pharmacophore screen use): red donor, blue acceptor, purple positive, orange negative, amber hydrophobe, yellow-green ring centroid. Sites sit at atom centers (single-point model, no projected direction). After a shape-search row click: bright = matched to the query, dim = unmatched."> Features
+         <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" title="Pharmacophore features (same sites the shape Color T / pharmacophore screen use): red donor, blue acceptor, purple positive, orange negative, amber hydrophobe, yellow-green ring centroid. Donor spheres sit at the hydrogens, acceptor spheres ~1 A along the lone-pair direction (ROCS-style projected features); hydrophobe/charge at atoms, ring at centroid. After a shape-search row click: bright = matched to the query, dim = unmatched."> Features
          <span id="featLegend" class="hint" style="display:inline-flex; gap:0.55rem; flex-wrap:wrap;"></span>
          <span title="blue = positive, red = negative; white = neutral" style="display:inline-flex; gap:2px;">
            <span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
@@ -2174,12 +2174,54 @@ function rdkitAvailable() {
 
   /// Perceive color feature sites on a molblock (H-count SMARTS see both
   /// implicit and explicit hydrogens, so 3D and 2D inputs both work).
+  const PROJ_DIST = 1.0;  // Å — donor at H / acceptor along the lone pair
+
   function colorSites(mb, m) {
     const sites = [];
     const add = (idx, type) => {
       const el = elementOfMolblock(mb, idx);
       sites.push({ i: idx, type, alpha: COLOR_ALPHA[el] || COLOR_ALPHA.C });
     };
+
+    const lines = mb.split('\n');
+    const na = parseInt((lines[3] || '').substring(0, 3)) || 0;
+    const nb = parseInt((lines[3] || '').substring(3, 6)) || 0;
+    const adj = Array.from({ length: na }, () => []);
+    const bondOrd = new Map();   // "i,j" -> order (min if listed twice)
+    for (let i = 4 + na; i < 4 + na + nb && i < lines.length; i++) {
+      const l = lines[i] || '';
+      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
+      const o = parseInt(l.substring(6, 9)) || 1;
+      if (a >= 0 && b >= 0 && a < na && b < na) {
+        adj[a].push(b); adj[b].push(a);
+        bondOrd.set(a + ',' + b, o); bondOrd.set(b + ',' + a, o);
+      }
+    }
+    const elOf = i => ((lines[4 + i] || '').substring(31, 34) || '').trim();
+    // v1.9.0 projected H-bond features (ROCS/LigandScout-style short
+    // projection): donor at its hydrogens, acceptor ~1 Å along the lone
+    // pair — recomputed from coords at every use (conformer-exact).
+    const projFor = (idx, type) => {
+      if (type === 'donor') {
+        const hs = adj[idx].filter(j => elOf(j) === 'H');
+        return hs.length ? { h: hs } : null;
+      }
+      if (type === 'acceptor') {
+        // multiple bond to a neighbor: project along the axis, away from it
+        for (const j of adj[idx]) {
+          if ((bondOrd.get(idx + ',' + j) || 1) >= 2) return { ext: j };
+        }
+        if (adj[idx].length >= 2) {
+          // sp3/sp2 with 2+ substituents: opposite the bisector (ether O,
+          // hydroxyl O with C+H, aromatic N)
+          return { nb: [adj[idx][0], adj[idx][1]] };
+        }
+        if (adj[idx].length === 1) return { ext: adj[idx][0] };  // nitrile N
+        return null;
+      }
+      return null;
+    };
+    // hydrophobe: C/halogen whose heavy neighbors are all C/halogen (graph rule)
     for (const [type, patterns] of Object.entries(COLOR_Q)) {
       for (const sma of patterns) {
         let q = null;
@@ -2194,20 +2236,14 @@ function rdkitAvailable() {
             // is the last atom of the acid pattern)
             const idx = type === 'neg' && mt.atoms.length === 3 ? mt.atoms[2] : mt.atoms[0];
             add(idx, type);
+            if (type === 'donor' || type === 'acceptor') {
+              const proj = projFor(idx, type);
+              if (proj) sites[sites.length - 1].proj = proj;
+            }
           }
         }
         q.delete();
       }
-    }
-    // hydrophobe: C/halogen whose heavy neighbors are all C/halogen (graph rule)
-    const lines = mb.split('\n');
-    const na = parseInt((lines[3] || '').substring(0, 3)) || 0;
-    const nb = parseInt((lines[3] || '').substring(3, 6)) || 0;
-    const adj = Array.from({ length: na }, () => []);
-    for (let i = 4 + na; i < 4 + na + nb && i < lines.length; i++) {
-      const l = lines[i] || '';
-      const a = parseInt(l.substring(0, 3)) - 1, b = parseInt(l.substring(3, 6)) - 1;
-      if (a >= 0 && b >= 0 && a < na && b < na) { adj[a].push(b); adj[b].push(a); }
     }
     for (let i = 0; i < na; i++) {
       const el = ((lines[4 + i] || '').substring(31, 34) || '').trim();
@@ -2249,7 +2285,33 @@ function rdkitAvailable() {
 
   function sitePos(s, coords, transform) {
     let p;
-    if (s.type === 'ring' && s.ring) {
+    if (s.proj) {
+      // projected feature, recomputed from the CURRENT coords (conformer-
+      // exact): donor = mean of its hydrogens; acceptor = PROJ_DIST along
+      // the lone-pair direction (axis extension or bisector negated)
+      const ax = coords[s.i * 3], ay = coords[s.i * 3 + 1], az = coords[s.i * 3 + 2];
+      if (s.proj.h) {
+        let x = 0, y = 0, z = 0;
+        for (const j of s.proj.h) { x += coords[j * 3]; y += coords[j * 3 + 1]; z += coords[j * 3 + 2]; }
+        p = [x / s.proj.h.length, y / s.proj.h.length, z / s.proj.h.length];
+      } else if (s.proj.ext != null) {
+        const j = s.proj.ext;
+        let dx = ax - coords[j * 3], dy = ay - coords[j * 3 + 1], dz = az - coords[j * 3 + 2];
+        const n = Math.hypot(dx, dy, dz) || 1;
+        p = [ax + PROJ_DIST * dx / n, ay + PROJ_DIST * dy / n, az + PROJ_DIST * dz / n];
+      } else if (s.proj.nb) {
+        const [j, k] = s.proj.nb;
+        let ux = coords[j * 3] - ax, uy = coords[j * 3 + 1] - ay, uz = coords[j * 3 + 2] - az;
+        let un = Math.hypot(ux, uy, uz) || 1; ux /= un; uy /= un; uz /= un;
+        let vx = coords[k * 3] - ax, vy = coords[k * 3 + 1] - ay, vz = coords[k * 3 + 2] - az;
+        let vn = Math.hypot(vx, vy, vz) || 1; vx /= vn; vy /= vn; vz /= vn;
+        let dx = -(ux + vx), dy = -(uy + vy), dz = -(uz + vz);
+        const n = Math.hypot(dx, dy, dz) || 1;
+        p = [ax + PROJ_DIST * dx / n, ay + PROJ_DIST * dy / n, az + PROJ_DIST * dz / n];
+      } else {
+        p = [ax, ay, az];
+      }
+    } else if (s.type === 'ring' && s.ring) {
       let x = 0, y = 0, z = 0;
       for (const i of s.ring) {
         x += coords[i * 3]; y += coords[i * 3 + 1]; z += coords[i * 3 + 2];
@@ -2315,7 +2377,7 @@ function rdkitAvailable() {
   }
 
   /// Page sites → engine sites JSON ([{i,t}...] + [{atoms,t:"ring"}]).
-  function sitesToEngineJson(sites, weights) {
+  function sitesToEngineJson(sites, weights, coords) {
     const out = [];
     for (const s of sites) {
       // per-type weight u -> site w = sqrt(u): the engine's pair factor is
@@ -2323,7 +2385,18 @@ function rdkitAvailable() {
       const u = weights ? (weights[s.type] ?? 1) : 1;
       const w = Math.sqrt(Math.max(0, u));
       if (s.type === 'ring' && s.ring) out.push({ atoms: s.ring, t: 'ring', w: +w.toFixed(6) });
-      else if (s.i >= 0) out.push({ i: s.i, t: s.type, w: +w.toFixed(6) });
+      else if (s.i >= 0) {
+        const entry = { i: s.i, t: s.type, w: +w.toFixed(6) };
+        // v1.9.0: projected sites carry their offset from the anchor atom
+        // (donor at its H, acceptor along the lone pair); absent off = the
+        // engine's atom-centered legacy position (bit-identical)
+        if (s.proj && coords) {
+          const p = sitePos(s, coords);
+          const ax = coords[s.i * 3], ay = coords[s.i * 3 + 1], az = coords[s.i * 3 + 2];
+          entry.off = [+(p[0] - ax).toFixed(6), +(p[1] - ay).toFixed(6), +(p[2] - az).toFixed(6)];
+        }
+        out.push(entry);
+      }
     }
     return out;
   }
@@ -2413,7 +2486,7 @@ function rdkitAvailable() {
       }
     } catch (e) { qSites = null; }
     const cw = colorWeights();
-    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites, cw)) : '';
+    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites, cw, qCoordsCache)) : '';
     let candidates = searchLibrary;
     let t1, screenMs = 0;
 
@@ -2453,7 +2526,7 @@ function rdkitAvailable() {
           if (tm && tm.is_valid()) {
             const tSites = e.sites || (e.sites = colorSites(esdf, tm));
             tm.delete();
-            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites, cw));
+            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites, cw, sdfCoords(esdf)));
           }
         } catch (err) { tSitesJson = ''; }
         // joint shape+color optimization when both sides have sites
@@ -2526,7 +2599,7 @@ function rdkitAvailable() {
       }
     } catch (e) { qSites = null; }
     const cw = colorWeights();
-    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites, cw)) : '';
+    const qSitesJson = qSites && qSites.length ? JSON.stringify(sitesToEngineJson(qSites, cw, qCoordsCache)) : '';
     let qCanon = null;
     try {
       const qm = rdkitModule.get_mol(q);
@@ -2663,7 +2736,7 @@ function rdkitAvailable() {
           if (tm && tm.is_valid()) {
             const tSites = confs[ci].sites || (confs[ci].sites = colorSites(esdf, tm));
             tm.delete();
-            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites, cw));
+            if (tSites.length) tSitesJson = JSON.stringify(sitesToEngineJson(tSites, cw, sdfCoords(esdf)));
           }
         } catch (err) { tSitesJson = ''; }
         jobs.push({ e, confs, ci, esdf, tSitesJson, useColor: !!(qSitesJson && tSitesJson) });
@@ -2839,8 +2912,8 @@ function rdkitAvailable() {
         const useColor = !!(qSites && qSites.length && tSites2 && tSites2.length);
         if (useColor) {
           res2 = JSON.parse(window.webmm.shape_align_color_wasm(qSdf, flexed,
-            JSON.stringify(sitesToEngineJson(qSites, cw)),
-            JSON.stringify(sitesToEngineJson(tSites2, cw)), ''));
+            JSON.stringify(sitesToEngineJson(qSites, cw, qCoordsCache)),
+            JSON.stringify(sitesToEngineJson(tSites2, cw, sdfCoords(flexed))), ''));
         } else {
           res2 = JSON.parse(window.webmm.shape_align_wasm(qSdf, flexed, ''));
         }
