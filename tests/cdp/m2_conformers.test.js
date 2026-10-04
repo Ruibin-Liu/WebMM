@@ -3,7 +3,7 @@
 const { chromium } = require('/opt/homebrew/lib/node_modules/playwright');
 const fs = require('fs');
 
-const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell';
+const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 
 setTimeout(() => { console.log('WATCHDOG: test exceeded 420s'); process.exit(2); }, 420000);
 (async () => {

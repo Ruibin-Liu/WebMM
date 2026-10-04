@@ -2,7 +2,7 @@
 // conformer chart keyboard navigation. Run: node m3_site_nav.test.js
 const { chromium } = require('/opt/homebrew/lib/node_modules/playwright');
 const AXE = '/opt/homebrew/lib/node_modules/axe-core/axe.min.js';
-const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell';
+const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 
 (async () => {
   const browser = await chromium.launch({ executablePath: EXE });

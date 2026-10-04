@@ -11,7 +11,7 @@
 const { chromium } = require('/opt/homebrew/lib/node_modules/playwright');
 const fs = require('fs');
 const path = require('path');
-const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell';
+const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 const REFS = JSON.parse(fs.readFileSync(path.join(__dirname, '../fixtures/lbdd/search_refs.json'), 'utf8'));
 const RGD = JSON.parse(fs.readFileSync(path.join(__dirname, '../fixtures/lbdd/rgd_refs.json'), 'utf8'));
 const ASPIRIN = 'CC(=O)Oc1ccccc1C(=O)O';
@@ -133,6 +133,53 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   check('self-match tops the table at 100.0%', simUI.top === 'aspirin' && simUI.topScore === '100.0%', simUI.top + ' ' + simUI.topScore);
   check('rows sorted by descending Tanimoto', simUI.scores.every((v, i, a) => i === 0 || a[i - 1] >= v), 'n=' + simUI.scores.length);
   check('T ≥ 0.30 threshold respected', simUI.scores.every(v => v >= 30), 'min=' + Math.min(...simUI.scores));
+
+  // ---- property filter layer (MW / cLogP ranges) + PAINS flagging ----
+  console.log('property filter + PAINS flag:');
+  await page.evaluate(() => {
+    document.getElementById('searchThreshold').value = 0;
+    runSearch();
+  });
+  await page.waitForFunction(() => document.querySelectorAll('#searchRows tr').length >= 50, null, { timeout: 30000 });
+  const propFilter = await page.evaluate(() => {
+    const n0 = document.querySelectorAll('#searchRows tr').length;
+    document.getElementById('filterMwMin').value = '200'; renderSearchResultsCurrent();
+    const nMw = document.querySelectorAll('#searchRows tr').length;
+    const fsMw = document.getElementById('filterStatus').textContent;
+    document.getElementById('filterMwMin').value = ''; document.getElementById('filterClogpMax').value = '2'; renderSearchResultsCurrent();
+    const nLp = document.querySelectorAll('#searchRows tr').length;
+    document.getElementById('filterClogpMax').value = ''; renderSearchResultsCurrent();
+    const nBack = document.querySelectorAll('#searchRows tr').length;
+    return { n0, nMw, fsMw, nLp, nBack };
+  });
+  check('MW/cLogP range filters narrow and restore (view-layer)',
+    propFilter.nMw < propFilter.n0 && /filtered by MW\/cLogP/.test(propFilter.fsMw) &&
+    propFilter.nLp <= propFilter.nMw && propFilter.nBack === propFilter.n0,
+    JSON.stringify(propFilter));
+
+  // PAINS flag: pentadiyn-3-one hits ene_one_yne_A (no explicit-H requirement)
+  const painsFlag = await page.evaluate(async () => {
+    const cur = window.__search.getState().map(e => ({ smiles: e.smiles, name: e.name }));
+    cur.push({ smiles: 'C#CC(=O)C#C', name: 'pains-probe' });
+    loadSearchLibraryFrom(cur);
+    await new Promise(r => setTimeout(r, 800));
+    runSearch();
+    await new Promise(r => setTimeout(r, 1500));
+    document.getElementById('filterPainsFlag').checked = true; renderSearchResultsCurrent();
+    const row = [...document.querySelectorAll('#searchRows tr')].find(tr => tr.textContent.includes('pains-probe'));
+    const badge = row ? row.querySelector('.result-badge.fail') : null;
+    const fs = document.getElementById('filterStatus').textContent;
+    document.getElementById('filterPainsFlag').checked = false; renderSearchResultsCurrent();
+    // restore the 55-entry demo library — later sections assert its size
+    loadSearchLibraryFrom(cur.slice(0, -1));
+    await new Promise(r => setTimeout(r, 800));
+    runSearch();
+    await new Promise(r => setTimeout(r, 1500));
+    return { probeRow: !!row, badgeTitle: badge ? badge.title : null, flagged: parseInt(fs) > 0, libBack: (window.__search.getState() || []).length };
+  });
+  check('PAINS flag badges the alerting row (ene_one_yne_A on pentadiyn-3-one)',
+    painsFlag.probeRow && /ene_one_yne_A/.test(String(painsFlag.badgeTitle)) && painsFlag.flagged && painsFlag.libBack === 55,
+    JSON.stringify(painsFlag).slice(0, 120));
 
   // ---- substructure parity ----
   console.log('substructure parity vs search_refs.json:');

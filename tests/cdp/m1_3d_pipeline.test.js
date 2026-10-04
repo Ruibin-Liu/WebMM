@@ -9,7 +9,7 @@ const { chromium } = require('/opt/homebrew/lib/node_modules/playwright');
 const { execSync } = require('child_process');
 const fs = require('fs');
 
-const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell';
+const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 const XTB = process.env.HOME + '/.local/xtb-gxtb/bin/xtb';
 const CAFF_SDF3D = fs.readFileSync('/tmp/caff24.sdf', 'utf8');
 

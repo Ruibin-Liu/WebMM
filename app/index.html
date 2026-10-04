@@ -909,6 +909,10 @@ details {
         <option value="0.8">≥80%</option>
         <option value="1">all</option>
       </select>
+      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Property filter over the result rows (view-layer; MW from the library entry, cLogP computed lazily via Crippen)">MW <input type="number" id="filterMwMin" placeholder="min" min="0" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()">–<input type="number" id="filterMwMax" placeholder="max" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()"></label>
+      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Crippen cLogP range filter">cLogP <input type="number" id="filterClogpMin" placeholder="min" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()">–<input type="number" id="filterClogpMax" placeholder="max" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()"></label>
+      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap; cursor:pointer; display:inline-flex; gap:3px; align-items:center;" title="Flag PAINS alerts (A/B/C catalog from lbdd_data) on the result rows — lazy, first 200 shown rows"><input type="checkbox" id="filterPainsFlag" onchange="renderSearchResultsCurrent()">标 PAINS</label>
+      <span class="hint" id="filterStatus"></span>
       <span id="shapeConfsWrap" style="display:none; white-space:nowrap;">
         <label for="shapeConfs" style="font-size:0.75rem; color:var(--muted);" title="Conformers generated per library entry (best over conformers scores each entry; 1 = single-conformer legacy path)">confs</label>
         <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()">
@@ -1755,6 +1759,54 @@ function rdkitAvailable() {
         _lbddQueries.acceptors.length !== D.qed.acceptors.length)
       console.warn('[lbdd] some catalog SMARTS failed to parse');
     return _lbddQueries;
+  }
+
+
+  // ---- property filter layer (view-level; LigandLab-style candidate triage) ----
+  // MW comes with the library entry; cLogP is computed lazily via Crippen and
+  // cached on the entry; PAINS hits are lazy too (opt-in — the A/B/C catalog
+  // is ~480 SMARTS, so we cap the scan at the first 200 shown rows).
+  const PAINS_FLAG_CAP = 200;
+  function entryClogp(e) {
+    if (e.clogp === undefined) {
+      let m = null;
+      try { m = rdkitModule.get_mol(e.smiles); } catch (err) { m = null; }
+      if (m && m.is_valid()) {
+        try { e.clogp = JSON.parse(m.get_descriptors()).CrippenClogp; } catch (err) { e.clogp = NaN; }
+      } else { e.clogp = NaN; }
+      if (m) m.delete();
+    }
+    return e.clogp;
+  }
+  function entryPains(e) {
+    if (e.pains === undefined) {
+      e.pains = null;
+      let m = null;
+      try { m = rdkitModule.get_mol(e.smiles); } catch (err) { m = null; }
+      if (m && m.is_valid()) {
+        const qs = lbddQueries().pains;
+        let n = 0, first = null;
+        for (const pq of qs) {
+          if (lbddMatchCount(m, pq.q)) { n++; if (!first) first = pq.id; }
+        }
+        if (n) e.pains = { n, first };
+      }
+      if (m) m.delete();
+    }
+    return e.pains;
+  }
+  function activePropFilter() {
+    const num = id => {
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const v = parseFloat(el.value);
+      return isNaN(v) ? null : v;
+    };
+    return {
+      mwMin: num('filterMwMin'), mwMax: num('filterMwMax'),
+      lpMin: num('filterClogpMin'), lpMax: num('filterClogpMax'),
+      painsOn: !!(document.getElementById('filterPainsFlag') && document.getElementById('filterPainsFlag').checked),
+    };
   }
 
   function lbddMatchCount(m, q) {
@@ -3249,6 +3301,24 @@ function rdkitAvailable() {
       const filtered = shown.filter(r => !(r.e && r.e.molId && exclSet.has(r.e.molId)));
       if (filtered.length) shown = filtered;
     }
+    let nPropFiltered = 0;
+    const pf = activePropFilter();
+    if (pf.mwMin != null || pf.mwMax != null || pf.lpMin != null || pf.lpMax != null) {
+      const before = shown.length;
+      shown = shown.filter(r => {
+        const mw = r.e.MW;
+        if (pf.mwMin != null && !(mw >= pf.mwMin)) return false;
+        if (pf.mwMax != null && !(mw <= pf.mwMax)) return false;
+        if (pf.lpMin != null || pf.lpMax != null) {
+          const lp = entryClogp(r.e);
+          if (pf.lpMin != null && !(lp >= pf.lpMin)) return false;
+          if (pf.lpMax != null && !(lp <= pf.lpMax)) return false;
+        }
+        return true;
+      });
+      nPropFiltered = before - shown.length;
+    }
+
     const tb = document.getElementById('searchRows');
     tb.innerHTML = '';
     const shapeMode = mode === 'shape';
@@ -3282,7 +3352,9 @@ function rdkitAvailable() {
       const consCell = cons
         ? `<td class="value" title="${escHtml(cons.ranks.map(r => r.rid.slice(1, 7) + ': #' + r.rank + '/' + r.n).join(' · '))}"><strong>${cons.mean.toFixed(1)}</strong></td>`
         : '<td class="value">—</td>';
-      tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}${flexBadge}</td>` +
+      const painsBadge = (pf.painsOn && i < PAINS_FLAG_CAP && entryPains(e))
+        ? ` <span class="result-badge fail" title="${e.pains.n} PAINS alert(s) — first: ${e.pains.first} (lbdd_data A/B/C catalog)">PAINS</span>` : '';
+      tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}${flexBadge}${painsBadge}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
         `<td class="value">${e.MW}</td>` +
         (mode === 'sub'
@@ -3299,6 +3371,16 @@ function rdkitAvailable() {
     document.getElementById('searchPanel').style.display = 'block';
     document.getElementById('searchResultStatus').textContent =
       statusMsg + (rows.length > cap ? ` · showing top ${cap}` : '');
+    {
+      let fs = '';
+      if (nPropFiltered) fs = nPropFiltered + ' filtered by MW/cLogP';
+      if (pf.painsOn) {
+        let flagged = 0;
+        for (const r of shown.slice(0, PAINS_FLAG_CAP)) if (entryPains(r.e)) flagged++;
+        fs += (fs ? ' · ' : '') + flagged + ' PAINS-flagged' + (shown.length > PAINS_FLAG_CAP ? ' (first ' + PAINS_FLAG_CAP + ')' : '');
+      }
+      document.getElementById('filterStatus').textContent = fs;
+    }
     renderWorkSet();
     renderQueryHistory();
   }

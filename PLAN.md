@@ -1,4 +1,17 @@
-# Plan: ECFP4+Tanimoto 引擎导出(v1.11.0)——已完成
+# Plan: 检索属性过滤(MW/cLogP 区间)+ PAINS 标记列 —— 已完成
+
+## 范围(纯应用层,两页同构)
+
+1. 检索控制行新增:MW min–max / cLogP min–max 数字输入 + "标 PAINS"
+   复选 + filterStatus 提示行——全部 view-layer,经
+   renderSearchResultsCurrent 重渲染即时生效,清空即恢复。
+2. cLogP 惰性:CrippenClogp(MinimalLib get_descriptors)按条目缓存
+   (e.clogp);MW 用库条目自带值。
+3. PAINS 标记:lbdd_data A/B/C 目录(~480 SMARTS,lbddQueries 既有)
+   惰性匹配(e.pains={n,first} 缓存),仅勾选时计算,硬顶前 200 显示行;
+   行内 fail 徽章(flex 徽章同款),filterStatus 报 flagged 计数。
+4. 不加表格列(m5/m6 断言依赖 children 索引);不做 PAINS 过滤语义
+   (LigandLab 是"标记"非"筛除")。
 
 ## 现状核查(先行事实)
 
@@ -74,3 +87,26 @@ cargo 322 + sascore_golden **6**(+2);clippy 0;fmt;m0-m6
 更正记录:此前"MinimalLib 无 Morgan"为探针函数名误用
 (get_morgan_fingerprint ≠ get_morgan_fp),应用侧 ECFP4+Tanimoto
 检索自始存在且 m5 已逐位对拍。
+
+
+## 实施与验收(完成;检索属性过滤 + PAINS)
+
+1. **两页同构五处补丁**(controls/helpers/filter block/badge/status)
+   一次锚定落盘;7 内联脚本 node --check 通过。
+2. **实测**:T=0 全库 55 行,MW≥200 → 8 行("47 filtered by MW/cLogP"),
+   叠加 cLogP≤2 → 0,清空 → 55 全恢复;PAINS 探针 C#CC(=O)C#C
+   (pentadiyn-3-one,命中 ene_one_yne_A(1),无显式氢依赖)入库检索,
+   勾选后该行 PAINS 徽章 + filterStatus "1 PAINS-flagged"。
+3. **排雷两条**:①SMARTS `-[#1]` 只匹显式氢原子——CC=S(乙硫醛)不中
+   thio_aldehyd_A(Python RDKit 证实;与 batch 列行为一致),探针改用
+   无 [#1] 模式的 pentadiyn-3-one;②loadSearchLibraryFrom 收对象数组
+   [{smiles,name}] 非文本(传文本静默得 0 库)。
+4. **m5 +2**(过滤收窄+恢复;PAINS 徽章)且**段落自洁**:PAINS 探针
+   后恢复 55 库(状态污染教训:下游 shape 断言硬编码 screen 55×10)。
+5. **环境维护**:playwright chromium 缓存 1234→1243(旧二进制被清),
+   七套件 + 基线脚本路径按 README 惯例同步升级。
+
+## 验收数字
+
+m0-m6 37/10/11/10/32/**47**/30(m5 +2);平台 Node 34/34;两页 7×2
+脚本 check;390px 溢出 0;控件目检(两行 wrap 无重叠);零 page error。

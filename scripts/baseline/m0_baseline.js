@@ -5,7 +5,7 @@
 // and wall time; "time-to-shortlist" = from first search action to a
 // filtered, ordered, exported-ready list of <=10 candidates.
 const { chromium } = require('/opt/homebrew/lib/node_modules/playwright');
-const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell';
+const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 const URL = 'http://localhost:8901/app/index.html';
 
 const r = (fn) => ({ t: Date.now(), n: 1 }); // helper marker (unused)

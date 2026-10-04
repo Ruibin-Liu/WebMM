@@ -2,7 +2,7 @@
 // Drives BOTH pages with the same inputs and asserts per-field equality.
 const { chromium } = require('/opt/homebrew/lib/node_modules/playwright');
 
-const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell';
+const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 const INPUTS = [
   { label: 'caffeine (kekule)', smiles: 'CN1C=NC2=C1C(=O)N(C)C(=O)N2' },
   { label: 'ibuprofen', smiles: 'CC(C)Cc1ccc(cc1)C(C)C(=O)O' },
