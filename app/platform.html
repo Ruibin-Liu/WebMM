@@ -947,6 +947,34 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 ::-webkit-scrollbar-thumb { background: #c3cdd9; border-radius: 6px; border: 2px solid #f4f6f9; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 #sidenav::-webkit-scrollbar-thumb { border-color: var(--ll-navy); background: #33445c; }
+
+/* ===== content redesign: dashboards, cards, property bars ===== */
+.dash { display: grid; grid-template-columns: 290px minmax(0,1fr) 340px; gap: 0.9rem; align-items: start; margin-bottom: 1rem; }
+.dash-card { background: #fff; border: 1px solid var(--ll-line); border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04); overflow: hidden; }
+.dash-col-struct { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
+.dash-col-struct > .panel { margin-bottom: 0; }
+.card-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--ll-line); background: #f8fafc; }
+.card-head svg { width: 16px; height: 16px; color: var(--ll-teal-2); flex: 0 0 16px; }
+.card-head b { font-size: 0.85rem; color: #0f172a; }
+.card-sub { font-size: 0.7rem; color: #8fa1b6; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-body { padding: 0.75rem 0.85rem; }
+.card-body textarea { width: 100%; box-sizing: border-box; }
+.prop-bars { padding: 0.7rem 0.85rem 0.2rem; }
+.pbar { display: grid; grid-template-columns: 44px 1fr 52px; gap: 0.5rem; align-items: center; margin-bottom: 0.45rem; }
+.pbar-l { font-size: 0.72rem; color: #64748b; }
+.pbar-track { height: 8px; border-radius: 5px; background: #e8edf3; overflow: hidden; }
+.pbar-fill { display: block; height: 100%; border-radius: 5px; background: linear-gradient(90deg, #2dd4bf, var(--ll-teal-2)); }
+.pbar-fill.over { background: linear-gradient(90deg, #fbbf24, #d97706); }
+.pbar-v { font-size: 0.72rem; color: #334155; text-align: right; font-variant-numeric: tabular-nums; }
+.dash-search-row { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(0,1fr); gap: 0.6rem; align-items: start; margin-bottom: 0.6rem; }
+.filter-strip { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;
+  padding: 0.5rem 0.7rem; margin: 0.7rem 0; background: #f8fafc; border: 1px dashed #d4dde8; border-radius: 8px; }
+@media (max-width: 1150px) {
+  .dash { grid-template-columns: 1fr; }
+  .dash-search-row { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
@@ -1046,6 +1074,19 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
    </div>
  </div>
 
+ <div class="dash" id="dashSingle" style="display:none;">
+   <div class="dash-card dash-col-input">
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><b>参考配体</b><span class="card-sub">SMILES / MolBlock / SDF · 绘制 · 拖放</span></div>
+     <div class="card-body" id="dashInputBody"></div>
+   </div>
+   <div class="dash-col-struct" id="dashStructBody"></div>
+   <div class="dash-card dash-col-inspect">
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><b>检查器</b><span class="card-sub">性质 · 规则 · 警报</span></div>
+     <div id="propBars" class="prop-bars"></div>
+     <div class="card-body" id="dashInspectBody"></div>
+   </div>
+ </div>
+
 <div class="panel" id="inputPanel">
   <textarea id="input" aria-label="Molecule input: SMILES, MolBlock, or SDF" placeholder="Paste SMILES, MolBlock, or SDF here"></textarea>
   <div id="batchBar" style="display:none;">
@@ -1101,10 +1142,12 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
         <option value="0.8">≥80%</option>
         <option value="1">all</option>
       </select>
+      <div id="filterWrap" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
       <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Property filter over the result rows (view-layer; MW from the library entry, cLogP computed lazily via Crippen)">MW <input type="number" id="filterMwMin" placeholder="min" min="0" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()">–<input type="number" id="filterMwMax" placeholder="max" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()"></label>
       <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Crippen cLogP range filter">cLogP <input type="number" id="filterClogpMin" placeholder="min" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()">–<input type="number" id="filterClogpMax" placeholder="max" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()"></label>
       <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap; cursor:pointer; display:inline-flex; gap:3px; align-items:center;" title="Flag PAINS alerts (A/B/C catalog from lbdd_data) on the result rows — lazy, first 200 shown rows"><input type="checkbox" id="filterPainsFlag" onchange="renderSearchResultsCurrent()">标 PAINS</label>
       <span class="hint" id="filterStatus"></span>
+      </div>
       <span id="shapeConfsWrap" style="display:none; white-space:nowrap;">
         <label for="shapeConfs" style="font-size:0.75rem; color:var(--muted);" title="Conformers generated per library entry (best over conformers scores each entry; 1 = single-conformer legacy path)">confs</label>
         <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()">
@@ -1399,8 +1442,8 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
    </div>
 
    <div id="searchPanel" class="panel" style="display:none;">
-     <strong>Search Results</strong>
-     <div class="version" id="searchResultStatus" aria-live="polite" style="margin:0.3rem 0 0.5rem;"></div>
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 3H2l8 9.46V19h4v-6.54L22 3z"/></svg><b>检索结果</b><span class="card-sub" id="searchResultStatus" aria-live="polite"></span></div>
+     <div class="filter-strip" id="filterStrip"></div>
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
@@ -1731,6 +1774,7 @@ function rdkitAvailable() {
 
   function render(m, name) {
     document.getElementById("output").style.display = "block";
+    if (typeof applyDashLayout === 'function') applyDashLayout();
 
     let svgContent = m.get_svg(300, 300);   // squarer canvas: taller 2D image
     const svgParser = new DOMParser();
@@ -1882,6 +1926,7 @@ function rdkitAvailable() {
     // ---- LBDD: QED / structural alerts / Murcko scaffold ----
     try {
       const qed = computeQED(m, d);
+      renderPropBars(d, qed ? qed.mean : null);
       const pains = matchCatalog(m, lbddQueries().pains);
       const brenk = matchCatalog(m, lbddQueries().brenk);
       const murcko = murckoScaffold(m);
@@ -5655,6 +5700,102 @@ function initTaskTicker() {
 initTaskTicker();
 initSideStorage();
 syncShellChrome();
+
+// ===== single-mode 3-column dashboard (node relocation, zero behavior) =====
+const dashMoves = [];           // {el, parent, next} recorded before first move
+function dashEls() {
+  // after the first move the original containers are empty — return the
+  // RECORDED element references, never re-query
+  if (dashMoves.length) return dashMoves.map(a => a.el);
+  const q = id => document.getElementById(id);
+  const grid2d = document.querySelector('#output .panel.grid');
+  return [
+    q('input'), q('singleActions'), q('drop'),
+    grid2d.children[0], grid2d.children[1],
+    q('viewer3d').closest('.panel'), q('confPanel'),
+  ];
+}
+function applyDashLayout() {
+  const q = id => document.getElementById(id);
+  const single = !batchMode && !searchMode && !projectMode;
+  if (!dashMoves.length) dashEls().forEach(el => dashMoves.push({ el, parent: el.parentNode, next: el.nextSibling }));
+  if (single) {
+    const els = dashEls();
+    const inCard = q('dashInputBody'), stCol = q('dashStructBody'), insp = q('dashInspectBody');
+    inCard.appendChild(els[0]); inCard.appendChild(els[1]); inCard.appendChild(els[2]);
+    stCol.appendChild(els[3]); stCol.appendChild(els[5]); stCol.appendChild(els[6]);
+    insp.appendChild(els[4]);
+    q('dashSingle').style.display = '';
+    q('inputPanel').style.display = 'none';
+    const hasMol = q('output').style.display === 'block';
+    q('dashStructBody').style.display = hasMol ? '' : 'none';
+    q('propBars').style.display = hasMol ? '' : 'none';
+    q('dashInspectBody').style.display = hasMol ? '' : 'none';
+  } else {
+    [...dashMoves].reverse().forEach(a => a.parent.insertBefore(a.el, a.next));
+    q('dashSingle').style.display = 'none';
+    q('dashStructBody').style.display = '';
+    q('propBars').style.display = '';
+    q('dashInspectBody').style.display = '';
+  }
+}
+
+applyDashLayout();
+
+// search mode: query card + library card + filter strip (one-time wiring)
+(function initSearchCards() {
+  const sb = document.getElementById('searchBar');
+  if (!sb) return;
+  const rows = [...sb.children].filter(n => n.tagName === 'DIV' && n.classList.contains('action-buttons'));
+  if (rows.length < 2) return;
+  const libRow = rows[0], queryRow = rows[1];
+  const wrap = document.createElement('div');
+  wrap.className = 'dash-search-row';
+  const mk = (head, body) => {
+    const c = document.createElement('div');
+    c.className = 'dash-card';
+    c.innerHTML = '<div class="card-head">' + head + '</div>';
+    const b = document.createElement('div');
+    b.className = 'card-body';
+    c.appendChild(b);
+    wrap.appendChild(c);
+    return b;
+  };
+  const qb = mk('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><b>查询</b><span class="card-sub">相似 / 子结构 / 形状×2</span>');
+  const lb = mk('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg><b>配体库</b><span class="card-sub">SMILES+name 每行一条,或多记录 SDF</span>');
+  sb.appendChild(wrap);
+  qb.appendChild(queryRow);
+  lb.appendChild(libRow);
+  const sep = sb.querySelector('.separator');
+  if (sep) sep.remove();
+  // filter controls -> strip on the results card
+  const fw = document.getElementById('filterWrap');
+  const strip = document.getElementById('filterStrip');
+  if (fw && strip) strip.appendChild(fw);
+})();
+
+// inspector property bars (honest, descriptor-grounded)
+function renderPropBars(d, qedMean) {
+  const host = document.getElementById('propBars');
+  if (!host || !d) return;
+  const lp = +d.CrippenClogp || 0;
+  const rows = [
+    { l: 'QED', v: qedMean, disp: qedMean == null ? '—' : qedMean.toFixed(2), frac: qedMean == null ? 0 : qedMean, max: 1 },
+    { l: 'MW', v: d.amw, disp: d.amw.toFixed(0), frac: d.amw, max: 500 },
+    { l: 'cLogP', v: lp, disp: lp.toFixed(2), frac: Math.abs(lp), max: 5 },
+    { l: 'TPSA', v: d.tpsa, disp: d.tpsa.toFixed(0), frac: d.tpsa, max: 140 },
+    { l: 'RotB', v: d.NumRotatableBonds, disp: d.NumRotatableBonds, frac: d.NumRotatableBonds, max: 10 },
+  ];
+  host.innerHTML = rows.map(r => {
+    const frac = Math.max(0, Math.min(1, r.frac / r.max));
+    const over = r.frac > r.max;
+    return '<div class="pbar" title="' + r.l + (over ? ' — over guideline' : '') + '">' +
+      '<span class="pbar-l">' + r.l + '</span>' +
+      '<span class="pbar-track"><span class="pbar-fill' + (over ? ' over' : '') + '" style="width:' + (frac * 100).toFixed(1) + '%"></span></span>' +
+      '<span class="pbar-v">' + r.disp + (over ? ' ⚠' : '') + '</span></div>';
+  }).join('');
+}
+window.renderPropBars = renderPropBars;
 (function () {
   const a = document.getElementById('analogStatus');
   if (a && !a.textContent) a.textContent = '待命 — 选定位点后 Explore,或 aza-scan 一键骨架跃迁';
@@ -5685,6 +5826,7 @@ function switchMode(m) {
   document.getElementById('inputPanel').style.display = projectMode ? 'none' : 'block';
   if (projectMode) renderOverview();
   syncShellChrome();
+  applyDashLayout();
   document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
   document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
   document.getElementById('output').style.display = (single && modeShown.single) ? 'block' : 'none';

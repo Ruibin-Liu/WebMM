@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**检索属性过滤 + PAINS 标记落地(main,纯应用层两页同构):MW/cLogP 区间过滤(view-layer,renderSearchResultsCurrent 即时生效)+ PAINS A/B/C 惰性标记(勾选才算,硬顶 200 行,e.pains 缓存,fail 徽章)。m5 47/47(+2,含段落自洁);m0-m6 与平台 Node 全绿。环境:playwright chromium 缓存 1234→1243 已同步。**
+**主区真重构(ui/platform-content 分支):platform.html 单分子模式三栏 dashboard(参考配体卡|结构列|检查器卡+性质横条,applyDashLayout 物理搬移共享节点+锚点还原),检索模式双卡(查询/配体库)+结果卡筛选条;空态守卫与元素引用缓存排雷各一。m0-m6 全绿(37/10/11/10/32/47/30)+ 平台 Node 34/34;390px 溢出 0。待合并决策。**
 
+## Recently Completed
++- **主区真重构(用户批评"只是套壳"后的落地:三栏 dashboard 而非面板堆叠)。** ①单分子:290px 输入卡(textarea/绘制/拖放/历史迁入)+ 弹性结构列(2D 卡/3D 卡含能量/构象卡)+ 340px 检查器卡(props/rules/alerts 迁入)+ **性质横条**(QED/MW÷500/cLogP|x|÷5/TPSA÷140/RotB÷10,teal 渐变,超限琥珀⚠,render() QED 处填充);applyDashLayout 在 switchMode/render 双钩子下搬移 7 个共享节点,离开 single 按启动锚点**逆序**还原(batch/search 共享这些节点不能复制);空态只显输入卡。②检索:initSearchCards 一次性把 searchBar 两行重排为双卡(查询 1.45fr/配体库 1fr)+ filterWrap 抽到结果卡虚线筛选条 + 结果卡图标卡头(searchResultStatus 迁入为 card-sub,m6 文本断言不受影响)。**排雷**:dashEls 二次调用重查已搬空的容器 → children[0]=undefined → appendChild 抛 TypeError → process 的 try 吞掉 → 症状"结构列不显/横条 0 但零 page error"——修为首查缓存元素引用。③响应式 <1150px 单列堆叠;390px 溢出 0。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、7 脚本 check、目检四张(boot/三栏/双卡/窄屏)、零 page error;id/函数契约零改动(index.html 经典页不动)。
 ## Recently Completed
 +- **检索属性过滤 + PAINS 标记(LigandLab 卡收口,两页同构)。** ①控制行:MW min–max/cLogP min–max 数字输入 + 标 PAINS 复选 + filterStatus;过滤在 renderSearchResults 的 hideExcl 之后 view-layer 应用(清空即全恢复),过滤计数入 filterStatus 不动 searchResultChip 既有文案;②cLogP = MinimalLib CrippenClogp 惰性缓存 e.clogp;③PAINS = lbddQueries().pains(~480 SMARTS 既有)惰性 e.pains={n,first},仅勾选时算,硬顶前 200 显示行(240k 次子结构匹配的上界防护),行内 fail 徽章 + "N PAINS-flagged";不加表格列(children 索引契约)。**排雷**:`-[#1]` SMARTS 只匹显式氢(乙硫醛不中 thio_aldehyd_A,Python RDKit 证实;探针改 pentadiyn-3-one 中 ene_one_yne_A);loadSearchLibraryFrom 收 [{smiles,name}] 数组非文本(文本静默 0 库)。**m5 +2 且段落自洁**(PAINS 探针后恢复 55 库——下游 shape 断言硬编码 screen 55×10,状态污染教训再证)。环境维护:playwright 缓存 1234 二进制被清,七套件+基线脚本路径升 1243(README 既定惯例)。验收:m0-m6 37/10/11/10/32/**47**/30、平台 Node 34/34、14 脚本 check、390px 溢出 0、目检两行 wrap 无重叠、零 page error。
 ## Recently Completed
