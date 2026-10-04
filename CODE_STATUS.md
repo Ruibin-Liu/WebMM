@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**平台独立成页完成(explore/lbdd-platform):平台特性(M1-M3 全部)迁至 app/platform.html;Workbench(app/index.html)与 m5 以 git show 回退——对 main 字节零差异,合并即纯增量。m0-m5 全绿打 Workbench,m6(新)23/23 打平台页,平台 Node 34/34。分支可随时并入 main(Workbench 零风险);后续:SA score Rust 移植(独立项)、scaffold-hop spike、平台页入口链接待定。**
+**explore/lbdd-platform 已合入 main(fast-forward 372a03b,纯增量——Workbench 与 m5 对合并前零差异,合并后七套件 m0-m6 + 平台 Node 全绿:37/10/11/10/32/44/23 + 34)。平台页 app/platform.html 上线 Pages(/WebMM/app/platform.html)。平台页入口链接暂无(README/导航待用户定)。遗留独立项:SA score Rust 移植、scaffold-hop spike(go/no-go)、flex 与投影位点协同量化。**
 
+## Recently Completed
++- **explore/lbdd-platform 合入 main(fast-forward,23 提交,纯增量)。** 合并前验证:app/index.html 与 tests/cdp/m5_search_e2e.test.js 对 cdec869 零差异(git diff 空);合并后 main 全量回归——Workbench m0-m5(37/10/11/10/32/44)+ 平台页 m6(23/23)+ 平台 Node(34/34)全绿。增量文件清单:app/platform.html(平台页)+ app/platform/ 五模块(identity/state/db/project/compat)+ app/analog.worker.js(探索器农场)+ tests/cdp/m6_platform.test.js + tests/platform/(Node 测试+金标 m1a-project.json)+ docs/(lbdd-platform-redesign v0.5 + m0/spec + m0/baseline)+ scripts/baseline/m0_baseline.js。平台页经 Pages 部署于 /WebMM/app/platform.html;入口链接未加(待定)。
 ## Recently Completed
 +- **平台独立成页(用户决策落地:并行页不合入 Workbench——M0 分叉 1 的另一分支现在生效)。** 绞杀者路线下 M1-M3 全部织入过 app/index.html;本轮将其整体迁至 **app/platform.html**(标题 "WebMM Platform — LBDD workbench (explorer)"),app/index.html 与 tests/cdp/m5_search_e2e.test.js 以 `git show cdec869:` 回退到分支点——**git diff 对 main 零差异**(字节级验证),合并分支对 Workbench 变为纯增量文件(platform.html + app/platform/ 五模块 + analog.worker.js + m6)。平台五段测试(M1c 轮次 DAG+hit-as-query/M2a 共识+溯源+SAR 命中集/M2b 项目导入导出+多标签/M1b 甄别/M3 探索器全漏斗)提取为 tests/cdp/m6_platform.test.js(独立 preamble+库装载+零 page error+RESULT 行惯例);提取时 M2b 第二页的硬编码 index.html URL 改为常量(首跑 15s 超时教训:第二页开在已回退的 Workbench 上,平台永不在场)。两页同源共享 IndexedDB 但回退后的 Workbench 不触碰 'webmm-platform'(平台页独占)。验收:Workbench m0-m5 全绿(37/10/11/10/32/44,index==main);**m6 平台页 23/23**;平台 Node 34/34;两页各 7 内联脚本 node --check;零 page error。
 ## Recently Completed
