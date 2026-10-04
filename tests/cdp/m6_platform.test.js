@@ -313,12 +313,12 @@ function check(name, cond, detail) {
   await page.waitForFunction(() => /aza-hop|No valid aza|No H-bearing/.test(document.getElementById('analogStatus').textContent), null, { timeout: 300000 });
   const hopRes = await page.evaluate(() => ({
     status: document.getElementById('analogStatus').textContent,
-    rows: [...document.querySelectorAll('#analogRows tr')].slice(0, 4).map(tr => ({
+    rows: [...document.querySelectorAll('#analogRows tr')].slice(0, 8).map(tr => ({
       smi: tr.children[1].textContent, T: tr.children[3].textContent,
       sa: tr.children[5].textContent, flex: tr.children[6].textContent })),
   }));
   check('aza-scan produces pyridyl scaffold hops with SA + flex columns',
-    /Done: \d+ scored/.test(hopRes.status) && hopRes.rows.length >= 2 &&
+    /Done: \d+ scored/.test(hopRes.status) && /single \+ \d+ double/.test(hopRes.status) && hopRes.rows.length >= 5 &&
     hopRes.rows.every(r => r.smi.includes('n')) &&
     hopRes.rows.every(r => parseFloat(r.sa) > 0) &&
     hopRes.rows.every(r => parseFloat(r.flex) > 0), hopRes.status.slice(0, 60));
@@ -327,6 +327,9 @@ function check(name, cond, detail) {
     parseFloat(best.T) >= 0.7, best.T);
   check('SA column active (fragment table lazy-loaded, values present)',
     hopRes.rows.every(r => parseFloat(r.sa) >= 1 && parseFloat(r.sa) <= 10), hopRes.rows.map(r => r.sa).join(','));
+  // double-swap diazines present (two ring N's in one candidate)
+  const diaz = hopRes.rows.filter(r => (r.smi.match(/n/g) || []).length >= 2);
+  check('double swaps produce diazines', diaz.length >= 1, hopRes.rows.map(r => r.smi.slice(0, 22)).join(' | '));
 
   // ---- zero page errors ----
   check('zero page errors', errors.length === 0, errors.slice(0, 2).join(' | '));

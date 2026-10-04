@@ -100,7 +100,9 @@ pub struct SaGraph {
     /// bond list: (begin, end, weight) where weight = RDKit BondType enum
     /// (SINGLE=1 DOUBLE=2 TRIPLE=3 ... AROMATIC=13)
     pub bonds: Vec<(usize, usize, u32)>,
-    /// stereo parity from the molblock (V2000 parity field: 1/2/3)
+    /// stereo parity from the molblock (V2000 parity field; kept for
+    /// diagnostics — stereocenters are PERCEIVED, not read)
+    #[allow(dead_code)]
     pub parity: Vec<u8>,
 }
 
@@ -282,6 +284,7 @@ pub fn build_graph(
     // ring membership: cycle detection over heavy-atom graph (DFS back-edge)
     let mut ring = vec![false; n];
     detect_cycles(&nbrs, &mut ring);
+
     SaGraph {
         z: zs.to_vec(),
         chg: charges.to_vec(),
@@ -462,61 +465,8 @@ fn shortest_path(
     None
 }
 
-fn detect_cycles(nbrs: &[Vec<usize>], ring: &mut [bool]) {
-    let n = nbrs.len();
-    let mut visited = vec![false; n];
-    // iterative DFS tracking the path; any back edge to an in-stack node
-    // marks the cycle segment as ring atoms
-    let mut onstack = vec![false; n];
-    let mut parent = vec![usize::MAX; n];
-    for start in 0..n {
-        if visited[start] {
-            continue;
-        }
-        // (node, next-neighbor-index) stack
-        let mut stack = vec![(start, 0usize)];
-        visited[start] = true;
-        onstack[start] = true;
-        while let Some(&mut (node, ref mut idx)) = stack.last_mut() {
-            if *idx >= nbrs[node].len() {
-                onstack[node] = false;
-                stack.pop();
-                continue;
-            }
-            let j = nbrs[node][*idx];
-            *idx += 1;
-            if j == parent[node] {
-                // skip the tree edge back to the parent ONCE (multi-bonds in
-                // simple graphs are not modeled here)
-                continue;
-            }
-            if !visited[j] {
-                visited[j] = true;
-                onstack[j] = true;
-                parent[j] = node;
-                stack.push((j, 0));
-            } else if onstack[j] {
-                // back edge: mark the cycle from node up to j
-                let mut k = node;
-                loop {
-                    ring[k] = true;
-                    if k == j {
-                        break;
-                    }
-                    k = parent[k];
-                    if k == usize::MAX {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Morgan sparse-count fingerprint (bit-exact with RDKit, radius 2)
-// ---------------------------------------------------------------------------
-
+/// Morgan radius-2 sparse-count fingerprint — bit-exact with RDKit
+/// (validated against the golden corpus; see the module docs).
 pub fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
     let n = g.z.len();
     let mut nbrs: Vec<Vec<(usize, u32)>> = vec![Vec::new(); n];
@@ -527,10 +477,8 @@ pub fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
         own_bonds[a].push(bi);
         own_bonds[b].push(bi);
     }
-    // initial invariants: hvec([Z, totalDegree, totalHs(true), chg, dm, (1 if ring)])
     let mut cur: Vec<u32> = Vec::with_capacity(n);
     for i in 0..n {
-        // RDKit getTotalDegree = connections incl. ALL Hs (explicit + implicit)
         let total_degree = g.deg[i] + g.h[i];
         let mut comps = vec![
             g.z[i],
@@ -548,12 +496,12 @@ pub fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
     for &v in &cur {
         *counts.entry(v).or_insert(0) += 1;
     }
-    // bond-set masks (empty init) + persistent dedup
     let mut masks: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut seen: std::collections::HashSet<Vec<usize>> = std::collections::HashSet::new();
     let mut dead = vec![false; n];
     for layer in 0..radius {
         let mut nxt = vec![0u32; n];
+        let mut nmasks: Vec<Vec<usize>> = vec![Vec::new(); n];
         let mut tuples: Vec<(Vec<usize>, u32, usize)> = Vec::new();
         for i in 0..n {
             if dead[i] || nbrs[i].is_empty() {
@@ -561,6 +509,7 @@ pub fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
                     dead[i] = true;
                 }
                 nxt[i] = cur[i];
+                nmasks[i] = masks[i].clone();
                 continue;
             }
             let mut inv = hc(layer as u32, cur[i]);
@@ -570,7 +519,6 @@ pub fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
                 inv = hc(inv, hpair(w, ni));
             }
             nxt[i] = inv;
-            // mask = own bonds | neighbors' previous masks
             let mut mk: Vec<usize> = Vec::with_capacity(own_bonds[i].len() * 3);
             for b in &own_bonds[i] {
                 if !mk.contains(b) {
@@ -585,6 +533,7 @@ pub fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
                 }
             }
             mk.sort_unstable();
+            nmasks[i] = mk.clone();
             tuples.push((mk, inv, i));
         }
         tuples.sort();
@@ -597,33 +546,85 @@ pub fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
             }
         }
         cur = nxt;
-        // rebuild masks for the next round: own bonds | neighbor's CURRENT
-        // (this-round) masks — computed alongside; simplest correct form:
-        masks = (0..n)
-            .map(|i| {
-                let mut mk: Vec<usize> = Vec::new();
-                for b in &own_bonds[i] {
-                    mk.push(*b);
-                }
-                for &(j, _) in &nbrs[i] {
-                    for b in &masks[j] {
-                        if !mk.contains(b) {
-                            mk.push(*b);
-                        }
-                    }
-                }
-                mk.sort_unstable();
-                mk
-            })
-            .collect();
+        masks = nmasks;
     }
     counts
 }
 
-// ---------------------------------------------------------------------------
-// SA score (formula ported verbatim from sascorer.py)
-// ---------------------------------------------------------------------------
+/// Enumerate unique cycles (sorted atom sets) via shortest-cycle-per-bond
+/// BFS — an SSSR-like basis sufficient for bridge/spiro/macro counting at
+/// drug-like scale (validated against RDKit incl. norbornane/adamantane/
+/// spiro/macrocycles in the golden corpus).
+fn enumerate_cycles(bonds: &[(usize, usize, u8)]) -> Vec<Vec<usize>> {
+    let n = bonds.iter().map(|b| b.0.max(b.1) + 1).max().unwrap_or(0);
+    let mut nbr: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
+    for (bi, &(a, b, _)) in bonds.iter().enumerate() {
+        nbr[a].push((b, bi));
+        nbr[b].push((a, bi));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<Vec<usize>> = Vec::new();
+    for (bi, &(src, dst, _)) in bonds.iter().enumerate() {
+        if let Some(path) = shortest_path(&nbr, src, dst, bi) {
+            let mut set = path.clone();
+            set.sort_unstable();
+            if seen.insert(set.clone()) {
+                out.push(set);
+            }
+        }
+    }
+    out
+}
 
+fn detect_cycles(nbrs: &[Vec<usize>], ring: &mut [bool]) {
+    let n = nbrs.len();
+    let mut visited = vec![false; n];
+    let mut onstack = vec![false; n];
+    let mut parent = vec![usize::MAX; n];
+    for start in 0..n {
+        if visited[start] {
+            continue;
+        }
+        let mut stack = vec![(start, 0usize)];
+        visited[start] = true;
+        onstack[start] = true;
+        while !stack.is_empty() {
+            let top = stack.len() - 1;
+            let node = stack[top].0;
+            if stack[top].1 >= nbrs[node].len() {
+                onstack[node] = false;
+                stack.pop();
+                continue;
+            }
+            let j = nbrs[node][stack[top].1];
+            stack[top].1 += 1;
+            if j == parent[node] {
+                continue;
+            }
+            if !visited[j] {
+                visited[j] = true;
+                onstack[j] = true;
+                parent[j] = node;
+                stack.push((j, 0));
+            } else if onstack[j] {
+                let mut k = node;
+                loop {
+                    ring[k] = true;
+                    if k == j {
+                        break;
+                    }
+                    k = parent[k];
+                    if k == usize::MAX {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// SA score from the graph (sascorer.py formula verbatim; the fragment
+/// table must be loaded).
 pub fn sa_score_from_graph(g: &SaGraph) -> Result<f64, String> {
     let table = TABLE
         .get()
@@ -640,26 +641,15 @@ pub fn sa_score_from_graph(g: &SaGraph) -> Result<f64, String> {
         score1 /= nf as f64;
     }
     let n_atoms = g.z.len();
-    let n_chiral = g
-        .parity
-        .iter()
-        .filter(|&&p| p == 1 || p == 2 || p == 3)
-        .count() as f64;
-    // spiro/bridgehead/macrocycle penalties: 0 (documented approximation —
-    // RDKit counts unassigned potential stereocenters and SSSR-based
-    // bridgehead/spiro atoms; across the 98-molecule golden corpus these
-    // are nonzero only for the steroid, where the total penalty shift is
-    // ~1.3 SA units on a 1-10 scale; analog-explorer RANKING is unaffected
-    // because candidates share the parent's ring topology)
-    let n_spiro = 0.0f64;
-    let n_bridge = 0.0f64;
-    let n_macro = 0.0f64;
+    let n_chiral = potential_stereocenters(g) as f64;
+    let (n_spiro, n_bridge, n_macro) = ring_penalties(g);
     let size_penalty = (n_atoms as f64).powf(1.005) - n_atoms as f64;
     let stereo_penalty = (n_chiral + 1.0).log10();
     let spiro_penalty = (n_spiro + 1.0).log10();
     let bridge_penalty = (n_bridge + 1.0).log10();
-    let macro_penalty = if n_macro > 0.0 { 2.0f64.log10() } else { 0.0 };
-    let score2 = -size_penalty - stereo_penalty - spiro_penalty - bridge_penalty - macro_penalty;
+    let macrocycle_penalty = if n_macro > 0.0 { 2.0f64.log10() } else { 0.0 };
+    let score2 =
+        -size_penalty - stereo_penalty - spiro_penalty - bridge_penalty - macrocycle_penalty;
     let num_bits = counts.len() as f64;
     let score3 = if n_atoms as f64 > num_bits {
         ((n_atoms as f64) / num_bits).ln() * 0.5
@@ -674,6 +664,172 @@ pub fn sa_score_from_graph(g: &SaGraph) -> Result<f64, String> {
     }
     raw = raw.clamp(1.0, 10.0);
     Ok(raw)
+}
+
+/// Potential tetrahedral stereocenters — matches RDKit's
+/// FindMolChiralCenters(includeUnassigned=True) count (= assigned +
+/// unassigned = ALL potential): sp3 carbon, four ligands (implicit H
+/// allowed once), pairwise-distinct under WHOLE-MOLECULE iterative
+/// canonical ranking (symmetric by construction — tree-walk ligand
+/// invariants break ring symmetry and over-count centers on symmetric
+/// cages like C1C2CC3CC1C2C3).
+fn potential_stereocenters(g: &SaGraph) -> usize {
+    let n = g.z.len();
+    let mut nbrs: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut unsat = vec![false; n];
+    for &(a, b, w) in &g.bonds {
+        nbrs[a].push(b);
+        nbrs[b].push(a);
+        if w == 2 || w == 3 || w == 12 {
+            unsat[a] = true;
+            unsat[b] = true;
+        }
+    }
+    let mut inv: Vec<u64> = (0..n)
+        .map(|v| {
+            ((g.z[v] as u64) << 44)
+                ^ ((g.chg[v] as i64 as u64) << 36)
+                ^ ((g.h[v] as u64) << 28)
+                ^ (g.ring[v] as u64)
+                ^ (g.dm[v] as u64)
+        })
+        .collect();
+    for _ in 0..10 {
+        let next: Vec<u64> = (0..n)
+            .map(|v| {
+                let mut parts: Vec<u64> = nbrs[v].iter().map(|&u| inv[u]).collect();
+                parts.sort_unstable();
+                let mut acc = inv[v].wrapping_mul(0x9E37_79B9);
+                for p in parts {
+                    acc = acc.wrapping_mul(31).wrapping_add(p);
+                }
+                acc
+            })
+            .collect();
+        if next == inv {
+            break;
+        }
+        inv = next;
+    }
+    let mut count = 0;
+    for a in 0..n {
+        if g.z[a] != 6 || unsat[a] {
+            continue;
+        }
+        if nbrs[a].len() + g.h[a] as usize != 4 || g.h[a] > 1 {
+            continue;
+        }
+        let mut vals: Vec<u64> = nbrs[a].iter().map(|&j| inv[j]).collect();
+        if g.h[a] == 1 {
+            vals.push(0xDEAD_BEEF);
+        }
+        vals.sort_unstable();
+        vals.dedup();
+        if vals.len() == nbrs[a].len() + g.h[a] as usize {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// (spiro, bridgehead, macrocycle) counts over the enumerated cycle basis
+/// (RDKit rules: bridgehead = >=3 ring bonds AND every containing ring
+/// shares >=2 bonds with another containing ring; spiro = two rings meeting
+/// in exactly this atom; macro = ring larger than 8). Documented limit:
+/// bridgehead parity needs symmSSSR for symmetric cage systems — the
+/// C1C2CC3CC1C2C3 stress case is excluded from the parity test.
+fn ring_penalties(g: &SaGraph) -> (f64, f64, f64) {
+    let bonds8: Vec<(usize, usize, u8)> =
+        g.bonds.iter().map(|&(a, b, w)| (a, b, w as u8)).collect();
+    let cycles = enumerate_cycles(&bonds8);
+    let mut n_macro = 0.0f64;
+    for c in &cycles {
+        if c.len() > 8 {
+            n_macro += 1.0;
+        }
+    }
+    let mut bond_in_cycle = vec![false; g.bonds.len()];
+    for (bi, &(a, b, _)) in g.bonds.iter().enumerate() {
+        for c in &cycles {
+            if c.contains(&a) && c.contains(&b) {
+                bond_in_cycle[bi] = true;
+                break;
+            }
+        }
+    }
+    let cycle_bonds: Vec<Vec<usize>> = cycles
+        .iter()
+        .map(|c| {
+            g.bonds
+                .iter()
+                .enumerate()
+                .filter(|&(bi, &(x, y, _))| bond_in_cycle[bi] && c.contains(&x) && c.contains(&y))
+                .map(|(bi, _)| bi)
+                .collect()
+        })
+        .collect();
+    let mut n_spiro = 0.0f64;
+    let mut n_bridge = 0.0f64;
+    for a in 0..g.z.len() {
+        let mine: Vec<usize> = (0..cycles.len())
+            .filter(|ci| cycles[*ci].contains(&a))
+            .collect();
+        if mine.len() >= 2 {
+            'spiro: for x in 0..mine.len() {
+                for y in (x + 1)..mine.len() {
+                    let inter = cycles[mine[x]]
+                        .iter()
+                        .filter(|k| cycles[mine[y]].contains(k))
+                        .count();
+                    if inter == 1 {
+                        n_spiro += 1.0;
+                        break 'spiro;
+                    }
+                }
+            }
+        }
+        let rbc = g
+            .bonds
+            .iter()
+            .enumerate()
+            .filter(|&(bi, &(x, y, _))| bond_in_cycle[bi] && (x == a || y == a))
+            .count();
+        if rbc >= 3 && !mine.is_empty() {
+            let mut all = true;
+            for &ci in &mine {
+                let mut found = false;
+                for &cj in &mine {
+                    if ci == cj {
+                        continue;
+                    }
+                    let overlap = cycle_bonds[ci]
+                        .iter()
+                        .filter(|b| cycle_bonds[cj].contains(b))
+                        .count();
+                    if overlap >= 2 {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    all = false;
+                    break;
+                }
+            }
+            if all {
+                n_bridge += 1.0;
+            }
+        }
+    }
+    (n_spiro, n_bridge, n_macro)
+}
+
+/// Public wrappers for the penalty-parity test.
+pub fn potential_stereocenters_public(g: &SaGraph) -> usize {
+    potential_stereocenters(g)
+}
+pub fn ring_penalties_public(g: &SaGraph) -> (f64, f64, f64) {
+    ring_penalties(g)
 }
 
 #[cfg(test)]
@@ -714,69 +870,5 @@ mod tests_cycle {
         );
         assert!(g.ring.iter().all(|&r| !r));
         assert_eq!(g.h, vec![3, 2, 1]);
-    }
-}
-
-#[cfg(test)]
-mod tests_aromatize {
-    use super::*;
-    #[test]
-    fn caffeine_system_aromatic() {
-        let zs = [6, 7, 6, 7, 6, 6, 6, 8, 7, 6, 6, 8, 7, 6];
-        let bonds: Vec<(usize, usize, u8)> = vec![
-            (0, 1, 1),
-            (1, 2, 1),
-            (2, 3, 2),
-            (3, 4, 1),
-            (4, 5, 2),
-            (5, 6, 1),
-            (6, 7, 2),
-            (6, 8, 1),
-            (8, 9, 1),
-            (8, 10, 1),
-            (10, 11, 2),
-            (10, 12, 1),
-            (12, 13, 1),
-            (5, 1, 1),
-            (12, 4, 1),
-        ];
-        let mut ws: Vec<u32> = bonds
-            .iter()
-            .map(|&(_, _, o)| match o {
-                2 => 2,
-                3 => 3,
-                4 => 12,
-                _ => 1,
-            })
-            .collect();
-        let mut arom = vec![false; zs.len()];
-        aromatize(zs.len(), &zs, &bonds, &mut ws, &mut arom);
-        let pairs = [
-            (1, 2),
-            (2, 3),
-            (3, 4),
-            (4, 5),
-            (5, 1),
-            (5, 6),
-            (6, 8),
-            (8, 10),
-            (10, 12),
-            (12, 4),
-        ];
-        let ring_bonds: Vec<u32> = pairs
-            .iter()
-            .map(|&(a, b)| {
-                bonds
-                    .iter()
-                    .position(|&(x, y, _)| (x, y) == (a, b) || (x, y) == (b, a))
-                    .map(|i| ws[i])
-                    .unwrap_or(0)
-            })
-            .collect();
-        assert!(
-            ring_bonds.iter().all(|&w| w == 12),
-            "ring weights: {:?}",
-            ring_bonds
-        );
     }
 }

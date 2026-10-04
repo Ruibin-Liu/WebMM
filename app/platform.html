@@ -1244,7 +1244,7 @@ details {
          <option value="O">O-linked</option><option value="N">N-linked</option><option value="acyl">carbonyl-attached</option><option value="aryl">aryl / heteroaryl</option>
        </select>
        <button class="action-btn primary" style="width:auto;" onclick="runAnalogExplorer()">Explore</button>
-       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="runAzaScan()" title="Scaffold-hop spike: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres), then the same shape funnel">aza-scan hop</button>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="runAzaScan()" title="Scaffold-hop spike: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres), then the same shape funnel">aza-scan (r5+r6, 1-2 swaps)</button>
        <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">Cancel</button>
      </div>
      <div class="hint" id="analogStatus"></div>
@@ -3613,7 +3613,7 @@ function rdkitAvailable() {
                 for (const w of workers) w.terminate();
                 document.getElementById('analogCancel').style.display = 'none';
                 const nFlex = results.filter(r => r.flexT != null).length;
-                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop' : ''));
+                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop (' + (window.__azaCounts ? window.__azaCounts.single + ' single + ' + window.__azaCounts.double + ' double' : '') + ')' : ''));
                 window.__azaRun = false;
               })();
             });
@@ -3638,7 +3638,7 @@ function rdkitAvailable() {
     analogParentSdf = sdf3d;
     analogStatus('Aza-scanning…');
     // H-bearing aromatic 6-ring carbons via RDKit SMARTS
-    const q = rdkitModule.get_qmol('[c;H1;r6]');
+    const q = rdkitModule.get_qmol('[c;H1;r5,r6]');
     let ringCH = [];
     let m0 = null;
     let surgeryBase = null;
@@ -3665,29 +3665,48 @@ function rdkitAvailable() {
     const na = parseInt(base[3].substring(0, 3));
     const cands = [];
     const seen = new Set();
-    for (const idx of ringCH) {
+    const trySwap = (swapSet) => {
       const lines = base.slice();
-      const l = lines[4 + idx];
-      lines[4 + idx] = l.substring(0, 31) + 'N   ' + l.substring(35);
-      const mb = lines.join('\n');
+      for (const idx of swapSet) {
+        const l = lines[4 + idx];
+        lines[4 + idx] = l.substring(0, 31) + 'N   ' + l.substring(35);
+      }
+      return lines.join('\n');
+    };
+    const addCand = (mb) => {
       let m = null;
-      try { m = rdkitModule.get_mol(mb); } catch (e) { continue; }
-      if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
+      try { m = rdkitModule.get_mol(mb); } catch (e) { return; }
+      if (!m || !m.is_valid()) { if (m) m.delete(); return; }
       const canon = m.get_smiles();
       const mbClean = m.get_molblock();
       const d = JSON.parse(m.get_descriptors());
       m.delete();
-      if (seen.has(canon)) continue;
+      if (seen.has(canon)) return;
       seen.add(canon);
-      let sa = null;
-      if (await ensureSaTable()) {
-        try { sa = +window.webmm.sa_score_wasm(mbClean).toFixed(2); } catch (e) {}
+      cands.push({ smiles: canon, molblock: mbClean, mw: +d.amw.toFixed(2), rotb: d.NumRotatableBonds ?? 0, sa: null });
+    };
+    let nSingle = 0, nDouble = 0;
+    for (const idx of ringCH) {
+      nSingle++;
+      addCand(trySwap([idx]));
+    }
+    // double swaps (diazines / azoles): C(n,2) — invalid valences (e.g.
+    // adjacent N pairs RDKit rejects) drop out via is_valid
+    for (let x = 0; x < ringCH.length; x++) {
+      for (let y = x + 1; y < ringCH.length; y++) {
+        nDouble++;
+        addCand(trySwap([ringCH[x], ringCH[y]]));
       }
-      cands.push({ smiles: canon, molblock: mbClean, mw: +d.amw.toFixed(2), rotb: d.NumRotatableBonds ?? 0, sa });
+    }
+    if (await ensureSaTable()) {
+      for (const c of cands) {
+        try { c.sa = +window.webmm.sa_score_wasm(c.molblock).toFixed(2); } catch (e) {}
+      }
     }
     if (m0) m0.delete();
     if (!cands.length) { analogStatus('No valid aza-isomers'); return; }
-    analogStatus(cands.length + ' aza-isomers — funnel…');
+    window.__azaCounts = { n: cands.length, single: nSingle, double: nDouble };
+    analogStatus(cands.length + ' aza-isomers (' + nSingle + ' single + ' + nDouble + ' double positions) — funnel…');
     window.__azaRun = true;   // the funnel's final status appends the marker
     runAnalogFromCands(cands, token);
   }
