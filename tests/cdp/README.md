@@ -13,7 +13,11 @@ Run all (from this directory):
     node m0_core.test.js && node m1_3d_pipeline.test.js && \
     node m2_conformers.test.js && node m3_site_nav.test.js && \
     node m4_batch.test.js && node m5_search_e2e.test.js
-- m6_platform.test.js — the LBDD platform page (app/platform.html): rounds DAG + hit-as-query, consensus + provenance CSV, project export/import + multi-tab broadcast, triage overlay, neighborhood explorer (full funnel)
+- m6_platform.test.js — the LBDD platform page (app/platform.html): LigandLab-style shell (sidenav/stepper/overview) + rounds DAG + hit-as-query, consensus + provenance CSV, project export/import + multi-tab broadcast, triage overlay, neighborhood explorer (full funnel)
+
+Note: since the workbench swap, m0–m5 run against app/index.html, which is the
+former platform page (classic UI, full LBDD surface, IndexedDB-backed library);
+the old bare workbench page is superseded (git history keeps it).
 
 Suites:
 - m0_core           2D parse/render, properties, buttons, history, JSME

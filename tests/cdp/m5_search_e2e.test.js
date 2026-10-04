@@ -47,7 +47,7 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   await page.evaluate(() => switchMode('search'));
   await page.waitForFunction(() => document.getElementById('searchStatus').textContent.includes('restored'), null, { timeout: 30000 });
   const restored = await page.evaluate(() => (window.__search.getState() || []).length);
-  check('library auto-restored after reload (localStorage)', restored === 55, 'n=' + restored);
+  check('library auto-restored after reload (persisted storage)', restored === 55, 'n=' + restored);
 
   // ---- similarity parity (exact doubles equality by construction) ----
   console.log('similarity parity vs search_refs.json:');
@@ -373,7 +373,7 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   await page.evaluate(() => switchMode('search'));
   await page.evaluate(() => clearSearchLibrary());
   const cleared = await page.evaluate(() => ({ status: document.getElementById('searchStatus').textContent, stored: localStorage.getItem('wb-searchLibrary') }));
-  check('Clear wipes the library and its persisted copy', /cleared/.test(cleared.status) && cleared.stored === null, cleared.status);
+  check('Clear wipes the library and its persisted copy (IDB store; localStorage never written)', /cleared/.test(cleared.status) && cleared.stored === null, cleared.status);
 
   console.log('\npage errors:', JSON.stringify(errors, null, 1));
   check('zero page errors', errors.length === 0, errors.slice(0, 3).join(' ; '));

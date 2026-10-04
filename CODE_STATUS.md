@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**平台外壳 LigandLab 化三轮(ui/platform-shell,纯 UI)。** 轮 1:侧栏/顶栏/stepper/项目概览/控件协调。轮 2:sticky 缝隙、stepper 连线 teal、平台身份、漏斗 chip、探索器空态。轮 3(深调):分数热度编码(applyHeat teal 强度随值,搜索+探索器五列)、pinned 行底色、批量表内滚+sticky 表头+zebra、3D 区卡片化(viewer3d/能量面板/构象图 132px)、细滚动条。id/函数/引擎零改动;m6 30/30、平台 Node 34/34、m5 44/44、零 page error。分支待合并决策。
+**工作台换位完成并合入 main(ui/platform-shell → main ff):app/index.html = 老壳全功能平台(替换裸 workbench,title "WebMM Workbench — full bench (LBDD)",+Platform 导航链接);app/platform.html = LigandLab 新壳;两页共享 IndexedDB 项目库(实测 55↔55)。旧裸 workbench 退役(git 历史保全)。m0–m5 对换位页零改动全绿(144/144,m5 两条标签措辞更新),m6 30/30,平台 Node 34/34;README/tests README 双条目更新。**
 
+## Recently Completed
++- **工作台换位 + ui/platform-shell 合入 main(纯增量 ff)。** 用户决策落地:①app/index.html ← main 的老壳 platform.html(全功能超集,UIUX 与 workbench 几乎一致)——title "WebMM Workbench — full bench (LBDD)",topnav 增 Platform 链接,navDemo 经既有 fixSiteLinks 解析(实测指向 site/index.html);②app/platform.html ← 分支 LigandLab 壳(三轮深调成果);③两页共享 'webmm-platform' IndexedDB(跨页 55↔55 实测,multi-tab 安全既有设计覆盖);④**m0–m5 零改动通过**(IDB 持久层下 localStorage 断言天然成立:m5 的 restore 走 __search.getState()==55,clear 后 localStorage 为 null;m5 两条 check 标签措辞更新 persisted storage,断言未动);⑤README 顶部双条目(Workbench 全功能/Platform 新壳/共享存储)+ tests/cdp/README.md 换位说明。风险记录:旧 m5 "localStorage" 字样是历史语义,实际断言在两代页面都真;两页并存的写竞争由 Web Locks+BroadcastChannel 既有机制管。
 ## Recently Completed
 ## Recently Completed
 ## Recently Completed

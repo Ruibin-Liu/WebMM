@@ -123,3 +123,21 @@ chips 可读/标题正确/无重叠);零 page error。
 验收:m6 30/30、平台 Node 34/34、m5 44/44;实测 heat 单元 137/着色 132、
 pin 底色 1 行、chart cssH 130、sticky 表头/zebra/滚动条目检通过;
 零 page error。
+
+
+## 工作台换位 + 合入 main(用户决策:platform 顶替 workbench,分支前端成为新 platform)
+
+1. **app/index.html ← main 的 app/platform.html**(老壳全功能平台,UIUX 与
+   workbench 几乎一致且为严格超集):title "WebMM Workbench — full bench
+   (LBDD)";topnav 增 Platform 链接;navDemo 经 fixSiteLinks 解析
+   ../site/index.html(实测 200)。旧裸 workbench 页退役(git 历史保全)。
+2. **app/platform.html = 本分支 LigandLab 壳**(未动);两页共享 IndexedDB
+   'webmm-platform' 项目库(实测:index 装 55 → platform 恢复 55)。
+3. **m0–m5 对换位后 index.html 全绿零改动**(144/144;localStorage 断言
+   在 IDB 持久层下依旧成立——新 profile 下 localStorage 本就为 null);
+   m5 两条 check 标签措辞更新为 persisted storage(断言不变)。
+4. README 顶双条目重写(Workbench 全功能长描述 + Platform 新壳描述 +
+   共享存储说明);tests/cdp/README.md 增换位说明。
+5. 验收:m0-m6 七套件 + 平台 Node 全绿;烟测(导航/跨页共享/零 page error)。
+
+ff 合入 main(分支基于 b107e59 = main HEAD,纯增量)。
