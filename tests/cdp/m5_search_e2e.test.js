@@ -75,6 +75,49 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   }, REFS);
   check(`all ${simParity.checked} Tanimoto values exactly equal the refs`, simParity.mism.length === 0, simParity.mism.slice(0, 3).join(' ; ') || 'exact');
 
+  // ---- ECFP4 engine export vs MinimalLib (cross-implementation parity) ----
+  console.log('engine ECFP4 vs MinimalLib:');
+  const engParity = await page.evaluate((refs) => {
+    let mism = [], checked = 0, pairs = 0;
+    const bitsFromString = (s) => [...s].reduce((acc, c, i) => { if (c === '1') acc.push(i); return acc; }, []);
+    const probes = [];
+    for (const [qname, q] of Object.entries(refs.queries)) {
+      if (q.kind !== 'sim') continue;
+      probes.push({ name: qname, smiles: q.smiles });
+    }
+    const probeMols = probes.map(p => {
+      const m = rdkitModule.get_mol(p.smiles);
+      const mb = m.get_molblock();           // MinimalLib writes kekulized
+      const r = { name: p.name, mb, lib: bitsFromString(m.get_morgan_fp()) };
+      m.delete();
+      return r;
+    });
+    for (const p of probeMols) {
+      const eng = window.webmm.ecfp4_fingerprint_wasm(p.mb);
+      checked++;
+      if (eng.length !== p.lib.length || eng.some((v, i) => v !== p.lib[i])) {
+        mism.push(p.name + ': engine vs MinimalLib bit sets differ (' + eng.length + ' vs ' + p.lib.length + ')');
+      }
+    }
+    for (let i = 0; i < probeMols.length; i++) {
+      for (let j = i + 1; j < Math.min(probeMols.length, i + 4); j++) {
+        const tEng = window.webmm.tanimoto_wasm(
+          window.webmm.ecfp4_fingerprint_wasm(probeMols[i].mb),
+          window.webmm.ecfp4_fingerprint_wasm(probeMols[j].mb));
+        const a = probeMols[i].lib, b = probeMols[j].lib;
+        let inter = 0;
+        const sb = new Set(b);
+        for (const x of a) if (sb.has(x)) inter++;
+        const tJs = inter / (a.length + b.length - inter);
+        pairs++;
+        if (tEng !== tJs) mism.push(probeMols[i].name + '/' + probeMols[j].name + ': ' + tEng + ' vs ' + tJs);
+      }
+    }
+    return { mism, checked, pairs };
+  }, REFS);
+  check(`engine ECFP4 == MinimalLib bits (${engParity.checked} mols) and tanimoto_wasm == set arithmetic (${engParity.pairs} pairs)`,
+    engParity.mism.length === 0, engParity.mism.slice(0, 3).join(' ; ') || 'exact');
+
   // ---- UI similarity path: threshold, descending sort, self-match top ----
   console.log('UI similarity path:');
   await page.evaluate((q) => {

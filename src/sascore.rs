@@ -732,6 +732,44 @@ fn potential_stereocenters(g: &SaGraph) -> usize {
     count
 }
 
+/// ECFP4-style folded fingerprint: the bit-exact unfolded Morgan r2
+/// identifier set folded mod n_bits — the same folding semantics as
+/// RDKit's GetMorganFingerprintAsBitVect(mol, 2, n_bits). Returns
+/// sorted unique bit indices.
+pub fn ecfp4_fingerprint(g: &SaGraph, n_bits: u32) -> Vec<u32> {
+    let counts = morgan_sparse_counts(g, 2);
+    let mut bits: Vec<u32> = counts.keys().map(|&k| k % n_bits).collect();
+    bits.sort_unstable();
+    bits.dedup();
+    bits
+}
+
+/// Tanimoto over two sorted-unique bit-index sets: |A∩B| / |A∪B|.
+/// Empty union returns 0.0 (mirrors the app's tanimotoBits convention,
+/// which in turn mirrors RDKit's DataStructs.TanimotoSimilarity).
+pub fn tanimoto(a: &[u32], b: &[u32]) -> f64 {
+    let (mut i, mut j, mut inter, mut uni) = (0usize, 0usize, 0usize, 0usize);
+    while i < a.len() && j < b.len() {
+        if a[i] == b[j] {
+            inter += 1;
+            uni += 1;
+            i += 1;
+            j += 1;
+        } else if a[i] < b[j] {
+            uni += 1;
+            i += 1;
+        } else {
+            uni += 1;
+            j += 1;
+        }
+    }
+    uni += (a.len() - i) + (b.len() - j);
+    if uni == 0 {
+        return 0.0;
+    }
+    inter as f64 / uni as f64
+}
+
 /// (spiro, bridgehead, macrocycle) counts over the enumerated cycle basis
 /// (RDKit rules: bridgehead = >=3 ring bonds AND every containing ring
 /// shares >=2 bonds with another containing ring; spiro = two rings meeting

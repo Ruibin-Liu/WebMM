@@ -8247,30 +8247,30 @@ pub fn sa_load_table_wasm(bytes: &[u8]) -> Result<usize, JsValue> {
 /// engine's parse_sdf, whose aromaticity perception rewrites bond types —
 /// the SA contract is the RAW kekulized orders; build_graph perceives
 /// aromaticity itself, bit-exactly with RDKit). Requires sa_load_table.
-#[wasm_bindgen]
-pub fn sa_score_wasm(molblock: &str) -> Result<f64, JsValue> {
-    console_error_panic_hook::set_once();
+/// Shared raw-molblock -> SaGraph parser for the SA/ECFP4 wasm surface
+/// (V2000, kekulized orders as written; no engine aromaticity rewrite).
+fn sa_parse_molblock(molblock: &str) -> Result<crate::sascore::SaGraph, String> {
     let lines: Vec<&str> = molblock.lines().collect();
     let ci = lines
         .iter()
         .position(|l| l.contains("V2000"))
-        .ok_or("sa: no V2000")?;
+        .ok_or_else(|| "sa: no V2000".to_string())?;
     let start = ci.saturating_sub(3);
     let l: Vec<&str> = lines[start..].to_vec();
     if l.len() < 4 {
-        return Err(JsValue::from_str("sa: short molblock"));
+        return Err("sa: short molblock".to_string());
     }
     let counts = l[3];
     let na: usize = counts
         .get(0..3)
         .and_then(|x| x.trim().parse().ok())
-        .ok_or("sa: bad atom count")?;
+        .ok_or_else(|| "sa: bad atom count".to_string())?;
     let nb: usize = counts
         .get(3..6)
         .and_then(|x| x.trim().parse().ok())
         .unwrap_or(0);
     if l.len() < 4 + na + nb {
-        return Err(JsValue::from_str("sa: truncated molblock"));
+        return Err("sa: truncated molblock".to_string());
     }
     let sym_z = |t: &str| -> u32 {
         match t {
@@ -8298,7 +8298,7 @@ pub fn sa_score_wasm(molblock: &str) -> Result<f64, JsValue> {
         let line = l[4 + i];
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 4 {
-            return Err(JsValue::from_str("sa: bad atom line"));
+            return Err("sa: bad atom line".to_string());
         }
         zs.push(sym_z(parts[3]));
         let b = line.as_bytes();
@@ -8316,10 +8316,16 @@ pub fn sa_score_wasm(molblock: &str) -> Result<f64, JsValue> {
     let mut bonds = Vec::with_capacity(nb);
     for line in l[4 + na..4 + na + nb].iter() {
         if line.len() < 9 {
-            return Err(JsValue::from_str("sa: bad bond line"));
+            return Err("sa: bad bond line".to_string());
         }
-        let a: usize = line[0..3].trim().parse().map_err(|_| "sa: bond atom")?;
-        let bb: usize = line[3..6].trim().parse().map_err(|_| "sa: bond atom")?;
+        let a: usize = line[0..3]
+            .trim()
+            .parse()
+            .map_err(|_| "sa: bond atom".to_string())?;
+        let bb: usize = line[3..6]
+            .trim()
+            .parse()
+            .map_err(|_| "sa: bond atom".to_string())?;
         let o: u8 = line[6..9].trim().parse().unwrap_or(1);
         bonds.push((a - 1, bb - 1, o));
     }
@@ -8340,8 +8346,31 @@ pub fn sa_score_wasm(molblock: &str) -> Result<f64, JsValue> {
             }
         }
     }
-    let g = crate::sascore::build_graph(&zs, &chg, &dm, &par, &bonds);
+    Ok(crate::sascore::build_graph(&zs, &chg, &dm, &par, &bonds))
+}
+
+#[wasm_bindgen]
+pub fn sa_score_wasm(molblock: &str) -> Result<f64, JsValue> {
+    console_error_panic_hook::set_once();
+    let g = sa_parse_molblock(molblock).map_err(|e| JsValue::from_str(&e))?;
     crate::sascore::sa_score_from_graph(&g).map_err(|e| JsValue::from_str(&e))
+}
+
+/// ECFP4 (Morgan r2) folded fingerprint as sorted unique bit indices
+/// (default fold 2048, same semantics as RDKit
+/// GetMorganFingerprintAsBitVect(mol, 2, 2048)). Raw kekulized molblock.
+#[wasm_bindgen]
+pub fn ecfp4_fingerprint_wasm(molblock: &str) -> Result<Vec<u32>, JsValue> {
+    console_error_panic_hook::set_once();
+    let g = sa_parse_molblock(molblock).map_err(|e| JsValue::from_str(&e))?;
+    Ok(crate::sascore::ecfp4_fingerprint(&g, 2048))
+}
+
+/// Tanimoto over two sorted-unique bit-index sets (from
+/// ecfp4_fingerprint_wasm). Empty union = 0.0 (app tanimotoBits parity).
+#[wasm_bindgen]
+pub fn tanimoto_wasm(a: &[u32], b: &[u32]) -> f64 {
+    crate::sascore::tanimoto(a, b)
 }
 
 #[wasm_bindgen]

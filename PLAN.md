@@ -1,143 +1,76 @@
-# Plan: LigandLab 风格平台外壳(纯 UI 重构,能力零改动)——已完成
+# Plan: ECFP4+Tanimoto 引擎导出(v1.11.0)——已完成
 
-## 目标
+## 现状核查(先行事实)
 
-按竞品截图(LigandLab,中文 LBDD 平台设计稿)的视觉语言,把
-`app/platform.html` 的外壳重做:**深蓝左侧导航 + 顶栏(面包屑/版本/任务
-指示)+ 四步流程指示器(stepper)+ 卡片化主区 + 徽章/漏斗条**。所有既有
-功能、元素 id、JS 函数、worker、IndexedDB 模块**零改动**——只动壳、CSS
-与少量展示层 JS。诚实适配:不做 QSAR/pIC50/适用域/云端库的假 UI。
+- **应用侧已有 ECFP4+Tanimoto**:search 模式五种指纹之一 "Morgan" =
+  MinimalLib `get_morgan_fp`(r2/2048)+ JS `tanimotoBits`;m5 对
+  search_refs.json **逐位全等**(55 库 × 5 指纹 × 多查询,Python RDKit
+  生成参考)。此前"MinimalLib 无 Morgan"判断是探针函数名用错
+  (`get_morgan_fingerprint` ≠ `get_morgan_fp`),予以更正。
+- 引擎侧 `src/sascore.rs::morgan_sparse_counts` = bit-exact 展开型
+  Morgan r2 标识符计数(golden 77 分子逐位全等)。ECFP4 位集 =
+  {identifier % 2048 : identifier 存在}——与 RDKit
+  GetMorganFingerprintAsBitVect(mol, 2, 2048) 同一折叠语义。
 
-## 范围(仅 app/platform.html + tests/cdp/m6_platform.test.js)
+## 范围
 
-### A. 设计系统 CSS(追加层,不重写既有样式)
-- 变量:侧栏 navy `#16202e`、主色 teal `#14b8a6`、底 `#f4f6f9`、白卡
-  圆角 10px + 轻阴影;`.panel`→卡片、`.action-btn.primary`→teal。
-- 徽章/风险标签 pills(绿/橙/灰)、stepper(圆点+连线)、任务条。
+### A. 引擎(Rust,additive)
+1. `sascore.rs`:`pub fn ecfp4_fingerprint(g: &SaGraph, n_bits: u32) -> Vec<u32>`
+   ——计数键折叠去重升序;`pub fn tanimoto(a: &[u32], b: &[u32]) -> f64`
+   ——有序集交/并(全等双除法,与 JS tanimotoBits 同算术)。
+2. `lib.rs` 导出:`ecfp4_fingerprint_wasm(molblock) -> Vec<u32>`(固定
+   2048;复用 SA 的原始 Kekulé molblock 解析)+ `tanimoto_wasm(a, b) -> f64`。
+3. cargo 测试:77 金标分子折叠位集与 golden fp 键集 %2048 全等;
+   tanimoto 自身=1.0/对称/空集守卫;若干跨分子值(与金标 fp 在测试内
+   折叠重算,不引新夹具)。
 
-### B. 外壳 DOM:body → `.app-shell`(grid:侧栏 216px + 主列)
-- `<aside class="sidenav">`:品牌、导航 6 项(内联 SVG 图标 + 文案)
-  - 项目概览 `tabProject`(新,mode 'project')· 分子工作台 `tabSingle`
-    (id 原样,按钮从 mode-tabs 迁入)· 批量处理 `tabBatch` ·
-    相似性检索 `tabSearch` · 骨架探索(锚点:search+analogPanel)·
-    检索历史(锚点:search+queryHistoryPanel)
-  - 页脚:Workbench 链接、本地计算声明、存储徽章
-- `.main-col` = 顶栏 + stepper + 既有 container
-  - 顶栏:面包屑(随模式更新)+ 任务指示 `taskTicker`
-    (MutationObserver 监听 searchStatus/analogStatus/batchStatus,
-    运行态 teal 脉冲)+ RDKit/engine 版本(id 迁入,原处删除)
-  - stepper 四步(可点击,诚实映射):结构导入→single · 候选检索→
-    search · 骨架探索→analogPanel · 性质与精选→batch;switchMode 同步
-    done/current 态
+### B. 应用(最小接线)
+1. index.html 与 platform.html 检索指纹选项 "Morgan" 标签 →
+   "ECFP4 (Morgan r2)"(value 键 `morgan` 不动——零行为变更)。
+2. m5 增**跨实现对拍**:查询与若干库分子上,引擎
+   `ecfp4_fingerprint_wasm(get_mol(smiles).get_molblock())` 位集 ==
+   MinimalLib `get_morgan_fp()` 位集,且 `tanimoto_wasm` ==
+   `tanimotoBits`(双精度全等)——防 vendor 升级漂移的真回归价值,
+   亦为导出的真实消费者。
 
-### C. 项目概览面板(新 `overviewPanel`,mode 'project')
-- 统计卡:库规模/工作集(读既有 state)/引擎与 RDKit 版本;
-  存储状态(navigator.storage);
-- 项目导入/导出按钮**迁入**(`projectImportFile` 等 id 原样保留,
-  setInputFiles 兼容);
-- 诚实横幅(对应竞品"模型预测≠实验结果"):"本地确定性引擎——不含
-  QSAR/ADMET 预测模型;分数用于优先级排序"。
-
-### D. switchMode 扩展(增量)
-- `projectMode` 布尔;single = !batch&&!search&&!project;
-  overviewPanel 显隐;tabProject active;面包屑+stepper 同步;
-  modeInputs/modeShown/MODE_SECTION 增 project 键。
-
-### E. 窄屏
-- <920px 侧栏缩为 56px 图标列;stepper 文字缩短。390px 无横向溢出。
+### C. 版本与构建
+- v1.11.0(Cargo.toml);wasm-pack 双重建;pkg 暂存
+  (site/index.html + app/fpscores.bin);node 冒烟(导出可用、自相似 1.0)。
 
 ## 不做
-- 引擎/wasm/worker/IndexedDB 模块改动;新能力(ECFP4 导出、PAINS 等);
-  右侧浮动详情卡(单分子工作台即检查器,映射声明);假 QSAR/ADMET 列。
+- 不替换应用检索路径(MinimalLib 已验证且同值,换路径零收益);
+  不加属性过滤/PAINS 列(LigandLab 卡片剩余项,另行立项);
+  不动探索器预筛(语义变更风险)。
 
 ## 验收
-1. m6 既有 27 项全绿 + 新增 3 项(外壳渲染 6 导航项;overview 可达且
-   统计卡+项目按钮在场;stepper 第一步点击切到 single)。
-2. m0–m5、平台 Node 34/34 回归全绿;内联脚本 node --check;零 page error。
-3. 目检:侧栏/顶栏/stepper/卡片/徽章符合截图视觉;窄屏 390px 无溢出。
+1. cargo 全量 + sascore_golden(含新 ecfp4/tanimoto 测试)绿;
+2. m0–m6 七套件 + 平台 Node 全绿(m5 +1 跨实现断言);
+3. node 冒烟:ecfp4 位集非空、tanimoto 自身=1.0;
+4. 零 page error;clippy 0;fmt。
 
 
 ## 实施与验收(完成)
 
-1. **外壳**:body → `.app-shell`(216px 侧栏 + 主列);深蓝渐变侧栏 6 导航
-   项(内联 SVG 图标;tabSingle/tabBatch/tabSearch id 迁入 + 新 tabProject;
-   骨架探索/检索历史 = search 锚点 sideGoto);页脚 Workbench/GitHub/本地
-   声明/存储徽章。顶栏 = 面包屑(随模式)+ 任务指示 taskTicker
-   (MutationObserver 四状态源,运行态 teal 脉冲)+ RDKit/engine 版本(id 迁入)。
-2. **Stepper**:四步可点击,诚实映射(结构导入→single · 候选检索→search ·
-   骨架探索→analog 锚点 · 性质与精选→batch);switchMode 同步 cur/done 态;
-   project 模式全中性(初版"全 done"语义错误已修)。
-3. **项目概览(mode 'project')**:5 统计卡(库/工作集 pin/轮次
-   [triageStore().projectApi().state.rounds 同源]/引擎/存储 estimate);
-   项目导入导出按钮**迁入**(id 保留,setInputFiles 兼容);诚实横幅
-   "本地确定性引擎——不含 QSAR/ADMET 预测模型";输入面板该模式隐藏。
-4. **switchMode 扩展**:projectMode 布尔;modeInputs/modeShown/MODE_SECTION
-   增 project 键;syncShellChrome() 统一驱动面包屑+stepper。
-5. **控件协调 CSS 层**:teal 主按钮、中性描边 edit/history/spatial、
-   红描边 clear、teal 描边 export(旧金黄/淡紫废除外观);select/range
-   accent-color;表格表头着色+行 hover;dropzone 强化。
-6. **窄屏**:<920px 侧栏缩 54px 图标列;390px 溢出 0px。
+1. **引擎**:`sascore::ecfp4_fingerprint(g, n_bits)`(展开型标识符集
+   折叠 mod n,去重升序——RDKit AsBitVect 同语义)+
+   `sascore::tanimoto`(有序集双指针交/并;**空并集=0.0 镜像 app
+   tanimotoBits/ RDKit 约定**)。lib.rs:抽 `sa_parse_molblock` 共享
+   解析(机械重构,SA 路径错误串不变);`ecfp4_fingerprint_wasm`(固定
+   2048,原始 Kekulé molblock)+ `tanimoto_wasm`。v1.11.0。
+2. **cargo 测试 +2**:77 金标分子折叠位集 vs golden fp 键集 %2048 全等;
+   tanimoto 恒等式(空集=0/自身=1/对称/与金标折叠集重算值全等)。
+3. **应用**:两页检索选项 "Morgan" → "ECFP4 (Morgan r2)"(value 不动);
+   m5 +1 跨实现断言:浏览器内 `ecfp4_fingerprint_wasm(get_molblock())`
+   位集 == MinimalLib `get_morgan_fp()` 位集(全部 sim 查询)+
+   `tanimoto_wasm` == 集合算术(逐对双精度全等)——vendor 升级漂移的
+   真回归护栏,亦为导出的真实消费者。
+4. **构建**:wasm-pack v1.11.0 双重建,pkg 暂存;node 冒烟(自 T=1/
+   空=0/CCO↔paracetamol 0.0833)。
 
 ## 验收数字
 
-- **m6 30/30**(+3:外壳 6 导航项+4 tab+stepper+ticker;overview 统计卡+
-  项目按钮迁入+stepper 中性;step1 点击回 single);m0–m5 37/10/11/10/32/44
-  全绿;平台 Node 34/34;7 内联脚本 node --check;零 page error;
-  390px 溢出 0px;目检三轮(overview/search/窄屏)通过。
-- 引擎/wasm/worker/IndexedDB 模块零改动;全部既有 id/函数保留。
-
-
-## 视觉轮 2(继续调;已完成)
-
-1. **sticky 缝隙修复**:topbar 实测 34.6px vs stepper top:46px 写死 → topbar
-   定高 46px,滚动时 gap=0 实测验证。
-2. **stepper 连线**:line1-3 id + done 态(已完成段 teal 填充,flex 可伸缩
-   18-70px);syncShellChrome 同步。
-3. **平台身份**:h1 "WebMM Workbench" → "WebMM Platform",副题改中文
-   本地配体设计流描述(侧栏/顶栏/标题三级一致)。
-4. **漏斗 chips**:searchResultStatus → teal 胶囊(内容不变)。
-5. **探索器空态**:analogStatus 初始"待命 — 选定位点后 Explore,或
-   aza-scan 一键骨架跃迁"(不含 m6 终态正则词)。
-6. **行距**:analogPanel/pharmQueryPanel 按钮行 wrap+row-gap;separator
-   字距微调。
-
-验收:m6 30/30、m5 44/44、平台 Node 34/34;目检(search 视图:连线 teal/
-chips 可读/标题正确/无重叠);零 page error。
-
-
-## 视觉轮 3(深调;已完成)
-
-1. **分数热度编码**:applyHeat 帮助函数——`[data-heat]` 单元格按 0-1 值
-   上 teal 底色(α=0.04+0.26v,tabular-nums);搜索表 Shape T/Color T/
-   Combo 三列 + 探索器 T/flex 两列;自匹配 100% 最深,单调渐变;
-   文本对比度目检可读。
-2. **pinned 行底色**:检索表 pinned 行 teal 8% 底(排除行 45% 透明既有);
-   ★ 视觉与工作集联动。
-3. **批量表**:容器 max-height 62vh 内滚 + **sticky 表头**(着色+阴影)、
-   zebra 行、hover teal、细滚动条。
-4. **3D 区卡片化**:viewer3d 边框+圆角+阴影+min-height 300;能量面板
-   底色卡;构象图 96→132px(H=clientHeight 自适应,HiDPI 逻辑不变);
-   按钮行 wrap+row-gap;属性表 Copy 按钮间距。
-5. **细滚动条**:全站 9px 圆角滚动条(侧栏深色变体)。
-
-验收:m6 30/30、平台 Node 34/34、m5 44/44;实测 heat 单元 137/着色 132、
-pin 底色 1 行、chart cssH 130、sticky 表头/zebra/滚动条目检通过;
-零 page error。
-
-
-## 工作台换位 + 合入 main(用户决策:platform 顶替 workbench,分支前端成为新 platform)
-
-1. **app/index.html ← main 的 app/platform.html**(老壳全功能平台,UIUX 与
-   workbench 几乎一致且为严格超集):title "WebMM Workbench — full bench
-   (LBDD)";topnav 增 Platform 链接;navDemo 经 fixSiteLinks 解析
-   ../site/index.html(实测 200)。旧裸 workbench 页退役(git 历史保全)。
-2. **app/platform.html = 本分支 LigandLab 壳**(未动);两页共享 IndexedDB
-   'webmm-platform' 项目库(实测:index 装 55 → platform 恢复 55)。
-3. **m0–m5 对换位后 index.html 全绿零改动**(144/144;localStorage 断言
-   在 IDB 持久层下依旧成立——新 profile 下 localStorage 本就为 null);
-   m5 两条 check 标签措辞更新为 persisted storage(断言不变)。
-4. README 顶双条目重写(Workbench 全功能长描述 + Platform 新壳描述 +
-   共享存储说明);tests/cdp/README.md 增换位说明。
-5. 验收:m0-m6 七套件 + 平台 Node 全绿;烟测(导航/跨页共享/零 page error)。
-
-ff 合入 main(分支基于 b107e59 = main HEAD,纯增量)。
+cargo 322 + sascore_golden **6**(+2);clippy 0;fmt;m0-m6
+37/10/11/10/32/**45**/30(m5 +1 跨实现);平台 Node 34/34;零 page error。
+更正记录:此前"MinimalLib 无 Morgan"为探针函数名误用
+(get_morgan_fingerprint ≠ get_morgan_fp),应用侧 ECFP4+Tanimoto
+检索自始存在且 m5 已逐位对拍。
