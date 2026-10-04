@@ -840,7 +840,7 @@ body { background: var(--ll-bg); margin: 0; }
 /* --- topbar --- */
 .main-col { min-width: 0; }
 .topbar { display: flex; align-items: center; gap: 1rem; background: #fff; border-bottom: 1px solid var(--ll-line);
-  padding: 0.55rem 1.1rem; position: sticky; top: 0; z-index: 40; }
+  height: 46px; padding: 0 1.1rem; box-sizing: border-box; position: sticky; top: 0; z-index: 40; }
 .crumb { font-size: 0.85rem; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumb b { color: var(--ll-teal-2); font-weight: 600; }
 .top-tasks { flex: 1; text-align: center; font-size: 0.75rem; color: #64748b; min-width: 0;
@@ -862,7 +862,8 @@ body { background: var(--ll-bg); margin: 0; }
 .step.done .dot { border-color: var(--ll-teal); background: var(--ll-teal); }
 .step.done .dot::after { content: ""; width: 6px; height: 3.5px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translate(0, -1px); }
 .step:hover { color: var(--ll-teal-2); }
-.step-line { flex: 0 1 26px; height: 2px; background: #e2e8f0; }
+.step-line { flex: 1 1 26px; min-width: 18px; max-width: 70px; height: 2.5px; background: #dbe3ec; border-radius: 2px; }
+.step-line.done { background: var(--ll-teal); }
 
 /* --- cards --- */
 .container { padding-top: 1rem; }
@@ -877,8 +878,13 @@ body { background: var(--ll-bg); margin: 0; }
 .ov-card { background: #f8fafc; border: 1px solid var(--ll-line); border-radius: 10px; padding: 0.7rem 0.8rem; }
 .ov-num { font-size: 1.5rem; font-weight: 700; color: #0f172a; line-height: 1.15; }
 .ov-cap { font-size: 0.75rem; color: #64748b; margin: 0.15rem 0 0.2rem; }
+#searchResultStatus { display: inline-block; background: #f0fdfa; border: 1px solid #b5d8d3; color: #0f766e;
+  border-radius: 999px; padding: 0.22rem 0.7rem; font-size: 0.75rem; font-weight: 500; }
 .ov-banner { background: #fef9ec; border: 1px solid #f2e3bb; color: #8a6d1d; border-radius: 8px;
   padding: 0.5rem 0.7rem; font-size: 0.78rem; margin-top: 0.4rem; }
+
+#analogPanel .action-buttons, #pharmQueryPanel .action-buttons { flex-wrap: wrap; row-gap: 0.45rem; }
+.separator { color: #8fa1b6; letter-spacing: 0.04em; }
 
 /* --- narrow: icon rail --- */
 @media (max-width: 920px) {
@@ -968,18 +974,18 @@ body { background: var(--ll-bg); margin: 0; }
 </header>
 
 <div class="stepper" id="stepperBar" aria-label="工作流程">
-  <button class="step cur" id="step1" onclick="stepGo('single')" title="结构导入:粘贴/绘制/上传,校验 + 2D"><span class="dot"></span><span class="step-label">结构导入</span></button><span class="step-line"></span>
-  <button class="step" id="step2" onclick="stepGo('search')" title="候选检索:相似/子结构/形状×2,漏斗 + 甄别"><span class="dot"></span><span class="step-label">候选检索</span></button><span class="step-line"></span>
-  <button class="step" id="step3" onclick="stepGo('analog')" title="骨架探索:邻域片段枚举 + aza-scan 骨架跃迁"><span class="dot"></span><span class="step-label">骨架探索</span></button><span class="step-line"></span>
+  <button class="step cur" id="step1" onclick="stepGo('single')" title="结构导入:粘贴/绘制/上传,校验 + 2D"><span class="dot"></span><span class="step-label">结构导入</span></button><span class="step-line" id="line1"></span>
+  <button class="step" id="step2" onclick="stepGo('search')" title="候选检索:相似/子结构/形状×2,漏斗 + 甄别"><span class="dot"></span><span class="step-label">候选检索</span></button><span class="step-line" id="line2"></span>
+  <button class="step" id="step3" onclick="stepGo('analog')" title="骨架探索:邻域片段枚举 + aza-scan 骨架跃迁"><span class="dot"></span><span class="step-label">骨架探索</span></button><span class="step-line" id="line3"></span>
   <button class="step" id="step4" onclick="stepGo('batch')" title="性质与精选:批量描述符/规则/QED/PAINS + 工作集共识排序"><span class="dot"></span><span class="step-label">性质与精选</span></button>
 </div>
 
 <div class="container">
 
  <header>
-   <h1>WebMM Workbench</h1>
+   <h1>WebMM Platform</h1>
     <div class="subtitle">
-      Prep ligands for docking — draw or paste a structure, embed 3D (ETKDG), optimize (MMFF94s / GFN-FF), enumerate conformers, and screen in batch. Everything runs locally; nothing is uploaded.
+      从已知配体出发的本地配体设计流:结构导入 → 相似性检索(含骨架跃迁)→ 批量性质 → 工作集精选。全部计算在浏览器内确定性完成 — 不上传、不联网、无预测模型。
     </div>
    <div class="badges">
      <span class="badge" title="All processing happens in your browser - no data sent anywhere">
@@ -5461,6 +5467,8 @@ function syncShellChrome() {
     const el = document.getElementById('step' + i);
     el.classList.toggle('cur', i === step);
     el.classList.toggle('done', i < step);
+    const ln = document.getElementById('line' + i);
+    if (ln) ln.classList.toggle('done', i < step);
   }
 }
 function stepGo(target) {
@@ -5527,6 +5535,10 @@ function initTaskTicker() {
 initTaskTicker();
 initSideStorage();
 syncShellChrome();
+(function () {
+  const a = document.getElementById('analogStatus');
+  if (a && !a.textContent) a.textContent = '待命 — 选定位点后 Explore,或 aza-scan 一键骨架跃迁';
+})();
 function initSideStorage() {
   const el = document.getElementById('sideStorage');
   if (navigator.storage && navigator.storage.persisted) {

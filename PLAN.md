@@ -85,3 +85,21 @@
   全绿;平台 Node 34/34;7 内联脚本 node --check;零 page error;
   390px 溢出 0px;目检三轮(overview/search/窄屏)通过。
 - 引擎/wasm/worker/IndexedDB 模块零改动;全部既有 id/函数保留。
+
+
+## 视觉轮 2(继续调;已完成)
+
+1. **sticky 缝隙修复**:topbar 实测 34.6px vs stepper top:46px 写死 → topbar
+   定高 46px,滚动时 gap=0 实测验证。
+2. **stepper 连线**:line1-3 id + done 态(已完成段 teal 填充,flex 可伸缩
+   18-70px);syncShellChrome 同步。
+3. **平台身份**:h1 "WebMM Workbench" → "WebMM Platform",副题改中文
+   本地配体设计流描述(侧栏/顶栏/标题三级一致)。
+4. **漏斗 chips**:searchResultStatus → teal 胶囊(内容不变)。
+5. **探索器空态**:analogStatus 初始"待命 — 选定位点后 Explore,或
+   aza-scan 一键骨架跃迁"(不含 m6 终态正则词)。
+6. **行距**:analogPanel/pharmQueryPanel 按钮行 wrap+row-gap;separator
+   字距微调。
+
+验收:m6 30/30、m5 44/44、平台 Node 34/34;目检(search 视图:连线 teal/
+chips 可读/标题正确/无重叠);零 page error。

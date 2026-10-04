@@ -4,8 +4,9 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**LigandLab 风格外壳落地(ui/platform-shell 分支,纯 UI):深蓝侧栏 6 导航 + 顶栏面包屑/任务指示 + 四步 stepper + 项目概览统计卡(项目导入导出迁入)+ 控件 teal 协调层;switchMode 增 project 伪模式(增量);全部既有 id/函数/引擎零改动。m6 30/30(+3 外壳断言),m0–m5 与平台 Node 全绿,390px 溢出 0,零 page error。**
+**平台外壳 LigandLab 化 + 视觉轮 2(ui/platform-shell 分支,纯 UI)。** 轮 1:深蓝侧栏 6 导航 + 顶栏面包屑/任务指示 + 四步 stepper + 项目概览统计卡(项目导入导出迁入)+ 控件 teal 协调层;switchMode 增 project 伪模式。轮 2:sticky 缝隙修复(topbar 定高 46px 对齐 stepper 偏移)、stepper 连线 done 段 teal、h1 平台身份重写 + 中文副题、检索汇总行 teal chips、探索器空态提示、按钮行 wrap。全部既有 id/函数/引擎零改动;m6 30/30(+3)、m5 44/44、平台 Node 34/34、零 page error、390px 溢出 0。
 
+## Recently Completed
 ## Recently Completed
 +- **平台外壳 LigandLab 化(ui/platform-shell,纯 UI 重构)。** 竞品截图(设计稿)视觉语言移植:①`.app-shell` 网格 = 216px 深蓝渐变侧栏(6 导航项内联 SVG 图标;tabSingle/tabBatch/tabSearch **id 原样迁入**侧栏,新 tabProject;骨架探索/检索历史 = sideGoto('search'+锚点 scrollIntoView))+ 主列;②顶栏 = 面包屑(syncShellChrome 随模式)+ taskTicker(MutationObserver 监听 analog/search/batch/result 四状态源,运行态 teal 脉冲)+ RDKit/engine 版本迁入;③四步 stepper 可点击诚实映射(结构导入→single/候选检索→search/骨架探索→analog/性质与精选→batch),cur/done 由 switchMode 同步;④**项目概览伪模式**:5 统计卡(库规模 __search.getState / 工作集 compat.getPins / 轮次 triageStore().projectApi().state.rounds 与检索历史同源 / 引擎 / navigator.storage.estimate)+ 项目导入导出按钮迁入(id 保留 → m6 setInputFiles 兼容)+ 诚实横幅("不含 QSAR/ADMET 预测模型"),该模式输入面板隐藏;⑤控件协调 CSS 追加层(teal 主/中性描边次/红描边破坏性,废旧金黄与淡紫外观;select/range accent;表头着色+hover);⑥<920px 侧栏缩 54px 图标列。**排雷**:fixSiteLinks 对已删 navDemo 元素 null 解引用(守卫);project 模式 stepper 初版"全 done"语义错误(改全中性);任务等待正则与实际状态文案不符(诊断后确认页面无恙)。验收:**m6 30/30**(+3:外壳完整性/概览统计卡+迁移/step1 点击回 single)、m0–m5 37/10/11/10/32/44、平台 Node 34/34、7 脚本 node --check、零 page error、390px 溢出 0px、目检三轮(overview/search/窄屏)。范围纪律:引擎/wasm/worker/IndexedDB 模块零改动,不做的(右侧浮动详情卡、假 QSAR/ADMET 列、ECFP4 导出)在 PLAN 声明。
 ## Recently Completed
