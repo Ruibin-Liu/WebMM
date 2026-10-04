@@ -809,18 +809,170 @@ details {
     font-size: 0.8rem;
     margin-top: auto;
   }
+
+/* ===== LigandLab-style shell (UI layer; ids/behaviors unchanged) ===== */
+:root {
+  --ll-navy: #16202e; --ll-navy-2: #1d2a3b; --ll-teal: #14b8a6; --ll-teal-2: #0d9488;
+  --ll-bg: #f4f6f9; --ll-line: #e5e9f0;
+}
+html { background: var(--ll-bg); }
+body { background: var(--ll-bg); margin: 0; }
+.app-shell { display: grid; grid-template-columns: 216px 1fr; min-height: 100vh; }
+
+/* --- sidenav --- */
+.sidenav { background: linear-gradient(180deg, var(--ll-navy) 0%, #101827 100%); color: #cbd5e1;
+  display: flex; flex-direction: column; padding: 0.9rem 0.7rem; position: sticky; top: 0; height: 100vh; box-sizing: border-box; }
+.side-brand { color: #f1f5f9; font-weight: 700; font-size: 1.02rem; text-decoration: none; padding: 0.2rem 0.55rem 0.75rem; letter-spacing: 0.01em; }
+.side-brand span { color: var(--ll-teal); }
+.side-brand:hover { color: #fff; }
+.side-nav { display: flex; flex-direction: column; gap: 2px; }
+.side-item { display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: left; cursor: pointer;
+  background: none; border: none; color: #9fb0c3; font: inherit; font-size: 0.86rem; padding: 0.52rem 0.55rem;
+  border-radius: 8px; transition: background .15s, color .15s; }
+.side-item svg { width: 17px; height: 17px; flex: 0 0 17px; }
+.side-item:hover { background: var(--ll-navy-2); color: #e2e8f0; }
+.side-item.active { background: rgba(20,184,166,.16); color: #5eead4; box-shadow: inset 2.5px 0 0 var(--ll-teal); }
+.side-foot { margin-top: auto; padding: 0.6rem 0.55rem 0.2rem; border-top: 1px solid #26344a; display: flex; flex-direction: column; gap: 0.3rem; }
+.side-foot a { color: #7d8fa5; font-size: 0.75rem; text-decoration: none; }
+.side-foot a:hover { color: #b6c5d8; }
+.side-note { color: #64778e; font-size: 0.68rem; }
+
+/* --- topbar --- */
+.main-col { min-width: 0; }
+.topbar { display: flex; align-items: center; gap: 1rem; background: #fff; border-bottom: 1px solid var(--ll-line);
+  padding: 0.55rem 1.1rem; position: sticky; top: 0; z-index: 40; }
+.crumb { font-size: 0.85rem; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumb b { color: var(--ll-teal-2); font-weight: 600; }
+.top-tasks { flex: 1; text-align: center; font-size: 0.75rem; color: #64748b; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-tasks.running { color: var(--ll-teal-2); animation: ll-pulse 1.6s ease-in-out infinite; }
+@keyframes ll-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+.top-ver { font-size: 0.72rem; color: #94a3b8; white-space: nowrap; }
+
+/* --- stepper --- */
+.stepper { display: flex; align-items: center; gap: 0.4rem; background: #fff; border-bottom: 1px solid var(--ll-line);
+  padding: 0.6rem 1.1rem; position: sticky; top: 46px; z-index: 39; overflow-x: auto; }
+.step { display: flex; align-items: center; gap: 0.45rem; background: none; border: none; cursor: pointer;
+  font: inherit; font-size: 0.78rem; color: #94a3b8; padding: 0.15rem 0.2rem; white-space: nowrap; }
+.step .dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #cbd5e1; background: #fff;
+  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.step.cur { color: #0f172a; font-weight: 600; }
+.step.cur .dot { border-color: var(--ll-teal); box-shadow: 0 0 0 4px rgba(20,184,166,.18); }
+.step.done { color: #475569; }
+.step.done .dot { border-color: var(--ll-teal); background: var(--ll-teal); }
+.step.done .dot::after { content: ""; width: 6px; height: 3.5px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translate(0, -1px); }
+.step:hover { color: var(--ll-teal-2); }
+.step-line { flex: 0 1 26px; height: 2px; background: #e2e8f0; }
+
+/* --- cards --- */
+.container { padding-top: 1rem; }
+.panel { background: #fff; border: 1px solid var(--ll-line); border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04); margin-bottom: 1.05rem; }
+.mode-tab { all: unset; }
+.action-btn.primary { background: var(--ll-teal); border-color: var(--ll-teal-2); }
+.action-btn.primary:hover { background: var(--ll-teal-2); }
+
+/* --- overview --- */
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.7rem; margin: 0.7rem 0; }
+.ov-card { background: #f8fafc; border: 1px solid var(--ll-line); border-radius: 10px; padding: 0.7rem 0.8rem; }
+.ov-num { font-size: 1.5rem; font-weight: 700; color: #0f172a; line-height: 1.15; }
+.ov-cap { font-size: 0.75rem; color: #64748b; margin: 0.15rem 0 0.2rem; }
+.ov-banner { background: #fef9ec; border: 1px solid #f2e3bb; color: #8a6d1d; border-radius: 8px;
+  padding: 0.5rem 0.7rem; font-size: 0.78rem; margin-top: 0.4rem; }
+
+/* --- narrow: icon rail --- */
+@media (max-width: 920px) {
+  .app-shell { grid-template-columns: 54px 1fr; }
+  .sidenav { padding: 0.9rem 0.4rem; }
+  .side-brand { font-size: 0; padding: 0 0 0.7rem 0.25rem; }
+  .side-brand::first-letter { font-size: 1rem; }
+  .side-label { display: none; }
+  .side-item { justify-content: center; padding: 0.55rem 0; }
+  .side-foot a:nth-of-type(1), .side-note { display: none; }
+  .top-ver { display: none; }
+  .step-label { display: none; }
+  .stepper { top: 46px; }
+}
+
+/* --- inner-control harmonization (CSS-only; DOM untouched) --- */
+.panel select, .panel input[type="range"] { accent-color: var(--ll-teal); }
+.panel select { padding: 0.3rem 0.45rem; border: 1px solid var(--ll-line); border-radius: 7px;
+  background: #fff; font-size: 0.8rem; color: #1e293b; }
+.action-btn.edit { background: #fff; border: 1px solid #c7d2de; color: #334155; }
+.action-btn.edit:hover { background: #f1f5f9; border-color: #94a3b8; }
+.action-btn.clear { background: #fff; border: 1px solid #f3c9c9; color: #b91c1c; }
+.action-btn.clear:hover { background: #fef2f2; border-color: #ef9a9a; }
+.action-btn.history { background: #fff; border: 1px solid #c7d2de; color: #334155; }
+.action-btn.history:hover { background: #f1f5f9; }
+.action-btn.export { background: #fff; border: 1px solid #b5d8d3; color: #0f766e; }
+.action-btn.export:hover { background: #f0fdfa; border-color: var(--ll-teal); }
+.action-btn.spatial { background: #fff; border: 1px solid #c7d2de; color: #334155; }
+.action-btn.spatial:hover { background: #f1f5f9; }
+.ctl-group .action-btn.primary { background: var(--ll-teal); }
+.ctl-group .action-btn.export { background: #fff; border-color: #b5d8d3; color: #0f766e; }
+.drop { border: 2px dashed #b8c4d4; background: #f8fafc; }
+.drop:hover, .drop.drag { border-color: var(--ll-teal); background: #f0fdfa; }
+.panel table { border-collapse: collapse; }
+.panel table th { background: #f1f5f9; color: #475569; font-weight: 600; font-size: 0.74rem; }
+.panel table td, .panel table th { border-bottom: 1px solid #eef2f7; }
+.panel table tbody tr:hover { background: #f8fafc; }
+.mode-tab { all: unset; }
+.badge { border: 1px solid var(--ll-line); background: #fff; }
 </style>
 </head>
 <body>
-<nav class="topnav">
-  <a class="brand" href="#" onclick="window.scrollTo({top:0}); return false;">Web<span>MM</span></a>
-  <div class="links">
-    <a href="#" class="active" aria-current="page">Workbench</a>
-    <a id="navDemo" href="../index.html">Demo</a>
-    <a id="navPlayground" href="../playground.html">Playground</a>
-    <a href="https://github.com/Ruibin-Liu/WebMM">GitHub</a>
+<div class="app-shell">
+
+<aside class="sidenav" id="sidenav">
+  <a class="side-brand" href="#" onclick="window.scrollTo({top:0}); return false;" title="WebMM Platform">Web<span>MM</span> Platform</a>
+  <nav class="side-nav" aria-label="Platform sections">
+    <button class="side-item" id="tabProject" onclick="switchMode('project')" title="项目概览 — 库/工作集统计、项目导入导出">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      <span class="side-label">项目概览</span>
+    </button>
+    <button class="side-item mode-tab active" id="tabSingle" role="tab" aria-selected="true" onclick="switchMode('single')" title="分子工作台 — 结构导入、2D/3D、构象、位点">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg>
+      <span class="side-label">分子工作台</span>
+    </button>
+    <button class="side-item mode-tab" id="tabBatch" role="tab" aria-selected="false" onclick="switchMode('batch')" title="批量处理 — 描述符、规则、QED/PAINS、导出">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      <span class="side-label">批量处理</span>
+    </button>
+    <button class="side-item mode-tab" id="tabSearch" role="tab" aria-selected="false" onclick="switchMode('search')" title="相似性检索 — sim/sub/shape×2、阈值、漏斗、甄别">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span class="side-label">相似性检索</span>
+    </button>
+    <button class="side-item" onclick="sideGoto('analogPanel')" title="骨架探索 — 邻域片段枚举 + aza-scan(相似性检索模式内)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v4m0 6v4a2 2 0 0 0 2 2h4m6-18h4a2 2 0 0 1 2 2v4m0 6v4a2 2 0 0 1-2 2h-4"/><circle cx="12" cy="12" r="3"/></svg>
+      <span class="side-label">骨架探索</span>
+    </button>
+    <button class="side-item" onclick="sideGoto('queryHistoryPanel', true)" title="检索历史 — 轮次 DAG、hit-as-query(相似性检索模式内)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <span class="side-label">检索历史</span>
+    </button>
+  </nav>
+  <div class="side-foot">
+    <a href="../index.html">← Workbench</a>
+    <a href="https://github.com/Ruibin-Liu/WebMM">GitHub ↗</a>
+    <span class="side-note">本地计算 · 不上传</span>
+    <span class="side-note" id="sideStorage">storage…</span>
   </div>
-</nav>
+</aside>
+
+<div class="main-col">
+
+<header class="topbar">
+  <div class="crumb" id="crumbNow">WebMM 项目 · <b>分子工作台</b></div>
+  <div class="top-tasks" id="taskTicker" aria-live="polite"></div>
+  <div class="top-ver">RDKit <span id="rdkitVersion">Loading...</span> · engine <span id="engineVersion">WebMM (loading…)</span></div>
+</header>
+
+<div class="stepper" id="stepperBar" aria-label="工作流程">
+  <button class="step cur" id="step1" onclick="stepGo('single')" title="结构导入:粘贴/绘制/上传,校验 + 2D"><span class="dot"></span><span class="step-label">结构导入</span></button><span class="step-line"></span>
+  <button class="step" id="step2" onclick="stepGo('search')" title="候选检索:相似/子结构/形状×2,漏斗 + 甄别"><span class="dot"></span><span class="step-label">候选检索</span></button><span class="step-line"></span>
+  <button class="step" id="step3" onclick="stepGo('analog')" title="骨架探索:邻域片段枚举 + aza-scan 骨架跃迁"><span class="dot"></span><span class="step-label">骨架探索</span></button><span class="step-line"></span>
+  <button class="step" id="step4" onclick="stepGo('batch')" title="性质与精选:批量描述符/规则/QED/PAINS + 工作集共识排序"><span class="dot"></span><span class="step-label">性质与精选</span></button>
+</div>
 
 <div class="container">
 
@@ -845,15 +997,27 @@ details {
      </span>
 
    </div>
-   <div class="version">RDKit version: <span id="rdkitVersion">Loading...</span> · engine: <span id="engineVersion">WebMM (loading…)</span></div>
  </header>
 
-<div class="panel">
-  <div class="mode-tabs" role="tablist">
-    <button class="mode-tab active" id="tabSingle" role="tab" aria-selected="true" onclick="switchMode('single')">Single</button>
-    <button class="mode-tab" id="tabBatch" role="tab" aria-selected="false" onclick="switchMode('batch')">Batch</button>
-    <button class="mode-tab" id="tabSearch" role="tab" aria-selected="false" onclick="switchMode('search')">Search</button>
-  </div>
+ <div id="overviewPanel" class="panel overview" style="display:none;">
+   <strong>项目概览</strong> <span class="hint">— 库 / 工作集 / 引擎 / 持久化一览</span>
+   <div class="ov-grid">
+     <div class="ov-card"><div class="ov-num" id="ovLib">–</div><div class="ov-cap">库分子</div><div class="hint" id="ovLibDetail"></div></div>
+     <div class="ov-card"><div class="ov-num" id="ovPins">–</div><div class="ov-cap">工作集 pin</div><div class="hint" id="ovPinsDetail"></div></div>
+     <div class="ov-card"><div class="ov-num" id="ovRounds">–</div><div class="ov-cap">检索轮次</div><div class="hint" id="ovRoundsDetail"></div></div>
+     <div class="ov-card"><div class="ov-num" id="ovEngine">–</div><div class="ov-cap">引擎</div><div class="hint" id="ovEngineDetail"></div></div>
+     <div class="ov-card"><div class="ov-num" id="ovStore">–</div><div class="ov-cap">持久化</div><div class="hint" id="ovStoreDetail">IndexedDB · webmm-platform</div></div>
+   </div>
+   <div class="ov-banner" title="honest by design">本地确定性引擎 — 不含 QSAR / ADMET 预测模型;相似性与 SA 分数用于研究优先级排序,不构成活性或性质预测。</div>
+   <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+     <button class="action-btn edit" style="width:auto; padding:0.35rem 0.8rem; font-size:0.8rem;" onclick="exportProjectFile()" title="The whole project as JSON (libraries, query rounds, triage — the command log itself). Import restores everything on any machine">⬇ 导出项目</button>
+     <button class="action-btn edit" style="width:auto; padding:0.35rem 0.8rem; font-size:0.8rem;" onclick="document.getElementById('projectImportFile').click()" title="Replace the current project with an exported .webmm-project.json (the page reloads after import)">⬆ 导入项目</button>
+     <input type="file" id="projectImportFile" accept=".json,application/json" style="display:none;" onchange="importProjectFile(this)">
+     <button class="action-btn primary" style="width:auto; padding:0.35rem 0.8rem; font-size:0.8rem;" onclick="switchMode('search')" title="去相似性检索装载库">打开检索 →</button>
+   </div>
+ </div>
+
+<div class="panel" id="inputPanel">
   <textarea id="input" aria-label="Molecule input: SMILES, MolBlock, or SDF" placeholder="Paste SMILES, MolBlock, or SDF here"></textarea>
   <div id="batchBar" style="display:none;">
     <div class="separator">-- one SMILES per line, or a multi-record SDF --</div>
@@ -1227,9 +1391,7 @@ details {
      </div>
      <div style="margin-top:0.4rem;">
        <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportResultsCSV()" title="CSV with per-round ranks, consensus, pins and notes — the exit path to other tools">⬇ results CSV</button>
-       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportProjectFile()" title="The whole project as JSON (libraries, query rounds, triage — the command log itself). Import restores everything on any machine">⬇ project</button>
-       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="document.getElementById('projectImportFile').click()" title="Replace the current project with an exported .webmm-project.json (the page reloads after import)">⬆ import project</button>
-       <input type="file" id="projectImportFile" accept=".json,application/json" style="display:none;" onchange="importProjectFile(this)">
+       <span class="hint">(项目级导出/导入在侧栏「项目概览」)</span>
      </div>
    </div>
 
@@ -5284,23 +5446,113 @@ let batchResults = [];
 // the single view). Each mode's input text and result-section visibility are
 // remembered across tab switches — switching away never destroys the other
 // modes' work (row-click → single view → back keeps the batch table).
-const modeInputs = { single: '', batch: '', search: '' };
-const modeShown = { single: false, batch: false, search: false };
-const MODE_SECTION = { single: 'output', batch: 'batchPanel', search: 'searchPanel' };
+let projectMode = false;
+const modeInputs = { single: '', batch: '', search: '', project: '' };
+const modeShown = { single: false, batch: false, search: false, project: false };
+const MODE_SECTION = { single: 'output', batch: 'batchPanel', search: 'searchPanel', project: 'overviewPanel' };
+
+// ===== LigandLab-style shell chrome (presentational only) =====
+const SECTION_LABEL = { project: '项目概览', single: '分子工作台', batch: '批量处理', search: '相似性检索' };
+function syncShellChrome() {
+  const m = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : 'single';
+  document.getElementById('crumbNow').innerHTML = 'WebMM 项目 · <b>' + (SECTION_LABEL[m] || m) + '</b>';
+  const step = { single: 1, search: 2, batch: 4, project: 0 }[m] || 0;
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById('step' + i);
+    el.classList.toggle('cur', i === step);
+    el.classList.toggle('done', i < step);
+  }
+}
+function stepGo(target) {
+  if (target === 'analog') { sideGoto('analogPanel'); return; }
+  switchMode(target);
+}
+function sideGoto(panelId, optional) {
+  switchMode('search');
+  requestAnimationFrame(() => {
+    const el = document.getElementById(panelId);
+    if (el && (el.style.display !== 'none' || optional)) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      document.getElementById('searchPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+}
+function renderOverview() {
+  try {
+    const st = (window.__search && window.__search.getState()) || [];
+    document.getElementById('ovLib').textContent = st.length;
+    document.getElementById('ovLibDetail').textContent = st.length ? '装载于相似性检索' : '未装载 — 侧栏「相似性检索」导入或 Demo 库';
+    const pins = (window.__platformCompat && window.__platformCompat.getPins && window.__platformCompat.getPins()) || [];
+    const excl = (window.__platformCompat && window.__platformCompat.getExcludes && window.__platformCompat.getExcludes()) || [];
+    document.getElementById('ovPins').textContent = pins.length;
+    document.getElementById('ovPinsDetail').textContent = pins.length + ' pinned · ' + excl.length + ' excluded';
+    let rounds = 0;
+    try {
+      const c = triageStore();
+      if (c) rounds = Object.keys(c.projectApi().state.rounds).length;
+    } catch (e) {}
+    document.getElementById('ovRounds').textContent = rounds || '–';
+    document.getElementById('ovRoundsDetail').textContent = 'DAG 轮次 · hit-as-query ⇄';
+    const ev = document.getElementById('engineVersion').textContent.replace(/^WebMM\s*/i, '');
+    document.getElementById('ovEngine').textContent = ev || '…';
+    document.getElementById('ovEngineDetail').textContent = 'RDKit ' + document.getElementById('rdkitVersion').textContent;
+    document.getElementById('ovStore').textContent = '…';
+    if (navigator.storage && navigator.storage.estimate) {
+      navigator.storage.estimate().then(est => {
+        const mb = (est.usage / 1048576).toFixed(1);
+        document.getElementById('ovStore').textContent = mb + ' MB';
+        document.getElementById('ovStoreDetail').textContent = '已用 ~' + mb + ' MB / 配额 ' + (est.quota / 1048576 / 1024).toFixed(1) + ' GB';
+      }).catch(() => { document.getElementById('ovStore').textContent = 'n/a'; });
+    }
+  } catch (e) { /* overview is presentational — never block */ }
+}
+function initTaskTicker() {
+  const tick = document.getElementById('taskTicker');
+  const sources = ['analogStatus', 'searchStatus', 'batchStatus', 'searchResultStatus'].map(id => document.getElementById(id)).filter(Boolean);
+  const update = () => {
+    let best = '';
+    for (const el of sources) {
+      const t = el.textContent.trim();
+      if (t && /…|%|streaming|refining|running|scoring|Embedding|Optimizing/i.test(t)) { best = t; break; }
+      if (t && /^Done|^restored/i.test(t) && !best) best = t;
+    }
+    tick.textContent = best ? '⟳ ' + best.slice(0, 90) : '';
+    tick.classList.toggle('running', /…|%|streaming|refining|running|scoring/i.test(best));
+  };
+  const mo = new MutationObserver(update);
+  sources.forEach(el => mo.observe(el, { childList: true, characterData: true, subtree: true }));
+  update();
+}
+initTaskTicker();
+initSideStorage();
+syncShellChrome();
+function initSideStorage() {
+  const el = document.getElementById('sideStorage');
+  if (navigator.storage && navigator.storage.persisted) {
+    navigator.storage.persisted().then(p => { el.textContent = p ? '存储已持久化' : '存储:默认'; }).catch(() => {});
+  }
+}
 
 function switchMode(m) {
-  const cur = searchMode ? 'search' : batchMode ? 'batch' : 'single';
+  const cur = searchMode ? 'search' : batchMode ? 'batch' : projectMode ? 'project' : 'single';
   modeInputs[cur] = document.getElementById('input').value;
   modeShown[cur] = document.getElementById(MODE_SECTION[cur]).style.display === 'block';
   batchMode = (m === 'batch');
   searchMode = (m === 'search');
-  const single = !batchMode && !searchMode;
+  projectMode = (m === 'project');
+  const single = !batchMode && !searchMode && !projectMode;
   document.getElementById('tabSingle').classList.toggle('active', single);
   document.getElementById('tabBatch').classList.toggle('active', batchMode);
   document.getElementById('tabSearch').classList.toggle('active', searchMode);
+  document.getElementById('tabProject').classList.toggle('active', projectMode);
   document.getElementById('tabSingle').setAttribute('aria-selected', String(single));
   document.getElementById('tabBatch').setAttribute('aria-selected', String(batchMode));
   document.getElementById('tabSearch').setAttribute('aria-selected', String(searchMode));
+  document.getElementById('overviewPanel').style.display = projectMode ? 'block' : 'none';
+  document.getElementById('inputPanel').style.display = projectMode ? 'none' : 'block';
+  if (projectMode) renderOverview();
+  syncShellChrome();
   document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
   document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
   document.getElementById('output').style.display = (single && modeShown.single) ? 'block' : 'none';
@@ -6355,7 +6607,8 @@ function exportEnsembleSDF() {
       ['navDemo', 'index.html'], ['noteDemo', 'index.html'], ['xDemo', 'index.html'],
       ['navPlayground', 'playground.html'], ['notePlayground', 'playground.html'], ['xPlayground', 'playground.html'],
     ]) {
-      document.getElementById(id).href = await resolveSitePage(page);
+      const el = document.getElementById(id);
+      if (el) el.href = await resolveSitePage(page);
     }
   }
 
@@ -6363,11 +6616,14 @@ function exportEnsembleSDF() {
     webmm = window.webmm;
     window.__webmmVersion = webmm.webmm_version ? webmm.webmm_version() : '?';
     document.getElementById('engineVersion').textContent = `WebMM v${window.__webmmVersion}`;
+    syncShellChrome();
     window.webmmReady = true;
     fixSiteLinks();
     enable3dActions();
     set3dStatus('Engine ready — Embed 3D to begin');
   });
 </script>
+</div>
+</div>
 </body>
 </html>

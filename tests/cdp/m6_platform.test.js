@@ -25,6 +25,50 @@ function check(name, cond, detail) {
   await page.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
   await page.waitForFunction(() => window.webmm !== undefined, null, { timeout: 60000 });
 
+  // ---- LigandLab-style shell (UI layer): sidebar + topbar + stepper + overview ----
+  console.log('shell:');
+  {
+    const shell = await page.evaluate(() => ({
+      items: document.querySelectorAll('#sidenav .side-item').length,
+      tabs: ['tabProject', 'tabSingle', 'tabBatch', 'tabSearch'].every(id => !!document.getElementById(id)),
+      crumb: document.getElementById('crumbNow').textContent,
+      steps: document.querySelectorAll('#stepperBar .step').length,
+      ticker: !!document.getElementById('taskTicker'),
+    }));
+    check('shell: sidenav 6 items + 4 mode tabs + crumb + 4-step stepper + task ticker',
+      shell.items >= 6 && shell.tabs && shell.steps === 4 && shell.ticker && shell.crumb.includes('分子工作台'),
+      JSON.stringify(shell));
+
+    const ov = await page.evaluate(() => {
+      switchMode('project');
+      return {
+        visible: document.getElementById('overviewPanel').style.display !== 'none',
+        inputHidden: document.getElementById('inputPanel').style.display === 'none',
+        lib: document.getElementById('ovLib').textContent,
+        engine: document.getElementById('ovEngine').textContent,
+        store: document.getElementById('ovStore').textContent,
+        importInput: !!document.getElementById('projectImportFile'),
+        crumb: document.getElementById('crumbNow').textContent,
+        steps: [...document.querySelectorAll('#stepperBar .step')].map(e => e.className.includes('cur')).join(','),
+      };
+    });
+    check('overview mode: stats cards + project import/export relocated here; stepper neutral',
+      ov.visible && ov.inputHidden && ov.importInput && ov.engine.includes('v') && ov.crumb.includes('项目概览') && ov.steps === 'false,false,false,false',
+      JSON.stringify(ov));
+
+    const back = await page.evaluate(() => {
+      document.getElementById('step1').click();
+      return {
+        singleActive: document.getElementById('tabSingle').classList.contains('active'),
+        step1Cur: document.getElementById('step1').className.includes('cur'),
+        step1Done: document.getElementById('step1').className.includes('done'),
+        step2Cur: document.getElementById('step2').className.includes('cur'),
+      };
+    });
+    check('stepper step-1 click returns to single (current=1, done none after)',
+      back.singleActive && back.step1Cur && !back.step1Done && !back.step2Cur, JSON.stringify(back));
+  }
+
   // ---- library setup (the platform sections expect a loaded library) ----
   console.log('library setup:');
   await page.evaluate(() => { switchMode('search'); loadDemoLibrary(); });
