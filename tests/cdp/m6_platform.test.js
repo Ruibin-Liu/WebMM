@@ -301,6 +301,33 @@ function check(name, cond, detail) {
   await page.evaluate(() => { switchMode('single'); });   // leave the mode tidy
 
 
+  // ---- M3+: SA column + aza-scan scaffold hop ----
+  console.log('SA column / aza-scan hop:');
+  await page.evaluate(() => { switchMode('single'); document.getElementById('input').value = 'CC(=O)Nc1ccc(O)cc1'; process(true); });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => embed3D());
+  await page.waitForFunction(() => !!document.querySelector('#viewer3d canvas'), null, { timeout: 60000 });
+  await page.evaluate(() => { switchMode('search'); runAzaScan(); });
+  // wait for THIS run's terminal marker (the stale status from the M3
+  // section matches the generic Done regex; the aza-hop suffix discriminates)
+  await page.waitForFunction(() => /aza-hop|No valid aza|No H-bearing/.test(document.getElementById('analogStatus').textContent), null, { timeout: 300000 });
+  const hopRes = await page.evaluate(() => ({
+    status: document.getElementById('analogStatus').textContent,
+    rows: [...document.querySelectorAll('#analogRows tr')].slice(0, 4).map(tr => ({
+      smi: tr.children[1].textContent, T: tr.children[3].textContent,
+      sa: tr.children[5].textContent, flex: tr.children[6].textContent })),
+  }));
+  check('aza-scan produces pyridyl scaffold hops with SA + flex columns',
+    /Done: \d+ scored/.test(hopRes.status) && hopRes.rows.length >= 2 &&
+    hopRes.rows.every(r => r.smi.includes('n')) &&
+    hopRes.rows.every(r => parseFloat(r.sa) > 0) &&
+    hopRes.rows.every(r => parseFloat(r.flex) > 0), hopRes.status.slice(0, 60));
+  const best = hopRes.rows[0];
+  check('hop keeps high shape similarity (pyridine ≈ benzene bioisostere)',
+    parseFloat(best.T) >= 0.7, best.T);
+  check('SA column active (fragment table lazy-loaded, values present)',
+    hopRes.rows.every(r => parseFloat(r.sa) >= 1 && parseFloat(r.sa) <= 10), hopRes.rows.map(r => r.sa).join(','));
+
   // ---- zero page errors ----
   check('zero page errors', errors.length === 0, errors.slice(0, 2).join(' | '));
 

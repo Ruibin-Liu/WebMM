@@ -30,6 +30,7 @@ pub mod shape;
 
 /// L-BFGS optimization algorithm
 pub mod optimizer;
+pub mod sascore;
 
 /// Utility functions
 pub mod utils;
@@ -8233,7 +8234,116 @@ pub fn kabsch_align(mobile_sdf: &str, ref_sdf: &str, pairs_json: &str) -> Result
     Ok(out.to_string())
 }
 
-/// WASM shell (JsValue errors) around the native `kabsch_align`.
+// ===== Synthetic accessibility (SA score, M3 SA port) =====
+
+/// Load the fragment table (app/fpscores.bin). Returns the entry count.
+#[wasm_bindgen]
+pub fn sa_load_table_wasm(bytes: &[u8]) -> Result<usize, JsValue> {
+    console_error_panic_hook::set_once();
+    crate::sascore::sa_load_table(bytes).map_err(|e| JsValue::from_str(&e))
+}
+
+/// SA score for a molblock. Parses the molblock DIRECTLY (not via the
+/// engine's parse_sdf, whose aromaticity perception rewrites bond types —
+/// the SA contract is the RAW kekulized orders; build_graph perceives
+/// aromaticity itself, bit-exactly with RDKit). Requires sa_load_table.
+#[wasm_bindgen]
+pub fn sa_score_wasm(molblock: &str) -> Result<f64, JsValue> {
+    console_error_panic_hook::set_once();
+    let lines: Vec<&str> = molblock.lines().collect();
+    let ci = lines
+        .iter()
+        .position(|l| l.contains("V2000"))
+        .ok_or("sa: no V2000")?;
+    let start = ci.saturating_sub(3);
+    let l: Vec<&str> = lines[start..].to_vec();
+    if l.len() < 4 {
+        return Err(JsValue::from_str("sa: short molblock"));
+    }
+    let counts = l[3];
+    let na: usize = counts
+        .get(0..3)
+        .and_then(|x| x.trim().parse().ok())
+        .ok_or("sa: bad atom count")?;
+    let nb: usize = counts
+        .get(3..6)
+        .and_then(|x| x.trim().parse().ok())
+        .unwrap_or(0);
+    if l.len() < 4 + na + nb {
+        return Err(JsValue::from_str("sa: truncated molblock"));
+    }
+    let sym_z = |t: &str| -> u32 {
+        match t {
+            "H" => 1,
+            "B" => 5,
+            "C" => 6,
+            "N" => 7,
+            "O" => 8,
+            "F" => 9,
+            "Si" => 14,
+            "P" => 15,
+            "S" => 16,
+            "Cl" => 17,
+            "Se" => 34,
+            "Br" => 35,
+            "I" => 53,
+            _ => 0,
+        }
+    };
+    let mut zs = Vec::with_capacity(na);
+    let mut chg = vec![0i32; na];
+    let mut dm = vec![0i32; na];
+    let mut par = vec![0u8; na];
+    for i in 0..na {
+        let line = l[4 + i];
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 4 {
+            return Err(JsValue::from_str("sa: bad atom line"));
+        }
+        zs.push(sym_z(parts[3]));
+        let b = line.as_bytes();
+        if b.len() >= 36 {
+            let t: String = String::from_utf8_lossy(&b[34..36]).trim().to_string();
+            dm[i] = t.parse().unwrap_or(0);
+        }
+        if b.len() >= 42 {
+            let t: String = String::from_utf8_lossy(&b[39..42]).trim().to_string();
+            if let Ok(v) = t.parse::<u8>() {
+                par[i] = v;
+            }
+        }
+    }
+    let mut bonds = Vec::with_capacity(nb);
+    for line in l[4 + na..4 + na + nb].iter() {
+        if line.len() < 9 {
+            return Err(JsValue::from_str("sa: bad bond line"));
+        }
+        let a: usize = line[0..3].trim().parse().map_err(|_| "sa: bond atom")?;
+        let bb: usize = line[3..6].trim().parse().map_err(|_| "sa: bond atom")?;
+        let o: u8 = line[6..9].trim().parse().unwrap_or(1);
+        bonds.push((a - 1, bb - 1, o));
+    }
+    for line in l.iter().skip(4 + na + nb) {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("M  CHG") {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if let Some(cnt) = parts.first().and_then(|x| x.parse::<usize>().ok()) {
+                let mut k = 1;
+                for _ in 0..cnt {
+                    let ai: usize = parts.get(k).and_then(|x| x.parse().ok()).unwrap_or(0);
+                    let c: i32 = parts.get(k + 1).and_then(|x| x.parse().ok()).unwrap_or(0);
+                    if ai >= 1 && ai <= na {
+                        chg[ai - 1] = c;
+                    }
+                    k += 2;
+                }
+            }
+        }
+    }
+    let g = crate::sascore::build_graph(&zs, &chg, &dm, &par, &bonds);
+    crate::sascore::sa_score_from_graph(&g).map_err(|e| JsValue::from_str(&e))
+}
+
 #[wasm_bindgen]
 pub fn kabsch_align_wasm(
     mobile_sdf: &str,

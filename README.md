@@ -1,3 +1,4 @@
+- **WebMM Platform** (`app/platform.html`, also linked from the Workbench nav) — the LBDD platform: persistent projects (IndexedDB command log), triage (pin/exclude/notes/undo), search rounds as a DAG with one-action lead hopping, consensus rank fusion, provenance CSV export, project import/export, multi-tab safety, and the neighborhood explorer (single-site group-swap analog enumeration, conformer-ensemble shape rescoring, flex refinement of the top hits, Ertl SA score — a bit-exact in-house port of RDKit's sascorer — and an aza-scan scaffold-hop spike).
 # WebMM
 
 **Molecular mechanics in the browser — no server, no install.**

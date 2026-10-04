@@ -1244,11 +1244,12 @@ details {
          <option value="O">O-linked</option><option value="N">N-linked</option><option value="acyl">carbonyl-attached</option><option value="aryl">aryl / heteroaryl</option>
        </select>
        <button class="action-btn primary" style="width:auto;" onclick="runAnalogExplorer()">Explore</button>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="runAzaScan()" title="Scaffold-hop spike: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres), then the same shape funnel">aza-scan hop</button>
        <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">Cancel</button>
      </div>
      <div class="hint" id="analogStatus"></div>
      <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
-       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
+       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="Ertl synthetic accessibility — bit-exact port of RDKit sascorer (1 = easy, 10 = hard)">SA</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
      </div>
    </div>
    <div id="rgdPanel" class="panel" style="display:none;">
@@ -3347,6 +3348,17 @@ function rdkitAvailable() {
     ['methoxy', '[OX2;H0]([CX4;H3])'],
     ['nitrile', '[CX3](=N)'],
   ];
+  let saTableLoaded = null;         // SA fragment table (5.6 MB, lazy fetch)
+  function ensureSaTable() {
+    if (!saTableLoaded) {
+      saTableLoaded = fetch('fpscores.bin')
+        .then(r => r.arrayBuffer())
+        .then(buf => window.webmm.sa_load_table_wasm(new Uint8Array(buf)))
+        .catch(err => { console.warn('[analog] SA table fetch failed:', err); saTableLoaded = null; return null; });
+    }
+    return saTableLoaded;
+  }
+
   let analogParentSdf = null;      // the parent's 3D conformer (scoring ref)
   let analogParentMolblock = null; // for site detection + core surgery
   let analogRunToken = 0;
@@ -3494,9 +3506,19 @@ function rdkitAvailable() {
       canon = m2.get_smiles();
       const mb = m2.get_molblock();
       m2.delete();
-      cands.push({ smiles: canon, molblock: mb, mw: +d.amw.toFixed(2), rotb });
+      let sa = null;
+      if (await ensureSaTable()) {
+        try { sa = +window.webmm.sa_score_wasm(mb).toFixed(2); } catch (e) { /* keep null */ }
+      }
+      cands.push({ smiles: canon, molblock: mb, mw: +d.amw.toFixed(2), rotb, sa });
     }
     if (!cands.length) { analogStatus('No candidates passed the sanity filters'); return; }
+    runAnalogFromCands(cands, token);
+  }
+  window.runAnalogExplorer = runAnalogExplorer;
+
+  // shared funnel (B -> C -> D) over an enumerated candidate list
+  async function runAnalogFromCands(cands, token) {
     // --- stage B: worker farm, conformers + rigid overlay (streamed)
     const cores = (navigator.hardwareConcurrency || 4);
     const NW = Math.max(1, Math.min(cores - 1, 8));
@@ -3591,7 +3613,8 @@ function rdkitAvailable() {
                 for (const w of workers) w.terminate();
                 document.getElementById('analogCancel').style.display = 'none';
                 const nFlex = results.filter(r => r.flexT != null).length;
-                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total');
+                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop' : ''));
+                window.__azaRun = false;
               })();
             });
           }
@@ -3600,7 +3623,75 @@ function rdkitAvailable() {
     };
     pump();
   }
-  window.runAnalogExplorer = runAnalogExplorer;
+  window.runAnalogFromCands = runAnalogFromCands;
+
+  // ---- scaffold-hop spike: aza-scan (M3 spike) ----
+  // Swap each H-bearing aromatic 6-ring carbon C→N by ATOM-LINE SURGERY on
+  // the parent molblock (element field cols 31-34), dedupe canonical, then
+  // feed the exact enumeration+funnel path. Benzene→pyridine/diazine is THE
+  // classic scaffold hop; this proves the grafting machinery generalizes.
+  async function runAzaScan() {
+    if (!rdkitAvailable() || !window.webmm) { analogStatus('Engine not ready'); return; }
+    if (!sdf3d || !sdf3d.trim()) { analogStatus('Load a molecule into the single view first'); return; }
+    analogRunToken++;
+    const token = analogRunToken;
+    analogParentSdf = sdf3d;
+    analogStatus('Aza-scanning…');
+    // H-bearing aromatic 6-ring carbons via RDKit SMARTS
+    const q = rdkitModule.get_qmol('[c;H1;r6]');
+    let ringCH = [];
+    let m0 = null;
+    let surgeryBase = null;
+    try {
+      m0 = rdkitModule.get_mol(sdf3d);
+      if (m0 && m0.is_valid()) {
+        const arr = JSON.parse(m0.get_substruct_matches(q));
+        if (Array.isArray(arr)) ringCH = arr.map(mt => mt.atoms[0]);
+        // surgery base = the HEAVY-ATOM molblock rebuilt from the parent's
+        // canonical SMILES (implicit H). The engine sdf3d carries explicit
+        // H atoms — swapping an aromatic C-H to N would leave a bonded
+        // explicit H on the new pyridine N (invalid).
+        const curSmiles = (document.getElementById('smiles').textContent || '').trim();
+        const mS = rdkitModule.get_mol(curSmiles);
+        if (mS && mS.is_valid()) {
+          surgeryBase = sdfLines(mS.get_molblock());
+          mS.delete();
+        }
+      }
+    } catch (e) { /* none */ }
+    if (q) q.delete();
+    if (!ringCH.length) { if (m0) m0.delete(); analogStatus('No H-bearing aromatic ring carbons (need an aryl C-H)'); return; }
+    const base = surgeryBase;
+    const na = parseInt(base[3].substring(0, 3));
+    const cands = [];
+    const seen = new Set();
+    for (const idx of ringCH) {
+      const lines = base.slice();
+      const l = lines[4 + idx];
+      lines[4 + idx] = l.substring(0, 31) + 'N   ' + l.substring(35);
+      const mb = lines.join('\n');
+      let m = null;
+      try { m = rdkitModule.get_mol(mb); } catch (e) { continue; }
+      if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
+      const canon = m.get_smiles();
+      const mbClean = m.get_molblock();
+      const d = JSON.parse(m.get_descriptors());
+      m.delete();
+      if (seen.has(canon)) continue;
+      seen.add(canon);
+      let sa = null;
+      if (await ensureSaTable()) {
+        try { sa = +window.webmm.sa_score_wasm(mbClean).toFixed(2); } catch (e) {}
+      }
+      cands.push({ smiles: canon, molblock: mbClean, mw: +d.amw.toFixed(2), rotb: d.NumRotatableBonds ?? 0, sa });
+    }
+    if (m0) m0.delete();
+    if (!cands.length) { analogStatus('No valid aza-isomers'); return; }
+    analogStatus(cands.length + ' aza-isomers — funnel…');
+    window.__azaRun = true;   // the funnel's final status appends the marker
+    runAnalogFromCands(cands, token);
+  }
+  window.runAzaScan = runAzaScan;
 
   // stage D: flexible refinement of ONE analog at its best rigid pose —
   // the shared core is found by MCS (parent vs analog), snapped by Kabsch,
@@ -3658,6 +3749,7 @@ function rdkitAvailable() {
         '<td class="value">' + r.mw + '</td>' +
         '<td class="value"><strong>' + (r.tanimoto * 100).toFixed(1) + '%</strong></td>' +
         '<td class="value">' + r.rotb + '</td>' +
+        '<td class="value">' + (r.sa != null ? r.sa.toFixed(2) : '—') + '</td>' +
         '<td class="value">' + (r.flexT != null ? '<strong>' + (r.flexT * 100).toFixed(1) + '%</strong>' : '—') + '</td>' +
         '<td>' + (mid ? '<span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem; ' + (pinned ? '' : 'opacity:0.35;') + '" title="pin (synthetic-library identity)" onclick="analogPin(\'' + r.idx + '\',\'' + mid + '\')">' + (pinned ? '★' : '☆') + '</span>' : '') + '</td></tr>';
     }).join('');
