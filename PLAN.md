@@ -103,3 +103,23 @@
 
 验收:m6 30/30、m5 44/44、平台 Node 34/34;目检(search 视图:连线 teal/
 chips 可读/标题正确/无重叠);零 page error。
+
+
+## 视觉轮 3(深调;已完成)
+
+1. **分数热度编码**:applyHeat 帮助函数——`[data-heat]` 单元格按 0-1 值
+   上 teal 底色(α=0.04+0.26v,tabular-nums);搜索表 Shape T/Color T/
+   Combo 三列 + 探索器 T/flex 两列;自匹配 100% 最深,单调渐变;
+   文本对比度目检可读。
+2. **pinned 行底色**:检索表 pinned 行 teal 8% 底(排除行 45% 透明既有);
+   ★ 视觉与工作集联动。
+3. **批量表**:容器 max-height 62vh 内滚 + **sticky 表头**(着色+阴影)、
+   zebra 行、hover teal、细滚动条。
+4. **3D 区卡片化**:viewer3d 边框+圆角+阴影+min-height 300;能量面板
+   底色卡;构象图 96→132px(H=clientHeight 自适应,HiDPI 逻辑不变);
+   按钮行 wrap+row-gap;属性表 Copy 按钮间距。
+5. **细滚动条**:全站 9px 圆角滚动条(侧栏深色变体)。
+
+验收:m6 30/30、平台 Node 34/34、m5 44/44;实测 heat 单元 137/着色 132、
+pin 底色 1 行、chart cssH 130、sticky 表头/zebra/滚动条目检通过;
+零 page error。
