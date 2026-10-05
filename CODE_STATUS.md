@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**主区真重构 + 新设计语言 v2(ui/platform-content 分支):三栏 dashboard(上轮)+ 本轮新组件系统——.btn 系列取代 .action-btn 旧皮肤、.field 标签上置字段、检索方式分段控件(隐藏 select 保契约)、paste-field 粘贴输入、表格 v2、qgrid 字段网格。m6 30/30、m5 47/47、平台 Node 34/34;390px 溢出 0。待合并。**
+**ui/platform-content 已合入 main(ff,a874e41):platform 主区三栏 dashboard + 设计语言 v2(新组件系统/paste-field/分段控件/表格 v2);合入后 main 全量回归绿——m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34。当前无进行中任务;开放项:探索器/RGD/scaffold 面板 v2 化、批量双卡化、检查器 SA 横条(需懒加载 SA 表)。**
 
+## Recently Completed
++- **ui/platform-content 合入 main(纯增量 ff,2 提交)。** bfc9ecf(三栏 dashboard:applyDashLayout 节点搬移+锚点还原+性质横条;检索双卡+筛选条;排雷:元素引用首查缓存)+ a874e41(设计语言 v2:.btn 组件系统映射换装/.field 标签上置/检索方式分段控件[隐藏 select 保 m6 契约]/paste-field/表格 v2/qgrid)。合入后 main 全量回归:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、零 page error。index.html 经典页与引擎/worker/存储全程零改动。
 ## Recently Completed
 +- **设计语言 v2(用户授权不复用原 workbench UI 元素;platform 展示层重写,逻辑/契约零改动)。** ①新按钮系统:btn-primary/ghost/danger/accent 经 .action-btn 类映射整体取代旧皮肤(全站按钮一夜换装,含 ctl-group);②.field 字段模式:小号大写标签上置 + teal focus 环,检索卡六组控件全部字段化,检索行重排为 qgrid(auto-fit 网格,检索按钮加大);③**分段控件**:相似/子结构/形状3D 分段按钮取代检索方式 select——隐藏 select 保留(m6 程序化 searchMode.value+onSearchModeChange 契约不变),segModeSet/syncSegMode 双向同步(onSearchModeChange 内挂钩);④paste-field:单分子输入=虚线等宽 textarea(focus 实线 teal 环)+瘦身拖放条+::after 提示行;body[data-mode] 批量态区分皮肤;⑤表格 v2(小写大写表头/紧凑/tabular-nums)+空态组件。验收:m6 30/30(隐藏 select 契约验证)、m5 47/47、平台 Node 34/34、7 脚本 check、390px 溢出 0、目检三张(paste-field/分段+字段化/boot)、零 page error。
 ## Recently Completed
