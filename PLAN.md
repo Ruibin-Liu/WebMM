@@ -1,4 +1,4 @@
-# Plan: 主区真重构 —— LigandLab 三栏 dashboard(不再是套壳)——已完成
+# Plan: 主区真重构 + 新设计语言 v2(不复用 workbench UI 组件)——已完成
 
 ## 承认问题
 
@@ -80,3 +80,23 @@ m6 30/30 + 平台 Node 34/34 + m5(index 不受累)44→47 项全绿;
 m0-m6 37/10/11/10/32/47/**30** 全绿;平台 Node 34/34;7 脚本 check;
 目检三张(boot/单分子三栏含横条/检索双卡+筛选条/窄屏堆叠)通过;
 零 page error;引擎/worker/存储/id 契约零改动。
+
+
+## 设计语言 v2(用户授权"不需要使用原 workbench 的任何 UI 元素")
+
+1. **新组件系统**(CSS 层,.btn 系列**映射取代** .action-btn 旧皮肤):
+   btn-primary(teal 实心)/ btn-ghost(描边)/ btn-danger(红描边)/
+   btn-accent(teal 描边);统一圆角/按压反馈/焦点环。
+2. **.field 字段模式**:小号大写标签在控件上方 + focus teal 环——检索卡
+   全部控件字段化(查询结构/检索方式/指纹/阈值/药效团/形状选项)。
+3. **分段控件**:检索方式 select → 相似/子结构/形状3D 分段按钮
+   (segModeSet/syncSegMode;隐藏 select 保留契约——m6 程序化设值+
+   onSearchModeChange 仍生效,seg 经钩子同步)。
+4. **粘贴字段**:单分子输入 = 虚线等宽 textarea(focus 转实线 teal 环)+
+   瘦身拖放条 + ::after 提示行;批量态经 body[data-mode] 区分皮肤。
+5. **表格 v2**:小号大写表头/紧凑行距/tabular-nums;空态组件。
+6. 检索行重构为 qgrid(auto-fit 字段网格)+ 检索按钮加大(检 索)。
+
+验收:m6 30/30、m5 47/47、平台 Node 34/34;390px 溢出 0;
+目检(boot/单分子 paste-field/检索分段+字段化)通过;零 page error;
+id/函数契约零改动(index.html 经典页不动)。

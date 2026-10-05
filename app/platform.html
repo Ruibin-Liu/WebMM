@@ -968,6 +968,8 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 .pbar-fill { display: block; height: 100%; border-radius: 5px; background: linear-gradient(90deg, #2dd4bf, var(--ll-teal-2)); }
 .pbar-fill.over { background: linear-gradient(90deg, #fbbf24, #d97706); }
 .pbar-v { font-size: 0.72rem; color: #334155; text-align: right; font-variant-numeric: tabular-nums; }
+.qgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, auto)); gap: 0.7rem 0.9rem; align-items: end; width: 100%; }
+.qgrid .field { min-width: 0; }
 .dash-search-row { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(0,1fr); gap: 0.6rem; align-items: start; margin-bottom: 0.6rem; }
 .filter-strip { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;
   padding: 0.5rem 0.7rem; margin: 0.7rem 0; background: #f8fafc; border: 1px dashed #d4dde8; border-radius: 8px; }
@@ -975,6 +977,96 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
   .dash { grid-template-columns: 1fr; }
   .dash-search-row { grid-template-columns: 1fr; }
 }
+
+/* ===== design language v2 — new components (no workbench UI reuse) ===== */
+.btn, .action-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+  border-radius: 8px; border: 1px solid transparent; cursor: pointer;
+  font: inherit; font-size: 0.8rem; font-weight: 500;
+  padding: 0.45rem 0.95rem; transition: all .14s ease;
+  background: #eef2f7; color: #1e293b; box-shadow: 0 1px 1px rgba(16,24,40,.04);
+}
+.btn:hover, .action-btn:hover { background: #e2e8f0; }
+.btn:active, .action-btn:active { transform: translateY(0.5px); }
+.btn svg, .action-btn svg { width: 14px; height: 14px; }
+.btn-primary, .action-btn.primary { background: var(--ll-teal); color: #fff; box-shadow: 0 1px 2px rgba(13,148,136,.35); }
+.btn-primary:hover, .action-btn.primary:hover { background: var(--ll-teal-2); }
+.btn-ghost, .action-btn.edit, .action-btn.history, .action-btn.spatial { background: transparent; border-color: #d5dde7; box-shadow: none; color: #334155; }
+.btn-ghost:hover, .action-btn.edit:hover, .action-btn.history:hover, .action-btn.spatial:hover { background: #f1f5f9; }
+.btn-danger, .action-btn.clear { background: transparent; border-color: #f0c9c9; color: #b91c1c; box-shadow: none; }
+.btn-danger:hover, .action-btn.clear:hover { background: #fef2f2; }
+.btn-accent, .action-btn.export { background: #fff; border-color: #b5d8d3; color: #0f766e; box-shadow: none; }
+.btn-accent:hover, .action-btn.export:hover { background: #f0fdfa; }
+.ctl-group .action-btn.primary { background: var(--ll-teal); }
+
+.field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.field > .f-label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em; color: #64748b; text-transform: uppercase; }
+.field input[type="text"], .field input[type="number"], .field select, .panel select {
+  border: 1px solid #d5dde7; border-radius: 8px; padding: 0.45rem 0.6rem; font: inherit; font-size: 0.82rem;
+  background: #fff; color: #1e293b; transition: border .14s, box-shadow .14s;
+}
+.field input:focus, .field select:focus, .panel select:focus { outline: none; border-color: var(--ll-teal); box-shadow: 0 0 0 3px rgba(20,184,166,.15); }
+
+/* segmented control (search mode) */
+.seg { display: inline-flex; background: #e8edf3; border-radius: 9px; padding: 3px; gap: 2px; }
+.seg-btn { border: none; background: transparent; font: inherit; font-size: 0.78rem; font-weight: 500;
+  color: #64748b; padding: 0.35rem 0.8rem; border-radius: 7px; cursor: pointer; transition: all .14s; }
+.seg-btn:hover { color: #0f172a; }
+.seg-btn.on { background: #fff; color: var(--ll-teal-2); box-shadow: 0 1px 2px rgba(16,24,40,.1); font-weight: 600; }
+
+/* paste field (single input) */
+.paste-field { position: relative; }
+.paste-field textarea {
+  width: 100%; box-sizing: border-box; min-height: 128px; resize: vertical;
+  border: 1.5px dashed #c9d4e0; border-radius: 10px; background: #fbfdfe;
+  padding: 0.7rem 0.8rem; font: inherit; font-size: 0.82rem; font-family: ui-monospace, Menlo, monospace;
+  color: #0f172a; transition: border .14s, box-shadow .14s;
+}
+.paste-field textarea:focus { outline: none; border-style: solid; border-color: var(--ll-teal);
+  box-shadow: 0 0 0 3px rgba(20,184,166,.13); background: #fff; }
+.pf-hint { font-size: 0.7rem; color: #8fa1b6; margin-top: 0.3rem; display: flex; gap: 0.9rem; align-items: center; }
+
+/* table v2 */
+.panel table { font-size: 0.8rem; }
+.panel table th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.5rem 0.6rem; }
+.panel table td { padding: 0.42rem 0.6rem; }
+#props td.key, #moreProps td.key, #rules td.key, #alerts td.key { color: #64748b; }
+#props td.value, #moreProps td.value, #rules td.value, #alerts td.value { font-variant-numeric: tabular-nums; }
+
+/* empty state */
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+  padding: 2.2rem 1rem; color: #94a3b8; text-align: center; }
+.empty-state svg { width: 34px; height: 34px; opacity: .5; }
+.empty-state .es-t { font-size: 0.85rem; color: #64748b; }
+.empty-state .es-s { font-size: 0.72rem; }
+
+/* single input card: paste field + slim drop + hint */
+#dashInputBody > textarea#input {
+  width: 100%; box-sizing: border-box; min-height: 128px; resize: vertical;
+  border: 1.5px dashed #c9d4e0; border-radius: 10px; background: #fbfdfe;
+  padding: 0.7rem 0.8rem; font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem;
+  transition: border .14s, box-shadow .14s;
+}
+#dashInputBody > textarea#input:focus {
+  outline: none; border-style: solid; border-color: var(--ll-teal);
+  box-shadow: 0 0 0 3px rgba(20,184,166,.13); background: #fff;
+}
+#dashInputBody > .drop {
+  padding: 0.55rem 0.7rem; font-size: 0.74rem; margin-top: 0.55rem;
+  display: flex; align-items: center; gap: 0.5rem;
+}
+#dashInputBody > .drop svg { width: 16px; height: 16px; }
+#dashInputBody::after {
+  content: '粘贴结构 → 自动处理 · 或拖放文件 · Enter 处理';
+  display: block; font-size: 0.7rem; color: #94a3b8; margin-top: 0.45rem;
+}
+#dashInputBody > .action-buttons { margin-top: 0.55rem; }
+/* batch mode keeps the classic shared panel — distinct skin */
+body[data-mode="batch"] #input {
+  border: 1.5px dashed #c9d4e0; border-radius: 10px; background: #fbfdfe;
+  font-family: ui-monospace, Menlo, monospace; padding: 0.7rem 0.8rem;
+}
+body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-teal); border-style: solid; }
 </style>
 </head>
 <body>
@@ -1119,63 +1211,92 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
       </label>
     </div>
     <div class="action-buttons" style="justify-content:flex-start; margin-top:0.5rem;">
-      <input type="text" id="searchQuery" placeholder="Query: SMILES (similarity) or SMILES/SMARTS (substructure)" aria-label="Search query" style="flex:1; min-width:160px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
-      <button class="action-btn edit" onclick="useCurrentAsQuery()" title="Use the molecule currently loaded in the single view">Use current</button>
-      <select id="searchMode" aria-label="Search mode" style="padding:0.35rem; font-size:0.8rem;" onchange="onSearchModeChange()">
-        <option value="sim">Similarity</option>
-        <option value="sub">Substructure</option>
-        <option value="shape">Shape (3D)</option>
-      </select>
-      <select id="searchFp" aria-label="Fingerprint type" style="padding:0.35rem; font-size:0.8rem;">
-        <option value="morgan">ECFP4 (Morgan r2)</option>
-        <option value="rdkit">RDKit</option>
-        <option value="maccs">MACCS</option>
-        <option value="atompair">AtomPair</option>
-        <option value="topologicaltorsion">TopoTorsion</option>
-      </select>
-      <label for="searchThreshold" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">T ≥ <span id="searchThresholdVal">0.30</span></label>
-      <input type="range" id="searchThreshold" min="0" max="1" step="0.05" value="0.3" style="width:90px;" oninput="document.getElementById('searchThresholdVal').textContent = parseFloat(this.value).toFixed(2)">
-      <label for="pharmFilter" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">Pharm</label>
-      <select id="pharmFilter" aria-label="Minimum pharmacophore feature matches" style="padding:0.35rem; font-size:0.8rem;">
-        <option value="0">any</option>
-        <option value="0.6">≥60%</option>
-        <option value="0.8">≥80%</option>
-        <option value="1">all</option>
-      </select>
+      <div class="qgrid">
+        <div class="field" style="grid-column:1/-1;">
+          <span class="f-label">查询结构 · SMILES(相似/形状)或 SMILES/SMARTS(子结构)</span>
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <input type="text" id="searchQuery" placeholder="如 CC(=O)Nc1ccc(O)cc1" aria-label="Search query" style="flex:1; min-width:180px; border:1px solid #d5dde7; border-radius:8px; padding:0.5rem 0.65rem; font-family:ui-monospace,Menlo,monospace; font-size:0.85rem; transition:border .14s, box-shadow .14s;" onfocus="this.style.borderColor='var(--ll-teal)';this.style.boxShadow='0 0 0 3px rgba(20,184,166,.13)'" onblur="this.style.borderColor='#d5dde7';this.style.boxShadow='none'">
+            <button class="btn-ghost" onclick="useCurrentAsQuery()" title="Use the molecule currently loaded in the single view">用当前分子</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="f-label">检索方式</span>
+          <div class="seg" id="segMode" role="tablist" aria-label="Search mode">
+            <button type="button" class="seg-btn on" data-v="sim" onclick="segModeSet('sim')">相似</button>
+            <button type="button" class="seg-btn" data-v="sub" onclick="segModeSet('sub')">子结构</button>
+            <button type="button" class="seg-btn" data-v="shape" onclick="segModeSet('shape')">形状 3D</button>
+          </div>
+          <select id="searchMode" aria-label="Search mode" style="display:none;" onchange="onSearchModeChange()">
+            <option value="sim">Similarity</option>
+            <option value="sub">Substructure</option>
+            <option value="shape">Shape (3D)</option>
+          </select>
+        </div>
+        <div class="field" id="fieldFp">
+          <span class="f-label">指纹</span>
+          <select id="searchFp" aria-label="Fingerprint type">
+            <option value="morgan">ECFP4 (Morgan r2)</option>
+            <option value="rdkit">RDKit</option>
+            <option value="maccs">MACCS</option>
+            <option value="atompair">AtomPair</option>
+            <option value="topologicaltorsion">TopoTorsion</option>
+          </select>
+        </div>
+        <div class="field">
+          <span class="f-label">阈值 T ≥ <span id="searchThresholdVal">0.30</span></span>
+          <input type="range" id="searchThreshold" min="0" max="1" step="0.05" value="0.3" style="width:110px; accent-color:var(--ll-teal);" oninput="document.getElementById('searchThresholdVal').textContent = parseFloat(this.value).toFixed(2)">
+        </div>
+        <div class="field">
+          <span class="f-label">药效团匹配</span>
+          <select id="pharmFilter" aria-label="Minimum pharmacophore feature matches">
+            <option value="0">任意</option>
+            <option value="0.6">≥60%</option>
+            <option value="0.8">≥80%</option>
+            <option value="1">全部</option>
+          </select>
+        </div>
+        <div class="field" id="shapeOptsCol" style="display:none;">
+          <span class="f-label">形状选项</span>
+          <div style="display:flex; gap:0.8rem; align-items:center; flex-wrap:wrap;">
+            <span id="shapeConfsWrap">
+              <label for="shapeConfs" style="font-size:0.75rem; color:var(--muted);" title="Conformers generated per library entry (best over conformers scores each entry; 1 = single-conformer legacy path)">confs/条目</label>
+              <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()">
+            </span>
+            <span id="shapeFlexWrap">
+              <label style="font-size:0.75rem; color:var(--muted); cursor:pointer;" title="Flexible alignment: after rigid scoring the top 10 rows are torsionally refined onto the query — MCS-matched atoms restrained to the query frame (flat-bottom 0.5 Å, fc 25), MMFF94s relaxation, then rescored. Schrödinger Ligand-Alignment-style flex fit; rows without a ≥6-atom MCS keep their rigid pose.">
+                <input type="checkbox" id="shapeFlex"> flex top 10
+              </label>
+            </span>
+            <details id="colorWeightsWrap">
+              <summary style="cursor:pointer; font-size:0.75rem; color:var(--muted); display:inline-flex; align-items:center;" title="Per-type color force field weights: how many times each feature type counts in Color T / Combo (1.0 = ROCS-style uniform)">色权重</summary>
+              <div style="position:absolute; z-index:50; background:#fff; border:1px solid var(--border); border-radius:8px; padding:0.6rem; display:flex; flex-wrap:wrap; gap:0.5rem; max-width:340px; box-shadow:0 4px 12px rgba(0,0,0,0.12); white-space:normal;">
+                <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">donor
+                  <input type="number" class="cw" data-t="donor" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+                <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">acceptor
+                  <input type="number" class="cw" data-t="acceptor" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+                <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">pos
+                  <input type="number" class="cw" data-t="pos" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+                <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">neg
+                  <input type="number" class="cw" data-t="neg" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+                <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">hydrophobe
+                  <input type="number" class="cw" data-t="hydrophobe" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+                <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">ring
+                  <input type="number" class="cw" data-t="ring" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
+                <button onclick="resetColorWeights()" class="btn-danger" style="padding:0.3rem 0.6rem; font-size:0.72rem;">重置</button>
+              </div>
+            </details>
+          </div>
+        </div>
+        <div class="field" style="justify-content:flex-end;">
+          <button id="btnSearchRun" class="btn-primary" onclick="runSearch()" style="padding:0.55rem 1.6rem;">检 索</button>
+        </div>
+      </div>
       <div id="filterWrap" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
       <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Property filter over the result rows (view-layer; MW from the library entry, cLogP computed lazily via Crippen)">MW <input type="number" id="filterMwMin" placeholder="min" min="0" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()">–<input type="number" id="filterMwMax" placeholder="max" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()"></label>
       <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Crippen cLogP range filter">cLogP <input type="number" id="filterClogpMin" placeholder="min" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()">–<input type="number" id="filterClogpMax" placeholder="max" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()"></label>
       <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap; cursor:pointer; display:inline-flex; gap:3px; align-items:center;" title="Flag PAINS alerts (A/B/C catalog from lbdd_data) on the result rows — lazy, first 200 shown rows"><input type="checkbox" id="filterPainsFlag" onchange="renderSearchResultsCurrent()">标 PAINS</label>
       <span class="hint" id="filterStatus"></span>
       </div>
-      <span id="shapeConfsWrap" style="display:none; white-space:nowrap;">
-        <label for="shapeConfs" style="font-size:0.75rem; color:var(--muted);" title="Conformers generated per library entry (best over conformers scores each entry; 1 = single-conformer legacy path)">confs</label>
-        <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()">
-      </span>
-      <span id="shapeFlexWrap" style="display:none; white-space:nowrap;">
-        <label style="font-size:0.75rem; color:var(--muted); cursor:pointer;" title="Flexible alignment: after rigid scoring the top 10 rows are torsionally refined onto the query — MCS-matched atoms restrained to the query frame (flat-bottom 0.5 Å, fc 25), MMFF94s relaxation, then rescored. Schrödinger Ligand-Alignment-style flex fit; rows without a ≥6-atom MCS keep their rigid pose.">
-          <input type="checkbox" id="shapeFlex"> flex top 10
-        </label>
-      </span>
-      <details id="colorWeightsWrap" style="display:none; white-space:nowrap;">
-        <summary style="cursor:pointer; font-size:0.75rem; color:var(--muted); display:inline-flex; align-items:center;" title="Per-type color force field weights: how many times each feature type counts in Color T / Combo (1.0 = ROCS-style uniform)">color weights</summary>
-        <div style="position:absolute; z-index:50; background:#fff; border:1px solid var(--border); border-radius:8px; padding:0.6rem; display:flex; flex-wrap:wrap; gap:0.5rem; max-width:340px; box-shadow:0 4px 12px rgba(0,0,0,0.12); white-space:normal;">
-          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">donor
-            <input type="number" class="cw" data-t="donor" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
-          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">acceptor
-            <input type="number" class="cw" data-t="acceptor" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
-          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">pos
-            <input type="number" class="cw" data-t="pos" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
-          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">neg
-            <input type="number" class="cw" data-t="neg" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
-          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">hydrophobe
-            <input type="number" class="cw" data-t="hydrophobe" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
-          <label style="font-size:0.72rem; color:var(--muted); display:flex; flex-direction:column; gap:2px;">ring
-            <input type="number" class="cw" data-t="ring" min="0" max="3" step="0.1" value="1" style="width:3.4rem; padding:0.3rem; font-size:0.78rem;"></label>
-          <button onclick="resetColorWeights()" class="action-btn clear" style="width:auto; padding:0.3rem 0.6rem; font-size:0.72rem;">reset</button>
-        </div>
-      </details>
-      <button id="btnSearchRun" class="action-btn primary" onclick="runSearch()">Search</button>
     </div>
     <div class="version" id="searchStatus" aria-live="polite" style="margin:0.3rem 0 0;"></div>
   </div>
@@ -2363,6 +2484,9 @@ function rdkitAvailable() {
     document.getElementById('shapeConfsWrap').style.display = shape ? '' : 'none';
     document.getElementById('shapeFlexWrap').style.display = shape ? '' : 'none';
     document.getElementById('colorWeightsWrap').style.display = shape ? '' : 'none';
+    const soc = document.getElementById('shapeOptsCol');
+    if (soc) soc.style.display = shape ? '' : 'none';
+    if (typeof syncSegMode === 'function') syncSegMode();
     syncShapeConfCol();
     document.getElementById('searchQuery').placeholder = shape
       ? 'Query: SMILES (3D conformers are generated on the fly)'
@@ -5742,6 +5866,16 @@ function applyDashLayout() {
 
 applyDashLayout();
 
+function syncSegMode() {
+  const v = document.getElementById('searchMode').value;
+  document.querySelectorAll('#segMode .seg-btn').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+}
+function segModeSet(v) {
+  const sel = document.getElementById('searchMode');
+  if (sel.value !== v) { sel.value = v; onSearchModeChange(); }
+}
+window.segModeSet = segModeSet;
+
 // search mode: query card + library card + filter strip (one-time wiring)
 (function initSearchCards() {
   const sb = document.getElementById('searchBar');
@@ -5827,6 +5961,7 @@ function switchMode(m) {
   if (projectMode) renderOverview();
   syncShellChrome();
   applyDashLayout();
+  document.body.dataset.mode = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : 'single';
   document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
   document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
   document.getElementById('output').style.display = (single && modeShown.single) ? 'block' : 'none';

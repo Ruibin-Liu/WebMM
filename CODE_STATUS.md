@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**主区真重构(ui/platform-content 分支):platform.html 单分子模式三栏 dashboard(参考配体卡|结构列|检查器卡+性质横条,applyDashLayout 物理搬移共享节点+锚点还原),检索模式双卡(查询/配体库)+结果卡筛选条;空态守卫与元素引用缓存排雷各一。m0-m6 全绿(37/10/11/10/32/47/30)+ 平台 Node 34/34;390px 溢出 0。待合并决策。**
+**主区真重构 + 新设计语言 v2(ui/platform-content 分支):三栏 dashboard(上轮)+ 本轮新组件系统——.btn 系列取代 .action-btn 旧皮肤、.field 标签上置字段、检索方式分段控件(隐藏 select 保契约)、paste-field 粘贴输入、表格 v2、qgrid 字段网格。m6 30/30、m5 47/47、平台 Node 34/34;390px 溢出 0。待合并。**
 
+## Recently Completed
++- **设计语言 v2(用户授权不复用原 workbench UI 元素;platform 展示层重写,逻辑/契约零改动)。** ①新按钮系统:btn-primary/ghost/danger/accent 经 .action-btn 类映射整体取代旧皮肤(全站按钮一夜换装,含 ctl-group);②.field 字段模式:小号大写标签上置 + teal focus 环,检索卡六组控件全部字段化,检索行重排为 qgrid(auto-fit 网格,检索按钮加大);③**分段控件**:相似/子结构/形状3D 分段按钮取代检索方式 select——隐藏 select 保留(m6 程序化 searchMode.value+onSearchModeChange 契约不变),segModeSet/syncSegMode 双向同步(onSearchModeChange 内挂钩);④paste-field:单分子输入=虚线等宽 textarea(focus 实线 teal 环)+瘦身拖放条+::after 提示行;body[data-mode] 批量态区分皮肤;⑤表格 v2(小写大写表头/紧凑/tabular-nums)+空态组件。验收:m6 30/30(隐藏 select 契约验证)、m5 47/47、平台 Node 34/34、7 脚本 check、390px 溢出 0、目检三张(paste-field/分段+字段化/boot)、零 page error。
 ## Recently Completed
 +- **主区真重构(用户批评"只是套壳"后的落地:三栏 dashboard 而非面板堆叠)。** ①单分子:290px 输入卡(textarea/绘制/拖放/历史迁入)+ 弹性结构列(2D 卡/3D 卡含能量/构象卡)+ 340px 检查器卡(props/rules/alerts 迁入)+ **性质横条**(QED/MW÷500/cLogP|x|÷5/TPSA÷140/RotB÷10,teal 渐变,超限琥珀⚠,render() QED 处填充);applyDashLayout 在 switchMode/render 双钩子下搬移 7 个共享节点,离开 single 按启动锚点**逆序**还原(batch/search 共享这些节点不能复制);空态只显输入卡。②检索:initSearchCards 一次性把 searchBar 两行重排为双卡(查询 1.45fr/配体库 1fr)+ filterWrap 抽到结果卡虚线筛选条 + 结果卡图标卡头(searchResultStatus 迁入为 card-sub,m6 文本断言不受影响)。**排雷**:dashEls 二次调用重查已搬空的容器 → children[0]=undefined → appendChild 抛 TypeError → process 的 try 吞掉 → 症状"结构列不显/横条 0 但零 page error"——修为首查缓存元素引用。③响应式 <1150px 单列堆叠;390px 溢出 0。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、7 脚本 check、目检四张(boot/三栏/双卡/窄屏)、零 page error;id/函数契约零改动(index.html 经典页不动)。
 ## Recently Completed
