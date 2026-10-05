@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**ui/platform-content 已合入 main(ff,a874e41):platform 主区三栏 dashboard + 设计语言 v2(新组件系统/paste-field/分段控件/表格 v2);合入后 main 全量回归绿——m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34。当前无进行中任务;开放项:探索器/RGD/scaffold 面板 v2 化、批量双卡化、检查器 SA 横条(需懒加载 SA 表)。**
+**一致性专项完成(main 待提交):platform 静态标签全量中文化 ~70 处(逐条 grep 测试契约后改),探索器/RGD/骨架/药效团四面板 .card-head v2 化,表头/行提示/作用域下拉统一;动态状态串=测试契约保留(系统消息语义,文档化边界)。m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0。**
 
+## Recently Completed
++- **platform 全站一致性(用户驱动)。** 审计:224 静态文本 ~80 英文残留。修复:①静态标签中文化 ~70 处——批量/库卡/单分子面板族/徽章/Playground 引导/探索器族按钮与下拉(片段类别、全库/当前结果)/表头(名称/分子数/占比/结果)/行提示;②探索器/RGD/骨架频次/药效团查询四面板 → .card-head(图标+中文标题+副题)v2 化;③**边界**:动态状态串(测试契约 '55'/'at T'/'restored'/'aza-hop'/'pinned'/'scaffold'/'/3 molecules')保留英文=系统消息语义;技术词保留。排雷:按钮文本含换行缩进致 `>X<` 锚点失配(行内容锚定三批落盘);服务器被前序命令尾杀致 m0/m6 假阴性(起服重跑甄别)。验收:m0-m6 + 平台 Node 全绿、7 脚本 check、390px 溢出 0、目检四张、零 page error。
 ## Recently Completed
 +- **ui/platform-content 合入 main(纯增量 ff,2 提交)。** bfc9ecf(三栏 dashboard:applyDashLayout 节点搬移+锚点还原+性质横条;检索双卡+筛选条;排雷:元素引用首查缓存)+ a874e41(设计语言 v2:.btn 组件系统映射换装/.field 标签上置/检索方式分段控件[隐藏 select 保 m6 契约]/paste-field/表格 v2/qgrid)。合入后 main 全量回归:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、零 page error。index.html 经典页与引擎/worker/存储全程零改动。
 ## Recently Completed

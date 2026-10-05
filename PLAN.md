@@ -1,102 +1,64 @@
-# Plan: 主区真重构 + 新设计语言 v2(不复用 workbench UI 组件)——已完成
+# Plan: 一致性专项 —— platform 全站统一(v2 组件 + 中文静态标签 + 旧面板 v2 化)——已完成
 
-## 承认问题
+## 审计结论
 
-前几轮 = 侧栏/顶栏/stepper 套在**原面板堆叠**外;主区仍是 textarea→按钮行→表格
-自上而下。本轮重构 `app/platform.html` 主区本身(index.html 保持经典页不动;
-引擎/worker/存储零接触)。
+- 静态文本 224 条,~80 条英文残留(批量区 separator/按钮、库卡按钮、
+  单分子面板标题与控件、探索器/RGD/scaffold/药效团/工作集/历史面板、
+  顶栏徽章、Playground 引导)。
+- **动态状态串是 m6/m5 测试契约**('55'/'at T'/'restored'/'aza-hop'/
+  'pinned'/'contain the core' 等)——本轮**不动**,定位为"系统消息"
+  (双语可接受);静态标签全量中文化(技术词 SVG/PNG/InChI/MW/flex 保留)。
+- 三个 legacy separator("-- or --" 等)、旧面板标题(strong 裸文本)、
+  部分旧按钮类需 v2 化。
 
-## A. 单分子模式 → 三栏 dashboard(最大视觉转变)
+## 改动(app/platform.html only;逐项先 grep 测试契约)
 
-```
-┌──────────┬──────────────────────┬────────────┐
-│ 参考配体  │ 2D 结构图卡           │ 检查器卡    │
-│ (输入卡)  │ ──────────────────── │ 性质横条    │
-│ textarea │ 3D 查看器卡(含能量)   │ Properties │
-│ 绘制/拖放 │ ──────────────────── │ Rules      │
-│ 历史      │ 构象系综卡            │ Alerts     │
-└──────────┴──────────────────────┴────────────┘
-```
+1. **静态标签中文化**(约 60 处):批量(Run batch→批量处理/Cancel→取消/
+   3D 复选文案/separator 重写);库卡(装载库/Demo 库/清除/上传文件);
+   单分子(绘制/历史/二维结构/性质/更多性质/规则/更多规则/结构警报/
+   三维结构/嵌入 3D/优化/构象/按部分电荷着色/特征/导出系综 SDF/
+   能量标题/查看器占位/分子式/规范 SMILES/复制/表示);徽章(本地运行/
+   查看源码);Playground 引导句。
+2. **旧面板 v2 化**:Neighborhood explorer→骨架探索卡、RGD、scaffold、
+   Pharmacophore Query→药效团查询、Working set→工作集、Queries→检索历史
+   ——.card-head(图标+中文)+按钮 btn 化(Screen library→筛选库/
+   Build from current→由当前分子构建/Auto core→自动核心/Analyze
+   scaffolds→分析骨架 等)。
+3. **separator → 现代分隔**(CSS:细线居中小字)或删除(卡片结构已替代)。
+4. **模态框**(源码/历史):v2 卡片样式 + 按钮中文化。
+5. 探索器表头/操作列(★/pin)保持;表格 v2 全局样式已就位。
 
-- 实现:`#dashSingle` 三列网格 + `applyDashLayout(single)` 模式切换时
-  **物理搬移**共享节点(textarea/#singleActions/#drop ← inputPanel;
-  2D 子块/3D panel/#confPanel ← output;props 子块 → 检查器列),
-  离开 single 模式按启动时记录的锚点还原(batch/search 共享这些节点,
-  不能复制)。纯位置搬移,零行为改动;全部 id 保留。
-- **性质横条(检查器头部)**:诚实指标条——QED↑(0-1)/ SA↓(1-10 反向)/
-  MW(÷500 Lipinski 上限)/ cLogP(|x|÷5)/ TPSA(÷140)/ RotB(÷10),
-  超限变琥珀;数据取自现有 descriptors 渲染路径,#propBars 由同一处填充。
+## 安全检查
 
-## B. 检索模式 → 查询卡 + 库卡双列 + 筛选条
-
-- `#searchBar` 内部重排:`.dash-search-row` 双列网格——左"查询"卡
-  (query/mode/指纹/阈值/pharm/Search),右"配体库"卡(装载/Demo/上传/
-  清除 + 状态行);useCurrent 并入查询卡。
-- MW/cLogP/PAINS 过滤控件 + filterStatus 从查询行抽出,贴到结果卡头部
-  成筛选条(仍只触发 renderSearchResultsCurrent)。
-- 探索器/RGD/scaffold/药效团/工作集面板:卡片头统一(图标+标题),
-  不改行为。
-
-## C. 通用
-
-- 卡片头组件(.card-head:SVG 图标 + 标题 + 说明);面板圆角/阴影已有。
-- 窄屏(<1100px)三栏降级:输入/结构/检查器纵向堆叠;<920px 侧栏已图标化。
-- 零 page error;m6 30/30(全部 id/函数不变);两页 7 脚本 check;
-  390px 无横向溢出。
-
-## 不做
-
-- index.html(经典页刻意保留);引擎/worker/IndexedDB;表格列结构;
-  假 QSAR/ADMET。
+- 每条待改文本先 grep m6/m5/m4-m0(index 不动,但同源文本)确认无断言;
+  命中的(如 aria-label、占位串)只改可见文本不动 JS 引用值。
+- 涉及 JS 读取的标签(label for)保留 for/id 关系。
 
 ## 验收
 
-m6 30/30 + 平台 Node 34/34 + m5(index 不受累)44→47 项全绿;
-单分子全流程(process→embed→optimize→conformers)在三栏内工作;
-检索全流程(库→查询→过滤→行点击回载单分子三栏)无断裂;
-目检截图(宽/窄)+ 零 page error。
+m0-m6 + 平台 Node 全绿;7 脚本 check;目检六状态(boot/单分子全流程/
+检索全家族面板/批量/概览/模态);390px 溢出 0;零 page error。
 
 
 ## 实施与验收(完成)
 
-1. **单分子三栏**(290px 参考配体卡 | 弹性结构列[2D/3D/构象] | 340px
-   检查器卡):`applyDashLayout` 模式切换时物理搬移 7 个共享节点
-   (textarea/singleActions/drop ← inputPanel;2D 子块/3D 面板/confPanel
-   ← output;props 子块 → 检查器),离开 single 按启动锚点逆序还原;
-   **元素引用首查缓存**(排雷:二次调用重查空容器 → undefined →
-   appendChild 抛错 → render 静默中断——症状:结构列不显/横条 0);
-   空态(未处理分子)只显示输入卡,结构/检查器隐藏。
-2. **检查器性质横条**:QED(0-1)/MW(÷500)/cLogP(|x|÷5)/TPSA(÷140)/
-   RotB(÷10),teal 渐变填充,超限琥珀+⚠;render() QED 处填充
-   (paracetamol:0.60/151/0.00/49/1)。
-3. **检索双卡 + 筛选条**:initSearchCards 一次性重排——查询卡(1.45fr:
-   query/mode/指纹/阈值/pharm/Search)+ 配体库卡(1fr:Load/Demo/
-   Upload/Clear);MW/cLogP/标PAINS + filterStatus 抽到结果卡头部
-   虚线筛选条;结果卡 = 图标卡头 + 漏斗 chip(searchResultStatus 迁入)。
-4. 响应式:<1150px 三栏/双卡降单列;390px 溢出 0(实测)。
+1. **静态标签中文化 ~70 处**(逐条先 grep 测试契约):批量区(批量处理/
+   取消/3D 复选/提示/批量结果);库卡(装载库/Demo 库/上传文件/清除);
+   单分子(绘制/历史/二维结构/性质/规则/结构警报/三维结构/嵌入 3D/优化/
+   构象/特征/导出系综 SDF/能量标题/查看器占位[HTML+JS 两处]/分子式/
+   规范 SMILES/复制/表示);徽章(本地运行/查看源码);Playground 引导;
+   探索器族(骨架探索/R-Group 分解/骨架频次/药效团查询 四卡头 v2 化 +
+   探索/用当前分子/筛选库/由当前分子构建/自动核心/分析骨架/取消 +
+   片段类别与作用域下拉全库/当前结果);表格表头(名称/分子数/占比/
+   结果,RGD 动态表头同步);行提示三处;Export×5 → 导出。
+2. **保留边界(文档化)**:动态状态串 = 测试契约 + "系统消息"语义
+   ('55'/'at T'/'restored'/'aza-hop'/'pinned'/'scaffold'/'/3 molecules'
+   等)保持英文;技术词(SMILES/MW/Tanimoto/ECFP4/flex/InChI)保留。
+3. **修正过程排雷**:按钮文本带换行缩进——`>X<` 锚点失配,改按
+   行内容锚定;三次补丁分批落盘。
 
 ## 验收数字
 
-m0-m6 37/10/11/10/32/47/**30** 全绿;平台 Node 34/34;7 脚本 check;
-目检三张(boot/单分子三栏含横条/检索双卡+筛选条/窄屏堆叠)通过;
-零 page error;引擎/worker/存储/id 契约零改动。
-
-
-## 设计语言 v2(用户授权"不需要使用原 workbench 的任何 UI 元素")
-
-1. **新组件系统**(CSS 层,.btn 系列**映射取代** .action-btn 旧皮肤):
-   btn-primary(teal 实心)/ btn-ghost(描边)/ btn-danger(红描边)/
-   btn-accent(teal 描边);统一圆角/按压反馈/焦点环。
-2. **.field 字段模式**:小号大写标签在控件上方 + focus teal 环——检索卡
-   全部控件字段化(查询结构/检索方式/指纹/阈值/药效团/形状选项)。
-3. **分段控件**:检索方式 select → 相似/子结构/形状3D 分段按钮
-   (segModeSet/syncSegMode;隐藏 select 保留契约——m6 程序化设值+
-   onSearchModeChange 仍生效,seg 经钩子同步)。
-4. **粘贴字段**:单分子输入 = 虚线等宽 textarea(focus 转实线 teal 环)+
-   瘦身拖放条 + ::after 提示行;批量态经 body[data-mode] 区分皮肤。
-5. **表格 v2**:小号大写表头/紧凑行距/tabular-nums;空态组件。
-6. 检索行重构为 qgrid(auto-fit 字段网格)+ 检索按钮加大(检 索)。
-
-验收:m6 30/30、m5 47/47、平台 Node 34/34;390px 溢出 0;
-目检(boot/单分子 paste-field/检索分段+字段化)通过;零 page error;
-id/函数契约零改动(index.html 经典页不动)。
+m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34 全绿(服务器未起的两次
+假阴性已甄别);7 脚本 check;390px 溢出 0;目检四张(单分子/检索
+家族×2/批量)通过;零 page error。

@@ -1136,13 +1136,13 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
        </svg>
-       Runs Locally
+       本地运行
      </span>
      <span class="badge" onclick="viewSource()" title="View HTML source">
        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
          <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
        </svg>
-       View Source
+       查看源码
      </span>
 
    </div>
@@ -1182,17 +1182,17 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
 <div class="panel" id="inputPanel">
   <textarea id="input" aria-label="Molecule input: SMILES, MolBlock, or SDF" placeholder="Paste SMILES, MolBlock, or SDF here"></textarea>
   <div id="batchBar" style="display:none;">
-    <div class="separator">-- one SMILES per line, or a multi-record SDF --</div>
+    <div class="separator">每行一条 SMILES,或多记录 SDF</div>
     <div class="action-buttons" style="justify-content:flex-start;">
       <button id="btnBatchRun" class="action-btn primary" style="width:auto;" onclick="runBatch()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,3 19,12 5,21"/></svg>
-        Run batch
+        批量处理
       </button>
       <button id="btnBatchCancel" class="action-btn clear" onclick="cancelBatch()" style="display:none;width:auto;">Cancel</button>
       <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
-        <input type="checkbox" id="batch3d"> 3D: embed + MMFF94s optimize
+        <input type="checkbox" id="batch3d"> 3D:嵌入 + MMFF94s 优化
       </label>
-      <span class="hint" id="batchInfo">descriptors + drug rules + QED/PAINS · 3D optional · sort/filter · export CSV/SDF</span>
+      <span class="hint" id="batchInfo">描述符 + 药物规则 + QED/PAINS · 3D 可选 · 排序/过滤 · 导出 CSV/SDF</span>
     </div>
   </div>
 
@@ -1201,12 +1201,12 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
     <div class="action-buttons" style="justify-content:flex-start;">
       <button id="btnLibLoad" class="action-btn primary" style="width:auto;" onclick="loadSearchLibrary()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,3 19,12 5,21"/></svg>
-        Load library
+        装载库
       </button>
-      <button id="btnLibDemo" class="action-btn edit" style="width:auto;" onclick="loadDemoLibrary()" title="Load the bundled demo library (repo test molecules + named drugs)">Demo library</button>
-      <button id="btnLibClear" class="action-btn clear" onclick="clearSearchLibrary()" title="Clear the current library and forget the saved one">Clear</button>
+      <button id="btnLibDemo" class="action-btn edit" style="width:auto;" onclick="loadDemoLibrary()" title="Load the bundled demo library (repo test molecules + named drugs)">Demo 库</button>
+      <button id="btnLibClear" class="action-btn clear" onclick="clearSearchLibrary()" title="Clear the current library and forget the saved one">清除</button>
       <label class="action-btn export" style="cursor:pointer;" title="Upload a .smi / .txt / .sdf library file">
-        Upload file
+        上传文件
         <input type="file" id="libFile" accept=".smi,.txt,.sdf,.mol" style="display:none;" onchange="onLibFile(event)">
       </label>
     </div>
@@ -1301,10 +1301,9 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
     <div class="version" id="searchStatus" aria-live="polite" style="margin:0.3rem 0 0;"></div>
   </div>
 
-  <div class="separator">-- or --</div>
-
-   <div class="drop" id="drop" role="button" tabindex="0" aria-label="Drag and drop MOL, SDF, or TXT files here">
-     Drag & drop MOL / SDF / TXT files here
+  
+   <div class="drop" id="drop" role="button" tabindex="0" aria-label="拖放 MOL、SDF 或 TXT 文件到此处">
+     拖放 MOL / SDF / TXT 文件到此处
    </div>
 
      <div class="action-buttons" id="singleActions">
@@ -1312,7 +1311,7 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
         </svg>
-        Draw/Edit
+        绘制
       </button>
       <button onclick="clearAll()" class="action-btn clear">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1337,7 +1336,7 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
 
    <div class="panel grid">
      <div>
-         <strong>2D Structure</strong>
+         <strong>二维结构</strong>
          <div id="svg" style="margin-top:0.75rem; margin-bottom:0.75rem;"></div>
          <div class="action-buttons">
            <div class="ctl-group" title="Download the 2D structure">
@@ -1370,36 +1369,36 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
        </div>
 
       <div>
-        <strong>Properties</strong>
+        <strong>性质</strong>
         <table id="props"></table>
 
         <details>
-          <summary>More Properties</summary>
+          <summary>更多性质</summary>
           <table id="moreProps"></table>
         </details>
 
         <br>
-        <strong>Rules</strong>
+        <strong>规则</strong>
         <table id="rules"></table>
 
         <details>
-          <summary>More Rules</summary>
+          <summary>更多规则</summary>
           <table id="moreRules"></table>
         </details>
 
         <br>
-        <strong>Structural Alerts</strong>
+        <strong>结构警报</strong>
         <table id="alerts"></table>
         <div id="alertsList" class="alerts-list"></div>
       </div>
   </div>
 
    <div class="panel">
-     <strong>3D Structure</strong>
+     <strong>三维结构</strong>
      <div class="viewer-row">
        <div class="viewer-wrap">
          <div id="viewer3d" role="img" aria-label="3D molecule viewer">
-           Embed a 3D structure to begin (ETKDG)
+           嵌入 3D 结构开始(ETKDG)
          </div>
          <!-- sibling of the role="img" container: a button inside it would be
               a nested-interactive axe violation (the img role truncates the
@@ -1407,7 +1406,7 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
          <button class="view-reset" id="btn-viewreset" title="Reset view" aria-label="Reset view">⟲</button>
        </div>
        <div id="energyPanel" style="display:none;">
-         <strong id="energyTitle">WebMM Energy (kcal/mol)</strong>
+         <strong id="energyTitle">WebMM 能量 (kcal/mol)</strong>
          <table id="eterms"></table>
        </div>
      </div>
@@ -1418,7 +1417,7 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
              <path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/>
              <path d="M12 11l8-4.5M12 11v9M12 11L4 6.5"/>
            </svg>
-           Embed 3D
+           嵌入 3D
          </button>
        </div>
        <div class="ctl-group" title="Force-field engine + L-BFGS geometry optimization">
@@ -1432,7 +1431,7 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
              <polyline points="23 4 23 10 17 10"/>
              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
            </svg>
-           Optimize
+           优化
          </button>
        </div>
        <div class="ctl-group" title="Batch ETKDG + optimize + rank + RMSD prune">
@@ -1442,7 +1441,7 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
              <circle cx="18" cy="6" r="3"/>
              <circle cx="12" cy="17" r="3"/>
            </svg>
-           Conformers
+           构象
          </button>
          <label class="mini-field" title="number of embedding seeds (1–2000)">N
            <input id="confN" aria-label="Number of conformers" type="number" min="1" value="100">
@@ -1470,8 +1469,8 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
      </div>
      <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
        <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
-         <input type="checkbox" id="chargeColor" disabled> Color atoms by partial charge
-         <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" title="Pharmacophore features (same sites the shape Color T / pharmacophore screen use): red donor, blue acceptor, purple positive, orange negative, amber hydrophobe, yellow-green ring centroid. Donor spheres sit at the hydrogens, acceptor spheres ~1 A along the lone-pair direction (ROCS-style projected features); hydrophobe/charge at atoms, ring at centroid. After a shape-search row click: bright = matched to the query, dim = unmatched."> Features
+         <input type="checkbox" id="chargeColor" disabled> 按部分电荷着色
+         <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" title="Pharmacophore features (same sites the shape Color T / pharmacophore screen use): red donor, blue acceptor, purple positive, orange negative, amber hydrophobe, yellow-green ring centroid. Donor spheres sit at the hydrogens, acceptor spheres ~1 A along the lone-pair direction (ROCS-style projected features); hydrophobe/charge at atoms, ring at centroid. After a shape-search row click: bright = matched to the query, dim = unmatched."> 特征
          <span id="featLegend" class="hint" style="display:inline-flex; gap:0.55rem; flex-wrap:wrap;"></span>
          <span title="blue = positive, red = negative; white = neutral" style="display:inline-flex; gap:2px;">
            <span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
@@ -1487,13 +1486,13 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
      </div>
      <div id="status3d" class="version" aria-live="polite" style="margin-top:0.5rem;">Engine loading…</div>
      <div id="confPanel" style="display:none; margin-top:0.75rem;">
-       <strong>Conformer Ensemble (kcal/mol, pruned)</strong>
+       <strong>构象系综 (kcal/mol,已剪枝)</strong>
        <canvas id="confChart" tabindex="0" style="width:100%; height:132px; margin:0.4rem 0 0.2rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;" aria-label="Conformer energy chart - click a bar or use arrow keys to show that conformer"></canvas>
        <div class="version" id="confChartAxis" style="margin-bottom:0.4rem;"></div>
-       <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">Export ensemble SDF</button>
+       <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">导出系综 SDF</button>
      </div>
      <div class="spiral-note">
-       Interactive MD &amp; metadynamics live in the <a id="notePlayground" href="../playground.html">Playground</a> and <a id="noteDemo" href="../index.html">Demo</a> pages.
+       交互式 MD 与元动力学在 <a id="notePlayground" href="../playground.html">Playground</a> 与 <a id="noteDemo" href="../index.html">Demo</a> 页面。
      </div>
    </div>
 
@@ -1505,14 +1504,14 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
        </tr>
      </table>
 
-     <strong>Representations</strong>
+     <strong>表示</strong>
     <table>
       <tr>
-        <td class="key">Formula</td>
+        <td class="key">分子式</td>
         <td class="value" id="formula"></td>
       </tr>
       <tr>
-        <td class="key">Canonical SMILES</td>
+        <td class="key">规范 SMILES</td>
         <td class="value" id="smiles"></td>
         <td><button onclick="copy('smiles')">Copy</button></td>
       </tr>
@@ -1527,7 +1526,7 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
         <td><button onclick="copy('inchikey')">Copy</button></td>
       </tr>
       <tr>
-        <td class="key">Murcko Scaffold</td>
+        <td class="key">Murcko 骨架</td>
         <td class="value" id="murcko"></td>
         <td><button onclick="copy('murcko')">Copy</button></td>
       </tr>
@@ -1537,11 +1536,11 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
  </div>
 
   <div id="batchPanel" class="panel" style="display:none;">
-     <strong>Batch Results</strong>
+     <strong>批量结果</strong>
      <div class="version" id="batchStatus" aria-live="polite" style="margin:0.3rem 0 0.5rem;"></div>
      <div class="action-buttons" style="justify-content:flex-start; margin-bottom:0.6rem;">
-       <button id="btnBatchCSV" class="action-btn export" onclick="exportBatchCSV()">Export CSV</button>
-       <button id="btnBatchSDF" class="action-btn export" onclick="exportBatchSDF()">Export SDF</button>
+       <button id="btnBatchCSV" class="action-btn export" onclick="exportBatchCSV()">导出 CSV</button>
+       <button id="btnBatchSDF" class="action-btn export" onclick="exportBatchSDF()">导出 SDF</button>
        <label for="batchFilter" style="font-size:0.75rem; color:#64748b; margin-left:0.3rem;">Filter</label>
        <select id="batchFilter" onchange="applyBatchView()" style="font-size:0.75rem; padding:0.25rem;">
          <option value="all">All</option>
@@ -1554,12 +1553,12 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
      <div style="overflow-x:auto;">
      <table id="batchTable">
        <thead>
-         <tr><th>#</th><th class="sortable" data-key="Name" onclick="sortBatch('Name')" aria-sort="none">Name</th><th>SMILES</th><th class="sortable" data-key="Formula" onclick="sortBatch('Formula')" aria-sort="none">Formula</th><th class="sortable" data-key="MW" onclick="sortBatch('MW')" aria-sort="none">MW</th><th class="sortable" data-key="cLogP" onclick="sortBatch('cLogP')" aria-sort="none">cLogP</th><th class="sortable" data-key="TPSA" onclick="sortBatch('TPSA')" aria-sort="none">TPSA</th><th class="sortable" data-key="HBD" onclick="sortBatch('HBD')" aria-sort="none">HBD</th><th class="sortable" data-key="HBA" onclick="sortBatch('HBA')" aria-sort="none">HBA</th><th class="sortable" data-key="RotB" onclick="sortBatch('RotB')" aria-sort="none">RotB</th><th class="sortable" data-key="QED" onclick="sortBatch('QED')" aria-sort="none">QED</th><th class="sortable" data-key="PAINS" onclick="sortBatch('PAINS')" aria-sort="none">PAINS</th><th class="sortable" data-key="Lipinski" onclick="sortBatch('Lipinski')" aria-sort="none">Lipinski</th><th class="sortable" data-key="Veber" onclick="sortBatch('Veber')" aria-sort="none">Veber</th><th class="sortable" data-key="E MMFF94s" onclick="sortBatch('E MMFF94s')" aria-sort="none">E MMFF94s</th></tr>
+         <tr><th>#</th><th class="sortable" data-key="Name" onclick="sortBatch('Name')" aria-sort="none">名称</th><th>SMILES</th><th class="sortable" data-key="Formula" onclick="sortBatch('Formula')" aria-sort="none">分子式</th><th class="sortable" data-key="MW" onclick="sortBatch('MW')" aria-sort="none">MW</th><th class="sortable" data-key="cLogP" onclick="sortBatch('cLogP')" aria-sort="none">cLogP</th><th class="sortable" data-key="TPSA" onclick="sortBatch('TPSA')" aria-sort="none">TPSA</th><th class="sortable" data-key="HBD" onclick="sortBatch('HBD')" aria-sort="none">HBD</th><th class="sortable" data-key="HBA" onclick="sortBatch('HBA')" aria-sort="none">HBA</th><th class="sortable" data-key="RotB" onclick="sortBatch('RotB')" aria-sort="none">RotB</th><th class="sortable" data-key="QED" onclick="sortBatch('QED')" aria-sort="none">QED</th><th class="sortable" data-key="PAINS" onclick="sortBatch('PAINS')" aria-sort="none">PAINS</th><th class="sortable" data-key="Lipinski" onclick="sortBatch('Lipinski')" aria-sort="none">Lipinski</th><th class="sortable" data-key="Veber" onclick="sortBatch('Veber')" aria-sort="none">Veber</th><th class="sortable" data-key="E MMFF94s" onclick="sortBatch('E MMFF94s')" aria-sort="none">E MMFF94s</th></tr>
        </thead>
        <tbody id="batchRows"></tbody>
      </table>
      </div>
-     <div class="hint" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+     <div class="hint" style="margin-top:0.4rem;">点击行回载到单分子工作台</div>
    </div>
 
    <div id="searchPanel" class="panel" style="display:none;">
@@ -1568,16 +1567,16 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
-         <tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th><th title="consensus = mean rank across every recorded round that scored this molecule (explicit rank-fusion column; lower is better; needs >= 2 rounds)">Cons.</th><th title="pin to the working set / exclude from triage (persisted in the project store, undoable)">★</th></tr>
+         <tr><th>#</th><th>名称</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th><th title="consensus = mean rank across every recorded round that scored this molecule (explicit rank-fusion column; lower is better; needs >= 2 rounds)">Cons.</th><th title="pin to the working set / exclude from triage (persisted in the project store, undoable)">★</th></tr>
        </thead>
        <tbody id="searchRows"></tbody>
      </table>
      </div>
-     <div class="hint" style="margin-top:0.4rem;">click a row to load it into the single-molecule view</div>
+     <div class="hint" style="margin-top:0.4rem;">点击行回载到单分子工作台</div>
      <div id="queryHistoryPanel" style="display:none; margin-top:0.5rem; padding:0.5rem 0.6rem; border:1px solid var(--border); border-radius:8px;"></div>
      <div id="workSetPanel" style="display:none; margin-top:0.5rem; padding:0.5rem; border:1px solid var(--border); border-radius:8px;">
        <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
-         <strong style="font-size:0.82rem;">Working set</strong>
+         <strong style="font-size:0.82rem;">工作集</strong>
          <span id="workSetCounts" class="hint"></span>
          <button class="action-btn clear" style="width:auto; padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="triageUndo()" title="Undo the last triage action (appends the inverse command — the log is never rewritten)">↶ undo</button>
          <label class="hint" style="cursor:pointer; display:inline-flex; gap:3px; align-items:center;">
@@ -1587,24 +1586,24 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
        <div id="workSetPins" style="margin-top:0.35rem;"></div>
      </div>
      <div style="margin-top:0.4rem;">
-       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportResultsCSV()" title="CSV with per-round ranks, consensus, pins and notes — the exit path to other tools">⬇ results CSV</button>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.7rem; font-size:0.75rem;" onclick="exportResultsCSV()" title="CSV with per-round ranks, consensus, pins and notes — the exit path to other tools">⬇ 结果 CSV</button>
        <span class="hint">(项目级导出/导入在侧栏「项目概览」)</span>
      </div>
    </div>
 
    <div id="analogPanel" class="panel" style="display:none;">
-     <strong>Neighborhood explorer</strong> <span class="hint">(M3 — single-site group swaps, shape-rescored)</span>
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><b>骨架探索</b><span class="card-sub">单位点基团交换 · 形状重打分 · aza-scan</span></div>
      <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin:0.4rem 0;">
        <span id="analogParent" class="hint" style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
-       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="analogDetectSites()" title="Detect replaceable terminal groups on the CURRENT single-view molecule">use current molecule</button>
-       <select id="analogSite" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);"><option value="">— site —</option></select>
+       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="analogDetectSites()" title="Detect replaceable terminal groups on the CURRENT single-view molecule">用当前分子</button>
+       <select id="analogSite" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);"><option value="">— 位点 —</option></select>
        <select id="analogFragCat" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);" title="Fragment category (built-in set, ≤150 per run)">
-         <option value="all">all fragments</option><option value="alkyl">alkyl</option><option value="halo">halogen / CFx</option>
-         <option value="O">O-linked</option><option value="N">N-linked</option><option value="acyl">carbonyl-attached</option><option value="aryl">aryl / heteroaryl</option>
+         <option value="all">全部片段</option><option value="alkyl">烷基</option><option value="halo">卤素 / CFx</option>
+         <option value="O">O 连接</option><option value="N">N 连接</option><option value="acyl">羰基连接</option><option value="aryl">芳环 / 杂芳环</option>
        </select>
-       <button class="action-btn primary" style="width:auto;" onclick="runAnalogExplorer()">Explore</button>
+       <button class="action-btn primary" style="width:auto;" onclick="runAnalogExplorer()">探索</button>
        <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="runAzaScan()" title="Scaffold-hop spike: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres), then the same shape funnel">aza-scan (r5+r6, 1-2 swaps)</button>
-       <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">Cancel</button>
+       <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">取消</button>
      </div>
      <div class="hint" id="analogStatus"></div>
      <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
@@ -1612,17 +1611,17 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
      </div>
    </div>
    <div id="rgdPanel" class="panel" style="display:none;">
-     <strong>R-Group Decomposition</strong>
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v6m0 8v6M2 12h6m8 0h6"/></svg><b>R-Group 分解</b></div>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
        <input type="text" id="rgdCore" placeholder="Core with attachment labels, e.g. [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
        <button class="action-btn edit" onclick="fillRgdExample()" title="Fill a para-disubstituted benzene example core">Example</button>
-      <button class="action-btn edit" onclick="autoRgdCore()" title="Derive a labeled core automatically: MCS of the most frequent scaffold family, attachment points from the first member">Auto core</button>
+      <button class="action-btn edit" onclick="autoRgdCore()" title="Derive a labeled core automatically: MCS of the most frequent scaffold family, attachment points from the first member">自动核心</button>
        <select id="rgdScope" title="Run over the whole library or the current search results" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);">
-         <option value="library">whole library</option>
-         <option value="hits">current results</option>
+         <option value="library">全库</option>
+         <option value="hits">当前结果</option>
        </select>
        <button id="btnRGD" class="action-btn primary" style="width:auto;" onclick="runRGD()">Decompose</button>
-       <button class="action-btn export" onclick="exportRGDCSV()">Export CSV</button>
+       <button class="action-btn export" onclick="exportRGDCSV()">导出 CSV</button>
      </div>
      <div class="version" id="rgdStatus" aria-live="polite"></div>
      <div style="overflow-x:auto;">
@@ -1635,40 +1634,40 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
    </div>
 
    <div id="scaffoldPanel" class="panel" style="display:none;">
-     <strong>Scaffold Frequency</strong>
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2l8 5v10l-8 5-8-5V7z"/></svg><b>骨架频次</b></div>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
        <select id="scaffoldScope" title="Run over the whole library or the current search results" style="padding:0.35rem; font-size:0.8rem; border-radius:8px; border:1px solid var(--border);">
-         <option value="library">whole library</option>
-         <option value="hits">current results</option>
-       </select><button id="btnScaffold" class="action-btn primary" style="width:auto;" onclick="analyzeScaffolds()">Analyze scaffolds</button>
-       <button class="action-btn export" onclick="exportScaffoldCSV()">Export CSV</button>
+         <option value="library">全库</option>
+         <option value="hits">当前结果</option>
+       </select><button id="btnScaffold" class="action-btn primary" style="width:auto;" onclick="analyzeScaffolds()">分析骨架</button>
+       <button class="action-btn export" onclick="exportScaffoldCSV()">导出 CSV</button>
      </div>
      <div class="version" id="scaffoldStatus" aria-live="polite"></div>
      <div style="overflow-x:auto;">
      <table id="scaffoldTable">
-       <thead><tr><th>#</th><th>Murcko Scaffold</th><th>Molecules</th><th>Share</th></tr></thead>
+       <thead><tr><th>#</th><th>Murcko 骨架</th><th>分子数</th><th>占比</th></tr></thead>
        <tbody id="scaffoldRows"></tbody>
      </table>
      </div>
-     <div class="hint" style="margin-top:0.4rem;">click a row to load the scaffold into the single-molecule view</div>
+     <div class="hint" style="margin-top:0.4rem;">点击行将该骨架回载到单分子工作台</div>
    </div>
 
    <div id="pharmQueryPanel" class="panel" style="display:none;">
-     <strong>Pharmacophore Query</strong>
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg><b>药效团查询</b></div>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
-       <button class="action-btn edit" style="width:auto;" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">Build from current molecule</button>
+       <button class="action-btn edit" style="width:auto;" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">由当前分子构建</button>
        <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± tolerance (Å)</label>
        <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
        <label for="pharmConfs" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Conformers generated per molecule (more = fewer false negatives, slower)">conformers</label>
        <input type="number" id="pharmConfs" min="1" max="50" value="10" style="width:4rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
-       <button id="btnPharmQ" class="action-btn primary" style="width:auto;" onclick="screenPharmQuery()">Screen library</button>
+       <button id="btnPharmQ" class="action-btn primary" style="width:auto;" onclick="screenPharmQuery()">筛选库</button>
      </div>
      <div class="version" id="pharmQStatus" aria-live="polite"></div>
      <div id="pharmQFeatures" style="max-height:180px; overflow-y:auto; margin:0.3rem 0;"></div>
      <div class="version" id="pharmQDist" style="font-family:ui-monospace,Menlo,monospace; font-size:0.72rem; white-space:pre;"></div>
      <div style="overflow-x:auto;">
      <table id="pharmQTable">
-       <thead><tr><th>#</th><th>Name</th><th>SMILES</th><th>MW</th><th>Conf</th><th>Result</th></tr></thead>
+       <thead><tr><th>#</th><th>名称</th><th>SMILES</th><th>MW</th><th>Conf</th><th>结果</th></tr></thead>
        <tbody id="pharmQRows"></tbody>
      </table>
      </div>
@@ -1701,9 +1700,9 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
 <div id="historyModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
   <div class="modal-content">
     <div class="modal-header">
-      <h2 id="historyTitle">History</h2>
+      <h2 id="historyTitle">历史</h2>
       <div>
-        <button class="copy-btn" onclick="exportHistoryToCSV()">Export CSV</button>
+        <button class="copy-btn" onclick="exportHistoryToCSV()">导出 CSV</button>
         <button class="copy-btn" onclick="clearHistory()">Clear All</button>
         <button class="close-btn" onclick="closeHistoryModal()">&times;</button>
       </div>
@@ -1715,7 +1714,7 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
 <div id="sourceModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="sourceTitle">
   <div class="modal-content">
     <div class="modal-header">
-      <h2 id="sourceTitle">HTML Source</h2>
+      <h2 id="sourceTitle">HTML 源码</h2>
       <div>
         <button class="copy-btn" onclick="copySource()">Copy</button>
         <button class="close-btn" onclick="closeSourceModal()">&times;</button>
@@ -3571,7 +3570,7 @@ function rdkitAvailable() {
     for (const k of keys) if (depth[k] === undefined) depth[k] = 0;
     keys.sort((a, b) => a.slice(1).localeCompare(b.slice(1)));
     const shown = keys.slice(-12);
-    host.innerHTML = '<strong style="font-size:0.82rem;">Queries</strong>' +
+    host.innerHTML = '<strong style="font-size:0.82rem;">检索历史</strong>' +
       '<div style="max-height:150px; overflow-y:auto; margin-top:0.3rem;">' +
       shown.map(k => {
         const r = rounds[k];
@@ -3832,7 +3831,7 @@ function rdkitAvailable() {
     // re-parse. sdf3d itself carries proper orders (verified).
     analogParentMolblock = sdf3d;
     const sel = document.getElementById('analogSite');
-    sel.innerHTML = '<option value="">— site —</option>';
+    sel.innerHTML = '<option value="">— 位点 —</option>';
     let found = 0;
     for (const [label, sma] of ANALOG_SITES) {
       let q = null;
@@ -4732,7 +4731,7 @@ function rdkitAvailable() {
       (skipped ? ` · ${skipped} skipped (no core or unparseable)` : '');
     // header + rows
     const head = document.getElementById('rgdHead');
-    head.innerHTML = '<th>#</th><th>Name</th><th>SMILES</th>' + labels.map(n => `<th>R${n}</th>`).join('');
+    head.innerHTML = '<th>#</th><th>名称</th><th>SMILES</th>' + labels.map(n => `<th>R${n}</th>`).join('');
     const tb = document.getElementById('rgdRows');
     tb.innerHTML = '';
     rgdResults.forEach((r, i) => {
@@ -5630,7 +5629,7 @@ function clear3DViewer() {
   viewer = null;
   // the view-reset button is a SIBLING of this container (a11y: no
   // interactive content inside role="img") — the rewrite cannot drop it
-  el.innerHTML = 'Embed a 3D structure to begin (ETKDG)';
+  el.innerHTML = '嵌入 3D 结构开始(ETKDG)';
 }
 
 // Reset every 3D-panel state when the input molecule changes: structure,
@@ -5932,7 +5931,7 @@ function renderPropBars(d, qedMean) {
 window.renderPropBars = renderPropBars;
 (function () {
   const a = document.getElementById('analogStatus');
-  if (a && !a.textContent) a.textContent = '待命 — 选定位点后 Explore,或 aza-scan 一键骨架跃迁';
+  if (a && !a.textContent) a.textContent = '待命 — 选定位点后探索,或 aza-scan 一键骨架跃迁';
 })();
 function initSideStorage() {
   const el = document.getElementById('sideStorage');
