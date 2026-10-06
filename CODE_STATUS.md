@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**CSS 误删修复 + 全面普查完成(main 待提交):上轮窄屏媒体块区间切片连带删除 round 2/3 + 内容重构全段 CSS(.card-head svg 16px 规则丢失→图标爆 1052px);从 1c02ab5 全量重建(色板 sed + 浅侧栏 + 定点媒体块替换 + 拼回幸存段)。SVG 尺寸普查 0 超限;六状态目检通过;m0-m6 + 平台 Node 全绿。教训:区间切片先核对内含规则;CSS 大改后加图标尺寸普查探针。**
+**侧栏层级修正完成(main 待提交):组标签与条目三重层级线索——缩进 0.8rem/字号 0.58 vs 0.9rem/颜色 #b3bfcc vs #3f4c60;放大目检"层级立即可读";m6 30/30。**
 
+## Recently Completed
++- **侧栏层级修正(用户指出"字号和缩进看不出层级")。** 病灶:组标签与条目同左边线 + 字号差小 + 颜色相近 = 七元素平级观感。修复三重线索:①条目 margin-left 0.8rem(width calc(100%-0.8rem) 补偿),组标签贴左;②字号 0.62→0.58(标签)vs 0.86→0.9(条目);③颜色 #94a3b8→#b3bfcc(标签更浅)vs var(--muted)→#3f4c60(条目更深)。放大目检:层级立即可读、缩进一致、激活药丸正确、无歧义;m6 30/30。
 ## Recently Completed
 +- **CSS 误删修复(用户发现"结构导入大图标")。** 根因:图标移除轮的媒体块替换用区间切片(首个 @media 920 → design-language v2 标记)——中间的 round 2/3(viewer3d/能量卡/批量 sticky/滚动条/控件协调)与内容重构全段(.dash/.card-head[svg 16px]/.pbar/.qgrid/.filter-strip)全被删,card-head 图标失约束爆到 1052×1052(computed 普查定位)。修复:git 1c02ab5 全量 <style> 重建——色板 sed→浅侧栏块→**定点** 920 媒体块替换→删死规则(brand-tile/side-item svg)→拼回 v2 后幸存段;定义唯一性核对。普查:SVG 尺寸扫描(排除内容区)boot/处理后 0 超限;六状态截图(boot/单分子三栏/检索/批量/概览/390px)目检通过;390px 溢出 0;零 page error;m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34。
 ## Recently Completed
