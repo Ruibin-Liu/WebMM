@@ -1067,6 +1067,42 @@ body[data-mode="batch"] #input {
   font-family: ui-monospace, Menlo, monospace; padding: 0.7rem 0.8rem;
 }
 body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-teal); border-style: solid; }
+
+/* ===== molecule studio ===== */
+.studio { align-items: stretch; grid-template-columns: minmax(0, 1fr) 300px; gap: 0; }
+.studio-main { display: flex; flex-direction: column; min-width: 0; }
+.studio-head { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+  padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--ll-line); background: #f8fafc; border-radius: 12px 12px 0 0; }
+.vtabs { display: inline-flex; background: #e8edf3; border-radius: 9px; padding: 3px; gap: 2px; }
+.vtab { border: none; background: transparent; font: inherit; font-size: 0.78rem; font-weight: 500;
+  color: #64748b; padding: 0.3rem 0.85rem; border-radius: 7px; cursor: pointer; }
+.vtab.on { background: #fff; color: var(--ll-teal-2); box-shadow: 0 1px 2px rgba(16,24,40,.1); font-weight: 600; }
+.studio-actions { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; margin-left: auto; }
+.studio-actions .action-btn { padding: 0.4rem 0.75rem; }
+.engine-sel { border: 1px solid #d5dde7; border-radius: 8px; padding: 0.35rem 0.45rem; font-size: 0.8rem; background: #fff; }
+.studio-adv { position: relative; }
+.studio-adv > summary { list-style: none; cursor: pointer; font-size: 0.78rem; color: #64748b;
+  border: 1px solid #d5dde7; border-radius: 8px; padding: 0.4rem 0.7rem; background: #fff; }
+.studio-adv > summary::-webkit-details-marker { display: none; }
+.studio-adv[open] > summary { color: var(--ll-teal-2); border-color: #b5d8d3; }
+.adv-body { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; background: #fff;
+  border: 1px solid var(--ll-line); border-radius: 10px; box-shadow: 0 8px 24px rgba(16,24,40,.12);
+  padding: 0.7rem; display: flex; flex-wrap: wrap; gap: 0.55rem; max-width: 380px; align-items: center; }
+.adv-body .chk { font-size: 0.75rem; color: #334155; display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+#vpane3d, #vpane2d { padding: 0.8rem; min-height: 340px; }
+#svg { display: flex; justify-content: center; }
+#svg svg { max-width: 100%; height: auto; }
+.studio-inspect { border-left: 1px solid var(--ll-line); padding: 0.8rem 0.9rem; min-width: 0; }
+@media (max-width: 1150px) { .studio-inspect { border-left: none; border-top: 1px solid var(--ll-line); } }
+
+/* result-row structure thumbnails */
+.rowthumb { display: inline-flex; width: 64px; height: 44px; flex: 0 0 64px; align-items: center; justify-content: center;
+  vertical-align: middle; margin-right: 0.5rem; border: 1px solid var(--ll-line); border-radius: 6px; background: #fff; overflow: hidden; }
+.rowthumb svg { width: 100%; height: 100%; }
+.cell-name { white-space: nowrap; }
+.cell-name .nm, .cell-smiles .sm { vertical-align: middle; }
+.cell-smiles .sm { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+#searchRows tr, #analogRows tr, #batchRows tr { height: 52px; }
 </style>
 </head>
 <body>
@@ -1102,7 +1138,10 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
   </nav>
   <div class="side-foot">
     <a href="../index.html">← Workbench</a>
+    <a id="navPlayground" href="../playground.html">Playground</a>
+    <a id="navDemo" href="../site/index.html">Demo</a>
     <a href="https://github.com/Ruibin-Liu/WebMM">GitHub ↗</a>
+    <button onclick="viewSource()" style="all:unset; cursor:pointer; color:#7d8fa5; font-size:0.75rem; text-align:left;">查看源码</button>
     <span class="side-note">本地计算 · 不上传</span>
     <span class="side-note" id="sideStorage">storage…</span>
   </div>
@@ -1125,28 +1164,6 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
 
 <div class="container">
 
- <header>
-   <h1>WebMM Platform</h1>
-    <div class="subtitle">
-      从已知配体出发的本地配体设计流:结构导入 → 相似性检索(含骨架跃迁)→ 批量性质 → 工作集精选。全部计算在浏览器内确定性完成 — 不上传、不联网、无预测模型。
-    </div>
-   <div class="badges">
-     <span class="badge" title="All processing happens in your browser - no data sent anywhere">
-       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-         <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-       </svg>
-       本地运行
-     </span>
-     <span class="badge" onclick="viewSource()" title="View HTML source">
-       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-         <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
-       </svg>
-       查看源码
-     </span>
-
-   </div>
- </header>
 
  <div id="overviewPanel" class="panel overview" style="display:none;">
    <strong>项目概览</strong> <span class="hint">— 库 / 工作集 / 引擎 / 持久化一览</span>
@@ -1334,166 +1351,115 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-tea
 
 <div id="output" style="display:none">
 
-   <div class="panel grid">
-     <div>
-         <strong>二维结构</strong>
-         <div id="svg" style="margin-top:0.75rem; margin-bottom:0.75rem;"></div>
-         <div class="action-buttons">
-           <div class="ctl-group" title="Download the 2D structure">
-             <button id="btn2dSvg" class="action-btn export" onclick="downloadSVG()" title="Download 2D structure as SVG">
-               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                 <polyline points="7,10 12,15 17,10"/>
-                 <line x1="12" y1="15" x2="12" y2="3"/>
-               </svg>
-               SVG
-             </button>
-             <button id="btn2dPng" class="action-btn export" onclick="downloadPNG()" title="Download 2D structure as PNG">PNG</button>
-             <button id="btn2dMol" class="action-btn export" onclick="downloadMOL()" title="Download 2D molfile as MOL">MOL</button>
-             <button id="btn2dSdf" class="action-btn export" onclick="downloadSDF()" title="Download 2D structure as SDF">SDF</button>
-           </div>
-           <div class="ctl-group" title="Copy or share">
-             <button id="btn2dCopy" class="action-btn export" onclick="copySVG()" title="Copy 2D structure as SVG to the clipboard">
-               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-               </svg>
-               SVG
-             </button>
-             <button id="btn2dMolC" class="action-btn export" onclick="copyText(sourceMolblock, this)" title="Copy 2D molfile to the clipboard">MOL</button>
-             <button id="btn2dSdfC" class="action-btn export" onclick="copyText(sourceMolblock + '$$$$', this)" title="Copy 2D structure as SDF to the clipboard">SDF</button>
-             <button id="btn2dPngC" class="action-btn export" onclick="copyPNG(this)" title="Copy 2D structure as PNG to the clipboard">PNG</button>
-             <button id="btn2dLink" class="action-btn export" onclick="copyShareLink()" title="Copy a shareable link to this molecule">Link</button>
-           </div>
+   <div class="panel grid studio">
+     <div class="studio-main">
+       <div class="studio-head">
+         <div class="vtabs" role="tablist" aria-label="结构视图">
+           <button type="button" class="vtab on" id="vtab3d" onclick="studioTab('3d')">三维</button>
+           <button type="button" class="vtab" id="vtab2d" onclick="studioTab('2d')">二维</button>
+         </div>
+         <div class="studio-actions">
+           <button id="btnEmbed" class="action-btn spatial primary" onclick="studioTab('3d'); embed3D()" disabled title="ETKDG v3 3D embedding (seeded, stereo-aware)">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+             嵌入 3D
+           </button>
+           <select id="engineSel" class="engine-sel" aria-label="Force-field engine">
+             <option value="MMFF94s" selected>MMFF94s</option>
+             <option value="MMFF94">MMFF94</option>
+             <option value="GFNFF" title="General Force Field (Grimme): includes an attractive aryl C–H···π term — aromatic H's may sit ~2.4 Å above ring faces by design; MMFF94s relaxes those">GFN-FF</option>
+           </select>
+           <button id="btnOpt" class="action-btn spatial" onclick="optimize3D()" disabled title="L-BFGS geometry optimization">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+             优化
+           </button>
+           <button id="btnConf" class="action-btn spatial" onclick="runConformers()" disabled>
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="17" r="3"/></svg>
+             构象
+           </button>
+           <details class="studio-adv">
+             <summary title="构象与显示选项">高级</summary>
+             <div class="adv-body">
+               <label class="mini-field" title="number of embedding seeds (1–2000)">N
+                 <input id="confN" aria-label="Number of conformers" type="number" min="1" value="100">
+               </label>
+               <label class="mini-field" title="RMSD prune threshold (Å)">RMSD
+                 <input id="confRmsd" aria-label="RMSD prune threshold" type="number" step="0.1" value="0.5">
+               </label>
+               <label class="mini-field" title="energy window (kcal/mol)">ΔE
+                 <input id="confWin" aria-label="Energy window" type="number" step="0.5" value="5">
+               </label>
+               <label class="chk"><input type="checkbox" id="chargeColor" onchange="chargeColor()"> 按部分电荷着色</label>
+               <label class="chk" title="Pharmacophore features (same sites the shape Color T / pharmacophore screen use); donor spheres at hydrogens, acceptor spheres along the lone-pair direction">
+                 <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()"> 特征
+               </label>
+               <span id="featLegend" class="hint" style="display:inline-flex; gap:0.55rem; flex-wrap:wrap;"></span>
+               <span class="hint" id="gfnffHint" style="display:none;"></span>
+             </div>
+           </details>
+           <details class="studio-adv">
+             <summary title="结构导出">导出</summary>
+             <div class="adv-body">
+               <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled title="Export 3D structure as SDF">3D SDF</button>
+               <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled title="Export 3D coordinates as XYZ">XYZ</button>
+               <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled title="Export the 3D view as PNG">3D PNG</button>
+               <button id="btn2dSvg" class="action-btn export" onclick="downloadSVG()" title="Download 2D structure as SVG">2D SVG</button>
+               <button id="btn2dPng" class="action-btn export" onclick="downloadPNG()" title="Download 2D structure as PNG">2D PNG</button>
+               <button id="btn2dMol" class="action-btn export" onclick="downloadMOL()" title="Download 2D molfile as MOL">2D MOL</button>
+               <button id="btn2dSdf" class="action-btn export" onclick="downloadSDF()" title="Download the displayed record as SDF">记录 SDF</button>
+               <button id="btn2dLink" class="action-btn export" onclick="copyShareLink()" title="Copy a URL that re-opens this molecule">链接</button>
+               <button id="btn2dCopy" class="action-btn export" onclick="copySVG()" title="Copy the 2D SVG markup">SVG 源</button>
+               <span style="display:none;">
+                 <button id="btn2dMolC" onclick="copyText(sourceMolblock, this)"></button><button id="btn2dSdfC" onclick="copyText(sourceMolblock + '84928492', this)"></button><button id="btn2dPngC" onclick="copyPNG(this)"></button>
+               </span>
+             </div>
+           </details>
          </div>
        </div>
+       <div class="vpane" id="vpane3d">
+         <div class="viewer-wrap">
+           <div id="viewer3d" role="img" aria-label="3D molecule viewer">
+             嵌入 3D 结构开始(ETKDG)
+           </div>
+           <button class="view-reset" id="btn-viewreset" title="Reset view" aria-label="Reset view">⟲</button>
+         </div>
+         <div class="version" id="status3d" aria-live="polite" style="margin:0.4rem 0 0;"></div>
+         <details id="energyPanel" style="display:none;">
+           <summary id="energyTitle" style="cursor:pointer; font-size:0.8rem; color:#475569;">WebMM 能量分解 (kcal/mol)</summary>
+           <table id="eterms"></table>
+         </details>
+       </div>
+       <div class="vpane" id="vpane2d" style="display:none;">
+         <div id="svg" style="margin-top:0.75rem; margin-bottom:0.75rem;"></div>
+       </div>
+     </div>
 
-      <div>
+     <div class="studio-inspect">
         <strong>性质</strong>
         <table id="props"></table>
-
-        <details>
-          <summary>更多性质</summary>
+        <details style="margin-top:0.4rem;">
+          <summary class="hint" style="cursor:pointer;">更多性质</summary>
           <table id="moreProps"></table>
         </details>
-
-        <br>
-        <strong>规则</strong>
+        <strong style="display:block; margin-top:0.7rem;">规则</strong>
         <table id="rules"></table>
-
-        <details>
-          <summary>更多规则</summary>
+        <details style="margin-top:0.4rem;">
+          <summary class="hint" style="cursor:pointer;">更多规则</summary>
           <table id="moreRules"></table>
         </details>
-
-        <br>
-        <strong>结构警报</strong>
+        <strong style="display:block; margin-top:0.7rem;">结构警报</strong>
         <table id="alerts"></table>
         <div id="alertsList" class="alerts-list"></div>
       </div>
-  </div>
+   </div>
 
-   <div class="panel">
-     <strong>三维结构</strong>
-     <div class="viewer-row">
-       <div class="viewer-wrap">
-         <div id="viewer3d" role="img" aria-label="3D molecule viewer">
-           嵌入 3D 结构开始(ETKDG)
-         </div>
-         <!-- sibling of the role="img" container: a button inside it would be
-              a nested-interactive axe violation (the img role truncates the
-              accessibility tree); the wrapper provides the position anchor -->
-         <button class="view-reset" id="btn-viewreset" title="Reset view" aria-label="Reset view">⟲</button>
-       </div>
-       <div id="energyPanel" style="display:none;">
-         <strong id="energyTitle">WebMM 能量 (kcal/mol)</strong>
-         <table id="eterms"></table>
-       </div>
-     </div>
-     <div class="action-buttons spatial-bar">
-       <div class="ctl-group" title="ETKDG distance-geometry embedding">
-         <button id="btnEmbed" class="action-btn spatial primary" onclick="embed3D()" disabled>
-           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-             <path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/>
-             <path d="M12 11l8-4.5M12 11v9M12 11L4 6.5"/>
-           </svg>
-           嵌入 3D
-         </button>
-       </div>
-       <div class="ctl-group" title="Force-field engine + L-BFGS geometry optimization">
-         <select id="engineSel" class="engine-sel" aria-label="Force-field engine">
-           <option value="MMFF94s" selected>MMFF94s</option>
-           <option value="MMFF94">MMFF94</option>
-           <option value="GFNFF" title="General Force Field (Grimme): includes an attractive aryl C–H···π term — aromatic H's may sit ~2.4 Å over ring faces by design (MMFF94s relaxes these contacts)">GFN-FF</option>
-         </select>
-         <button id="btnOpt" class="action-btn spatial" onclick="optimize3D()" disabled title="L-BFGS geometry optimization">
-           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-             <polyline points="23 4 23 10 17 10"/>
-             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-           </svg>
-           优化
-         </button>
-       </div>
-       <div class="ctl-group" title="Batch ETKDG + optimize + rank + RMSD prune">
-         <button id="btnConf" class="action-btn spatial" onclick="runConformers()" disabled>
-           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-             <circle cx="6" cy="6" r="3"/>
-             <circle cx="18" cy="6" r="3"/>
-             <circle cx="12" cy="17" r="3"/>
-           </svg>
-           构象
-         </button>
-         <label class="mini-field" title="number of embedding seeds (1–2000)">N
-           <input id="confN" aria-label="Number of conformers" type="number" min="1" value="100">
-         </label>
-         <label class="mini-field" title="RMSD prune threshold (Å, heavy atoms)">RMSD
-           <input id="confRmsd" aria-label="RMSD prune threshold in angstrom" type="number" min="0.05" max="3" step="0.05" value="0.5">
-         </label>
-         <label class="mini-field" title="Re-optimize conformers within this window of the minimum to full convergence (kcal/mol; 0 disables)">ΔE
-           <input id="confWin" aria-label="Re-optimization energy window in kcal per mol" type="number" min="0" max="50" step="0.5" value="5">
-         </label>
-       </div>
-       <span class="bar-divider" aria-hidden="true"></span>
-       <div class="ctl-group" title="Export">
-         <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled title="Export 3D structure as SDF">
-           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-             <polyline points="7,10 12,15 17,10"/>
-             <line x1="12" y1="15" x2="12" y2="3"/>
-           </svg>
-           SDF
-         </button>
-         <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled title="Export as XYZ">XYZ</button>
-         <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled title="Export viewer as PNG">PNG</button>
-       </div>
-     </div>
-     <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
-       <label style="display:inline-flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--muted); cursor:pointer;">
-         <input type="checkbox" id="chargeColor" disabled> 按部分电荷着色
-         <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" title="Pharmacophore features (same sites the shape Color T / pharmacophore screen use): red donor, blue acceptor, purple positive, orange negative, amber hydrophobe, yellow-green ring centroid. Donor spheres sit at the hydrogens, acceptor spheres ~1 A along the lone-pair direction (ROCS-style projected features); hydrophobe/charge at atoms, ring at centroid. After a shape-search row click: bright = matched to the query, dim = unmatched."> 特征
-         <span id="featLegend" class="hint" style="display:inline-flex; gap:0.55rem; flex-wrap:wrap;"></span>
-         <span title="blue = positive, red = negative; white = neutral" style="display:inline-flex; gap:2px;">
-           <span style="width:10px;height:10px;border-radius:2px;background:#3b82f6;display:inline-block;"></span>
-           <span style="width:10px;height:10px;border-radius:2px;background:#f1f5f9;border:1px solid var(--border);display:inline-block;"></span>
-           <span style="width:10px;height:10px;border-radius:2px;background:#ef4444;display:inline-block;"></span>
-         </span>
-       </label>
-       <!-- GFN-FF models aromatic C–H···π as an attractive HB-type term (its
-            acceptor set IS the low-qa π carbons), so optimized structures may
-            show aromatic H's pressed ~2.4 Å onto ring faces — by design, not
-            a defect; MMFF94s has no such term and relaxes those contacts -->
-       <span id="gfnffHint" class="hint" style="display:none;" title="GFN-FF's hydrogen-bond term uses aromatic π carbons as acceptors: close C–H···π contacts after optimization are expected behavior">GFN-FF: aromatic C–H···π is attractive by design — H's may press onto ring faces (~2.4 Å); MMFF94s relaxes these</span>
-     </div>
-     <div id="status3d" class="version" aria-live="polite" style="margin-top:0.5rem;">Engine loading…</div>
-     <div id="confPanel" style="display:none; margin-top:0.75rem;">
+   
+<div id="confPanel" style="display:none; margin-top:0.75rem;">
        <strong>构象系综 (kcal/mol,已剪枝)</strong>
        <canvas id="confChart" tabindex="0" style="width:100%; height:132px; margin:0.4rem 0 0.2rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;" aria-label="Conformer energy chart - click a bar or use arrow keys to show that conformer"></canvas>
        <div class="version" id="confChartAxis" style="margin-bottom:0.4rem;"></div>
        <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">导出系综 SDF</button>
      </div>
-     <div class="spiral-note">
-       交互式 MD 与元动力学在 <a id="notePlayground" href="../playground.html">Playground</a> 与 <a id="noteDemo" href="../index.html">Demo</a> 页面。
-     </div>
+     
    </div>
 
    <div class="panel">
@@ -3648,6 +3614,23 @@ function rdkitAvailable() {
     }).join('') + (orphaned > 0 ? '<div class="hint">' + orphaned + ' pinned elsewhere (not in this library)</div>' : '');
   }
 
+  // presentational: 2D structure thumbnails for result rows (cached per SMILES)
+  const _thumbCache = new Map();
+  function molThumb(smiles) {
+    if (!smiles) return '';
+    if (_thumbCache.has(smiles)) return _thumbCache.get(smiles);
+    let svg = '';
+    let m = null;
+    try { m = rdkitModule.get_mol(smiles); } catch (e) { m = null; }
+    if (m && m.is_valid()) {
+      try { svg = m.get_svg(64, 44); } catch (e) { svg = ''; }
+    }
+    if (m) m.delete();
+    const html = svg ? '<span class="rowthumb" title="结构预览">' + svg + '</span>' : '';
+    _thumbCache.set(smiles, html);
+    return html;
+  }
+
   // presentational: tint [data-heat] cells by their 0..1 value (teal intensity)
   function applyHeat(scope) {
     (scope || document).querySelectorAll('[data-heat]').forEach(td => {
@@ -3725,7 +3708,7 @@ function rdkitAvailable() {
         : '<td class="value">—</td>';
       const painsBadge = (pf.painsOn && i < PAINS_FLAG_CAP && entryPains(e))
         ? ` <span class="result-badge fail" title="${e.pains.n} PAINS alert(s) — first: ${e.pains.first} (lbdd_data A/B/C catalog)">PAINS</span>` : '';
-      tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(e.name)}${flexBadge}${painsBadge}</td>` +
+      tr.innerHTML = `<td>${i + 1}</td><td class="cell-name">${molThumb(e.smiles)}<span class="nm">${escHtml(e.name)}</span>${flexBadge}${painsBadge}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
         `<td class="value">${e.MW}</td>` +
         (mode === 'sub'
@@ -4219,7 +4202,7 @@ function rdkitAvailable() {
       const mid = window.Platform ? window.Platform.Identity.syntheticMolId('analog', r.idx, r.smiles, 'builtin-v1', r.smiles) : null;
       const pinned = mid && window.__platformCompat && window.__platformCompat.getPins()[mid];
       return '<tr><td>' + (i + 1) + '</td>' +
-        '<td class="value" style="font-family:ui-monospace,Menlo,monospace; font-size:0.75rem; max-width:280px; overflow:hidden; text-overflow:ellipsis;" title="' + r.smiles + '">' + r.smiles + '</td>' +
+        '<td class="cell-smiles">' + molThumb(r.smiles) + '<span class="sm" title="' + r.smiles + '">' + r.smiles + '</span></td>' +
         '<td class="value">' + r.mw + '</td>' +
         '<td class="value" data-heat="' + r.tanimoto.toFixed(3) + '"><strong>' + (r.tanimoto * 100).toFixed(1) + '%</strong></td>' +
         '<td class="value">' + r.rotb + '</td>' +
@@ -5834,8 +5817,8 @@ function dashEls() {
   const grid2d = document.querySelector('#output .panel.grid');
   return [
     q('input'), q('singleActions'), q('drop'),
-    grid2d.children[0], grid2d.children[1],
-    q('viewer3d').closest('.panel'), q('confPanel'),
+    grid2d.children[0], grid2d.children[1],   // studio-main / studio-inspect
+    q('confPanel'),
   ];
 }
 function applyDashLayout() {
@@ -5846,7 +5829,7 @@ function applyDashLayout() {
     const els = dashEls();
     const inCard = q('dashInputBody'), stCol = q('dashStructBody'), insp = q('dashInspectBody');
     inCard.appendChild(els[0]); inCard.appendChild(els[1]); inCard.appendChild(els[2]);
-    stCol.appendChild(els[3]); stCol.appendChild(els[5]); stCol.appendChild(els[6]);
+    stCol.appendChild(els[3]); stCol.appendChild(els[5]);
     insp.appendChild(els[4]);
     q('dashSingle').style.display = '';
     q('inputPanel').style.display = 'none';
@@ -5862,6 +5845,21 @@ function applyDashLayout() {
     q('dashInspectBody').style.display = '';
   }
 }
+
+// ===== molecule studio: view tabs + identity panel into inspector =====
+function studioTab(w) {
+  document.getElementById('vpane3d').style.display = w === '3d' ? '' : 'none';
+  document.getElementById('vpane2d').style.display = w === '2d' ? '' : 'none';
+  document.getElementById('vtab3d').classList.toggle('on', w === '3d');
+  document.getElementById('vtab2d').classList.toggle('on', w === '2d');
+}
+window.studioTab = studioTab;
+(function initStudio() {
+  const insp = document.querySelector('#output .studio-inspect');
+  const smilesTd = document.getElementById('smiles');
+  const idPanel = smilesTd ? smilesTd.closest('.panel') : null;
+  if (insp && idPanel) insp.appendChild(idPanel);
+})();
 
 applyDashLayout();
 
@@ -6030,9 +6028,9 @@ function renderBatchRow(r) {
   const tb = document.getElementById('batchRows');
   const tr = tb.querySelector(`tr[data-idx="${r.idx}"]`);
   const cells = r.error
-    ? `<td>${r.idx + 1}</td><td>${r.name || ''}</td><td colspan="13" style="color:var(--bad);">${r.error}</td>`
-    : `<td>${r.idx + 1}</td><td>${r.name || ''}</td>` +
-      `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${r.smiles}">${r.smiles}</td>` +
+    ? `<td>${r.idx + 1}</td><td class="cell-name">${r.name || ''}</td><td colspan="13" style="color:var(--bad);">${r.error}</td>`
+    : `<td>${r.idx + 1}</td><td class="cell-name">${r.name || ''}</td>` +
+      `<td class="cell-smiles">${molThumb(r.smiles)}<span class="sm" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${r.smiles}">${r.smiles}</span></td>` +
       `<td class="value">${batchFormula(r)}</td>` +
       `<td class="value">${r.MW}</td><td class="value">${r.cLogP}</td><td class="value">${r.TPSA}</td>` +
       `<td class="value">${r.HBD}</td><td class="value">${r.HBA}</td><td class="value">${r.RotB}</td>` +

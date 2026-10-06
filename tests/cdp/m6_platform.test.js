@@ -132,7 +132,8 @@ function check(name, cond, detail) {
   const cons = await page.evaluate(() => {
     const ci = [...document.querySelectorAll('#searchRows tr')].slice(0, 2).map(tr => {
       const c = tr.cells[tr.cells.length - 2];
-      return { name: tr.children[1].textContent.trim(), cons: c.textContent, tip: c.title };
+      const c1 = tr.children[1];
+      return { name: (c1.querySelector('.nm') || c1).textContent.trim(), cons: c.textContent, tip: c.title };
     });
     return ci;
   });
@@ -311,7 +312,7 @@ function check(name, cond, detail) {
   const exp = await page.evaluate(() => ({
     status: document.getElementById('analogStatus').textContent,
     rows: [...document.querySelectorAll('#analogRows tr')].map(tr => ({
-      smi: tr.children[1].textContent, T: tr.children[3].textContent,
+      smi: (tr.children[1].querySelector('.sm') || tr.children[1]).textContent, T: tr.children[3].textContent,
     })),
   }));
   check('alkyl category scores analogs (parent among them, sensible order)',
@@ -325,7 +326,7 @@ function check(name, cond, detail) {
   const analogFlex = await page.evaluate(() => ({
     status: document.getElementById('analogStatus').textContent,
     top: [...document.querySelectorAll('#analogRows tr')].slice(0, 6).map(tr => ({
-      smi: tr.children[1].textContent.slice(0, 30), rigid: tr.children[3].textContent, flex: tr.children[5].textContent })),
+      smi: ((tr.children[1].querySelector('.sm') || tr.children[1]).textContent).slice(0, 30), rigid: tr.children[3].textContent, flex: tr.children[5].textContent })),
   }));
   check('funnel completes B->C->D with flex-refined top rows',
     /flex-refined/.test(analogFlex.status) && analogFlex.top.some(r => parseFloat(r.flex) > 0), analogFlex.status.slice(0, 70));
@@ -358,7 +359,7 @@ function check(name, cond, detail) {
   const hopRes = await page.evaluate(() => ({
     status: document.getElementById('analogStatus').textContent,
     rows: [...document.querySelectorAll('#analogRows tr')].slice(0, 8).map(tr => ({
-      smi: tr.children[1].textContent, T: tr.children[3].textContent,
+      smi: (tr.children[1].querySelector('.sm') || tr.children[1]).textContent, T: tr.children[3].textContent,
       sa: tr.children[5].textContent, flex: tr.children[6].textContent })),
   }));
   check('aza-scan produces pyridyl scaffold hops with SA + flex columns',

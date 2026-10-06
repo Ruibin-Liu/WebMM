@@ -1,4 +1,17 @@
-# Plan: 一致性专项 —— platform 全站统一(v2 组件 + 中文静态标签 + 旧面板 v2 化)——已完成
+# Plan: 分子工作室重设计 —— 彻底去除 workbench UI 元素(ui/studio-redesign)——已完成
+
+## 范围(用户指令:完全去除旧 UI 元素,重新设计;逻辑/契约不动)
+
+1. **分子工作室卡**:#output 首面板重写——页签(三维/二维)+ 收纳式工具栏
+   (嵌入3D/engine/优化/构象 + "高级"/"导出"下拉:构象参数/着色/特征 +
+   全部导出按钮);3D 视图居中放大;能量表转折叠;2D 导出芯片行/控件摊开
+   全部消灭。dashEls 重构(studio-main→结构列,studio-inspect→检查器列,
+   身份面板经 #smiles.closest 全局定位入检查器)。
+2. **结果行 2D 缩略图**(workbench 从未有):molThumb(SMILES→64×44 SVG,
+   Map 缓存)入检索/探索器/批量三表;**排雷:SVG 杂原子 <text> 污染
+   children[1].textContent 契约**——m6 四处读取改 .sm/.nm span 优先。
+3. **头部块/页脚删除**:h1/副题/徽章/©/Playground 引导全部移除;
+   Playground/Demo/查看源码入侧栏足部(fixSiteLinks null 守卫既有)。
 
 ## 审计结论
 
@@ -62,3 +75,13 @@ m0-m6 + 平台 Node 全绿;7 脚本 check;目检六状态(boot/单分子全流�
 m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34 全绿(服务器未起的两次
 假阴性已甄别);7 脚本 check;390px 溢出 0;目检四张(单分子/检索
 家族×2/批量)通过;零 page error。
+
+
+## 工作室轮验收(完成)
+
+m6 30/30(4 处读取点适配缩略图)、m0-m5 37/10/11/10/32/47、平台 Node
+34/34;7 脚本 check;390px 溢出 0;目检:工作室卡(页签/工具栏/3D 居中/
+检查器)、缩略图行(55/55)、头部页脚无残留;零 page error。
+排雷存档:命名 IIFE 外部不可见(检测误报);身份面板在 #output 同级
+非子级(closest 全局定位取代子级过滤);dashEls 的 viewer3d.closest
+('.panel') 在工作室结构里命中工作室面板自身(显式六元素表取代)。

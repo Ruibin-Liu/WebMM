@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**一致性专项完成(main 待提交):platform 静态标签全量中文化 ~70 处(逐条 grep 测试契约后改),探索器/RGD/骨架/药效团四面板 .card-head v2 化,表头/行提示/作用域下拉统一;动态状态串=测试契约保留(系统消息语义,文档化边界)。m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0。**
+**分子工作室重设计(ui/studio-redesign 分支,用户指令"完全去除旧 UI 元素"):工作室卡(页签+收纳工具栏+3D 居中,2D 导出行/控件摊开消灭)、结果行 2D 缩略图(检索/探索器/批量,SMILES→SVG 缓存)、头部块/页脚删除。m6 30/30(4 读取点适配)+ m0-m5 + 平台 Node 全绿;390px 溢出 0。待合并。**
 
+## Recently Completed
++- **分子工作室重设计(旧 UI 元素清除)。** ①#output 首面板重写为工作室卡:三维/二维页签(vpane3d/vpane2d 切换)+ 收纳工具栏(嵌入3D/engineSel/优化/构象 + "高级"下拉[confN/RMSD/ΔE/着色/特征/图例/GFNFF 提示]+"导出"下拉[3D SDF/XYZ/PNG/2D 全家桶/链接,隐藏剪贴板变体保 handler]);能量表转 details 折叠;display 契约不变;②dashEls 重构为显式六元素(input/singleActions/drop/studio-main/studio-inspect/confPanel);身份面板(名称/SMILES/InChI/表示)经 #smiles.closest('.panel') 全局定位并入检查器列;③**结果行 2D 缩略图**(molThumb:SMILES→64×44 SVG,Map 缓存,三表 name/smiles 单元)——workbench 从未有;**排雷:SVG 杂原子 <text> 污染 children[1].textContent** → m6 四处读取改 .sm/.nm span 优先;④头部块(h1/副题/徽章)+ 页脚(©/spiral-note)删除,Playground/Demo/查看源码入侧栏足部。其他排雷:命名 IIFE 外部不可见;viewer3d.closest('.panel') 命中工作室面板自身。验收:m6 30/30、m0-m5 37/10/11/10/32/47、平台 Node 34/34、7 脚本 check、390px 溢出 0、目检三张(工作室/缩略图行/批量)、零 page error。
 ## Recently Completed
 +- **platform 全站一致性(用户驱动)。** 审计:224 静态文本 ~80 英文残留。修复:①静态标签中文化 ~70 处——批量/库卡/单分子面板族/徽章/Playground 引导/探索器族按钮与下拉(片段类别、全库/当前结果)/表头(名称/分子数/占比/结果)/行提示;②探索器/RGD/骨架频次/药效团查询四面板 → .card-head(图标+中文标题+副题)v2 化;③**边界**:动态状态串(测试契约 '55'/'at T'/'restored'/'aza-hop'/'pinned'/'scaffold'/'/3 molecules')保留英文=系统消息语义;技术词保留。排雷:按钮文本含换行缩进致 `>X<` 锚点失配(行内容锚定三批落盘);服务器被前序命令尾杀致 m0/m6 假阴性(起服重跑甄别)。验收:m0-m6 + 平台 Node 全绿、7 脚本 check、390px 溢出 0、目检四张、零 page error。
 ## Recently Completed
