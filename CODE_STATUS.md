@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**Ketcher 替换 JSME 完成(ui/studio-redesign 四提交待合并):platform 绘制模态 = Ketcher 3.18(ketcher-react + ketcher-standalone + Indigo 1.46 wasm,esbuild 一次性 IIFE 31MB vendored,运行时零 CDN;单线程无 SAB,Pages 兼容);懒加载 + WebMMKetcher API(readyPromise 队列);排雷×2(banner process 覆盖页面函数/onInit 前调用丢弃)。模态内画布载入当前分子 + apply 闭环实测;m0-m6 + 平台 Node 全绿。**
+**ui/studio-redesign 已合入 main(ff,682cb93,4 提交):分子工作室(页签/收纳工具栏/旧 UI 元素清除)+ 排查优化轮(页脚真身/动态 placeholder/select 去内联)+ JSME 模态壳与批量列选择器 + Ketcher 替换 JSME(vendored 31MB IIFE,懒加载)。合入后 main 全量回归绿:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34。当前无进行中任务。**
 
+## Recently Completed
++- **ui/studio-redesign 合入 main(纯增量 ff,4 提交)。** f6b0a1f(工作室卡:三维/二维页签+高级/导出下拉+能量折叠+结果行 2D 缩略图[排雷:SVG 杂原子 text 污染 textContent 契约→m6 四处 .sm/.nm 优先];dashEls 六元素表;身份面板 closest 全局定位)+ e1f0a27(排查优化:页脚真身 crosslinks/copyright 双 div + year 脚本崩[排雷];JS 动态 placeholder 五态中文[静态盘点盲区];select 去内联;模态升级)+ 0c98c70(JSME 模态壳/批量列选择器 per-column hide-N[排雷:has-hide 一刀切])+ 682cb93(Ketcher 替换 JSME:vendored esbuild IIFE 31MB 懒加载;排雷:banner process 覆盖页面全局函数→守卫 shim;onInit 前 setMolecule 被吞→readyPromise 队列)。合入后 main 全量:m0-m6 + 平台 Node 全绿、零 page error。
 ## Recently Completed
 +- **Ketcher 替换 JSME(用户指令)。** ①分发探明:npm 无免构建单文件(ketcher-standalone=Indigo WASM 服务 21MB ESM + ketcher-react=React UI 分体)→ **esbuild 一次性打包 IIFE(31MB,worker+wasm 全内联)提交 app/vendor/ketcher/**(+ketcher.css 179KB + Apache-2.0 全文),运行时零 CDN;Indigo 单线程(零 SharedArrayBuffer)⇒ Pages/裸 http.server 无需 COOP/COEP。②入口 WebMMKetcher.mount/getMolfile/setMolecule/unmount。**排雷**:banner `var process={env}` 覆盖页面全局 process() 函数(applyJSME 静默 TypeError)→ 守卫式 shim;setMolecule 在 onInit 前调用被吞(画布空)→ readyPromise 队列所有 API await onInit。③接线:模态 id/函数名保留(openJSME/applyJSME/closeJSME),懒加载(31MB 首次,状态行提示),apply=getMolfile→input→process(错误不关模态防丢)。④LICENSE +5(Ketcher/Indigo,EPAM,Apache-2.0)。验收:独立页(/tmp:8902)与平台模态双实测——编辑器完整(工具栏/元素面板/模板条)、当前分子载入画布(视觉确认 paracetamol 全结构)、apply 闭环(molblock→process→2D 重渲染→模态关)、零外联请求、零 page error;m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34。
 ## Recently Completed
