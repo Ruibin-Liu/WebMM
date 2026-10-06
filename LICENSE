@@ -44,7 +44,12 @@ following components carry their own terms and remain subject to them:
    Institutes for BioMedical Research Inc and Bruno Bienfait.
    BSD-3-Clause; see `app/vendor/jsme/license.txt`.
 
-5. MMFF94/MMFF94s parameter data (extracted under `src/mmff/`) and LBDD
+5. Ketcher chemical structure editor + Indigo toolkit, prebuilt bundle
+   (`app/vendor/ketcher/`, ketcher-react 3.18.0 + ketcher-standalone
+   3.18.0 + Indigo 1.46.0 wasm, bundled once with esbuild) — Copyright
+   (c) EPAM Systems, Inc. Apache-2.0; see `app/vendor/ketcher/LICENSE`.
+
+6. MMFF94/MMFF94s parameter data (extracted under `src/mmff/`) and LBDD
    reference data (`app/lbdd_data.js`: PAINS/BRENK SMARTS catalogs, QED
    constants) — extracted from the RDKit source tree (BSD-3-Clause);
    MMFF94 parameters derive from the published work of T. A. Halgren.

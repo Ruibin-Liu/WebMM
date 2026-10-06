@@ -1686,11 +1686,12 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
   <div class="modal-content">
     <div class="modal-header">
       <h2 id="jsmeTitle">绘制结构</h2>
-      <span class="card-sub">JSME 分子编辑器 · 画完点"应用"导入</span>
+      <span class="card-sub">Ketcher 编辑器(Indigo WASM,本地运行)· 画完点"应用"导入</span>
       <button class="close-btn" onclick="closeJSME()">&times;</button>
     </div>
     <div class="modal-body" style="display:flex; justify-content:center; background:#fff;">
-      <div id="jsme_container" style="width: 100%; max-width: 780px; height: 475px;"></div>
+      <div id="ketcherStatus" style="padding:2.2rem 1rem; text-align:center; color:#64748b; font-size:0.85rem;">正在载入 Ketcher 编辑器(首次约 31 MB,已本地化,之后走浏览器缓存)…</div>
+      <div id="ketcher_container" style="width: 100%; height: 540px;"></div>
     </div>
     <div class="modal-footer">
       <button class="btn-danger" onclick="closeJSME()">取消</button>
@@ -5096,33 +5097,44 @@ function rdkitAvailable() {
      r.readAsText(f);
    };
 
-   let jsmeInstance = null;
-   let jsmeModalOpen = false;
-   let moleculeToLoad = null;
-   let originalName = null;
-   let jsmeInitialized = false;
+  // ===== Ketcher (Indigo WASM) drawing modal — replaces JSME =====
+  // The bundle (app/vendor/ketcher/, Apache-2.0, EPAM Ketcher + Indigo) is
+  // ~31 MB with the Indigo wasm inlined; it loads LAZILY on first open.
+  let jsmeModalOpen = false;         // name kept — modal wiring elsewhere
+  let moleculeToLoad = null;
+  let originalName = null;
+  let ketcherReady = false;
+  let ketcherLoading = false;
 
-  function createJSME() {
-    if (jsmeInitialized) return;
-
-    if (typeof JSApplet !== 'undefined') {
-      jsmeInstance = new JSApplet.JSME("jsme_container", "100%", "100%", {
-        "options": "star,query"
-      });
-      jsmeInitialized = true;
-
-      if (jsmeModalOpen && moleculeToLoad) {
-        setTimeout(() => {
-          if (jsmeInstance && moleculeToLoad) {
-            jsmeInstance.readGenericMolecularInput(moleculeToLoad);
-            setTimeout(() => {
-              if (jsmeInstance) {
-                jsmeInstance.deferredRepaint();
-              }
-            }, 200);
-          }
-        }, 300);
+  function loadKetcherAssets() {
+    return new Promise((resolve, reject) => {
+      if (ketcherReady) return resolve();
+      if (!document.querySelector('link[data-ketcher-css]')) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'vendor/ketcher/ketcher.css';
+        link.setAttribute('data-ketcher-css', '1');
+        document.head.appendChild(link);
       }
+      const sc = document.createElement('script');
+      sc.src = 'vendor/ketcher/ketcher-bundle.js';
+      sc.onload = () => {
+        try {
+          WebMMKetcher.mount(document.getElementById('ketcher_container'), 'vendor/ketcher');
+          ketcherReady = true;
+          resolve();
+        } catch (e) { reject(e); }
+      };
+      sc.onerror = () => reject(new Error('ketcher bundle failed to load'));
+      document.head.appendChild(sc);
+    });
+  }
+
+  function ketcherAfterReady() {
+    const st = document.getElementById('ketcherStatus');
+    if (st) st.style.display = 'none';
+    if (jsmeModalOpen && moleculeToLoad) {
+      WebMMKetcher.setMolecule(moleculeToLoad).catch(() => {});
     }
   }
 
@@ -5138,26 +5150,16 @@ function rdkitAvailable() {
        moleculeToLoad = mol.get_smiles();
      }
 
-    if (!jsmeInitialized) {
-      const checkJSME = setInterval(() => {
-        if (typeof JSApplet !== 'undefined') {
-          clearInterval(checkJSME);
-          setTimeout(() => {
-            createJSME();
-          }, 200);
-        }
-      }, 100);
-      return;
-    }
-
-    if (jsmeInstance && moleculeToLoad) {
-      setTimeout(() => {
-        jsmeInstance.readGenericMolecularInput(moleculeToLoad);
-        setTimeout(() => {
-          jsmeInstance.deferredRepaint();
-        }, 100);
-      }, 200);
-    }
+    if (ketcherReady) { ketcherAfterReady(); return; }
+    if (ketcherLoading) return;
+    ketcherLoading = true;
+    loadKetcherAssets()
+      .then(() => { ketcherLoading = false; ketcherAfterReady(); })
+      .catch((e) => {
+        ketcherLoading = false;
+        const st = document.getElementById('ketcherStatus');
+        if (st) st.textContent = '编辑器载入失败:' + String(e.message || e);
+      });
   }
 
    function closeJSME() {
@@ -5167,14 +5169,20 @@ function rdkitAvailable() {
      originalName = null;
    }
 
-  function applyJSME() {
-      if (jsmeInstance) {
-        const smiles = jsmeInstance.smiles();
-        if (smiles && smiles.trim()) {
-          const inputValue = originalName ? smiles + " " + originalName : smiles;
-          document.getElementById("input").value = inputValue;
-          process();
+  async function applyJSME() {
+      try {
+        if (ketcherReady) {
+          const mb = await WebMMKetcher.getMolfile();
+          if (mb && mb.trim()) {
+            // RDKit parses the molfile; keep the original compound name
+            document.getElementById("input").value = originalName ? mb + "\n" + originalName : mb;
+            process();
+          }
         }
+      } catch (e) {
+        const st = document.getElementById('ketcherStatus');
+        if (st) { st.style.display = ''; st.textContent = '读取结构失败:' + String(e.message || e); }
+        return;   // keep the modal open so nothing is lost
       }
       closeJSME();
   }

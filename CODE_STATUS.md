@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**studio-redesign 续磨轮完成(分支三提交待合并):JSME 模态包壳(绘制结构/画布 780px 居中/页脚右对齐)、批量列选择器(card-head 化 + per-column hide-N 类,全隐后 9 列舒适)、历史模态收尾。m0-m6 + 平台 Node 全绿;390px 溢出 0;零 page error。**
+**Ketcher 替换 JSME 完成(ui/studio-redesign 四提交待合并):platform 绘制模态 = Ketcher 3.18(ketcher-react + ketcher-standalone + Indigo 1.46 wasm,esbuild 一次性 IIFE 31MB vendored,运行时零 CDN;单线程无 SAB,Pages 兼容);懒加载 + WebMMKetcher API(readyPromise 队列);排雷×2(banner process 覆盖页面函数/onInit 前调用丢弃)。模态内画布载入当前分子 + apply 闭环实测;m0-m6 + 平台 Node 全绿。**
 
+## Recently Completed
++- **Ketcher 替换 JSME(用户指令)。** ①分发探明:npm 无免构建单文件(ketcher-standalone=Indigo WASM 服务 21MB ESM + ketcher-react=React UI 分体)→ **esbuild 一次性打包 IIFE(31MB,worker+wasm 全内联)提交 app/vendor/ketcher/**(+ketcher.css 179KB + Apache-2.0 全文),运行时零 CDN;Indigo 单线程(零 SharedArrayBuffer)⇒ Pages/裸 http.server 无需 COOP/COEP。②入口 WebMMKetcher.mount/getMolfile/setMolecule/unmount。**排雷**:banner `var process={env}` 覆盖页面全局 process() 函数(applyJSME 静默 TypeError)→ 守卫式 shim;setMolecule 在 onInit 前调用被吞(画布空)→ readyPromise 队列所有 API await onInit。③接线:模态 id/函数名保留(openJSME/applyJSME/closeJSME),懒加载(31MB 首次,状态行提示),apply=getMolfile→input→process(错误不关模态防丢)。④LICENSE +5(Ketcher/Indigo,EPAM,Apache-2.0)。验收:独立页(/tmp:8902)与平台模态双实测——编辑器完整(工具栏/元素面板/模板条)、当前分子载入画布(视觉确认 paracetamol 全结构)、apply 闭环(molblock→process→2D 重渲染→模态关)、零外联请求、零 page error;m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34。
 ## Recently Completed
 +- **续磨轮(JSME/批量密度)。** ①JSME 模态:标题+副题/画布 max-780px 居中(不再全宽拉伸)/.modal-footer 右对齐双按钮(取消 btn-danger/应用 btn-primary);画板本体第三方不动(空输入 ERROR 为其自有行为,文档化)。②批量结果卡 card-head 化(batchStatus 迁入 card-sub)+ **列选择器**("列"下拉:分子式/TPSA/HBD/HBA/RotB/E MMFF94s 六可选列)——**排雷:初版 has-hide 单类条件 CSS 会一刀切全隐**,改 per-column hide-N 类(行模板固定⇒nth-child 稳定);实测全隐 9 列(含缩略图)+sticky 表头正常。③历史模态 清空全部。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、6 脚本 check、390px 溢出 0、零 page error。
 ## Recently Completed

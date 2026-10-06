@@ -126,3 +126,26 @@ m6 30/30(4 处读取点适配缩略图)、m0-m5 37/10/11/10/32/47、平台 Node
 
 验收:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;6 脚本 check;
 390px 溢出 0;零 page error。
+
+
+## Ketcher 替换 JSME(已完成;platform 绘制模态)
+
+1. **分发探明**:npm 无免构建单文件——ketcher-standalone(Indigo WASM
+   服务,21MB ESM)+ ketcher-react(UI,需 React)分体;**一次性 esbuild
+   打包为 IIFE 提交 vendor**(app/vendor/ketcher/:31MB bundle + 179KB
+   CSS + Apache-2.0 全文),运行时零 CDN,与 JSME 同为提交库文件。
+   Indigo 单线程(零 SharedArrayBuffer/crossOriginIsolated)——
+   GitHub Pages/裸 http.server 无 COOP/COEP 也可用。
+2. **入口 API**:WebMMKetcher.mount/getMolfile/setMolecule/unmount;
+   **排雷①:banner `var process=…` 覆盖页面全局 process() 函数**
+   → 守卫式 shim(typeof 检查,不覆盖既有);**排雷②:setMolecule 在
+   onInit 前调用被静默丢弃**(画布空)→ readyPromise 队列,所有 API
+   await onInit。
+3. **接线**:绘制模态保留 id/函数名(openJSME/applyJSME/closeJSME),
+   内部换 Ketcher 懒加载(首次 31MB,状态行提示);apply = getMolfile
+   → input → process(错误不关模态防丢);失败态显示在模态状态行。
+4. LICENSE 第三方清单 +5(Ketcher/Indigo Apache-2.0)。
+
+验收:模态内编辑器完整(工具栏/元素面板/模板)+ 当前分子载入画布
+(视觉确认 paracetamol)+ apply 闭环(molblock→process→2D 重渲染→
+模态关闭);m0-m6 + 平台 Node 全绿;零 page error;零外联请求。
