@@ -842,15 +842,15 @@ body { background: var(--ll-bg); margin: 0; }
 .brand-text small { display: block; font-size: 0.62rem; font-weight: 500; color: #64778e; letter-spacing: .14em; text-transform: uppercase; margin-top: 1px; }
 .side-brand:hover .brand-text { color: #fff; }
 
-.side-nav { display: flex; flex-direction: column; gap: 2px; }
+.side-nav { display: flex; flex-direction: column; gap: 4px; }
 .side-group { font-size: 0.62rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
-  color: #4d5f76; padding: 0.85rem 0.6rem 0.3rem; }
+  color: #4d5f76; padding: 1.05rem 0.62rem 0.38rem; }
 .side-group:first-child { padding-top: 0.15rem; }
 .side-item { display: flex; align-items: center; gap: 0.65rem; width: 100%; text-align: left; cursor: pointer;
   background: none; border: none; color: #8ea1b8; font: inherit; font-size: 0.85rem; font-weight: 500;
-  padding: 0.56rem 0.62rem; border-radius: 9px; position: relative;
+  padding: 0.68rem 0.66rem; border-radius: 9px; position: relative;
   transition: background .15s, color .15s; }
-.side-item svg { width: 17px; height: 17px; flex: 0 0 17px; opacity: .85; transition: opacity .15s, color .15s; }
+.side-item svg { width: 18px; height: 18px; flex: 0 0 18px; display: block; opacity: .85; transition: opacity .15s, color .15s; }
 .side-item:hover { background: rgba(148,163,184,.09); color: #dbe5f0; }
 .side-item:hover svg { opacity: 1; }
 .side-item.active { background: rgba(20,184,166,.13); color: #5eead4; }
@@ -1189,28 +1189,28 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
   <nav class="side-nav" aria-label="Platform sections">
     <span class="side-group">工作区</span>
     <button class="side-item" id="tabProject" onclick="switchMode('project')" title="项目概览 — 库/工作集统计、项目导入导出">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/></svg>
       <span class="side-label">项目概览</span>
     </button>
     <button class="side-item mode-tab active" id="tabSingle" role="tab" aria-selected="true" onclick="switchMode('single')" title="分子工作台 — 结构导入、2D/3D、构象、位点">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z"/><circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none"/></svg>
       <span class="side-label">分子工作台</span>
     </button>
     <button class="side-item mode-tab" id="tabBatch" role="tab" aria-selected="false" onclick="switchMode('batch')" title="批量处理 — 描述符、规则、QED/PAINS、导出">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h12M9 12h12M9 18h12"/><circle cx="4.4" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.4" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.4" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>
       <span class="side-label">批量处理</span>
     </button>
     <span class="side-group">发现</span>
     <button class="side-item mode-tab" id="tabSearch" role="tab" aria-selected="false" onclick="switchMode('search')" title="相似性检索 — sim/sub/shape×2、阈值、漏斗、甄别">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.8" cy="10.8" r="6.9"/><line x1="20.2" y1="20.2" x2="15.9" y2="15.9"/></svg>
       <span class="side-label">相似性检索</span>
     </button>
     <button class="side-item" onclick="sideGoto('analogPanel')" title="骨架探索 — 邻域片段枚举 + aza-scan(相似性检索模式内)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v4m0 6v4a2 2 0 0 0 2 2h4m6-18h4a2 2 0 0 1 2 2v4m0 6v4a2 2 0 0 1-2 2h-4"/><circle cx="12" cy="12" r="3"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M12 8.2l3.3 1.9v3.8L12 15.8l-3.3-1.9v-3.8z" fill="currentColor" stroke="none"/></svg>
       <span class="side-label">骨架探索</span>
     </button>
     <button class="side-item" onclick="sideGoto('queryHistoryPanel', true)" title="检索历史 — 轮次 DAG、hit-as-query(相似性检索模式内)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.5v4.7l3.2 2.6"/></svg>
       <span class="side-label">检索历史</span>
     </button>
   </nav>

@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**侧栏审美重做完成(main 待提交):品牌磁贴 logo + 分组标签(工作区/发现)+ teal 药丸激活态(左缘发光指示条)+ 双色深蓝背景(径向辉光)+ 状态卡页脚(呼吸灯圆点)+ 56px 收窄 rail 优化。侧栏 CSS 块整体重写;id/类契约保留。m0-m6 + 平台 Node 全绿;500px 溢出 0。**
+**侧栏图标对齐 + 间距修正完成(main 待提交):六枚图标统一 stroke 1.8/round caps(分子工作台=六边形节点同构品牌/批量=圆点列表/骨架=角括号+实心核),display:block 消基线缝;gap 2→4px、padding 0.68rem、组距 1.05rem、图标 18px。m6 30/30。**
 
+## Recently Completed
++- **侧栏图标对齐与间距修正(用户指出视觉缺陷)。** 2× 放大裁剪审计证实三枚图标光学失衡(分子工作台过重偏高/批量处理过轻偏下/骨架探索偏空)+ 行距紧。修复:①图标集统一 stroke 1.8 + round caps + 相近 viewBox 填充——分子工作台=六边形+实心节点(品牌同构)、批量处理=前导圆点列表行、骨架探索=角括号+实心六边形核、概览格 rx=1.5、检索/时钟缩至 r7.2/8.2,svg display:block 消基线缝;②检索镜面再 -4%(复检 nit);③间距:gap 2→4px、条目 padding 0.56→0.68rem、组标签上距 0.85→1.05rem、图标 17→18px。复检评语:同轴同光学尺寸、"统一成功,无进一步动作必要"。m6 30/30。
 ## Recently Completed
 +- **侧栏审美重做(用户驱动)。** ①品牌区:teal 渐变磁贴(分子六边形 glyph,内嵌高光+teal 投影)+ 字标(MM teal / PLATFORM 小号大写副行);②导航分组:工作区/发现 两组小号大写组标签;③激活态:13% teal 药丸底+teal 文字图标+左缘 3px 发光指示条,hover 中性提亮;④背景:右上 teal 径向辉光+纵向渐变+右缘 10% 分隔线;⑤页脚:状态卡(2.6s 呼吸灯 teal 圆点+存储文本)+链接行+注记;⑥56px rail:磁贴/图标/指示条/圆点,其余全隐;目检评语 production-ready polish(宽/窄/激活态三截图)。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、500px 溢出 0、零 page error;.side-item/tab id 契约零改动。
 ## Recently Completed
