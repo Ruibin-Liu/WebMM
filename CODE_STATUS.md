@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**分子工作室重设计(ui/studio-redesign 分支,用户指令"完全去除旧 UI 元素"):工作室卡(页签+收纳工具栏+3D 居中,2D 导出行/控件摊开消灭)、结果行 2D 缩略图(检索/探索器/批量,SMILES→SVG 缓存)、头部块/页脚删除。m6 30/30(4 读取点适配)+ m0-m5 + 平台 Node 全绿;390px 溢出 0。待合并。**
+**studio-redesign 排查优化轮完成(分支待合并):六状态截图审计(高级下拉/历史模态/RGD/药效团/批量/JSME)+ 修复——页脚真身(crosslinks/copyright 双 div)与 year 脚本删除(JS 动态 placeholder 中文化四态)、select 内联旧样式剥离、复选框 teal accent、模态全局升级、标签收尾 ~15 处。m0-m6 + 平台 Node 全绿;390px 溢出 0;零 page error。**
 
+## Recently Completed
++- **排查优化轮(六状态截图审计法)。** 审计发现并修复:①页脚真身 = crosslinks+copyright 两个 div(非 <footer> 标签,上轮正则落空)+ year 独立脚本页脚删后 null 崩(m6 pageerror 抓获)——全删(脚本块 7→6);②**JS 按模式动态设置的 placeholder**(批量/检索/单分子 + 查询框 shape/sim 两态)是静态盘点的盲区——全部中文化;③analogSite/analogFragCat/rgdScope/scaffoldScope/pharmTol 五 select 剥离内联旧样式,.panel select 统一;过滤条数字输入样式化;checkbox/radio 全局 accent teal;④标签:Name→名称/↶撤销/隐藏已排除/全部·Lipinski 通过/药效团说明段/取消·应用到工作台/复制;⑤检索历史与工作集容器底色+间距;批量态拖放条;模态 blur+14px 圆角+阴影+页脚右对齐。**审计器误判甄别**:批量过滤器/取消按钮仅运行态渲染(截图态"缺失"非缺陷)。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、6 脚本 check、390px 溢出 0、零 page error。
 ## Recently Completed
 +- **分子工作室重设计(旧 UI 元素清除)。** ①#output 首面板重写为工作室卡:三维/二维页签(vpane3d/vpane2d 切换)+ 收纳工具栏(嵌入3D/engineSel/优化/构象 + "高级"下拉[confN/RMSD/ΔE/着色/特征/图例/GFNFF 提示]+"导出"下拉[3D SDF/XYZ/PNG/2D 全家桶/链接,隐藏剪贴板变体保 handler]);能量表转 details 折叠;display 契约不变;②dashEls 重构为显式六元素(input/singleActions/drop/studio-main/studio-inspect/confPanel);身份面板(名称/SMILES/InChI/表示)经 #smiles.closest('.panel') 全局定位并入检查器列;③**结果行 2D 缩略图**(molThumb:SMILES→64×44 SVG,Map 缓存,三表 name/smiles 单元)——workbench 从未有;**排雷:SVG 杂原子 <text> 污染 children[1].textContent** → m6 四处读取改 .sm/.nm span 优先;④头部块(h1/副题/徽章)+ 页脚(©/spiral-note)删除,Playground/Demo/查看源码入侧栏足部。其他排雷:命名 IIFE 外部不可见;viewer3d.closest('.panel') 命中工作室面板自身。验收:m6 30/30、m0-m5 37/10/11/10/32/47、平台 Node 34/34、7 脚本 check、390px 溢出 0、目检三张(工作室/缩略图行/批量)、零 page error。
 ## Recently Completed
