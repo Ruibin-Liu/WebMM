@@ -149,3 +149,20 @@ m6 30/30(4 处读取点适配缩略图)、m0-m5 37/10/11/10/32/47、平台 Node
 验收:模态内编辑器完整(工具栏/元素面板/模板)+ 当前分子载入画布
 (视觉确认 paracetamol)+ apply 闭环(molblock→process→2D 重渲染→
 模态关闭);m0-m6 + 平台 Node 全绿;零 page error;零外联请求。
+
+
+## 细节轮(已完成)
+
+审计面:概览(带数据)/历史模态内容/源码模态/色权重弹层/390px 高级下拉。
+修复:
+
+1. **真 bug:概览工作集卡 "undefined pinned · undefined excluded"**
+   ——getPins/getExcludes 返回对象(Object),原代码取 .length →
+   Object.keys().length;实测 pin 后 "1 pinned · 0 excluded"。
+2. 历史模态:空态中文(empty-state 组件);条目卡新 token(悬停 teal
+   边+阴影)、SMILES 等宽字体灰底 pill;头部按钮层级化(导出 CSV
+   teal 描边/清空全部 red 描边);删除 X 为 hover 显示(既有设计,
+   视觉审计误报甄别)。
+3. 色权重弹层 5+1 排布与 z-index 目检通过(无裁剪/无 sticky 冲突)。
+
+验收:m0-m6 + 平台 Node 全绿;390px 溢出 0;零 page error。

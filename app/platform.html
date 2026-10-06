@@ -1132,6 +1132,14 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 #batchTable.hide-9 td:nth-child(9), #batchTable.hide-9 th:nth-child(9) { display: none; }
 #batchTable.hide-10 td:nth-child(10), #batchTable.hide-10 th:nth-child(10) { display: none; }
 #batchTable.hide-15 td:nth-child(15), #batchTable.hide-15 th:nth-child(15) { display: none; }
+
+/* history modal items */
+.hist-item { position: relative; border: 1px solid var(--ll-line); border-radius: 10px; padding: 0.8rem 0.9rem;
+  margin-bottom: 0.55rem; cursor: pointer; transition: border .14s, box-shadow .14s; }
+.hist-item:hover { border-color: #b5d8d3; box-shadow: 0 2px 8px rgba(16,24,40,.08); }
+.hist-item code { font-family: ui-monospace, Menlo, monospace; font-size: 0.78rem; color: #64748b;
+  background: #f1f5f9; border-radius: 6px; padding: 0.1rem 0.4rem; }
+.hist-hbtn { font-size: 0.72rem; padding: 0.3rem 0.6rem; }
 </style>
 </head>
 <body>
@@ -1705,8 +1713,8 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     <div class="modal-header">
       <h2 id="historyTitle">历史</h2>
       <div>
-        <button class="copy-btn" onclick="exportHistoryToCSV()">导出 CSV</button>
-        <button class="copy-btn" onclick="clearHistory()">清空全部</button>
+        <button class="btn-accent hist-hbtn" onclick="exportHistoryToCSV()">导出 CSV</button>
+        <button class="btn-danger hist-hbtn" onclick="clearHistory()">清空全部</button>
         <button class="close-btn" onclick="closeHistoryModal()">&times;</button>
       </div>
     </div>
@@ -5223,10 +5231,10 @@ function rdkitAvailable() {
     const historyList = document.getElementById('historyList');
 
     if (compoundHistory.length === 0) {
-      historyList.innerHTML = '<p style="color: var(--muted); text-align: center; padding: 2rem;">No history yet. Process some compounds to see them here.</p>';
+      historyList.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span class="es-t">还没有历史记录</span><span class="es-s">在工作台处理过的分子会出现在这里</span></div>';
     } else {
       historyList.innerHTML = compoundHistory.map((compound, index) => `
-        <div style="border: 1px solid var(--border); border-radius: 8px; padding: 1rem; cursor: pointer; transition: all 0.15s ease;" onclick="loadFromHistory(${index})">
+        <div class="hist-item" onclick="loadFromHistory(${index})">
           <button class="history-item-delete" onclick="event.stopPropagation(); deleteFromHistory(${index})" title="Delete from history">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
               <line x1="18" y1="6" x2="6" y2="18"/>
@@ -5804,8 +5812,9 @@ function renderOverview() {
     const st = (window.__search && window.__search.getState()) || [];
     document.getElementById('ovLib').textContent = st.length;
     document.getElementById('ovLibDetail').textContent = st.length ? '装载于相似性检索' : '未装载 — 侧栏「相似性检索」导入或 Demo 库';
-    const pins = (window.__platformCompat && window.__platformCompat.getPins && window.__platformCompat.getPins()) || [];
-    const excl = (window.__platformCompat && window.__platformCompat.getExcludes && window.__platformCompat.getExcludes()) || [];
+    const pinsObj = (window.__platformCompat && window.__platformCompat.getPins && window.__platformCompat.getPins()) || {};
+    const exclObj = (window.__platformCompat && window.__platformCompat.getExcludes && window.__platformCompat.getExcludes()) || {};
+    const pins = Object.keys(pinsObj), excl = Object.keys(exclObj);
     document.getElementById('ovPins').textContent = pins.length;
     document.getElementById('ovPinsDetail').textContent = pins.length + ' pinned · ' + excl.length + ' excluded';
     let rounds = 0;

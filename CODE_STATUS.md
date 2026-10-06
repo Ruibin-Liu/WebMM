@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**ui/studio-redesign 已合入 main(ff,682cb93,4 提交):分子工作室(页签/收纳工具栏/旧 UI 元素清除)+ 排查优化轮(页脚真身/动态 placeholder/select 去内联)+ JSME 模态壳与批量列选择器 + Ketcher 替换 JSME(vendored 31MB IIFE,懒加载)。合入后 main 全量回归绿:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34。当前无进行中任务。**
+**细节轮完成(main 待提交):概览工作集卡 undefined 真 bug 修复(getPins/getExcludes 对象取 .length→Object.keys);历史模态条目卡 v2(空态中文/等宽 pill/按钮层级)。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
 
+## Recently Completed
++- **细节优化轮(五面审计:概览带数据/历史模态/源码模态/色权重/390px 下拉)。** ①**真 bug**:概览工作集卡 "undefined pinned · undefined excluded"——compat.getPins()/getExcludes() 返回对象却取 .length → Object.keys().length(pin 后实测 1 pinned · 0 excluded);②历史模态:空态转 empty-state 组件中文、条目卡换新 token(悬停 teal 边+阴影)、SMILES 等宽灰底 pill、头部按钮层级(导出 CSV=btn-accent/清空全部=btn-danger);删除 X 为 hover 显示属既有设计(视觉审计误报甄别存档);③色权重弹层 z-index/裁剪目检通过。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、390px 溢出 0、零 page error。
 ## Recently Completed
 +- **ui/studio-redesign 合入 main(纯增量 ff,4 提交)。** f6b0a1f(工作室卡:三维/二维页签+高级/导出下拉+能量折叠+结果行 2D 缩略图[排雷:SVG 杂原子 text 污染 textContent 契约→m6 四处 .sm/.nm 优先];dashEls 六元素表;身份面板 closest 全局定位)+ e1f0a27(排查优化:页脚真身 crosslinks/copyright 双 div + year 脚本崩[排雷];JS 动态 placeholder 五态中文[静态盘点盲区];select 去内联;模态升级)+ 0c98c70(JSME 模态壳/批量列选择器 per-column hide-N[排雷:has-hide 一刀切])+ 682cb93(Ketcher 替换 JSME:vendored esbuild IIFE 31MB 懒加载;排雷:banner process 覆盖页面全局函数→守卫 shim;onInit 前 setMolecule 被吞→readyPromise 队列)。合入后 main 全量:m0-m6 + 平台 Node 全绿、零 page error。
 ## Recently Completed
