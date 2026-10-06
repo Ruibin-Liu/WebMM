@@ -202,3 +202,24 @@ m6 30/30(4 处读取点适配缩略图)、m0-m5 37/10/11/10/32/47、平台 Node
    0.85→1.05rem;图标 17→18px。
 
 验收:m6 30/30;复检评语"统一成功,无进一步动作必要"。
+
+
+## 图标移除 + 回归 workbench 配色(用户指令;已完成)
+
+1. **图标全去**:六枚侧栏导航 SVG 移除(文本导航);品牌磁贴删除,
+   回归 workbench 文字品牌(WebMM 蓝色 MM + PLATFORM 小标)。
+2. **配色回归 workbench**:--ll-accent=#2563eb / --ll-accent-2=#1d4ed8
+   (原 teal 变量重定义,CSS 变量引用全站自动换装);字面量 sed 全文
+   (含内联属性与 JS heat/pinned 染色):rgba(20,184,166→37,99,235)、
+   #2dd4bf→#3b82f6、#f0fdfa→#eff6ff、#b5d8d3→#bfdbfe、#0f766e→
+   #1d4ed8 等;热力单元格/性质横条/分段控件/stepper/药丸态全部转蓝。
+3. **侧栏浅色化**:白 92% + blur(与 workbench topnav 同工艺),右缘
+   1px 边线;hover #f1f5f9;激活 #eff6ff 药丸 + 蓝字 + 蓝指示条;
+   状态卡浅底蓝点;组标签 slate。
+4. **窄屏**:图标既除,rail 方案不可行 → 侧栏转**横向滚动芯片条**
+   (static,随页滚动;组标签/品牌/页脚隐);**排雷:sticky top:46
+   在未滚动时把条带推进 topbar(z40)底下完全遮挡**——改 static,
+   未滚动时 条带0→topbar42→stepper112 层序正确。
+
+验收:m0-m6 + 平台 Node 全绿;390px 溢出 0;宽/窄截图目检通过
+(浅侧栏"production-ready theming",零 teal 残留)。
