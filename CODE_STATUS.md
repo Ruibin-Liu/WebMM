@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**侧栏层级修正完成(main 待提交):组标签与条目三重层级线索——缩进 0.8rem/字号 0.58 vs 0.9rem/颜色 #b3bfcc vs #3f4c60;放大目检"层级立即可读";m6 30/30。**
+**概览/工作集中文收尾完成(main 待提交):工作集钉选卡(detail 'N 已钉 · M 已排除')、轮次 DAG · ⇄ 命中即查询、工作集计数行中文化(m6 五处断言同步)、行 title 中文化;瞬时状态行与 CSV 列名边界维持英文(文档化)。m6 30/30;m0/m5 抽检绿。**
 
+## Recently Completed
++- **概览/工作集中文收尾(用户指出"还有很多英语")。** ①概览卡:工作集 pin→工作集钉选,'N pinned · M excluded'→'N 已钉 · M 已排除','DAG 轮次 · hit-as-query ⇄'→'轮次 DAG · ⇄ 命中即查询'(实测五卡标题全中文);②renderWorkSet 计数行中文化——**m6 断言同步**(/1 pinned/×4 + /1 excluded/×1 → 已钉/已排除;初次数错 3→实为 4);③行 title:pinned to working set→已钉入工作集等;④边界维持:瞬时状态行与 CSV 列名(数据格式)保持英文。**排雷**:python heredoc SyntaxError 是编译期错误——整段脚本不执行,不能假设"前半已写盘"(本轮第一次空跑即此)。m6 30/30、m0/m5 抽检绿。
 ## Recently Completed
 +- **侧栏层级修正(用户指出"字号和缩进看不出层级")。** 病灶:组标签与条目同左边线 + 字号差小 + 颜色相近 = 七元素平级观感。修复三重线索:①条目 margin-left 0.8rem(width calc(100%-0.8rem) 补偿),组标签贴左;②字号 0.62→0.58(标签)vs 0.86→0.9(条目);③颜色 #94a3b8→#b3bfcc(标签更浅)vs var(--muted)→#3f4c60(条目更深)。放大目检:层级立即可读、缩进一致、激活药丸正确、无歧义;m6 30/30。
 ## Recently Completed

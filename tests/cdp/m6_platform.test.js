@@ -194,7 +194,7 @@ function check(name, cond, detail) {
     pins: document.getElementById('workSetCounts').textContent,
   }));
   check('import restores library + rounds + pins after reload',
-    imported.lib === 55 && imported.hist >= 1 && /1 pinned/.test(imported.pins), JSON.stringify(imported));
+    imported.lib === 55 && imported.hist >= 1 && /1 已钉/.test(imported.pins), JSON.stringify(imported));
   // multi-tab: a second page in the same context hears the broadcast
   const page2 = await ctx.newPage();   // SAME context: shared storage + broadcast
   await page2.goto(URL, { waitUntil: 'load' });
@@ -240,7 +240,7 @@ function check(name, cond, detail) {
     };
   });
   check('pin toggles star, working-set panel shows the pin',
-    pinRes.star === '★' && /1 pinned/.test(pinRes.counts) && pinRes.panelShown && pinRes.pinRows >= 1, JSON.stringify(pinRes));
+    pinRes.star === '★' && /1 已钉/.test(pinRes.counts) && pinRes.panelShown && pinRes.pinRows >= 1, JSON.stringify(pinRes));
   const exclRes = await page.evaluate(async () => {
     const row = document.querySelectorAll('#searchRows tr')[1];
     row.querySelector('td:last-child span[onclick*=triageToggleExclude]').click();
@@ -250,7 +250,7 @@ function check(name, cond, detail) {
       opacity: getComputedStyle(document.querySelectorAll('#searchRows tr')[1]).opacity,
     };
   });
-  check('exclude dims the row and updates counts', /1 excluded/.test(exclRes.counts) && exclRes.opacity === '0.45', JSON.stringify(exclRes));
+  check('exclude dims the row and updates counts', /1 已排除/.test(exclRes.counts) && exclRes.opacity === '0.45', JSON.stringify(exclRes));
   const undoRes = await page.evaluate(async () => {
     triageUndo();
     await new Promise(r => setTimeout(r, 500));
@@ -281,7 +281,7 @@ function check(name, cond, detail) {
     await new Promise(r => setTimeout(r, 300));
     return document.getElementById('workSetCounts').textContent;
   });
-  check('pin survives page reload via the project store', /1 pinned/.test(persisted), persisted);
+  check('pin survives page reload via the project store', /1 已钉/.test(persisted), persisted);
   // cleanup: unpin + restore the mode state this reload disturbed (the
   // later flex section assumes shape mode persisted from earlier sections)
   await page.evaluate(async () => {
@@ -338,7 +338,7 @@ function check(name, cond, detail) {
     star: document.querySelector('#analogRows span[onclick*=analogPin]').textContent,
   }));
   check('analog pins via synthetic-library identity (star fills, counts update)',
-    analogPin.star === '★' && /1 pinned/.test(analogPin.counts), JSON.stringify(analogPin));
+    analogPin.star === '★' && /1 已钉/.test(analogPin.counts), JSON.stringify(analogPin));
   await page.evaluate(async () => {
     const c = window.__platformCompat;
     for (const id of Object.keys(c.getPins())) await c.unpin(id);

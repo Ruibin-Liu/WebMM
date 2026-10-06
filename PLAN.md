@@ -256,3 +256,20 @@ Node 全绿。
 3. **颜色拉开**:标签 #b3bfcc(更浅)vs 条目 #3f4c60(更深)。
 
 验收:放大目检"层级立即可读,无歧义";m6 30/30。
+
+
+## 概览/工作集中文收尾(用户指出;已完成)
+
+- 概览卡:工作集 pin→工作集钉选;detail 'N pinned · M excluded'→
+  'N 已钉 · M 已排除';'DAG 轮次 · hit-as-query ⇄'→'轮次 DAG · ⇄
+  命中即查询'。
+- 工作集计数行(renderWorkSet)同步中文化——**m6 五处断言同步**
+  (/1 pinned/×4、/1 excluded/×1 → 已钉/已排除)。
+- 行悬停 title:pinned to working set→已钉入工作集;excluded from
+  triage→已排除出甄别。
+- 边界维持:瞬时状态行(检索/批量/探索器进度)与 CSV 列名
+  (consensus_mean_rank/pinned/note/excluded 为导出数据格式)保持
+  英文,已文档化。
+
+验收:m6 30/30(断言同步后);m0/m5 抽检绿;实测概览卡五标题全中文。
+排雷:python heredoc 语法错是编译期——整段不执行,勿以为前半已落盘。

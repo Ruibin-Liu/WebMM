@@ -1390,7 +1390,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
    <strong>项目概览</strong> <span class="hint">— 库 / 工作集 / 引擎 / 持久化一览</span>
    <div class="ov-grid">
      <div class="ov-card"><div class="ov-num" id="ovLib">–</div><div class="ov-cap">库分子</div><div class="hint" id="ovLibDetail"></div></div>
-     <div class="ov-card"><div class="ov-num" id="ovPins">–</div><div class="ov-cap">工作集 pin</div><div class="hint" id="ovPinsDetail"></div></div>
+     <div class="ov-card"><div class="ov-num" id="ovPins">–</div><div class="ov-cap">工作集钉选</div><div class="hint" id="ovPinsDetail"></div></div>
      <div class="ov-card"><div class="ov-num" id="ovRounds">–</div><div class="ov-cap">检索轮次</div><div class="hint" id="ovRoundsDetail"></div></div>
      <div class="ov-card"><div class="ov-num" id="ovEngine">–</div><div class="ov-cap">引擎</div><div class="hint" id="ovEngineDetail"></div></div>
      <div class="ov-card"><div class="ov-num" id="ovStore">–</div><div class="ov-cap">持久化</div><div class="hint" id="ovStoreDetail">IndexedDB · webmm-platform</div></div>
@@ -3827,7 +3827,7 @@ function rdkitAvailable() {
     const byId = new Map((searchLibrary || []).map(e => [e.molId, e]));
     host.style.display = '';
     document.getElementById('workSetCounts').textContent =
-      Object.keys(pins).length + ' pinned · ' + Object.keys(excl).length + ' excluded';
+      Object.keys(pins).length + ' 已钉 · ' + Object.keys(excl).length + ' 已排除';
     const pinsHost = document.getElementById('workSetPins');
     const keys = Object.keys(pins).filter(id => byId.has(id));
     const orphaned = Object.keys(pins).length - keys.length;
@@ -3926,8 +3926,8 @@ function rdkitAvailable() {
       const molId = e.molId || null;
       const isPinned = !!(tc && molId && tc.getPins()[molId]);
       const isExcl = !!(tc && molId && exclSet && exclSet.has(molId));
-      if (isExcl) { tr.style.opacity = '0.45'; tr.title = 'excluded from triage'; }
-      else if (isPinned) { tr.style.background = 'rgba(37,99,235,0.08)'; tr.title = 'pinned to working set'; }
+      if (isExcl) { tr.style.opacity = '0.45'; tr.title = '已排除出甄别'; }
+      else if (isPinned) { tr.style.background = 'rgba(37,99,235,0.08)'; tr.title = '已钉入工作集'; }
       const triageCell = molId
         ? `<td style="white-space:nowrap;"><span role="button" tabindex="0" title="${isPinned ? 'unpin from working set' : 'pin to working set'}" style="cursor:pointer; font-size:0.95rem; ${isPinned ? '' : 'opacity:0.35;'}" onclick="triageTogglePin('${molId}')" onkeydown="if(event.key==='Enter')triageTogglePin('${molId}')">${isPinned ? '★' : '☆'}</span> <span role="button" tabindex="0" title="${isExcl ? 'include back' : 'exclude from triage'}" style="cursor:pointer; font-size:0.85rem; ${isExcl ? 'color:#b91c1c;' : 'opacity:0.35;'}" onclick="triageToggleExclude('${molId}')" onkeydown="if(event.key==='Enter')triageToggleExclude('${molId}')">${isExcl ? '✕' : '·'}</span> <span role="button" tabindex="0" title="use as query — lead hop (creates a child round)" style="cursor:pointer; font-size:0.85rem; opacity:0.45;" onclick="event.stopPropagation(); hitAsQuery('${molId}')" onkeydown="if(event.key==='Enter'){event.stopPropagation(); hitAsQuery('${molId}')}">⇄</span></td>`
         : '<td></td>';
@@ -6000,14 +6000,14 @@ function renderOverview() {
     const exclObj = (window.__platformCompat && window.__platformCompat.getExcludes && window.__platformCompat.getExcludes()) || {};
     const pins = Object.keys(pinsObj), excl = Object.keys(exclObj);
     document.getElementById('ovPins').textContent = pins.length;
-    document.getElementById('ovPinsDetail').textContent = pins.length + ' pinned · ' + excl.length + ' excluded';
+    document.getElementById('ovPinsDetail').textContent = pins.length + ' 已钉 · ' + excl.length + ' 已排除';
     let rounds = 0;
     try {
       const c = triageStore();
       if (c) rounds = Object.keys(c.projectApi().state.rounds).length;
     } catch (e) {}
     document.getElementById('ovRounds').textContent = rounds || '–';
-    document.getElementById('ovRoundsDetail').textContent = 'DAG 轮次 · hit-as-query ⇄';
+    document.getElementById('ovRoundsDetail').textContent = '轮次 DAG · ⇄ 命中即查询';
     const ev = document.getElementById('engineVersion').textContent.replace(/^WebMM\s*/i, '');
     document.getElementById('ovEngine').textContent = ev || '…';
     document.getElementById('ovEngineDetail').textContent = 'RDKit ' + document.getElementById('rdkitVersion').textContent;
