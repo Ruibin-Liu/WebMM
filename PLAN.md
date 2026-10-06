@@ -110,3 +110,19 @@ m6 30/30(4 处读取点适配缩略图)、m0-m5 37/10/11/10/32/47、平台 Node
 390px 溢出 0;零 page error;批量 placeholder 实测中文。
 视觉审计器误判甄别:过滤器/取消按钮只在运行态出现,截图态"缺失"
 非缺陷;placeholder 为 JS 动态设置,静态盘点盲区。
+
+
+## 续磨轮(JSME 包壳 + 批量列选择器;已完成)
+
+1. **JSME 模态包壳**:标题"绘制结构"+副题;画布居中约束 780px;页脚
+   .modal-footer 右对齐(取消红描边/应用 teal 实心)。画板本体第三方
+   组件不动(文档化边界;空输入 ERROR 为其自有行为)。
+2. **批量列选择器**(新 UI 元素):card-head 化批量结果卡(batchStatus
+   迁入 card-sub);"列"下拉六项可选列(分子式/TPSA/HBD/HBA/RotB/
+   E MMFF94s);**排雷:初版 has-hide 单类会一刀切隐藏全部六列**——改
+   per-column hide-N 类(nth-child 稳定因行模板固定);实测全隐后
+   9 列舒适密度 + 缩略图 + sticky 表头正常。
+3. 历史模态 Clear All → 清空全部。
+
+验收:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;6 脚本 check;
+390px 溢出 0;零 page error。

@@ -1124,6 +1124,14 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 .modal-header { background: #f8fafc; border-bottom: 1px solid var(--ll-line); padding: 0.7rem 1rem; border-radius: 14px 14px 0 0; }
 .modal-header h2 { font-size: 0.95rem; color: #0f172a; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 0.7rem 1rem; border-top: 1px solid var(--ll-line); background: #f8fafc; border-radius: 0 0 14px 14px; }
+
+/* batch column picker: per-column hide classes */
+#batchTable.hide-4 td:nth-child(4), #batchTable.hide-4 th:nth-child(4) { display: none; }
+#batchTable.hide-7 td:nth-child(7), #batchTable.hide-7 th:nth-child(7) { display: none; }
+#batchTable.hide-8 td:nth-child(8), #batchTable.hide-8 th:nth-child(8) { display: none; }
+#batchTable.hide-9 td:nth-child(9), #batchTable.hide-9 th:nth-child(9) { display: none; }
+#batchTable.hide-10 td:nth-child(10), #batchTable.hide-10 th:nth-child(10) { display: none; }
+#batchTable.hide-15 td:nth-child(15), #batchTable.hide-15 th:nth-child(15) { display: none; }
 </style>
 </head>
 <body>
@@ -1523,9 +1531,20 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
  </div>
 
   <div id="batchPanel" class="panel" style="display:none;">
-     <strong>批量结果</strong>
-     <div class="version" id="batchStatus" aria-live="polite" style="margin:0.3rem 0 0.5rem;"></div>
-     <div class="action-buttons" style="justify-content:flex-start; margin-bottom:0.6rem;">
+      <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><b>批量结果</b><span class="card-sub" id="batchStatus" aria-live="polite"></span>
+        <details class="studio-adv" style="margin-left:auto;" id="batchColPicker">
+          <summary>列</summary>
+          <div class="adv-body" style="right:auto; left:0; flex-direction:column; align-items:flex-start; min-width:130px;">
+            <label class="chk"><input type="checkbox" data-bcol="4" checked> 分子式</label>
+            <label class="chk"><input type="checkbox" data-bcol="7" checked> TPSA</label>
+            <label class="chk"><input type="checkbox" data-bcol="8" checked> HBD</label>
+            <label class="chk"><input type="checkbox" data-bcol="9" checked> HBA</label>
+            <label class="chk"><input type="checkbox" data-bcol="10" checked> RotB</label>
+            <label class="chk"><input type="checkbox" data-bcol="15" checked> E MMFF94s</label>
+          </div>
+        </details>
+      </div>
+     <div class="action-buttons" style="justify-content:flex-start; margin:0.6rem 0;">
        <button id="btnBatchCSV" class="action-btn export" onclick="exportBatchCSV()">导出 CSV</button>
        <button id="btnBatchSDF" class="action-btn export" onclick="exportBatchSDF()">导出 SDF</button>
        <label for="batchFilter" style="font-size:0.75rem; color:#64748b; margin-left:0.3rem;">Filter</label>
@@ -1666,15 +1685,16 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 <div id="jsmeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="jsmeTitle">
   <div class="modal-content">
     <div class="modal-header">
-      <h2 id="jsmeTitle">JSME Editor</h2>
+      <h2 id="jsmeTitle">绘制结构</h2>
+      <span class="card-sub">JSME 分子编辑器 · 画完点"应用"导入</span>
       <button class="close-btn" onclick="closeJSME()">&times;</button>
     </div>
-    <div class="modal-body">
-      <div id="jsme_container" style="width: 100%; height: 475px;"></div>
+    <div class="modal-body" style="display:flex; justify-content:center; background:#fff;">
+      <div id="jsme_container" style="width: 100%; max-width: 780px; height: 475px;"></div>
     </div>
-    <div class="modal-header" style="border-top: 1px solid var(--border); border-bottom: none;">
-      <button class="action-btn clear" onclick="closeJSME()">取消</button>
-      <button class="action-btn edit" onclick="applyJSME()">应用到工作台</button>
+    <div class="modal-footer">
+      <button class="btn-danger" onclick="closeJSME()">取消</button>
+      <button class="btn-primary" onclick="applyJSME()">应用到工作台</button>
     </div>
   </div>
 </div>
@@ -1685,7 +1705,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
       <h2 id="historyTitle">历史</h2>
       <div>
         <button class="copy-btn" onclick="exportHistoryToCSV()">导出 CSV</button>
-        <button class="copy-btn" onclick="clearHistory()">Clear All</button>
+        <button class="copy-btn" onclick="clearHistory()">清空全部</button>
         <button class="close-btn" onclick="closeHistoryModal()">&times;</button>
       </div>
     </div>
@@ -5859,6 +5879,18 @@ function applyDashLayout() {
     q('dashInspectBody').style.display = '';
   }
 }
+
+// batch table: optional column visibility (fixed row template => stable nth-child)
+(function initBatchColPicker() {
+  const picker = document.getElementById('batchColPicker');
+  if (!picker) return;
+  const apply = () => {
+    const hidden = [...picker.querySelectorAll('input[data-bcol]:not(:checked)')].map(i => 'hide-' + i.dataset.bcol);
+    document.getElementById('batchTable').className = hidden.join(' ');
+  };
+  picker.addEventListener('change', apply);
+  apply();
+})();
 
 // ===== molecule studio: view tabs + identity panel into inspector =====
 function studioTab(w) {

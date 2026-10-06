@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**studio-redesign 排查优化轮完成(分支待合并):六状态截图审计(高级下拉/历史模态/RGD/药效团/批量/JSME)+ 修复——页脚真身(crosslinks/copyright 双 div)与 year 脚本删除(JS 动态 placeholder 中文化四态)、select 内联旧样式剥离、复选框 teal accent、模态全局升级、标签收尾 ~15 处。m0-m6 + 平台 Node 全绿;390px 溢出 0;零 page error。**
+**studio-redesign 续磨轮完成(分支三提交待合并):JSME 模态包壳(绘制结构/画布 780px 居中/页脚右对齐)、批量列选择器(card-head 化 + per-column hide-N 类,全隐后 9 列舒适)、历史模态收尾。m0-m6 + 平台 Node 全绿;390px 溢出 0;零 page error。**
 
+## Recently Completed
++- **续磨轮(JSME/批量密度)。** ①JSME 模态:标题+副题/画布 max-780px 居中(不再全宽拉伸)/.modal-footer 右对齐双按钮(取消 btn-danger/应用 btn-primary);画板本体第三方不动(空输入 ERROR 为其自有行为,文档化)。②批量结果卡 card-head 化(batchStatus 迁入 card-sub)+ **列选择器**("列"下拉:分子式/TPSA/HBD/HBA/RotB/E MMFF94s 六可选列)——**排雷:初版 has-hide 单类条件 CSS 会一刀切全隐**,改 per-column hide-N 类(行模板固定⇒nth-child 稳定);实测全隐 9 列(含缩略图)+sticky 表头正常。③历史模态 清空全部。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、6 脚本 check、390px 溢出 0、零 page error。
 ## Recently Completed
 +- **排查优化轮(六状态截图审计法)。** 审计发现并修复:①页脚真身 = crosslinks+copyright 两个 div(非 <footer> 标签,上轮正则落空)+ year 独立脚本页脚删后 null 崩(m6 pageerror 抓获)——全删(脚本块 7→6);②**JS 按模式动态设置的 placeholder**(批量/检索/单分子 + 查询框 shape/sim 两态)是静态盘点的盲区——全部中文化;③analogSite/analogFragCat/rgdScope/scaffoldScope/pharmTol 五 select 剥离内联旧样式,.panel select 统一;过滤条数字输入样式化;checkbox/radio 全局 accent teal;④标签:Name→名称/↶撤销/隐藏已排除/全部·Lipinski 通过/药效团说明段/取消·应用到工作台/复制;⑤检索历史与工作集容器底色+间距;批量态拖放条;模态 blur+14px 圆角+阴影+页脚右对齐。**审计器误判甄别**:批量过滤器/取消按钮仅运行态渲染(截图态"缺失"非缺陷)。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、6 脚本 check、390px 溢出 0、零 page error。
 ## Recently Completed
