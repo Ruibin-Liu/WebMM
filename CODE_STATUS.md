@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**概览/工作集中文收尾完成(main 待提交):工作集钉选卡(detail 'N 已钉 · M 已排除')、轮次 DAG · ⇄ 命中即查询、工作集计数行中文化(m6 五处断言同步)、行 title 中文化;瞬时状态行与 CSV 列名边界维持英文(文档化)。m6 30/30;m0/m5 抽检绿。**
+**侧栏层级 v2 完成(main 待提交):中文正确的层级语法——组标签 0.7rem 可读灰+右延细线(视觉地板),条目 0.95rem 深色缩进 1.15rem,组间 1.4rem。放大目检"层级一眼可辨";m6 30/30。**
 
+## Recently Completed
++- **侧栏层级 v2(用户二次不满意后的认知修正)。** 病根:小型大写+宽字距是拉丁层级语法,对中文无效——0.58rem 中文不可读,缩进 0.8rem 太弱。v2:①组标签 0.7rem/weight 500/#94a3b8 + **右延 hairline 细线**(标签获得视觉地板,不再悬浮);②条目 0.95rem/#334155/缩进 1.15rem(≈18px);③组间 padding 1.15→1.4rem(复检 nit)。放大目检:"层级一眼可辨、细线是结构不是杂讯、缩进甜点、激活药丸完整"。m6 30/30。
 ## Recently Completed
 +- **概览/工作集中文收尾(用户指出"还有很多英语")。** ①概览卡:工作集 pin→工作集钉选,'N pinned · M excluded'→'N 已钉 · M 已排除','DAG 轮次 · hit-as-query ⇄'→'轮次 DAG · ⇄ 命中即查询'(实测五卡标题全中文);②renderWorkSet 计数行中文化——**m6 断言同步**(/1 pinned/×4 + /1 excluded/×1 → 已钉/已排除;初次数错 3→实为 4);③行 title:pinned to working set→已钉入工作集等;④边界维持:瞬时状态行与 CSV 列名(数据格式)保持英文。**排雷**:python heredoc SyntaxError 是编译期错误——整段脚本不执行,不能假设"前半已写盘"(本轮第一次空跑即此)。m6 30/30、m0/m5 抽检绿。
 ## Recently Completed
