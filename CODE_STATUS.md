@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**细节轮完成(main 待提交):概览工作集卡 undefined 真 bug 修复(getPins/getExcludes 对象取 .length→Object.keys);历史模态条目卡 v2(空态中文/等宽 pill/按钮层级)。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
+**侧栏审美重做完成(main 待提交):品牌磁贴 logo + 分组标签(工作区/发现)+ teal 药丸激活态(左缘发光指示条)+ 双色深蓝背景(径向辉光)+ 状态卡页脚(呼吸灯圆点)+ 56px 收窄 rail 优化。侧栏 CSS 块整体重写;id/类契约保留。m0-m6 + 平台 Node 全绿;500px 溢出 0。**
 
+## Recently Completed
++- **侧栏审美重做(用户驱动)。** ①品牌区:teal 渐变磁贴(分子六边形 glyph,内嵌高光+teal 投影)+ 字标(MM teal / PLATFORM 小号大写副行);②导航分组:工作区/发现 两组小号大写组标签;③激活态:13% teal 药丸底+teal 文字图标+左缘 3px 发光指示条,hover 中性提亮;④背景:右上 teal 径向辉光+纵向渐变+右缘 10% 分隔线;⑤页脚:状态卡(2.6s 呼吸灯 teal 圆点+存储文本)+链接行+注记;⑥56px rail:磁贴/图标/指示条/圆点,其余全隐;目检评语 production-ready polish(宽/窄/激活态三截图)。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、500px 溢出 0、零 page error;.side-item/tab id 契约零改动。
 ## Recently Completed
 +- **细节优化轮(五面审计:概览带数据/历史模态/源码模态/色权重/390px 下拉)。** ①**真 bug**:概览工作集卡 "undefined pinned · undefined excluded"——compat.getPins()/getExcludes() 返回对象却取 .length → Object.keys().length(pin 后实测 1 pinned · 0 excluded);②历史模态:空态转 empty-state 组件中文、条目卡换新 token(悬停 teal 边+阴影)、SMILES 等宽灰底 pill、头部按钮层级(导出 CSV=btn-accent/清空全部=btn-danger);删除 X 为 hover 显示属既有设计(视觉审计误报甄别存档);③色权重弹层 z-index/裁剪目检通过。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、390px 溢出 0、零 page error。
 ## Recently Completed

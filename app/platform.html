@@ -820,22 +820,57 @@ body { background: var(--ll-bg); margin: 0; }
 .app-shell { display: grid; grid-template-columns: 216px 1fr; min-height: 100vh; }
 
 /* --- sidenav --- */
-.sidenav { background: linear-gradient(180deg, var(--ll-navy) 0%, #101827 100%); color: #cbd5e1;
-  display: flex; flex-direction: column; padding: 0.9rem 0.7rem; position: sticky; top: 0; height: 100vh; box-sizing: border-box; }
-.side-brand { color: #f1f5f9; font-weight: 700; font-size: 1.02rem; text-decoration: none; padding: 0.2rem 0.55rem 0.75rem; letter-spacing: 0.01em; }
-.side-brand span { color: var(--ll-teal); }
-.side-brand:hover { color: #fff; }
+.sidenav {
+  background:
+    radial-gradient(420px 240px at 85% -5%, rgba(20,184,166,.10), transparent 62%),
+    linear-gradient(180deg, #141c2b 0%, #0f1622 100%);
+  color: #cbd5e1;
+  display: flex; flex-direction: column;
+  padding: 1.05rem 0.8rem 0.85rem;
+  position: sticky; top: 0; height: 100vh; box-sizing: border-box;
+  border-right: 1px solid rgba(148,163,184,.10);
+}
+.side-brand { display: flex; align-items: center; gap: 0.65rem; text-decoration: none;
+  padding: 0.15rem 0.45rem 0.95rem; }
+.brand-tile { width: 32px; height: 32px; flex: 0 0 32px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #14b8a6 0%, #0d9488 55%, #0f766e 100%);
+  color: #fff; box-shadow: 0 3px 10px rgba(13,148,136,.35), inset 0 1px 0 rgba(255,255,255,.22); }
+.brand-tile svg { width: 19px; height: 19px; }
+.brand-text { font-weight: 700; font-size: 1.02rem; color: #f1f5f9; line-height: 1.1; letter-spacing: .01em; }
+.brand-text .bt-mm { color: #2dd4bf; }
+.brand-text small { display: block; font-size: 0.62rem; font-weight: 500; color: #64778e; letter-spacing: .14em; text-transform: uppercase; margin-top: 1px; }
+.side-brand:hover .brand-text { color: #fff; }
+
 .side-nav { display: flex; flex-direction: column; gap: 2px; }
-.side-item { display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: left; cursor: pointer;
-  background: none; border: none; color: #9fb0c3; font: inherit; font-size: 0.86rem; padding: 0.52rem 0.55rem;
-  border-radius: 8px; transition: background .15s, color .15s; }
-.side-item svg { width: 17px; height: 17px; flex: 0 0 17px; }
-.side-item:hover { background: var(--ll-navy-2); color: #e2e8f0; }
-.side-item.active { background: rgba(20,184,166,.16); color: #5eead4; box-shadow: inset 2.5px 0 0 var(--ll-teal); }
-.side-foot { margin-top: auto; padding: 0.6rem 0.55rem 0.2rem; border-top: 1px solid #26344a; display: flex; flex-direction: column; gap: 0.3rem; }
-.side-foot a { color: #7d8fa5; font-size: 0.75rem; text-decoration: none; }
-.side-foot a:hover { color: #b6c5d8; }
-.side-note { color: #64778e; font-size: 0.68rem; }
+.side-group { font-size: 0.62rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+  color: #4d5f76; padding: 0.85rem 0.6rem 0.3rem; }
+.side-group:first-child { padding-top: 0.15rem; }
+.side-item { display: flex; align-items: center; gap: 0.65rem; width: 100%; text-align: left; cursor: pointer;
+  background: none; border: none; color: #8ea1b8; font: inherit; font-size: 0.85rem; font-weight: 500;
+  padding: 0.56rem 0.62rem; border-radius: 9px; position: relative;
+  transition: background .15s, color .15s; }
+.side-item svg { width: 17px; height: 17px; flex: 0 0 17px; opacity: .85; transition: opacity .15s, color .15s; }
+.side-item:hover { background: rgba(148,163,184,.09); color: #dbe5f0; }
+.side-item:hover svg { opacity: 1; }
+.side-item.active { background: rgba(20,184,166,.13); color: #5eead4; }
+.side-item.active svg { color: #2dd4bf; opacity: 1; }
+.side-item.active::before { content: ""; position: absolute; left: -0.8rem; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 18px; border-radius: 0 3px 3px 0; background: #2dd4bf; box-shadow: 0 0 8px rgba(45,212,191,.6); }
+
+.side-foot { margin-top: auto; padding-top: 0.8rem; border-top: 1px solid rgba(148,163,184,.10);
+  display: flex; flex-direction: column; gap: 0.5rem; }
+.side-status { display: flex; align-items: center; gap: 0.45rem; font-size: 0.7rem; color: #8ea1b8;
+  background: rgba(148,163,184,.07); border: 1px solid rgba(148,163,184,.10);
+  border-radius: 8px; padding: 0.4rem 0.55rem; }
+.ss-dot { width: 7px; height: 7px; border-radius: 50%; background: #2dd4bf;
+  box-shadow: 0 0 6px rgba(45,212,191,.8); flex: 0 0 7px; animation: ss-pulse 2.6s ease-in-out infinite; }
+@keyframes ss-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+.side-links { display: flex; flex-wrap: wrap; gap: 0.25rem 0.7rem; padding: 0 0.35rem; }
+.side-links a, .side-links button { color: #5c7089; font-size: 0.72rem; text-decoration: none;
+  background: none; border: none; cursor: pointer; font: inherit; font-size: 0.72rem; padding: 0; }
+.side-links a:hover, .side-links button:hover { color: #b6c5d8; }
+.side-note { color: #4d5f76; font-size: 0.66rem; padding: 0 0.35rem; }
 
 /* --- topbar --- */
 .main-col { min-width: 0; }
@@ -888,13 +923,14 @@ body { background: var(--ll-bg); margin: 0; }
 
 /* --- narrow: icon rail --- */
 @media (max-width: 920px) {
-  .app-shell { grid-template-columns: 54px 1fr; }
-  .sidenav { padding: 0.9rem 0.4rem; }
-  .side-brand { font-size: 0; padding: 0 0 0.7rem 0.25rem; }
-  .side-brand::first-letter { font-size: 1rem; }
-  .side-label { display: none; }
-  .side-item { justify-content: center; padding: 0.55rem 0; }
-  .side-foot a:nth-of-type(1), .side-note { display: none; }
+  .app-shell { grid-template-columns: 56px 1fr; }
+  .sidenav { padding: 0.85rem 0.45rem; }
+  .side-brand { justify-content: center; padding: 0 0 0.75rem; }
+  .brand-text, .side-group, .side-label, .side-links, .side-note { display: none; }
+  .side-item { justify-content: center; padding: 0.6rem 0; gap: 0; }
+  .side-item.active::before { left: -0.45rem; }
+  .side-status { justify-content: center; padding: 0.4rem 0.3rem; }
+  .side-status span:not(.ss-dot) { display: none; }
   .top-ver { display: none; }
   .step-label { display: none; }
   .stepper { top: 46px; }
@@ -1146,8 +1182,12 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 <div class="app-shell">
 
 <aside class="sidenav" id="sidenav">
-  <a class="side-brand" href="#" onclick="window.scrollTo({top:0}); return false;" title="WebMM Platform">Web<span>MM</span> Platform</a>
+  <a class="side-brand" href="#" onclick="window.scrollTo({top:0}); return false;" title="WebMM Platform">
+    <span class="brand-tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z"/><circle cx="12" cy="12" r="2.1" fill="currentColor" stroke="none"/><circle cx="19.8" cy="7.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="4.2" cy="16.5" r="1.5" fill="currentColor" stroke="none"/></svg></span>
+    <span class="brand-text">Web<span class="bt-mm">MM</span><small>Platform</small></span>
+  </a>
   <nav class="side-nav" aria-label="Platform sections">
+    <span class="side-group">工作区</span>
     <button class="side-item" id="tabProject" onclick="switchMode('project')" title="项目概览 — 库/工作集统计、项目导入导出">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
       <span class="side-label">项目概览</span>
@@ -1160,6 +1200,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
       <span class="side-label">批量处理</span>
     </button>
+    <span class="side-group">发现</span>
     <button class="side-item mode-tab" id="tabSearch" role="tab" aria-selected="false" onclick="switchMode('search')" title="相似性检索 — sim/sub/shape×2、阈值、漏斗、甄别">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span class="side-label">相似性检索</span>
@@ -1174,13 +1215,15 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     </button>
   </nav>
   <div class="side-foot">
-    <a href="../index.html">← Workbench</a>
-    <a id="navPlayground" href="../playground.html">Playground</a>
-    <a id="navDemo" href="../site/index.html">Demo</a>
-    <a href="https://github.com/Ruibin-Liu/WebMM">GitHub ↗</a>
-    <button onclick="viewSource()" style="all:unset; cursor:pointer; color:#7d8fa5; font-size:0.75rem; text-align:left;">查看源码</button>
+    <div class="side-status"><span class="ss-dot"></span><span id="sideStorage">storage…</span></div>
+    <div class="side-links">
+      <a href="../index.html">← Workbench</a>
+      <a id="navPlayground" href="../playground.html">Playground</a>
+      <a id="navDemo" href="../site/index.html">Demo</a>
+      <a href="https://github.com/Ruibin-Liu/WebMM">GitHub ↗</a>
+      <button onclick="viewSource()">查看源码</button>
+    </div>
     <span class="side-note">本地计算 · 不上传</span>
-    <span class="side-note" id="sideStorage">storage…</span>
   </div>
 </aside>
 
