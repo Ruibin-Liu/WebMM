@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**侧栏层级 v2 完成(main 待提交):中文正确的层级语法——组标签 0.7rem 可读灰+右延细线(视觉地板),条目 0.95rem 深色缩进 1.15rem,组间 1.4rem。放大目检"层级一眼可辨";m6 30/30。**
+**Stepper 移除完成(main 待提交):四步流程条不必常驻(点击目标与侧栏重复的装饰)——markup/JS 同步/CSS 全清;m6 三断言改写(removed 守卫 + 侧栏 tab 点击);滚动无缝、390px 溢出 0、m6 30/30。**
 
+## Recently Completed
++- **Stepper 移除(用户质疑常驻必要性)。** 判定:纯 LigandLab 模仿残留,导航价值与侧栏完全冗余。移除 #stepperBar markup、syncShellChrome 的 stepper 分支与 stepGo、全部相关 CSS(含窄屏媒体引用)。m6 三断言改写:shell 检查含 stepperGone 守卫;"step1 点击回 single"改"侧栏 tabSingle 点击回 single"。验证:滚动后 topbar 0..46 sticky 无缝;390px 溢出 0;m6 30/30;零 page error。
 ## Recently Completed
 +- **侧栏层级 v2(用户二次不满意后的认知修正)。** 病根:小型大写+宽字距是拉丁层级语法,对中文无效——0.58rem 中文不可读,缩进 0.8rem 太弱。v2:①组标签 0.7rem/weight 500/#94a3b8 + **右延 hairline 细线**(标签获得视觉地板,不再悬浮);②条目 0.95rem/#334155/缩进 1.15rem(≈18px);③组间 padding 1.15→1.4rem(复检 nit)。放大目检:"层级一眼可辨、细线是结构不是杂讯、缩进甜点、激活药丸完整"。m6 30/30。
 ## Recently Completed

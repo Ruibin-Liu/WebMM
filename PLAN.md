@@ -287,3 +287,15 @@ Node 全绿。
 
 验收:放大目检"层级一眼可辨、细线是帮助不是杂讯、缩进恰好在
 甜点";m6 30/30。
+
+
+## Stepper 移除(用户质疑"一定要常驻吗";已完成)
+
+判定:不必常驻——点击目标与侧栏完全重复,占一条 sticky 横条,纯装饰
+(LigandLab 模仿残留)。移除:
+
+1. markup(#stepperBar 整块)、syncShellChrome 的 step 同步与 stepGo、
+   CSS(.stepper/.step/.step-line + 媒体引用)。
+2. m6 三断言改写:shell 检查改"stepper removed"守卫(元素不存在);
+   "step1 点击回 single" 改为"侧栏 tabSingle 点击回 single"。
+3. 验证:滚动后 topbar 0..46 无缝;390px 溢出 0;m6 30/30;零 page error。

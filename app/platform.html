@@ -872,22 +872,6 @@ body { background: var(--ll-bg); margin: 0; }
 @keyframes ll-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
 .top-ver { font-size: 0.72rem; color: #94a3b8; white-space: nowrap; }
 
-/* --- stepper --- */
-.stepper { display: flex; align-items: center; gap: 0.4rem; background: #fff; border-bottom: 1px solid var(--ll-line);
-  padding: 0.6rem 1.1rem; position: sticky; top: 46px; z-index: 39; overflow-x: auto; }
-.step { display: flex; align-items: center; gap: 0.45rem; background: none; border: none; cursor: pointer;
-  font: inherit; font-size: 0.78rem; color: #94a3b8; padding: 0.15rem 0.2rem; white-space: nowrap; }
-.step .dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #cbd5e1; background: #fff;
-  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
-.step.cur { color: #0f172a; font-weight: 600; }
-.step.cur .dot { border-color: var(--ll-accent); box-shadow: 0 0 0 4px rgba(37,99,235,.18); }
-.step.done { color: #475569; }
-.step.done .dot { border-color: var(--ll-accent); background: var(--ll-accent); }
-.step.done .dot::after { content: ""; width: 6px; height: 3.5px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translate(0, -1px); }
-.step:hover { color: var(--ll-accent-2); }
-.step-line { flex: 1 1 26px; min-width: 18px; max-width: 70px; height: 2.5px; background: #dbe3ec; border-radius: 2px; }
-.step-line.done { background: var(--ll-accent); }
-
 /* --- cards --- */
 .container { padding-top: 1rem; }
 .panel { background: #fff; border: 1px solid var(--ll-line); border-radius: 12px;
@@ -921,8 +905,6 @@ body { background: var(--ll-bg); margin: 0; }
   .side-item { white-space: nowrap; padding: 0.4rem 0.75rem; font-size: 0.8rem; }
   .side-item.active::before { display: none; }
   .top-ver { display: none; }
-  .step-label { display: none; }
-  .stepper { top: 46px; }
 }
 
 /* --- inner-control harmonization (CSS-only; DOM untouched) --- */
@@ -1377,12 +1359,6 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
   <div class="top-ver">RDKit <span id="rdkitVersion">Loading...</span> · engine <span id="engineVersion">WebMM (loading…)</span></div>
 </header>
 
-<div class="stepper" id="stepperBar" aria-label="工作流程">
-  <button class="step cur" id="step1" onclick="stepGo('single')" title="结构导入:粘贴/绘制/上传,校验 + 2D"><span class="dot"></span><span class="step-label">结构导入</span></button><span class="step-line" id="line1"></span>
-  <button class="step" id="step2" onclick="stepGo('search')" title="候选检索:相似/子结构/形状×2,漏斗 + 甄别"><span class="dot"></span><span class="step-label">候选检索</span></button><span class="step-line" id="line2"></span>
-  <button class="step" id="step3" onclick="stepGo('analog')" title="骨架探索:邻域片段枚举 + aza-scan 骨架跃迁"><span class="dot"></span><span class="step-label">骨架探索</span></button><span class="step-line" id="line3"></span>
-  <button class="step" id="step4" onclick="stepGo('batch')" title="性质与精选:批量描述符/规则/QED/PAINS + 工作集共识排序"><span class="dot"></span><span class="step-label">性质与精选</span></button>
-</div>
 
 <div class="container">
 
@@ -5968,18 +5944,6 @@ const SECTION_LABEL = { project: '项目概览', single: '分子工作台', batc
 function syncShellChrome() {
   const m = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : 'single';
   document.getElementById('crumbNow').innerHTML = 'WebMM 项目 · <b>' + (SECTION_LABEL[m] || m) + '</b>';
-  const step = { single: 1, search: 2, batch: 4, project: 0 }[m] || 0;
-  for (let i = 1; i <= 4; i++) {
-    const el = document.getElementById('step' + i);
-    el.classList.toggle('cur', i === step);
-    el.classList.toggle('done', i < step);
-    const ln = document.getElementById('line' + i);
-    if (ln) ln.classList.toggle('done', i < step);
-  }
-}
-function stepGo(target) {
-  if (target === 'analog') { sideGoto('analogPanel'); return; }
-  switchMode(target);
 }
 function sideGoto(panelId, optional) {
   switchMode('search');
