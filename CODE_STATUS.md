@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**图标移除 + workbench 配色回归完成(main 待提交):侧栏文本导航(六 SVG 与品牌磁贴全删,文字品牌回归);--ll-accent=#2563eb 全站换装(CSS 变量重定义 + 字面量 sed 含 JS heat/pinned);侧栏浅色化(白 92%+blur);窄屏转横向芯片条(**排雷:sticky top:46 未滚动时钻入 topbar 底下**→static)。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
+**CSS 误删修复 + 全面普查完成(main 待提交):上轮窄屏媒体块区间切片连带删除 round 2/3 + 内容重构全段 CSS(.card-head svg 16px 规则丢失→图标爆 1052px);从 1c02ab5 全量重建(色板 sed + 浅侧栏 + 定点媒体块替换 + 拼回幸存段)。SVG 尺寸普查 0 超限;六状态目检通过;m0-m6 + 平台 Node 全绿。教训:区间切片先核对内含规则;CSS 大改后加图标尺寸普查探针。**
 
+## Recently Completed
++- **CSS 误删修复(用户发现"结构导入大图标")。** 根因:图标移除轮的媒体块替换用区间切片(首个 @media 920 → design-language v2 标记)——中间的 round 2/3(viewer3d/能量卡/批量 sticky/滚动条/控件协调)与内容重构全段(.dash/.card-head[svg 16px]/.pbar/.qgrid/.filter-strip)全被删,card-head 图标失约束爆到 1052×1052(computed 普查定位)。修复:git 1c02ab5 全量 <style> 重建——色板 sed→浅侧栏块→**定点** 920 媒体块替换→删死规则(brand-tile/side-item svg)→拼回 v2 后幸存段;定义唯一性核对。普查:SVG 尺寸扫描(排除内容区)boot/处理后 0 超限;六状态截图(boot/单分子三栏/检索/批量/概览/390px)目检通过;390px 溢出 0;零 page error;m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34。
 ## Recently Completed
 +- **图标移除 + workbench 配色回归(用户指令"干脆不要图标/颜色用回 workbench 那套")。** ①侧栏六枚导航 SVG 移除 + 品牌磁贴删除,回归文字品牌(WebMM 蓝 MM + PLATFORM 小标);②配色:--ll-accent=#2563eb/--ll-accent-2=#1d4ed8 变量重定义全站自动换装 + 字面量全文 sed(内联 onfocus/accent-color 与 JS applyHeat/pinned 染色的 rgba(20,184,166)→rgba(37,99,235) 等)——热力格/横条/分段/stepper/药丸/状态点全转蓝,目检零 teal 残留;③侧栏浅色:白 92%+blur(workbench topnav 同工艺)、hover #f1f5f9、激活 #eff6ff+蓝字+指示条;④窄屏:图标既除 rail 不可行 → 横向滚动芯片条;**排雷:sticky top:46 在未滚动时把条带推至 46px 钻入 topbar(z40)底下被完全遮挡(computed style 可见而截图不见的诡异来源)**→条带改 static 随页滚动,未滚动层序 条带0→topbar42→stepper112 验证正确。验收:m0-m6 37/10/11/10/32/47/30、平台 Node 34/34、390px 溢出 0、宽/窄目检通过。
 ## Recently Completed
