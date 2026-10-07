@@ -30,13 +30,13 @@ function check(name, cond, detail) {
   {
     const shell = await page.evaluate(() => ({
       items: document.querySelectorAll('#sidenav .side-item').length,
-      tabs: ['tabProject', 'tabSingle', 'tabBatch', 'tabSearch'].every(id => !!document.getElementById(id)),
+      tabs: ['tabProject', 'tabSingle', 'tabBatch', 'tabSearch', 'tabAnalog'].every(id => !!document.getElementById(id)),
       crumb: document.getElementById('crumbNow').textContent,
       ticker: !!document.getElementById('taskTicker'),
       stepperGone: !document.getElementById('stepperBar'),
     }));
     check('shell: sidenav 6 items + 4 mode tabs + crumb + task ticker; stepper removed',
-      shell.items === 4 && shell.tabs && shell.ticker && shell.crumb.includes('分子工作台') && shell.stepperGone,
+      shell.items === 5 && shell.tabs && shell.ticker && shell.crumb.includes('分子工作台') && shell.stepperGone,
       JSON.stringify(shell));
 
     const ov = await page.evaluate(() => {
@@ -291,7 +291,7 @@ function check(name, cond, detail) {
   await page.waitForTimeout(500);
   await page.evaluate(() => embed3D());
   await page.waitForFunction(() => !!document.querySelector('#viewer3d canvas'), null, { timeout: 60000 });
-  await page.evaluate(() => { switchMode('search'); analogDetectSites(); });
+  await page.evaluate(() => { switchMode('analog'); analogDetectSites(); });
   await page.waitForTimeout(600);
   const sites = await page.evaluate(() => [...document.getElementById('analogSite').options].filter(o => o.value).length);
   check('replaceable sites detected on paracetamol (>=2)', sites >= 2, 'sites=' + sites);

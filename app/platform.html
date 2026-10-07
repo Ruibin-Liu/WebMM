@@ -1331,6 +1331,9 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     <button class="side-item mode-tab" id="tabSearch" role="tab" aria-selected="false" onclick="switchMode('search')" title="相似性检索 — sim/sub/shape×2、阈值、漏斗、甄别">
       <span class="side-label">相似性检索</span>
     </button>
+    <button class="side-item mode-tab" id="tabAnalog" role="tab" aria-selected="false" onclick="switchMode('analog')" title="骨架探索 — 从当前分子衍生类似物:单位点基团交换 + aza-scan 环跃迁,形状重打分(不筛库,生成新候选)">
+      <span class="side-label">骨架探索</span>
+    </button>
   </nav>
   <div class="side-foot">
     <div class="side-status"><span class="ss-dot"></span><span id="sideStorage">storage…</span></div>
@@ -1742,7 +1745,31 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
      </table>
      </div>
      <div class="hint" style="margin-top:0.4rem;">点击行回载到单分子工作台</div>
-     <div id="queryHistoryPanel" style="display:none; margin-top:0.5rem; padding:0.5rem 0.6rem; border:1px solid var(--border); border-radius:8px;"></div>
+     <div id="pharmQueryPanel" class="panel" style="display:none;">
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg><b>药效团查询</b></div>
+     <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
+       <button class="action-btn edit" style="width:auto;" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">由当前分子构建</button>
+       <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± 容差 (Å)</label>
+       <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
+       <label for="pharmConfs" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Conformers generated per molecule (more = fewer false negatives, slower)">构象数</label>
+       <input type="number" id="pharmConfs" min="1" max="50" value="10" style="width:4rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
+       <button id="btnPharmQ" class="action-btn primary" style="width:auto;" onclick="screenPharmQuery()">筛选库</button>
+     </div>
+     <div class="version" id="pharmQStatus" aria-live="polite"></div>
+     <div id="pharmQFeatures" style="max-height:180px; overflow-y:auto; margin:0.3rem 0;"></div>
+     <div class="version" id="pharmQDist" style="font-family:ui-monospace,Menlo,monospace; font-size:0.72rem; white-space:pre;"></div>
+     <div style="overflow-x:auto;">
+     <table id="pharmQTable">
+       <thead><tr><th>#</th><th>名称</th><th>SMILES</th><th>MW</th><th>Conf</th><th>结果</th></tr></thead>
+       <tbody id="pharmQRows"></tbody>
+     </table>
+     </div>
+     <div class="hint" style="margin-top:0.4rem;">选取 2–6 个特征,设定距离容差与构象数;每个库分子在其构象系综上筛查(无对齐——纯几何约束;构象数 1 ≈ 单构象路径)</div>
+   </div>
+
+  
+
+<div id="queryHistoryPanel" style="display:none; margin-top:0.5rem; padding:0.5rem 0.6rem; border:1px solid var(--border); border-radius:8px;"></div>
      <div id="workSetPanel" style="display:none; margin-top:0.5rem; padding:0.5rem; border:1px solid var(--border); border-radius:8px;">
        <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
          <strong style="font-size:0.82rem;">工作集</strong>
@@ -1821,31 +1848,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
      <div class="hint" style="margin-top:0.4rem;">点击行将该骨架回载到单分子工作台</div>
    </div>
 
-   <div id="pharmQueryPanel" class="panel" style="display:none;">
-     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg><b>药效团查询</b></div>
-     <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
-       <button class="action-btn edit" style="width:auto;" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">由当前分子构建</button>
-       <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± 容差 (Å)</label>
-       <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
-       <label for="pharmConfs" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Conformers generated per molecule (more = fewer false negatives, slower)">构象数</label>
-       <input type="number" id="pharmConfs" min="1" max="50" value="10" style="width:4rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
-       <button id="btnPharmQ" class="action-btn primary" style="width:auto;" onclick="screenPharmQuery()">筛选库</button>
-     </div>
-     <div class="version" id="pharmQStatus" aria-live="polite"></div>
-     <div id="pharmQFeatures" style="max-height:180px; overflow-y:auto; margin:0.3rem 0;"></div>
-     <div class="version" id="pharmQDist" style="font-family:ui-monospace,Menlo,monospace; font-size:0.72rem; white-space:pre;"></div>
-     <div style="overflow-x:auto;">
-     <table id="pharmQTable">
-       <thead><tr><th>#</th><th>名称</th><th>SMILES</th><th>MW</th><th>Conf</th><th>结果</th></tr></thead>
-       <tbody id="pharmQRows"></tbody>
-     </table>
-     </div>
-     <div class="hint" style="margin-top:0.4rem;">选取 2–6 个特征,设定距离容差与构象数;每个库分子在其构象系综上筛查(无对齐——纯几何约束;构象数 1 ≈ 单构象路径)</div>
-   </div>
-
-  
-
-<div id="jsmeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="jsmeTitle">
+   <div id="jsmeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="jsmeTitle">
   <div class="modal-content">
     <div class="modal-header">
       <h2 id="jsmeTitle">绘制结构</h2>
@@ -5929,14 +5932,15 @@ let batchResults = [];
 // remembered across tab switches — switching away never destroys the other
 // modes' work (row-click → single view → back keeps the batch table).
 let projectMode = false;
-const modeInputs = { single: '', batch: '', search: '', project: '' };
-const modeShown = { single: false, batch: false, search: false, project: false };
-const MODE_SECTION = { single: 'output', batch: 'batchPanel', search: 'searchPanel', project: 'overviewPanel' };
+let analogMode = false;
+const modeInputs = { single: '', batch: '', search: '', project: '', analog: '' };
+const modeShown = { single: false, batch: false, search: false, project: false, analog: false };
+const MODE_SECTION = { single: 'output', batch: 'batchPanel', search: 'searchPanel', project: 'overviewPanel', analog: 'analogPanel' };
 
 // ===== LigandLab-style shell chrome (presentational only) =====
-const SECTION_LABEL = { project: '项目概览', single: '分子工作台', batch: '批量处理', search: '相似性检索' };
+const SECTION_LABEL = { project: '项目概览', single: '分子工作台', batch: '批量处理', search: '相似性检索', analog: '骨架探索' };
 function syncShellChrome() {
-  const m = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : 'single';
+  const m = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : analogMode ? 'analog' : 'single';
   document.getElementById('crumbNow').innerHTML = '<b>' + (SECTION_LABEL[m] || m) + '</b>';
 }
 function renderOverview() {
@@ -6006,7 +6010,7 @@ function dashEls() {
 }
 function applyDashLayout() {
   const q = id => document.getElementById(id);
-  const single = !batchMode && !searchMode && !projectMode;
+  const single = !batchMode && !searchMode && !projectMode && !analogMode;
   if (!dashMoves.length) dashEls().forEach(el => dashMoves.push({ el, parent: el.parentNode, next: el.nextSibling }));
   if (single) {
     const els = dashEls();
@@ -6124,7 +6128,7 @@ function renderPropBars(d, qedMean) {
 window.renderPropBars = renderPropBars;
 (function () {
   const a = document.getElementById('analogStatus');
-  if (a && !a.textContent) a.textContent = '待命 — 在「位点」下拉选择替换位点后探索,或 aza-scan 一键骨架跃迁';
+  if (a && !a.textContent) a.textContent = '待命 — 输入取自「分子工作台」的当前分子:检测位点 → 选片段探索,或 aza-scan 一键环跃迁';
 })();
 function initSideStorage() {
   const el = document.getElementById('sideStorage');
@@ -6134,33 +6138,35 @@ function initSideStorage() {
 }
 
 function switchMode(m) {
-  const cur = searchMode ? 'search' : batchMode ? 'batch' : projectMode ? 'project' : 'single';
+  const cur = searchMode ? 'search' : batchMode ? 'batch' : projectMode ? 'project' : analogMode ? 'analog' : 'single';
   modeInputs[cur] = document.getElementById('input').value;
   modeShown[cur] = document.getElementById(MODE_SECTION[cur]).style.display === 'block';
   batchMode = (m === 'batch');
   searchMode = (m === 'search');
   projectMode = (m === 'project');
-  const single = !batchMode && !searchMode && !projectMode;
+  analogMode = (m === 'analog');
+  const single = !batchMode && !searchMode && !projectMode && !analogMode;
   document.getElementById('tabSingle').classList.toggle('active', single);
   document.getElementById('tabBatch').classList.toggle('active', batchMode);
   document.getElementById('tabSearch').classList.toggle('active', searchMode);
   document.getElementById('tabProject').classList.toggle('active', projectMode);
+  document.getElementById('tabAnalog').classList.toggle('active', analogMode);
   document.getElementById('tabSingle').setAttribute('aria-selected', String(single));
   document.getElementById('tabBatch').setAttribute('aria-selected', String(batchMode));
   document.getElementById('tabSearch').setAttribute('aria-selected', String(searchMode));
   document.getElementById('overviewPanel').style.display = projectMode ? 'block' : 'none';
-  document.getElementById('inputPanel').style.display = projectMode ? 'none' : 'block';
+  document.getElementById('inputPanel').style.display = (projectMode || analogMode) ? 'none' : 'block';
   if (projectMode) renderOverview();
   syncShellChrome();
   applyDashLayout();
-  document.body.dataset.mode = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : 'single';
+  document.body.dataset.mode = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : analogMode ? 'analog' : 'single';
   document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
   document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
   document.getElementById('output').style.display = (single && modeShown.single) ? 'block' : 'none';
   document.getElementById('batchPanel').style.display = (batchMode && modeShown.batch) ? 'block' : 'none';
   document.getElementById('searchPanel').style.display = (searchMode && modeShown.search) ? 'block' : 'none';
   document.getElementById('rgdPanel').style.display = searchMode ? (rgdResults ? 'block' : 'none') : 'none';
-  document.getElementById('analogPanel').style.display = searchMode ? 'block' : 'none';
+  document.getElementById('analogPanel').style.display = analogMode ? 'block' : 'none';
   document.getElementById('scaffoldPanel').style.display = searchMode ? (scaffoldResults ? 'block' : 'none') : 'none';
   document.getElementById('pharmQueryPanel').style.display = searchMode ? 'block' : 'none';
   if (searchMode) restoreSearchLibrary();

@@ -353,3 +353,24 @@ m6:shell 断言 items>=6 → ===4。验收:m6 30/30;导航四项/面包屑
 英文——与检索 chip 同一文档化边界,不在本轮扩张。
 
 验收:m6 30/30、m5 47/47;骨架卡复检三项生效;零 page error。
+
+
+## B 方案落地:骨架探索独立成模式(用户选定;已完成)
+
+概念摆正:相似性检索/药效团查询 = 筛库(留检索模式);骨架探索 =
+从当前分子生成新候选(独立第五模式)。
+
+1. **模式管线**:analogMode 布尔;modeInputs/modeShown/MODE_SECTION/
+   SECTION_LABEL 增 analog;switchMode 五路(data-mode/面包屑/tab
+   active/面板显隐);该模式隐藏共享输入面板。
+2. **侧栏**:tabAnalog 排在相似性检索**之后**(先筛选后生成的顺序);
+   导航 = 5 项 = 5 模式。
+3. **药效团查询卡**迁至检索模式内结果卡之后、检索历史之前
+   (DOM 顺序 compareDocumentPosition 验证)。
+4. **探索器空态**措辞:输入来源 = 「分子工作台」的当前分子。
+5. m6 同步:items===5、tabs+tabAnalog、M3 段 switchMode('analog');
+   排雷:crumb 模式解析初版漏 analog 分支(显示"分子工作台")。
+
+验收:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34(m1 一次假阴性
+=/tmp/caff24.sdf 夹具被清,按 README 配方重生 24 原子后过);
+390px 溢出 0;零 page error。

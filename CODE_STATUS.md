@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**逐模式内部审查完成(main 待提交):程序探针(四模式可见性矩阵/Enter 与拖放行为核实——无悬空承诺无泄漏控件)+ 目检修复(RGD 提示与 placeholder/± 容差/构象数/探索器空态措辞/骨架表右对齐与间距)。m6 30/30、m5 47/47;骨架卡复检生效。**
+**B 方案落地(main 待提交):骨架探索独立成第五模式(先筛选后生成:项目概览/分子工作台/批量处理/相似性检索/骨架探索),药效团查询卡迁至结果卡后,探索器空态标明输入来源;analogMode 全管线(模式表/switchMode 五路/crumb);m6 items===5 + M3 段改 analog 模式。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
 
+## Recently Completed
++- **B 方案(用户三选一后选定)。** 概念摆正:筛库(相似性检索+药效团查询)与生成(骨架探索)分家。①analogMode 布尔 + 模式表(modeInputs/modeShown/MODE_SECTION/SECTION_LABEL)增 analog + switchMode 五路(data-mode/面包屑/tabAnalog active/analogPanel 显隐),该模式隐藏共享输入面板;②侧栏 tabAnalog 排相似性检索后(先筛后生的阅读顺序),导航 5 项 = 5 模式(等价性保持);③药效团查询卡 DOM 迁至 searchPanel 后 queryHistoryPanel 前(compareDocumentPosition 验证);④探索器空态注明输入=分子工作台当前分子;⑤m6:items===5、tabs 列表 +tabAnalog、M3 探索器段 switchMode('analog')。**排雷**:crumb 模式解析初漏 analog 分支(骨架探索模式显示"分子工作台");m1 一次假阴性 = /tmp/caff24.sdf 被清,按 tests/cdp/README 配方 RDKit 重生 24 原子后通过。验收:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error。
 ## Recently Completed
 +- **逐模式内部审查(概览/工作台/批量/检索)。** ①程序探针:四模式 × drop/singleActions/batchBar/searchBar 可见性矩阵全对(无泄漏);"Enter 处理"承诺属实(keydown→maybeProcess);拖放模式感知已有(batch 填框不自动跑/search 填框+提示装载)——两处疑似悬空承诺排除;②目检修复:RGD 英文提示与核心 placeholder 中文化、药效团 ± 容差 (Å)/构象数、探索器空态措辞改为与「位点」下拉对应、骨架表 分子数/占比 统一右对齐 + 状态行/底部提示间距;③边界维持:动态状态行(含骨架汇总英文)与检索 chip 同一边界,不扩张。验收:m6 30/30、m5 47/47、骨架卡复检三项生效、零 page error。
 ## Recently Completed
