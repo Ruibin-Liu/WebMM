@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**侧栏 mode-tab all:unset 毒规则清除(main 待提交):用户点破"项目概览字号字体与别项不一样"——实锤 14.72px/20px vs 16px/12px(四项带 mode-tab 被 `.mode-tab{all:unset}`×2 重置,tabProject 恰无此类;此前测量只量 items[0] 系盲区)。删两处毒规则;五项×两激活态全量复测全一致;目检"除颜色/药丸外零差异"。m6 30/30。**
+**侧栏条目间距放宽完成(main 待提交):padding-block 0.72rem/gap 6px/顶距 0.45rem,实测四间隙均 6px;目检呼吸均匀、对齐字号不变。m6 30/30。**
 
+## Recently Completed
++- **侧栏间距放宽(用户指出条目挤在一起)。** .side-item padding-block 0.64→0.72rem;.side-nav gap 3→6px、margin-top 0.35→0.45rem。实测相邻间隙 [6,6,6,6];3× 目检:呼吸充分、垂直节奏均匀、文本对齐/字号/字重不受影响、激活态无扰动。m6 30/30。
 ## Recently Completed
 +- **侧栏 mode-tab all:unset 毒规则(用户点破字号字体差异)。** 五项全量测量实锤:项目概览(无 mode-tab 类)14.72px/文字左缘 20px;其余四项(带 mode-tab)16px/左缘 12px——两处遗留 `.mode-tab { all: unset; }` 重置 .side-item 的字体与 padding。**测量盲区存档**:此前多轮"全对齐"结论都只量 items[0](恰为 tabProject);以后侧栏类测量必须遍历全部条目。修复:删两处 all:unset。复测(项目概览/骨架探索两种激活态 × 五项):左缘 20/14.72px 全一致;3× 目检"字体/字号/左线/行高全同,激活与未激活除颜色与药丸外零差异"。m6 30/30。
 ## Recently Completed
