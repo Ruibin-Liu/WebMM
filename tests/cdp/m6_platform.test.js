@@ -36,7 +36,7 @@ function check(name, cond, detail) {
       stepperGone: !document.getElementById('stepperBar'),
     }));
     check('shell: sidenav 6 items + 4 mode tabs + crumb + task ticker; stepper removed',
-      shell.items >= 6 && shell.tabs && shell.ticker && shell.crumb.includes('分子工作台') && shell.stepperGone,
+      shell.items === 4 && shell.tabs && shell.ticker && shell.crumb.includes('分子工作台') && shell.stepperGone,
       JSON.stringify(shell));
 
     const ov = await page.evaluate(() => {

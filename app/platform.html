@@ -1326,12 +1326,6 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     <button class="side-item mode-tab" id="tabSearch" role="tab" aria-selected="false" onclick="switchMode('search')" title="相似性检索 — sim/sub/shape×2、阈值、漏斗、甄别">
       <span class="side-label">相似性检索</span>
     </button>
-    <button class="side-item" onclick="sideGoto('analogPanel')" title="骨架探索 — 邻域片段枚举 + aza-scan(相似性检索模式内)">
-      <span class="side-label">骨架探索</span>
-    </button>
-    <button class="side-item" onclick="sideGoto('queryHistoryPanel', true)" title="检索历史 — 轮次 DAG、hit-as-query(相似性检索模式内)">
-      <span class="side-label">检索历史</span>
-    </button>
   </nav>
   <div class="side-foot">
     <div class="side-status"><span class="ss-dot"></span><span id="sideStorage">storage…</span></div>
@@ -5938,18 +5932,7 @@ const MODE_SECTION = { single: 'output', batch: 'batchPanel', search: 'searchPan
 const SECTION_LABEL = { project: '项目概览', single: '分子工作台', batch: '批量处理', search: '相似性检索' };
 function syncShellChrome() {
   const m = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : 'single';
-  document.getElementById('crumbNow').innerHTML = 'WebMM 项目 · <b>' + (SECTION_LABEL[m] || m) + '</b>';
-}
-function sideGoto(panelId, optional) {
-  switchMode('search');
-  requestAnimationFrame(() => {
-    const el = document.getElementById(panelId);
-    if (el && (el.style.display !== 'none' || optional)) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else {
-      document.getElementById('searchPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  });
+  document.getElementById('crumbNow').innerHTML = '<b>' + (SECTION_LABEL[m] || m) + '</b>';
 }
 function renderOverview() {
   try {
