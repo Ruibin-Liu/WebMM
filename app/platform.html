@@ -1306,6 +1306,11 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 .hist-item code { font-family: ui-monospace, Menlo, monospace; font-size: 0.78rem; color: #64748b;
   background: #f1f5f9; border-radius: 6px; padding: 0.1rem 0.4rem; }
 .hist-hbtn { font-size: 0.72rem; padding: 0.3rem 0.6rem; }
+
+/* scaffold table: numeric columns right-aligned uniformly; summary spacing */
+#scaffoldTable td:nth-child(3), #scaffoldTable td:nth-child(4) { text-align: right; font-variant-numeric: tabular-nums; }
+#scaffoldStatus, #rgdStatus { display: inline-block; margin: 0.55rem 0 0.3rem; }
+#scaffoldPanel .hint, #rgdPanel .hint { margin-top: 0.55rem !important; }
 </style>
 </head>
 <body>
@@ -1777,7 +1782,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
    <div id="rgdPanel" class="panel" style="display:none;">
      <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v6m0 8v6M2 12h6m8 0h6"/></svg><b>R-Group 分解</b></div>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
-       <input type="text" id="rgdCore" placeholder="Core with attachment labels, e.g. [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
+       <input type="text" id="rgdCore" placeholder="带附着标签的核心,如 [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
        <button class="action-btn edit" onclick="fillRgdExample()" title="Fill a para-disubstituted benzene example core">Example</button>
       <button class="action-btn edit" onclick="autoRgdCore()" title="Derive a labeled core automatically: MCS of the most frequent scaffold family, attachment points from the first member">自动核心</button>
        <select id="rgdScope" title="Run over the whole library or the current search results">
@@ -1794,7 +1799,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        <tbody id="rgdRows"></tbody>
      </table>
      </div>
-     <div class="hint" style="margin-top:0.4rem;">the core needs explicit [*:n] attachment labels; molecules not containing the core are skipped; the first match per molecule is used</div>
+     <div class="hint" style="margin-top:0.4rem;">核心需带显式 [*:n] 附着标签;不含核心的分子会被跳过;每个分子取首个匹配</div>
    </div>
 
    <div id="scaffoldPanel" class="panel" style="display:none;">
@@ -1820,9 +1825,9 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
      <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg><b>药效团查询</b></div>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
        <button class="action-btn edit" style="width:auto;" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">由当前分子构建</button>
-       <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± tolerance (Å)</label>
+       <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± 容差 (Å)</label>
        <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
-       <label for="pharmConfs" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Conformers generated per molecule (more = fewer false negatives, slower)">conformers</label>
+       <label for="pharmConfs" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Conformers generated per molecule (more = fewer false negatives, slower)">构象数</label>
        <input type="number" id="pharmConfs" min="1" max="50" value="10" style="width:4rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
        <button id="btnPharmQ" class="action-btn primary" style="width:auto;" onclick="screenPharmQuery()">筛选库</button>
      </div>
@@ -6119,7 +6124,7 @@ function renderPropBars(d, qedMean) {
 window.renderPropBars = renderPropBars;
 (function () {
   const a = document.getElementById('analogStatus');
-  if (a && !a.textContent) a.textContent = '待命 — 选定位点后探索,或 aza-scan 一键骨架跃迁';
+  if (a && !a.textContent) a.textContent = '待命 — 在「位点」下拉选择替换位点后探索,或 aza-scan 一键骨架跃迁';
 })();
 function initSideStorage() {
   const el = document.getElementById('sideStorage');
