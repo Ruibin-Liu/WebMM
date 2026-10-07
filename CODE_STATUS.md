@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**单分子布局重排完成(main 待提交):grid-template-areas "input inspect"/"struct inspect"——输入卡叠工作室(左,宽=原两栏和,3D 视图 ~700px),检查器右列通高(实测 102/1008 与左列组合像素级对齐);窄屏顺序堆叠;.studio 单列化(300px 空轨废,双份规则同改)。全页目检五项过;390px 溢出 0;m0-m6 + 平台 Node 全绿。**
+**细节轮完成(main 待提交):Clear/History 漏译补上(行内容锚定,`>X<` 锚点对带缩进文本第三次失配——教训固化);textarea 160px;检查器底部空白判为标准 dashboard 行为;构象图表/工具栏单行等目检通过。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
 
+## Recently Completed
++- **细节轮(新布局衍生)。** 审计:空态(输入卡全宽单独在场,可接受)/处理后(工具栏 7 项单行;检查器底部 253px 空白 = 等高边框语义的标准 dashboard 行为,不改)/构象态(图表 79 柱清晰、轴标签可读、左栈与检查器底对齐)。修复:①输入卡 **Clear/History 漏译**(按钮文本换行缩进,`>Clear<` 静态锚点再失配——换行文本必须行内容锚定,教训固化)→ 清空/历史;②textarea min-height 128→160px(空态比例);③目检余项零缺陷。m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error。
 ## Recently Completed
 +- **单分子布局:输入叠工作室 + 检查器通高(用户指令)。** grid-template-areas 重排(零 DOM):左列 input(auto)+struct(1fr)上下叠,宽=原两栏之和(3D 视图显著加宽);右列 inspect 跨两行——实测左列组合 102→1008 vs 检查器 102→1008 上下沿像素级一致;标识卡仍在整页下方。<1150px 顺序堆叠 input→struct→inspect。.studio 内部 grid 单列化(inspect 半区早迁检查器卡,原 300px 固定轨成空轨)——**排雷:.studio 规则 CSS 重建时双份,count=2 断言后同改**。验收:全页目检(叠放/等高/视图加宽/标识全宽/零缺陷)五项过;390px 溢出 0;m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;零 page error。
 ## Recently Completed
