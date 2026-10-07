@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**概览重载假阳性修复 + 检查器截断完成(main 待提交):"项目概览偶发打开分子工作台" = 重载后总落单分子(模式不持久)——sessionStorage 持久 + 启动恢复(深链优先,try 守卫),实测两种模式重载均复原;表示区长值(SMILES/InChI/InChIKey/Murcko)168px 截断,复制读 textContent 完整值零损失。m0-m6 + 平台 Node 全绿。**
+**标识面板下移 + 三栏等高完成(main 待提交):截断废弃;identityPanel 经 dashSingle.after() 成整页宽卡(显示跟随 dash);三栏 stretch + 工作室卡 flex:1 → 实测 102/780 像素级等高;InChI 完整显示。排雷:模式持久化竞态(启动恢复早于存储就绪消耗 guarded 库恢复→导入重载 'restored' 消失)——恢复挂 compat.ready.then。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
 
+## Recently Completed
++- **标识下移 + 三栏等高(用户改选方案)。** ①截断规则移除;②initStudio 改 dashSingle.after(identityPanel):标识与表示成整页宽卡(card-head 新增),显示跟随 dash(single∧hasMol,他模式隐藏);③.dash 去 align-items:start + .dash-col-struct>.panel:first-child{flex:1}——三栏 top=102/bottom=780 像素级等高,检查器不再被长串撑爆,InChI 65 字符完整可见;④**排雷(上轮模式持久化的竞态)**:启动恢复早于项目存储就绪时切 search,guarded 库恢复被空跑消耗 → 导入重载后 'restored' 不现、m6 超时——恢复改挂 __platformCompat.ready.then(存储就绪后切模式)。验收:全页目检(等高/全宽/零缺陷);m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error(六套件一次假阴性=服务器未起,甄别重跑)。
 ## Recently Completed
 +- **概览重载假阳性 + 检查器长值(用户报告两件)。** ①复现锁定:概览模式下任何重载(手动刷新/项目导入显式 reload)都落回单分子——模式从不持久 = "项目概览有时打开分子工作台"的全部真相。修复:switchMode 写 sessionStorage 'webmm-mode';启动恢复(URL ?molecule/#hash 深链优先单分子,白名单校验,try 守卫私隐模式)。实测:概览重载→项目概览 ✓ 骨架探索重载→骨架探索 ✓。②检查器"表示"截断(用户两方案选截断):规范 SMILES/InChI/InChIKey/Murcko td max-width 168px + ellipsis + nowrap——**复制按钮读 textContent 为完整值,零信息损失**(实测 fullLen 65/截断生效/copyStillFull)。验收:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;零 page error。
 ## Recently Completed

@@ -448,3 +448,21 @@ item padding-block 0.64→0.72rem;nav gap 3→6px;顶部 margin 0.35→
    截断生效、copyStillFull)。
 
 验收:m0-m6 + 平台 Node 全绿;零 page error。
+
+
+## 标识面板整页下移 + 三栏等高(用户选定方案;已完成)
+
+1. **截断规则移除**(上轮方案废弃);
+2. **标识面板下移**:initStudio 改为 `dashSingle.after(identityPanel)`
+   ——整页宽卡片(新增 card-head"标识与表示"),显示跟随 dash
+   (single ∧ hasMol;其他模式隐藏);
+3. **三栏等高**:.dash 去 align-items:start(默认 stretch)+
+   .dash-col-struct > .panel:first-child{flex:1}(工作室卡填满结构列)。
+   实测三栏 top=102/bottom=780 **像素级等高**;InChI 65 字符完整显示。
+4. **排雷(模式持久化的竞态)**:启动恢复若在项目存储就绪前切到
+   search,会把 guarded 库恢复提前消耗(空库)→ 导入重载后 'restored'
+   消息消失、m6 超时。修复:恢复挂 `__platformCompat.ready.then`
+   (存储就绪后才切模式)。
+
+验收:全页截图目检(等高/全宽标识/无缺陷);m0-m6 + 平台 Node
+全绿;390px 溢出 0;零 page error。

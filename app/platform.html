@@ -949,7 +949,8 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 #sidenav::-webkit-scrollbar-thumb { border-color: var(--ll-navy); background: #33445c; }
 
 /* ===== content redesign: dashboards, cards, property bars ===== */
-.dash { display: grid; grid-template-columns: 290px minmax(0,1fr) 340px; gap: 0.9rem; align-items: start; margin-bottom: 1rem; }
+.dash { display: grid; grid-template-columns: 290px minmax(0,1fr) 340px; gap: 0.9rem; margin-bottom: 1rem; }
+.dash-col-struct > .panel:first-child { flex: 1; }
 .dash-card { background: #fff; border: 1px solid var(--ll-line); border-radius: 12px;
   box-shadow: 0 1px 2px rgba(16,24,40,.04); overflow: hidden; }
 .dash-col-struct { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
@@ -1307,11 +1308,6 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 #scaffoldTable td:nth-child(3), #scaffoldTable td:nth-child(4) { text-align: right; font-variant-numeric: tabular-nums; }
 #scaffoldStatus, #rgdStatus { display: inline-block; margin: 0.55rem 0 0.3rem; }
 #scaffoldPanel .hint, #rgdPanel .hint { margin-top: 0.55rem !important; }
-
-/* identity values can be very long (InChI/SMILES) — truncate; Copy uses full textContent */
-.studio-inspect td.value#smiles, .studio-inspect td.value#inchi,
-.studio-inspect td.value#inchikey, .studio-inspect td.value#murcko {
-  max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -1658,7 +1654,8 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
      
    </div>
 
-   <div class="panel">
+   <div class="panel" id="identityPanel">
+     <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg><b>标识与表示</b><span class="card-sub">规范 SMILES · InChI · InChIKey · Murcko 骨架</span></div>
      <table>
        <tr>
          <td class="key">名称</td>
@@ -6025,12 +6022,16 @@ function applyDashLayout() {
     q('dashStructBody').style.display = hasMol ? '' : 'none';
     q('propBars').style.display = hasMol ? '' : 'none';
     q('dashInspectBody').style.display = hasMol ? '' : 'none';
+    const idp = document.getElementById('identityPanel');
+    if (idp) idp.style.display = hasMol ? '' : 'none';
   } else {
     [...dashMoves].reverse().forEach(a => a.parent.insertBefore(a.el, a.next));
     q('dashSingle').style.display = 'none';
     q('dashStructBody').style.display = '';
     q('propBars').style.display = '';
     q('dashInspectBody').style.display = '';
+    const idp2 = document.getElementById('identityPanel');
+    if (idp2) idp2.style.display = 'none';
   }
 }
 
@@ -6055,22 +6056,28 @@ function studioTab(w) {
 }
 window.studioTab = studioTab;
 (function initStudio() {
-  const insp = document.querySelector('#output .studio-inspect');
   const smilesTd = document.getElementById('smiles');
   const idPanel = smilesTd ? smilesTd.closest('.panel') : null;
-  if (insp && idPanel) insp.appendChild(idPanel);
+  const dash = document.getElementById('dashSingle');
+  if (dash && idPanel) dash.after(idPanel);
 })();
 
 applyDashLayout();
-// reload should land where the user was (URL deep-links take precedence)
+// reload should land where the user was (URL deep-links take precedence).
+// Runs AFTER the project store is ready — switching to search early would
+// consume the guarded library restore before IndexedDB has the data.
 (function restoreMode() {
-  try {
-    const saved = sessionStorage.getItem('webmm-mode');
-    const url = new URL(location.href);
-    const deepLink = url.searchParams.has('molecule') || url.hash.length > 1;
-    if (saved && !deepLink && saved !== 'single' &&
-        ['project', 'batch', 'search', 'analog'].includes(saved)) switchMode(saved);
-  } catch (e) { /* storage unavailable */ }
+  const go = () => {
+    try {
+      const saved = sessionStorage.getItem('webmm-mode');
+      const url = new URL(location.href);
+      const deepLink = url.searchParams.has('molecule') || url.hash.length > 1;
+      if (saved && !deepLink && saved !== 'single' &&
+          ['project', 'batch', 'search', 'analog'].includes(saved)) switchMode(saved);
+    } catch (e) { /* storage unavailable */ }
+  };
+  if (window.__platformCompat && window.__platformCompat.ready) window.__platformCompat.ready.then(go);
+  else go();
 })();
 
 function syncSegMode() {
