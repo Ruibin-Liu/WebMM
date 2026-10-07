@@ -829,7 +829,7 @@ body { background: var(--ll-bg); margin: 0; }
   border-right: 1px solid var(--border);
 }
 .side-brand { font-weight: 800; font-size: 1.08rem; letter-spacing: -0.02em; color: var(--text);
-  text-decoration: none; padding: 0.1rem 0.6rem 0.95rem; }
+  text-decoration: none; padding: 0.1rem 0.4rem 0.95rem; }
 .side-brand span { color: var(--ll-accent); }
 .side-brand small { font-size: 0.62rem; font-weight: 600; color: #94a3b8; letter-spacing: .13em; text-transform: uppercase; margin-left: 0.1rem; }
 .side-brand:hover { color: var(--text); }
@@ -837,13 +837,12 @@ body { background: var(--ll-bg); margin: 0; }
 .side-item { display: flex; align-items: center; width: 100%;
   text-align: left; cursor: pointer;
   background: none; border: none; color: #334155; font: inherit; font-size: 0.92rem; font-weight: 500;
-  padding: 0.64rem 0.7rem; border-radius: 8px; position: relative;
+  padding: 0.64rem 0.5rem; border-radius: 8px;
   transition: background .15s, color .15s; }
 .side-nav { display: flex; flex-direction: column; gap: 3px; margin-top: 0.35rem; }
 .side-item:hover { background: #f1f5f9; color: var(--text); }
 .side-item.active { background: #eff6ff; color: var(--ll-accent-2); font-weight: 600; }
-.side-item.active::before { content: ""; position: absolute; left: -0.75rem; top: 50%; transform: translateY(-50%);
-  width: 3px; height: 16px; border-radius: 0 3px 3px 0; background: var(--ll-accent); }
+
 .side-foot { margin-top: auto; padding-top: 0.8rem; border-top: 1px solid var(--border);
   display: flex; flex-direction: column; gap: 0.5rem; }
 .side-status { display: flex; align-items: center; gap: 0.45rem; font-size: 0.7rem; color: var(--muted);

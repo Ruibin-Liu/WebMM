@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**B 方案落地(main 待提交):骨架探索独立成第五模式(先筛选后生成:项目概览/分子工作台/批量处理/相似性检索/骨架探索),药效团查询卡迁至结果卡后,探索器空态标明输入来源;analogMode 全管线(模式表/switchMode 五路/crumb);m6 items===5 + M3 段改 analog 模式。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
+**激活指示条移除 + 侧栏左边距收紧完成(main 待提交):"缩进感"根因 = 激活态左缘 3px 指示条(线在缘、药丸内缩 12px,激活项被读作缩进)——删除指示条(激活=药丸+蓝字);条目/品牌 padding 收紧后文字左缘 20px 与品牌同线。m6 30/30。**
 
+## Recently Completed
++- **激活指示条移除(用户硬刷新确认所见后定位)。** 三重实测(computed/3× 目检/概览面板量边)证明侧栏零缩进——缩进感来源锁定为激活态左缘指示条(3px 蓝线钉侧栏最左缘 + 药丸内缩,视觉上激活项像被缩进)。修复:.side-item.active::before 删除,激活=浅蓝药丸+蓝字加粗;条目水平 padding 0.7→0.5rem、品牌 0.6→0.4rem(文字左缘 20px 与品牌字同线,实测)。复检四项全过(零指示条/同线/无缩进观感/clean)。m6 30/30。
 ## Recently Completed
 +- **B 方案(用户三选一后选定)。** 概念摆正:筛库(相似性检索+药效团查询)与生成(骨架探索)分家。①analogMode 布尔 + 模式表(modeInputs/modeShown/MODE_SECTION/SECTION_LABEL)增 analog + switchMode 五路(data-mode/面包屑/tabAnalog active/analogPanel 显隐),该模式隐藏共享输入面板;②侧栏 tabAnalog 排相似性检索后(先筛后生的阅读顺序),导航 5 项 = 5 模式(等价性保持);③药效团查询卡 DOM 迁至 searchPanel 后 queryHistoryPanel 前(compareDocumentPosition 验证);④探索器空态注明输入=分子工作台当前分子;⑤m6:items===5、tabs 列表 +tabAnalog、M3 探索器段 switchMode('analog')。**排雷**:crumb 模式解析初漏 analog 分支(骨架探索模式显示"分子工作台");m1 一次假阴性 = /tmp/caff24.sdf 被清,按 tests/cdp/README 配方 RDKit 重生 24 原子后通过。验收:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error。
 ## Recently Completed
