@@ -55,8 +55,7 @@
    margin: 0;
    background: var(--bg);
    color: var(--text);
-   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-                Roboto, Helvetica, Arial, sans-serif;
+   font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
  }
 
  .container {
@@ -85,7 +84,7 @@
    color: var(--muted);
    margin-top: 0.5rem;
    font-size: 0.8rem;
-   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+   font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
  }
 
  /* Static guidance/caption prose — sans like the body (mono .version is for
@@ -249,7 +248,7 @@
    white-space: pre-wrap;
    word-wrap: break-word;
    font-size: 0.8rem;
-   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+   font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
  }
 
 .panel {
@@ -265,7 +264,7 @@ textarea {
   min-height: 110px;
   resize: vertical;
   padding: 0.65rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 0.9rem;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -777,7 +776,7 @@ td.key {
 }
 
 td.value {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   word-break: break-all;
 }
 
@@ -831,7 +830,7 @@ body { background: var(--ll-bg); margin: 0; }
 .side-brand { font-weight: 800; font-size: 1.08rem; letter-spacing: -0.02em; color: var(--text);
   text-decoration: none; padding: 0.1rem 0.5rem 0.95rem; }
 .side-brand span { color: var(--ll-accent); }
-.side-brand small { font-size: 0.62rem; font-weight: 600; color: #94a3b8; letter-spacing: .13em; text-transform: uppercase; margin-left: 0.1rem; }
+.side-brand small { font-size: 0.66rem; font-weight: 600; color: #94a3b8; margin-left: 0.1rem; }
 .side-brand:hover { color: var(--text); }
 .side-nav { display: flex; flex-direction: column; gap: 3px; }
 .side-item { display: flex; align-items: center; width: 100%;
@@ -1001,7 +1000,7 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 .ctl-group .action-btn.primary { background: var(--ll-accent); }
 
 .field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
-.field > .f-label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em; color: #64748b; text-transform: uppercase; }
+.field > .f-label { font-size: 0.75rem; font-weight: 600; color: #64748b; }
 .field input[type="text"], .field input[type="number"], .field select, .panel select {
   border: 1px solid #d5dde7; border-radius: 8px; padding: 0.45rem 0.6rem; font: inherit; font-size: 0.82rem;
   background: #fff; color: #1e293b; transition: border .14s, box-shadow .14s;
@@ -1029,7 +1028,7 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 
 /* table v2 */
 .panel table { font-size: 0.8rem; }
-.panel table th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.5rem 0.6rem; }
+.panel table th { font-size: 0.75rem; font-weight: 600; padding: 0.45rem 0.6rem; }
 .panel table td { padding: 0.42rem 0.6rem; }
 #props td.key, #moreProps td.key, #rules td.key, #alerts td.key { color: #64748b; }
 #props td.value, #moreProps td.value, #rules td.value, #alerts td.value { font-variant-numeric: tabular-nums; }
@@ -1163,7 +1162,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 .ctl-group .action-btn.primary { background: var(--ll-accent); }
 
 .field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
-.field > .f-label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em; color: #64748b; text-transform: uppercase; }
+.field > .f-label { font-size: 0.75rem; font-weight: 600; color: #64748b; }
 .field input[type="text"], .field input[type="number"], .field select, .panel select {
   border: 1px solid #d5dde7; border-radius: 8px; padding: 0.45rem 0.6rem; font: inherit; font-size: 0.82rem;
   background: #fff; color: #1e293b; transition: border .14s, box-shadow .14s;
@@ -1191,7 +1190,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 
 /* table v2 */
 .panel table { font-size: 0.8rem; }
-.panel table th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.5rem 0.6rem; }
+.panel table th { font-size: 0.75rem; font-weight: 600; padding: 0.45rem 0.6rem; }
 .panel table td { padding: 0.42rem 0.6rem; }
 #props td.key, #moreProps td.key, #rules td.key, #alerts td.key { color: #64748b; }
 #props td.value, #moreProps td.value, #rules td.value, #alerts td.value { font-variant-numeric: tabular-nums; }

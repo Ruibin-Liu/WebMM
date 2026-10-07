@@ -418,3 +418,18 @@ m6 30/30。
 item padding-block 0.64→0.72rem;nav gap 3→6px;顶部 margin 0.35→
 0.45rem。实测四条间隙均 6px;目检"呼吸充分、节奏均匀、对齐字号不
 受影响"。m6 30/30。
+
+
+## 排版转科学计算惯例(用户指令;已完成)
+
+1. **正文字体**:system-ui → `"Helvetica Neue", Helvetica, Arial,
+   "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif`
+   (MATLAB/Jupyter 一系 + 中文回退);
+2. **等宽栈**统一:`"SF Mono", SFMono-Regular, Consolas,
+   "Liberation Mono", Menlo, monospace`(Consolas 优先覆盖 Win);
+3. **去 SaaS 风微排版**:.f-label 与 .panel table th 的小号大写+宽字距
+   → 普通大小写 0.75rem/600(×2 处副本同改);品牌 PLATFORM 副标同。
+4. 实测:body=Helvetica Neue;标签/表头 transform:none/12px;目检
+   "RDKit/Jupyter 类工具视觉语言,中文字形清晰,混排协调"。
+
+验收:m0-m6 + 平台 Node 全绿;390px 溢出 0;零 page error。

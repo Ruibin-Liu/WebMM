@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**侧栏条目间距放宽完成(main 待提交):padding-block 0.72rem/gap 6px/顶距 0.45rem,实测四间隙均 6px;目检呼吸均匀、对齐字号不变。m6 30/30。**
+**排版转科学计算惯例完成(main 待提交):Helvetica Neue/Arial+中文回退正文栈;Consolas 系等宽;.f-label/表头去小号大写宽字距(SaaS 风)→ 普通大小写 0.75rem。目检"RDKit/Jupyter 类视觉语言"。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
 
+## Recently Completed
++- **排版科学计算化(用户指令"每页内部字号和字体用科学计算软件更常用的")。** ①正文:system-ui → Helvetica Neue/Helvetica/Arial + PingFang SC/Hiragino Sans GB/Microsoft YaHei 中文回退(MATLAB/Jupyter 一系);②等宽统一 "SF Mono"/Consolas/Liberation Mono/Menlo(Consolas 覆盖 Win);③去 SaaS 微排版:.f-label 与 .panel table th 的小号大写+宽字距(×2 CSS 副本)→ 普通大小写 0.75rem/600,品牌 PLATFORM 副标同。实测 body=Helvetica Neue、标签/表头 transform:none 12px;目检:"从营销 SaaS 转向科学计算工具,中文字形清晰,拉丁中文混排协调"。m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error。
 ## Recently Completed
 +- **侧栏间距放宽(用户指出条目挤在一起)。** .side-item padding-block 0.64→0.72rem;.side-nav gap 3→6px、margin-top 0.35→0.45rem。实测相邻间隙 [6,6,6,6];3× 目检:呼吸充分、垂直节奏均匀、文本对齐/字号/字重不受影响、激活态无扰动。m6 30/30。
 ## Recently Completed
