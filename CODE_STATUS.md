@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**标识面板下移 + 三栏等高完成(main 待提交):截断废弃;identityPanel 经 dashSingle.after() 成整页宽卡(显示跟随 dash);三栏 stretch + 工作室卡 flex:1 → 实测 102/780 像素级等高;InChI 完整显示。排雷:模式持久化竞态(启动恢复早于存储就绪消耗 guarded 库恢复→导入重载 'restored' 消失)——恢复挂 compat.ready.then。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
+**单分子布局重排完成(main 待提交):grid-template-areas "input inspect"/"struct inspect"——输入卡叠工作室(左,宽=原两栏和,3D 视图 ~700px),检查器右列通高(实测 102/1008 与左列组合像素级对齐);窄屏顺序堆叠;.studio 单列化(300px 空轨废,双份规则同改)。全页目检五项过;390px 溢出 0;m0-m6 + 平台 Node 全绿。**
 
+## Recently Completed
++- **单分子布局:输入叠工作室 + 检查器通高(用户指令)。** grid-template-areas 重排(零 DOM):左列 input(auto)+struct(1fr)上下叠,宽=原两栏之和(3D 视图显著加宽);右列 inspect 跨两行——实测左列组合 102→1008 vs 检查器 102→1008 上下沿像素级一致;标识卡仍在整页下方。<1150px 顺序堆叠 input→struct→inspect。.studio 内部 grid 单列化(inspect 半区早迁检查器卡,原 300px 固定轨成空轨)——**排雷:.studio 规则 CSS 重建时双份,count=2 断言后同改**。验收:全页目检(叠放/等高/视图加宽/标识全宽/零缺陷)五项过;390px 溢出 0;m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;零 page error。
 ## Recently Completed
 +- **标识下移 + 三栏等高(用户改选方案)。** ①截断规则移除;②initStudio 改 dashSingle.after(identityPanel):标识与表示成整页宽卡(card-head 新增),显示跟随 dash(single∧hasMol,他模式隐藏);③.dash 去 align-items:start + .dash-col-struct>.panel:first-child{flex:1}——三栏 top=102/bottom=780 像素级等高,检查器不再被长串撑爆,InChI 65 字符完整可见;④**排雷(上轮模式持久化的竞态)**:启动恢复早于项目存储就绪时切 search,guarded 库恢复被空跑消耗 → 导入重载后 'restored' 不现、m6 超时——恢复改挂 __platformCompat.ready.then(存储就绪后切模式)。验收:全页目检(等高/全宽/零缺陷);m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error(六套件一次假阴性=服务器未起,甄别重跑)。
 ## Recently Completed

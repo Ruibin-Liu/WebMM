@@ -466,3 +466,23 @@ item padding-block 0.64→0.72rem;nav gap 3→6px;顶部 margin 0.35→
 
 验收:全页截图目检(等高/全宽标识/无缺陷);m0-m6 + 平台 Node
 全绿;390px 溢出 0;零 page error。
+
+
+## 单分子布局:输入叠工作室 + 检查器通高(用户指令;已完成)
+
+grid-template-areas 重排(零 DOM 改动):
+
+```
+"input  inspect"
+"struct inspect"
+```
+
+- 左列:输入卡(上,auto)+ 工作室(下,1fr)——宽度 = 原两栏之和
+  (≈700px,3D 视图显著变宽);
+- 右列:检查器跨两行通高——实测左列组合 102→1008 与检查器
+  102→1008 **上下沿像素级一致**;
+- 窄屏(<1150px)顺序堆叠 input→struct→inspect;.studio 内部单列化
+  (inspect 半区早已迁至检查器卡,原 300px 空轨废除——双份规则同改)。
+
+验收:全页目检五项全过;390px 溢出 0;m0-m6 + 平台 Node 全绿;
+零 page error。排雷:.studio 规则重建时双份(count=2 断言)。

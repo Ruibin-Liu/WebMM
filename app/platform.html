@@ -949,7 +949,13 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 #sidenav::-webkit-scrollbar-thumb { border-color: var(--ll-navy); background: #33445c; }
 
 /* ===== content redesign: dashboards, cards, property bars ===== */
-.dash { display: grid; grid-template-columns: 290px minmax(0,1fr) 340px; gap: 0.9rem; margin-bottom: 1rem; }
+.dash { display: grid; grid-template-columns: minmax(0,1fr) 340px;
+  grid-template-rows: auto minmax(0,1fr);
+  grid-template-areas: "input inspect" "struct inspect";
+  gap: 0.9rem; margin-bottom: 1rem; }
+.dash-col-input { grid-area: input; }
+.dash-col-struct { grid-area: struct; }
+.dash-col-inspect { grid-area: inspect; }
 .dash-col-struct > .panel:first-child { flex: 1; }
 .dash-card { background: #fff; border: 1px solid var(--ll-line); border-radius: 12px;
   box-shadow: 0 1px 2px rgba(16,24,40,.04); overflow: hidden; }
@@ -975,7 +981,8 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 .filter-strip { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;
   padding: 0.5rem 0.7rem; margin: 0.7rem 0; background: #f8fafc; border: 1px dashed #d4dde8; border-radius: 8px; }
 @media (max-width: 1150px) {
-  .dash { grid-template-columns: 1fr; }
+  .dash { grid-template-columns: 1fr; grid-template-rows: none;
+    grid-template-areas: "input" "struct" "inspect"; }
   .dash-search-row { grid-template-columns: 1fr; }
 }
 
@@ -1070,7 +1077,7 @@ body[data-mode="batch"] #input {
 body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-accent); border-style: solid; }
 
 /* ===== molecule studio ===== */
-.studio { align-items: stretch; grid-template-columns: minmax(0, 1fr) 300px; gap: 0; }
+.studio { align-items: stretch; grid-template-columns: minmax(0, 1fr); gap: 0; }
 .studio-main { display: flex; flex-direction: column; min-width: 0; }
 .studio-head { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
   padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--ll-line); background: #f8fafc; border-radius: 12px 12px 0 0; }
@@ -1232,7 +1239,7 @@ body[data-mode="batch"] #input {
 body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-accent); border-style: solid; }
 
 /* ===== molecule studio ===== */
-.studio { align-items: stretch; grid-template-columns: minmax(0, 1fr) 300px; gap: 0; }
+.studio { align-items: stretch; grid-template-columns: minmax(0, 1fr); gap: 0; }
 .studio-main { display: flex; flex-direction: column; min-width: 0; }
 .studio-head { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
   padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--ll-line); background: #f8fafc; border-radius: 12px 12px 0 0; }
