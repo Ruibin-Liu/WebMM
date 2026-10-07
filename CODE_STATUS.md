@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**排版转科学计算惯例完成(main 待提交):Helvetica Neue/Arial+中文回退正文栈;Consolas 系等宽;.f-label/表头去小号大写宽字距(SaaS 风)→ 普通大小写 0.75rem。目检"RDKit/Jupyter 类视觉语言"。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
+**概览重载假阳性修复 + 检查器截断完成(main 待提交):"项目概览偶发打开分子工作台" = 重载后总落单分子(模式不持久)——sessionStorage 持久 + 启动恢复(深链优先,try 守卫),实测两种模式重载均复原;表示区长值(SMILES/InChI/InChIKey/Murcko)168px 截断,复制读 textContent 完整值零损失。m0-m6 + 平台 Node 全绿。**
 
+## Recently Completed
++- **概览重载假阳性 + 检查器长值(用户报告两件)。** ①复现锁定:概览模式下任何重载(手动刷新/项目导入显式 reload)都落回单分子——模式从不持久 = "项目概览有时打开分子工作台"的全部真相。修复:switchMode 写 sessionStorage 'webmm-mode';启动恢复(URL ?molecule/#hash 深链优先单分子,白名单校验,try 守卫私隐模式)。实测:概览重载→项目概览 ✓ 骨架探索重载→骨架探索 ✓。②检查器"表示"截断(用户两方案选截断):规范 SMILES/InChI/InChIKey/Murcko td max-width 168px + ellipsis + nowrap——**复制按钮读 textContent 为完整值,零信息损失**(实测 fullLen 65/截断生效/copyStillFull)。验收:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;零 page error。
 ## Recently Completed
 +- **排版科学计算化(用户指令"每页内部字号和字体用科学计算软件更常用的")。** ①正文:system-ui → Helvetica Neue/Helvetica/Arial + PingFang SC/Hiragino Sans GB/Microsoft YaHei 中文回退(MATLAB/Jupyter 一系);②等宽统一 "SF Mono"/Consolas/Liberation Mono/Menlo(Consolas 覆盖 Win);③去 SaaS 微排版:.f-label 与 .panel table th 的小号大写+宽字距(×2 CSS 副本)→ 普通大小写 0.75rem/600,品牌 PLATFORM 副标同。实测 body=Helvetica Neue、标签/表头 transform:none 12px;目检:"从营销 SaaS 转向科学计算工具,中文字形清晰,拉丁中文混排协调"。m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error。
 ## Recently Completed

@@ -433,3 +433,18 @@ item padding-block 0.64→0.72rem;nav gap 3→6px;顶部 margin 0.35→
    "RDKit/Jupyter 类工具视觉语言,中文字形清晰,混排协调"。
 
 验收:m0-m6 + 平台 Node 全绿;390px 溢出 0;零 page error。
+
+
+## 概览"偶发打开工作台"修复 + 检查器长值截断(用户报告;已完成)
+
+1. **复现锁定**:概览模式下**任何重载**(手动刷新/项目导入后的显式
+   reload)都落回单分子模式——模式从不持久,即用户所见"项目概览有时
+   打开分子工作台"。修复:switchMode 写 sessionStorage('webmm-mode');
+   启动恢复(URL 深链 ?molecule/#hash 优先单分子;非法值拒绝;
+   try 守卫私隐模式)。实测:概览重载→项目概览,骨架探索重载→骨架探索。
+2. **检查器"表示"长值截断**(选截断方案,弃整页下移方案):规范
+   SMILES/InChI/InChIKey/Murcko 单元格 max-width 168px + ellipsis;
+   复制按钮读 textContent = **完整值不受影响**(实测 fullLen 65、
+   截断生效、copyStillFull)。
+
+验收:m0-m6 + 平台 Node 全绿;零 page error。

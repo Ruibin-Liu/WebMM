@@ -1307,6 +1307,11 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 #scaffoldTable td:nth-child(3), #scaffoldTable td:nth-child(4) { text-align: right; font-variant-numeric: tabular-nums; }
 #scaffoldStatus, #rgdStatus { display: inline-block; margin: 0.55rem 0 0.3rem; }
 #scaffoldPanel .hint, #rgdPanel .hint { margin-top: 0.55rem !important; }
+
+/* identity values can be very long (InChI/SMILES) — truncate; Copy uses full textContent */
+.studio-inspect td.value#smiles, .studio-inspect td.value#inchi,
+.studio-inspect td.value#inchikey, .studio-inspect td.value#murcko {
+  max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -6057,6 +6062,16 @@ window.studioTab = studioTab;
 })();
 
 applyDashLayout();
+// reload should land where the user was (URL deep-links take precedence)
+(function restoreMode() {
+  try {
+    const saved = sessionStorage.getItem('webmm-mode');
+    const url = new URL(location.href);
+    const deepLink = url.searchParams.has('molecule') || url.hash.length > 1;
+    if (saved && !deepLink && saved !== 'single' &&
+        ['project', 'batch', 'search', 'analog'].includes(saved)) switchMode(saved);
+  } catch (e) { /* storage unavailable */ }
+})();
 
 function syncSegMode() {
   const v = document.getElementById('searchMode').value;
@@ -6156,6 +6171,7 @@ function switchMode(m) {
   syncShellChrome();
   applyDashLayout();
   document.body.dataset.mode = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : analogMode ? 'analog' : 'single';
+  try { sessionStorage.setItem('webmm-mode', m); } catch (e) { /* private mode */ }
   document.getElementById('batchBar').style.display = batchMode ? 'block' : 'none';
   document.getElementById('searchBar').style.display = searchMode ? 'block' : 'none';
   document.getElementById('output').style.display = (single && modeShown.single) ? 'block' : 'none';
