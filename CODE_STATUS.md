@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**激活指示条移除 + 侧栏左边距收紧完成(main 待提交):"缩进感"根因 = 激活态左缘 3px 指示条(线在缘、药丸内缩 12px,激活项被读作缩进)——删除指示条(激活=药丸+蓝字);条目/品牌 padding 收紧后文字左缘 20px 与品牌同线。m6 30/30。**
+**侧栏左缘像素级对齐完成(main 待提交):四类文本(品牌/条目/链接/注记)左缘 18.4/20/17.6/17.6 → 统一 20.0px(实测);3× 目检零可检偏移。m6 30/30。**
 
+## Recently Completed
++- **侧栏左缘像素级对齐(用户指出"还有差距")。** 亚像素测量坐实差距:品牌字 18.4px/条目 20px/链接与注记 17.6px(四条不齐左缘,最大差 2.4px——上轮只对齐了品牌与条目,漏了页脚两族)。修复:品牌 padding-left 0.5rem、.side-links/.side-note padding 0.5rem——四类文本实测全部 = 20.0px;3× 目检"pixel-perfect clean,零可检偏移(含亚像素)"。m6 30/30。
 ## Recently Completed
 +- **激活指示条移除(用户硬刷新确认所见后定位)。** 三重实测(computed/3× 目检/概览面板量边)证明侧栏零缩进——缩进感来源锁定为激活态左缘指示条(3px 蓝线钉侧栏最左缘 + 药丸内缩,视觉上激活项像被缩进)。修复:.side-item.active::before 删除,激活=浅蓝药丸+蓝字加粗;条目水平 padding 0.7→0.5rem、品牌 0.6→0.4rem(文字左缘 20px 与品牌字同线,实测)。复检四项全过(零指示条/同线/无缩进观感/clean)。m6 30/30。
 ## Recently Completed
