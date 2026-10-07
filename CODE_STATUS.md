@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**Stepper 移除完成(main 待提交):四步流程条不必常驻(点击目标与侧栏重复的装饰)——markup/JS 同步/CSS 全清;m6 三断言改写(removed 守卫 + 侧栏 tab 点击);滚动无缝、390px 溢出 0、m6 30/30。**
+**侧栏终极简化完成(main 待提交):分组概念整体删除——六项平铺(同字号/零缩进/均一间距),激活药丸不变;m6 30/30;390px 溢出 0。教训:用户反复否定同一元素的多种编码时,应删概念而非换画法。**
 
+## Recently Completed
++- **侧栏平铺(用户三回否定分组渲染)。** 判定:工作区/发现的分组与用户心智模型不匹配,缩进/字号/细线三种编码皆失败。执行预留方案:删两个组标签;六项平铺(0.92rem/零缩进/gap 3px/padding 0.64rem/激活药丸+左缘指示条不变);CSS 清理。m6 零改动(side-item 契约未动)30/30;390px 溢出 0;放大目检四项全过(零缩进/均一/药丸清晰/无残留)。**教训存档**:反复否定同一元素的多种视觉编码 ⟹ 删除该元素承载的概念(分组),而非换第三种画法。
 ## Recently Completed
 +- **Stepper 移除(用户质疑常驻必要性)。** 判定:纯 LigandLab 模仿残留,导航价值与侧栏完全冗余。移除 #stepperBar markup、syncShellChrome 的 stepper 分支与 stepGo、全部相关 CSS(含窄屏媒体引用)。m6 三断言改写:shell 检查含 stepperGone 守卫;"step1 点击回 single"改"侧栏 tabSingle 点击回 single"。验证:滚动后 topbar 0..46 sticky 无缝;390px 溢出 0;m6 30/30;零 page error。
 ## Recently Completed

@@ -834,15 +834,12 @@ body { background: var(--ll-bg); margin: 0; }
 .side-brand small { font-size: 0.62rem; font-weight: 600; color: #94a3b8; letter-spacing: .13em; text-transform: uppercase; margin-left: 0.1rem; }
 .side-brand:hover { color: var(--text); }
 .side-nav { display: flex; flex-direction: column; gap: 3px; }
-.side-group { font-size: 0.7rem; font-weight: 500; letter-spacing: .06em;
-  color: #94a3b8; padding: 1.4rem 0.65rem 0.34rem; display: flex; align-items: center; gap: 0.5rem; }
-.side-group::after { content: ""; flex: 1; height: 1px; background: #e6ebf1; border-radius: 1px; }
-.side-group:first-child { padding-top: 0.1rem; }
-.side-item { display: flex; align-items: center; width: calc(100% - 1.15rem); margin-left: 1.15rem;
+.side-item { display: flex; align-items: center; width: 100%;
   text-align: left; cursor: pointer;
-  background: none; border: none; color: #334155; font: inherit; font-size: 0.95rem; font-weight: 500;
-  padding: 0.58rem 0.66rem; border-radius: 8px; position: relative;
+  background: none; border: none; color: #334155; font: inherit; font-size: 0.92rem; font-weight: 500;
+  padding: 0.64rem 0.7rem; border-radius: 8px; position: relative;
   transition: background .15s, color .15s; }
+.side-nav { display: flex; flex-direction: column; gap: 3px; margin-top: 0.35rem; }
 .side-item:hover { background: #f1f5f9; color: var(--text); }
 .side-item.active { background: #eff6ff; color: var(--ll-accent-2); font-weight: 600; }
 .side-item.active::before { content: ""; position: absolute; left: -0.75rem; top: 50%; transform: translateY(-50%);
@@ -1317,7 +1314,6 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 <aside class="sidenav" id="sidenav">
   <a class="side-brand" href="#" onclick="window.scrollTo({top:0}); return false;" title="WebMM Platform">Web<span>MM</span> <small>Platform</small></a>
   <nav class="side-nav" aria-label="Platform sections">
-    <span class="side-group">工作区</span>
     <button class="side-item" id="tabProject" onclick="switchMode('project')" title="项目概览 — 库/工作集统计、项目导入导出">
       <span class="side-label">项目概览</span>
     </button>
@@ -1327,7 +1323,6 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     <button class="side-item mode-tab" id="tabBatch" role="tab" aria-selected="false" onclick="switchMode('batch')" title="批量处理 — 描述符、规则、QED/PAINS、导出">
       <span class="side-label">批量处理</span>
     </button>
-    <span class="side-group">发现</span>
     <button class="side-item mode-tab" id="tabSearch" role="tab" aria-selected="false" onclick="switchMode('search')" title="相似性检索 — sim/sub/shape×2、阈值、漏斗、甄别">
       <span class="side-label">相似性检索</span>
     </button>
