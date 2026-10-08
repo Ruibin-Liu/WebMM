@@ -1328,6 +1328,16 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 .studio-adv[open] > summary::after { color: var(--ll-accent-2); }
 .vtabs { height: 34px; align-items: center; }
 .studio-head { min-height: 50px; }
+
+/* export menu: download vs clipboard groups */
+.exp-body { flex-direction: column; align-items: stretch; min-width: 210px; padding: 0.45rem; }
+.exp-group { display: flex; flex-direction: column; }
+.exp-glabel { font-size: 0.68rem; font-weight: 600; color: #94a3b8; padding: 0.25rem 0.55rem 0.3rem; }
+.exp-item { all: unset; cursor: pointer; font: inherit; font-size: 0.8rem; color: #334155;
+  padding: 0.42rem 0.55rem; border-radius: 7px; display: flex; align-items: center; }
+.exp-item:hover { background: #eff6ff; color: var(--ll-accent-2); }
+.exp-item:disabled { color: #b6c2d0; cursor: default; background: none; }
+.exp-divider { height: 1px; background: var(--ll-line); margin: 0.4rem 0.25rem; }
 </style>
 </head>
 <body>
@@ -1610,21 +1620,28 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
            </details>
            <details class="studio-adv">
              <summary title="结构导出">导出</summary>
-             <div class="adv-body">
-               <button id="btnSdf" class="action-btn export" onclick="exportSDF3D()" disabled title="Export 3D structure as SDF">3D SDF</button>
-               <button id="btnXyz" class="action-btn export" onclick="exportXYZ()" disabled title="Export 3D coordinates as XYZ">XYZ</button>
-               <button id="btnPng" class="action-btn export" onclick="exportPNG3D()" disabled title="Export the 3D view as PNG">3D PNG</button>
-               <button id="btn2dSvg" class="action-btn export" onclick="downloadSVG()" title="Download 2D structure as SVG">2D SVG</button>
-               <button id="btn2dPng" class="action-btn export" onclick="downloadPNG()" title="Download 2D structure as PNG">2D PNG</button>
-               <button id="btn2dMol" class="action-btn export" onclick="downloadMOL()" title="Download 2D molfile as MOL">2D MOL</button>
-               <button id="btn2dSdf" class="action-btn export" onclick="downloadSDF()" title="Download the displayed record as SDF">记录 SDF</button>
-               <button id="btn2dLink" class="action-btn export" onclick="copyShareLink()" title="Copy a URL that re-opens this molecule">链接</button>
-               <button id="btn2dCopy" class="action-btn export" onclick="copySVG()" title="Copy the 2D SVG markup">SVG 源</button>
-               <span style="display:none;">
-                 <button id="btn2dMolC" onclick="copyText(sourceMolblock, this)"></button><button id="btn2dSdfC" onclick="copyText(sourceMolblock + '84928492', this)"></button><button id="btn2dPngC" onclick="copyPNG(this)"></button>
-               </span>
-             </div>
-           </details>
+            <div class="adv-body exp-body">
+              <div class="exp-group">
+                <span class="exp-glabel">下载</span>
+                <button id="btnSdf" class="exp-item" onclick="exportSDF3D()" disabled title="下载 3D 结构(SDF)">3D 结构 · SDF</button>
+                <button id="btnXyz" class="exp-item" onclick="exportXYZ()" disabled title="下载 3D 坐标(XYZ)">3D 坐标 · XYZ</button>
+                <button id="btnPng" class="exp-item" onclick="exportPNG3D()" disabled title="下载 3D 视图(PNG)">3D 视图 · PNG</button>
+                <button id="btn2dSvg" class="exp-item" onclick="downloadSVG()" title="下载 2D 结构(SVG)">2D 结构 · SVG</button>
+                <button id="btn2dPng" class="exp-item" onclick="downloadPNG()" title="下载 2D 结构(PNG)">2D 结构 · PNG</button>
+                <button id="btn2dMol" class="exp-item" onclick="downloadMOL()" title="下载 2D 结构(MOL)">2D 结构 · MOL</button>
+                <button id="btn2dSdf" class="exp-item" onclick="downloadSDF()" title="下载当前记录(SDF)">当前记录 · SDF</button>
+              </div>
+              <div class="exp-divider"></div>
+              <div class="exp-group">
+                <span class="exp-glabel">复制到剪贴板</span>
+                <button id="btn2dLink" class="exp-item" onclick="copyShareLink()" title="复制可重新打开该分子的 URL">分享链接</button>
+                <button id="btn2dCopy" class="exp-item" onclick="copySVG()" title="复制 2D SVG 源码">SVG 源码</button>
+                <button id="btn2dMolC" class="exp-item" onclick="copyText(sourceMolblock, this)" title="复制 MOL 源码">MOL 源码</button>
+                <button id="btn2dSdfC" class="exp-item" onclick="copyText(sourceMolblock + '$$$$', this)" title="复制 SDF 文本">SDF 文本</button>
+                <button id="btn2dPngC" class="exp-item" onclick="copyPNG(this)" title="复制 3D 视图为 PNG 位图">3D 视图图片</button>
+              </div>
+            </div>
+          </details>
          </div>
        </div>
        <div class="vpane" id="vpane3d">

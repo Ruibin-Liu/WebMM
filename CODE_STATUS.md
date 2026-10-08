@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**工作室工具栏统一 + 表示标题删除完成(main 待提交):全控件 34px/ghost/▾ 箭头单行;两个对齐真凶(16px 宽差换行 + 全局 details margin-top:0.75rem 遗留)排除;实测 tops/heights 唯一。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
+**导出菜单重设计完成(main 待提交):两组(下载 7 项 / 复制到剪贴板 5 项)+ 组标签 + 分隔线 + 菜单行样式;三枚隐藏复制变体显性化;视觉验证(DeepSeek-V4.1-Flash 读图,zai 额度耗尽)抓到「3D 视图·PNG」两组重名→复制组改名去重。m0-m6 + 平台 Node 全绿。**
 
+## Recently Completed
++- **导出菜单:下载 vs 复制分组设计(用户要求"设计一下")。** 重构 .exp-body 为两组菜单行:「下载」3D 结构·SDF/3D 坐标·XYZ/3D 视图·PNG/2D 结构·SVG/PGM/MOL/当前记录·SDF;「复制到剪贴板」分享链接/SVG 源码/MOL 源码/SDF 文本/3D 视图图片——前轮隐藏的 btn2dMolC/SdfC/PngC 复制变体全部显性化正名;组标签小灰字+分隔线+悬停行高亮+禁用态灰。**视觉验证工具链切换**:describe_image 的 zai-coding-plan 5 小时额度耗尽(429),用户提供 key 后经 DeepSeek-V4.1-Flash(支持图像输入)读图核验——两组/标签/分隔线/可读性/无裁剪全过,并抓到真缺陷:「3D 视图·PNG」两组重名(出口不同名字同,读作冗余)→ 复制组改名「3D 视图图片」。弹层 12 项较长遮挡 3D 视图为下拉固有行为,接受。验收:m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;条目清单程序化核对;零 page error。
 ## Recently Completed
 +- **工具栏统一 + 表示删除(用户指出高级/导出没对齐 + 整行需重设计)。** ①统一度量:.studio-actions 内 buttons/select/summary 一律 height 34px/0.8rem/8px 圆角/ghost(summary 带 ▾),.vtabs 34px;②"没对齐"双真凶:宽度差 16px 致两个 details 换行(头部 padding 0.55rem/select 0.35rem/vtab 0.7rem/gap 收紧 → 667.6<680.4 单行),同行仍低 6px = workbench 全局 `details{margin-top:.75rem}` 命中(样式表规则级联匹配定位)→ .studio-adv margin-top:0(×2 副本);③"表示"小标题删(标识卡头已述)。实测 tops=[476]/heights=[34] 唯一、vtabs 同线;目检"单行均一专业"。m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error。
 ## Recently Completed
