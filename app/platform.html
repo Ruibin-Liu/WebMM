@@ -1079,18 +1079,19 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-acc
 /* ===== molecule studio ===== */
 .studio { align-items: stretch; grid-template-columns: minmax(0, 1fr); gap: 0; }
 .studio-main { display: flex; flex-direction: column; min-width: 0; }
-.studio-head { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
-  padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--ll-line); background: #f8fafc; border-radius: 12px 12px 0 0; }
+.studio-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.55rem 0.55rem; border-bottom: 1px solid var(--ll-line); background: #f8fafc; border-radius: 12px 12px 0 0; }
 .vtabs { display: inline-flex; background: #e8edf3; border-radius: 9px; padding: 3px; gap: 2px; }
 .vtab { border: none; background: transparent; font: inherit; font-size: 0.78rem; font-weight: 500;
-  color: #64748b; padding: 0.3rem 0.85rem; border-radius: 7px; cursor: pointer; }
+  color: #64748b; padding: 0.3rem 0.7rem; border-radius: 7px; cursor: pointer; }
 .vtab.on { background: #fff; color: var(--ll-accent-2); box-shadow: 0 1px 2px rgba(16,24,40,.1); font-weight: 600; }
-.studio-actions { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; margin-left: auto; }
+.studio-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin-left: auto; }
 .studio-actions .action-btn { padding: 0.4rem 0.75rem; }
 .engine-sel { border: 1px solid #d5dde7; border-radius: 8px; padding: 0.35rem 0.45rem; font-size: 0.8rem; background: #fff; }
-.studio-adv { position: relative; }
-.studio-adv > summary { list-style: none; cursor: pointer; font-size: 0.78rem; color: #64748b;
-  border: 1px solid #d5dde7; border-radius: 8px; padding: 0.4rem 0.7rem; background: #fff; }
+.studio-adv { position: relative; margin-top: 0; }
+.studio-adv > summary { list-style: none; cursor: pointer; font-size: 0.8rem; color: #334155;
+  border: 1px solid #d5dde7; border-radius: 8px; padding: 0 0.85rem; background: #fff;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; }
 .studio-adv > summary::-webkit-details-marker { display: none; }
 .studio-adv[open] > summary { color: var(--ll-accent-2); border-color: #bfdbfe; }
 .adv-body { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; background: #fff;
@@ -1241,18 +1242,19 @@ body[data-mode="batch"] #input:focus { outline: none; border-color: var(--ll-acc
 /* ===== molecule studio ===== */
 .studio { align-items: stretch; grid-template-columns: minmax(0, 1fr); gap: 0; }
 .studio-main { display: flex; flex-direction: column; min-width: 0; }
-.studio-head { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
-  padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--ll-line); background: #f8fafc; border-radius: 12px 12px 0 0; }
+.studio-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.55rem 0.55rem; border-bottom: 1px solid var(--ll-line); background: #f8fafc; border-radius: 12px 12px 0 0; }
 .vtabs { display: inline-flex; background: #e8edf3; border-radius: 9px; padding: 3px; gap: 2px; }
 .vtab { border: none; background: transparent; font: inherit; font-size: 0.78rem; font-weight: 500;
-  color: #64748b; padding: 0.3rem 0.85rem; border-radius: 7px; cursor: pointer; }
+  color: #64748b; padding: 0.3rem 0.7rem; border-radius: 7px; cursor: pointer; }
 .vtab.on { background: #fff; color: var(--ll-accent-2); box-shadow: 0 1px 2px rgba(16,24,40,.1); font-weight: 600; }
-.studio-actions { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; margin-left: auto; }
+.studio-actions { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin-left: auto; }
 .studio-actions .action-btn { padding: 0.4rem 0.75rem; }
 .engine-sel { border: 1px solid #d5dde7; border-radius: 8px; padding: 0.35rem 0.45rem; font-size: 0.8rem; background: #fff; }
-.studio-adv { position: relative; }
-.studio-adv > summary { list-style: none; cursor: pointer; font-size: 0.78rem; color: #64748b;
-  border: 1px solid #d5dde7; border-radius: 8px; padding: 0.4rem 0.7rem; background: #fff; }
+.studio-adv { position: relative; margin-top: 0; }
+.studio-adv > summary { list-style: none; cursor: pointer; font-size: 0.8rem; color: #334155;
+  border: 1px solid #d5dde7; border-radius: 8px; padding: 0 0.85rem; background: #fff;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; }
 .studio-adv > summary::-webkit-details-marker { display: none; }
 .studio-adv[open] > summary { color: var(--ll-accent-2); border-color: #bfdbfe; }
 .adv-body { position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; background: #fff;
@@ -1315,6 +1317,17 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 #scaffoldTable td:nth-child(3), #scaffoldTable td:nth-child(4) { text-align: right; font-variant-numeric: tabular-nums; }
 #scaffoldStatus, #rgdStatus { display: inline-block; margin: 0.55rem 0 0.3rem; }
 #scaffoldPanel .hint, #rgdPanel .hint { margin-top: 0.55rem !important; }
+
+/* studio toolbar: one metric for every control */
+.studio-actions .action-btn,
+.studio-actions select { height: 34px; padding: 0 0.35rem; font-size: 0.8rem; border-radius: 8px; }
+.studio-adv > summary { height: 34px; padding: 0 0.68rem; font-size: 0.8rem; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.32rem; }
+.studio-actions .action-btn svg { flex: 0 0 14px; }
+.studio-adv > summary::after { content: "▾"; font-size: 0.62rem; color: #94a3b8; }
+.studio-adv[open] > summary::after { color: var(--ll-accent-2); }
+.vtabs { height: 34px; align-items: center; }
+.studio-head { min-height: 50px; }
 </style>
 </head>
 <body>
@@ -1670,7 +1683,6 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        </tr>
      </table>
 
-     <strong>表示</strong>
     <table>
       <tr>
         <td class="key">分子式</td>

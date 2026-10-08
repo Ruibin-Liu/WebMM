@@ -501,3 +501,17 @@ grid-template-areas 重排(零 DOM 改动):
    目检无缺陷("production-ready")。
 
 m0-m6 + 平台 Node 全绿;390px 溢出 0;零 page error。
+
+
+## 工具栏统一 + "表示"标题删除(用户指出;已完成)
+
+1. **统一控件度量**:buttons/select/summary 一律 34px 高、同字号
+   0.8rem、同圆角、ghost 风格;summary 加 ▾ 小箭头;vtabs 34px。
+2. **两个"没对齐"的真凶**(先后两个):①宽度差 16px 致 details 换行
+   (收紧 padding/gap/vtab 内距后 667.6 < 680.4 单行放下);②同行再
+   低 6px = workbench 遗留全局 `details { margin-top: 0.75rem }` 命中
+   高级/导出——.studio-adv margin-top:0 覆写(×2 副本)。
+3. **"表示"小标题删除**(标识卡已有卡头)。
+
+实测:tops=[476] 唯一、heights=[34] 唯一、vtabs 同线 ONE_LINE=true;
+目检"单行、均一、专业"。m0-m6 + 平台 Node 全绿;390px 溢出 0。

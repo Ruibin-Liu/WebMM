@@ -4,8 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**细节轮完成(main 待提交):Clear/History 漏译补上(行内容锚定,`>X<` 锚点对带缩进文本第三次失配——教训固化);textarea 160px;检查器底部空白判为标准 dashboard 行为;构象图表/工具栏单行等目检通过。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
+**工作室工具栏统一 + 表示标题删除完成(main 待提交):全控件 34px/ghost/▾ 箭头单行;两个对齐真凶(16px 宽差换行 + 全局 details margin-top:0.75rem 遗留)排除;实测 tops/heights 唯一。m0-m6 + 平台 Node 全绿;390px 溢出 0。**
 
+## Recently Completed
++- **工具栏统一 + 表示删除(用户指出高级/导出没对齐 + 整行需重设计)。** ①统一度量:.studio-actions 内 buttons/select/summary 一律 height 34px/0.8rem/8px 圆角/ghost(summary 带 ▾),.vtabs 34px;②"没对齐"双真凶:宽度差 16px 致两个 details 换行(头部 padding 0.55rem/select 0.35rem/vtab 0.7rem/gap 收紧 → 667.6<680.4 单行),同行仍低 6px = workbench 全局 `details{margin-top:.75rem}` 命中(样式表规则级联匹配定位)→ .studio-adv margin-top:0(×2 副本);③"表示"小标题删(标识卡头已述)。实测 tops=[476]/heights=[34] 唯一、vtabs 同线;目检"单行均一专业"。m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error。
 ## Recently Completed
 +- **细节轮(新布局衍生)。** 审计:空态(输入卡全宽单独在场,可接受)/处理后(工具栏 7 项单行;检查器底部 253px 空白 = 等高边框语义的标准 dashboard 行为,不改)/构象态(图表 79 柱清晰、轴标签可读、左栈与检查器底对齐)。修复:①输入卡 **Clear/History 漏译**(按钮文本换行缩进,`>Clear<` 静态锚点再失配——换行文本必须行内容锚定,教训固化)→ 清空/历史;②textarea min-height 128→160px(空态比例);③目检余项零缺陷。m0-m6 37/10/11/10/32/47/30 + 平台 Node 34/34;390px 溢出 0;零 page error。
 ## Recently Completed
