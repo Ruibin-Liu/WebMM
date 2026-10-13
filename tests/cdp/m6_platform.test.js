@@ -131,6 +131,7 @@ function check(name, cond, detail) {
   check('hit-as-query = ONE action, child round indented (↳), query set to the hit',
     hop.entries.length >= 2 && hop.entries[hop.entries.length - 1].includes('↳') && hop.query.includes('COc1ccc'), JSON.stringify(hop.entries));
   // reload: the DAG persists
+  await page.evaluate(async () => { const p = window.__platformCompat?.projectApi?.(); if (p && p.withLock) await p.withLock('project', async () => {}); });
   await page.reload({ waitUntil: 'load' });
   await page.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
   await page.waitForFunction(() => window.webmm !== undefined, null, { timeout: 60000 });
@@ -223,9 +224,11 @@ function check(name, cond, detail) {
   await page.evaluate(() => clearSearchLibrary());
   await page.waitForTimeout(500);
   page.once('dialog', d => d.accept());
+  const importNav = page.waitForNavigation({ waitUntil: 'load', timeout: 60000 });
   await page.setInputFiles('#projectImportFile', '/tmp/m5-project.json');
-  await page.waitForFunction(() => document.readyState === 'complete', null, { timeout: 30000 }).catch(() => {});
-  await page.waitForTimeout(2500);
+  await importNav;
+  await page.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
+  await page.waitForFunction(() => window.webmm !== undefined && window.__platformCompat, null, { timeout: 60000 });
   await page.evaluate(() => switchMode('search'));
   await page.waitForFunction(() => (window.__search?.getState() || []).length > 0, null, { timeout: 30000 })
     .catch(async e => {
@@ -324,6 +327,7 @@ function check(name, cond, detail) {
   });
   check('note edited through the panel persists in the session', !noteRes.skip || noteRes.note === 'lead candidate');
   // pin survives reload (IndexedDB command log)
+  await page.evaluate(async () => { const p = window.__platformCompat?.projectApi?.(); if (p && p.withLock) await p.withLock('project', async () => {}); });
   await page.reload({ waitUntil: 'load' });
   await page.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
   await page.waitForFunction(() => window.webmm !== undefined, null, { timeout: 60000 });

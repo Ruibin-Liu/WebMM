@@ -18,7 +18,7 @@
 
   // ---- in-memory adapter (tests, Node) ----
   function createMemStorage() {
-    const data = { meta: new Map(), commands: new Map(), snapshots: new Map() };
+    const data = Object.fromEntries(STORES.map(s => [s, new Map()]));  // mirror IDB schema exactly
     return {
       kind: 'mem',
       async get(store, key) { return data[store].get(key); },

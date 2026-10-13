@@ -229,6 +229,50 @@ console.log('project (mem storage):');
     check('golden fixture minted', true);
   }
 
+  // ---- regression: stale projection must never become a snapshot ----
+  console.log('snapshot integrity (import race):');
+  {
+    const lib = (id, n) => ({ type: 'ImportLibrary', libraryId: id, entries:
+      Array.from({ length: n }, (_, i) => ({ molId: id + i, ordinal: i, raw: { smiles: 'C'.repeat(i + 1) }, structureKey: id + 'K' + i })) });
+    const srcStore = DB.createMemStorage();
+    const src = await Project.init(srcStore);
+    await src.apply(lib('S', 3));
+    await src.apply({ type: 'Pin', molId: 'S0', note: 'imported' });
+    const exported = await src.exportProject();
+
+    const st = DB.createMemStorage();
+    const old = await Project.init(st);
+    await old.apply(lib('O', 1));
+    for (let i = 0; i < 4; i++) await old.apply({ type: 'Pin', molId: 'O0', note: 'n' + i });
+    await old.checkpoint();
+
+    await Project.replaceProject(st, exported);
+    await old.checkpoint();
+    let snaps = await st.all('snapshots');
+    check('stale checkpoint after import writes no snapshot', snaps.length === 0, snaps.map(r => r.key));
+
+    old.invalidate();
+    let threw = false;
+    try { await old.apply({ type: 'Pin', molId: 'O0', note: 'late' }); } catch (e) { threw = /reload required/.test(e.message); }
+    check('invalidated projection refuses apply', threw);
+    await old.checkpoint();
+    snaps = await st.all('snapshots');
+    check('invalidated projection refuses snapshot', snaps.length === 0);
+
+    const fresh = await Project.init(st);
+    check('reload after import replays imported projection',
+      fresh.state.libraries.S && fresh.state.libraries.S.entries.size === 3 &&
+      fresh.state.pins.S0 && fresh.state.pins.S0.note === 'imported' && !fresh.state.libraries.O,
+      { libs: Object.keys(fresh.state.libraries), pins: Object.keys(fresh.state.pins) });
+
+    const st2 = DB.createMemStorage();
+    const a = await Project.init(st2);
+    await a.apply(lib('A', 2));
+    await st2.put('meta', 'cmdSeq', 7);
+    await a.checkpoint();
+    check('checkpoint skipped when log moved under us', (await st2.all('snapshots')).length === 0);
+  }
+
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });

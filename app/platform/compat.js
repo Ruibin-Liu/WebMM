@@ -22,7 +22,9 @@
   // cannot be hot-swapped safely). Uses the storage opened at init.
   async function importProject(data) {
     if (!activeStorage || !projectModule) throw new Error('compat: not initialized');
-    return projectModule.replaceProject(activeStorage, data, { withLock: activeLock });
+    const r = await projectModule.replaceProject(activeStorage, data, { withLock: activeLock });
+    if (project && project.invalidate) project.invalidate();   // old projection must never write again
+    return r;
   }
 
   // deps: { storage, Identity } — browser passes the IDB adapter and the

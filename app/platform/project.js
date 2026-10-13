@@ -89,6 +89,7 @@
 
       // checkpoint events (import/reconcile/round complete) also trigger
       async checkpoint() { await snapshot(p); },
+      invalidate() { p._dead = true; },
 
       // export = facts only (commands + meta). Golden fixtures + CI use
       // this; the M2 UI export is a wrapper.
@@ -121,10 +122,13 @@
     } else if (cmd.type === 'Include' && p.state.excludes[cmd.molId]) {
       pre = { type: 'Exclude', molId: cmd.molId, ...p.state.excludes[cmd.molId] };
     }
-    const res = State.applyCommand(p.state, cmd);
-    if (res.error) throw new Error('command rejected: ' + res.error);
-    p.state = res.state;
+    if (p._dead) throw new Error('project replaced; reload required');
+    let res;
     const id = await p.withLock('project', async () => {
+      if (p._dead) throw new Error('project replaced; reload required');
+      res = State.applyCommand(p.state, cmd);
+      if (res.error) throw new Error('command rejected: ' + res.error);
+      p.state = res.state;
       const seqRec = await p.storage.get('meta', 'cmdSeq');
       const seq = (seqRec || 0) + 1;
       await p.storage.put('commands', seq, cmd);
@@ -144,11 +148,18 @@
   }
 
   async function snapshot(p) {
-    const id = p._cmdId;
-    await p.storage.put('snapshots', id, { commandId: id, state: serializeState(p.state), at: Date.now() });
-    const snaps = (await p.storage.all('snapshots')).sort((a, b) => b.key - a.key);
-    for (const s of snaps.slice(KEEP_SNAPSHOTS)) await p.storage.del('snapshots', s.key);
-    p._commandsSinceSnapshot = 0;
+    if (p._dead) return;
+    await p.withLock('project', async () => {
+      if (p._dead) return;
+      const seq = (await p.storage.get('meta', 'cmdSeq')) || 0;
+      // never persist a projection that does not match the persisted log
+      // (stale tab, or log replaced underneath us by an import)
+      if (p._cmdId !== seq) { console.warn('[platform] snapshot skipped: projection #' + p._cmdId + ' != log #' + seq); return; }
+      await p.storage.put('snapshots', seq, { commandId: seq, state: serializeState(p.state), at: Date.now() });
+      const snaps = (await p.storage.all('snapshots')).sort((a, b) => b.key - a.key);
+      for (const s of snaps.slice(KEEP_SNAPSHOTS)) await p.storage.del('snapshots', s.key);
+      p._commandsSinceSnapshot = 0;
+    });
   }
 
   // Maps serialize as entries pairs for structured clone / JSON.
