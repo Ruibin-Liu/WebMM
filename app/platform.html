@@ -2017,6 +2017,10 @@ function rdkitAvailable() {
        loadFromURL();
        setupAutoProcess();
        loadHistory();
+       // a search-library restore may have run before RDKit was ready; retry it.
+       // isolated so a failure here can never mark RDKit itself as failed
+       try { if (searchMode) restoreSearchLibrary(); }
+       catch (e) { console.warn('[platform] post-RDKit restore retry failed:', e); }
      } catch(e) {
        rdkitInitFailed = true;
        document.getElementById("error").textContent = rdkitLoadHint() + " (" + e + ")";
@@ -2716,9 +2720,10 @@ function rdkitAvailable() {
           return Array.isArray(v) && v.length ? v : null;
         } catch (e) { return null; }
       }).then(async saved => {
-        if (!saved || !saved.length || generation !== searchLibRestoreGeneration) return;
+        if (generation !== searchLibRestoreGeneration) return;            // superseded: the newer attempt owns the flag
+        if (!saved || !saved.length) { searchLibRestored = false; return; }
         const r = loadSearchLibraryFrom(saved.map(x => ({ smiles: x.smiles, name: x.name })));
-        if (!r) return;
+        if (!r) { searchLibRestored = false; return; }                     // RDKit not ready: retried from initRDKit
         renderQueryHistory();
         await (r.persisted || Promise.resolve());
         if (generation !== searchLibRestoreGeneration) return;
