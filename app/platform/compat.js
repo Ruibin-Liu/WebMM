@@ -141,8 +141,8 @@
     if (!project) return;
     if (project.state.libraries[LIB_ID]) {
       await project.apply({ type: 'RemoveLibrary', libraryId: LIB_ID });
-      await project.checkpoint();
     }
+    await project.checkpoint();   // ensure a removed-library projection wins replay
   }
 
   return { init, saveLibraryInputs, restoreInputs, clearLibrary, LEGACY_KEY, LIB_ID,

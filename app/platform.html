@@ -59,9 +59,9 @@
  }
 
  .container {
-   max-width: 1100px;
-   margin: 2.5rem auto;
-   padding: 0 1.5rem;
+   display: flow-root;
+   margin: 0;
+   padding: 0;
  }
 
  header {
@@ -856,9 +856,10 @@ body { background: var(--ll-bg); margin: 0; }
 .side-note { color: #94a3b8; font-size: 0.66rem; padding: 0 0.5rem; }
 
 /* --- topbar --- */
-.main-col { min-width: 0; }
+.main-col { --workspace-gutter: 16px; min-width: 0; padding: 0 var(--workspace-gutter) 1rem; }
 .topbar { display: flex; align-items: center; gap: 1rem; background: #fff; border-bottom: 1px solid var(--ll-line);
-  height: 46px; padding: 0 1.1rem; box-sizing: border-box; position: sticky; top: 0; z-index: 40; }
+  height: 46px; padding: 0 calc(var(--workspace-gutter) + 8px); margin: 0 calc(-1 * var(--workspace-gutter)) 1rem;
+  box-sizing: border-box; position: sticky; top: 0; z-index: 40; }
 .crumb { font-size: 0.85rem; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .crumb b { color: var(--ll-accent-2); font-weight: 600; }
 .top-tasks { flex: 1; text-align: center; font-size: 0.75rem; color: #64748b; min-width: 0;
@@ -868,9 +869,8 @@ body { background: var(--ll-bg); margin: 0; }
 .top-ver { font-size: 0.72rem; color: #94a3b8; white-space: nowrap; }
 
 /* --- cards --- */
-.container { padding-top: 1rem; }
 .panel { background: #fff; border: 1px solid var(--ll-line); border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(16,24,40,.04); margin-bottom: 1.05rem; }
+  box-shadow: 0 1px 2px rgba(16,24,40,.04); margin: 0 0 1rem; }
 .action-btn.primary { background: var(--ll-accent); border-color: var(--ll-accent-2); }
 .action-btn.primary:hover { background: var(--ll-accent-2); }
 
@@ -878,18 +878,41 @@ body { background: var(--ll-bg); margin: 0; }
 .ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.7rem; margin: 0.7rem 0; }
 .ov-card { background: #f8fafc; border: 1px solid var(--ll-line); border-radius: 10px; padding: 0.7rem 0.8rem; }
 .ov-num { font-size: 1.5rem; font-weight: 700; color: #0f172a; line-height: 1.15; }
-.ov-cap { font-size: 0.75rem; color: #64748b; margin: 0.15rem 0 0.2rem; }
+.ov-cap { font-size: 0.75rem; color: #64748b; margin: 0.3rem 0 0.4rem; }
 #searchResultStatus { display: inline-block; background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8;
   border-radius: 999px; padding: 0.22rem 0.7rem; font-size: 0.75rem; font-weight: 500; }
 .ov-banner { background: #fef9ec; border: 1px solid #f2e3bb; color: #8a6d1d; border-radius: 8px;
   padding: 0.5rem 0.7rem; font-size: 0.78rem; margin-top: 0.4rem; }
 
 #analogPanel .action-buttons, #pharmQueryPanel .action-buttons { flex-wrap: wrap; row-gap: 0.45rem; }
+/* analog explorer: two per-method entry cards + hover structure preview */
+#analogPanel { padding: 0; }
+#analogPanel > .card-head { border-radius: 12px 12px 0 0; }
+.analog-source { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; padding: 0.7rem 0.85rem 0; }
+.analog-entry-grid { display: grid; grid-template-columns: 1.25fr 1fr; align-items: start;
+  gap: 0.75rem; padding: 0.75rem 0.85rem; }
+.analog-path { display: flex; flex-direction: column; gap: 0.55rem; border: 1px solid var(--ll-line);
+  border-radius: 10px; background: #fbfcfe; padding: 0.7rem 0.8rem; min-width: 0; }
+.analog-path .path-head { display: flex; align-items: baseline; gap: 0.5rem; }
+.analog-path .path-head b { font-size: 0.85rem; color: #0f172a; white-space: nowrap; }
+.analog-options { display: flex; gap: 0.6rem; align-items: flex-end; flex-wrap: wrap; }
+.analog-path .path-step { display: flex; flex: 1; flex-direction: column; gap: 0.3rem; min-width: 130px; }
+.analog-path select { width: 100%; min-width: 0; }
+.analog-path .f-label { font-size: 0.75rem; font-weight: 600; color: #64748b; }
+.analog-status-row { display: flex; gap: 0.6rem; align-items: center; padding: 0 0.85rem 0.6rem; }
+.analog-status-row .hint { min-width: 0; }
+body[data-mode="analog"] .container { display: none; }
+#analogResultsWrap { overflow-x: auto; }
+.thumb-pop { position: fixed; z-index: 90; background: #fff; border: 1px solid var(--ll-line);
+  border-radius: 10px; padding: 4px; box-shadow: 0 6px 20px rgba(16,24,40,.14); pointer-events: none; }
+.thumb-pop svg { width: 140px; height: 96px; display: block; }
+@media (max-width: 1150px) { .analog-entry-grid { grid-template-columns: 1fr; } }
 .separator { color: #8fa1b6; letter-spacing: 0.04em; }
 
 /* --- narrow: icon rail --- */
 @media (max-width: 920px) {
   .app-shell { grid-template-columns: 1fr; }
+  .main-col { --workspace-gutter: 12px; }
   .sidenav { position: static; height: auto;
     flex-direction: row; align-items: center; gap: 4px;
     padding: 0.4rem 0.6rem; border-right: none; border-bottom: 1px solid var(--border);
@@ -950,9 +973,11 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 
 /* ===== content redesign: dashboards, cards, property bars ===== */
 .dash { display: grid; grid-template-columns: minmax(0,1fr) 340px;
-  grid-template-rows: auto minmax(0,1fr);
+  grid-template-rows: auto auto; align-items: start;
   grid-template-areas: "input inspect" "struct inspect";
   gap: 0.9rem; margin-bottom: 1rem; }
+.dash:not(.has-molecule) { grid-template-columns: minmax(0,1fr); grid-template-rows: auto; grid-template-areas: "input"; }
+.dash:not(.has-molecule) > .dash-col-inspect { display: none; }
 .dash-col-input { grid-area: input; }
 .dash-col-struct { grid-area: struct; }
 .dash-col-inspect { grid-area: inspect; }
@@ -977,7 +1002,10 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 .pbar-v { font-size: 0.72rem; color: #334155; text-align: right; font-variant-numeric: tabular-nums; }
 .qgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, auto)); gap: 0.7rem 0.9rem; align-items: end; width: 100%; }
 .qgrid .field { min-width: 0; }
-.dash-search-row { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(0,1fr); gap: 0.6rem; align-items: start; margin-bottom: 0.6rem; }
+.dash-search-row { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(0,1fr); gap: 0.9rem; align-items: start; }
+body[data-mode="search"] #inputPanel { padding: 0; border: 0; background: transparent; box-shadow: none; }
+#searchBar .card-body > #input { display: block; min-height: 96px; height: 96px; margin-bottom: 0.6rem; font-size: 0.8rem; }
+#searchStatus:empty { display: none; }
 .filter-strip { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;
   padding: 0.5rem 0.7rem; margin: 0.7rem 0; background: #f8fafc; border: 1px dashed #d4dde8; border-radius: 8px; }
 @media (max-width: 1150px) {
@@ -1040,6 +1068,11 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 .panel table td { padding: 0.42rem 0.6rem; }
 #props td.key, #moreProps td.key, #rules td.key, #alerts td.key { color: #64748b; }
 #props td.value, #moreProps td.value, #rules td.value, #alerts td.value { font-variant-numeric: tabular-nums; }
+/* full-width identity card: fit-content label column (the 45% td.key rule
+   belongs to the narrow inspector tables) + never wrap the copy buttons
+   (auto table layout squeezed them onto two lines) */
+#identityPanel td.key { width: 1%; white-space: nowrap; }
+#identityPanel table button { white-space: nowrap; }
 
 /* empty state */
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
@@ -1048,9 +1081,12 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
 .empty-state .es-t { font-size: 0.85rem; color: #64748b; }
 .empty-state .es-s { font-size: 0.72rem; }
 
-/* single input card: paste field + slim drop + hint */
+/* single input card: paste field + slim drop + hint. Pre-populated SDF
+   normally lands in the workbench below; keep the paste box scrollable so
+   an oversized manual paste still has an affordance without bloating the
+   empty state. */
 #dashInputBody > textarea#input {
-  width: 100%; box-sizing: border-box; min-height: 160px; resize: vertical;
+  width: 100%; box-sizing: border-box; min-height: 96px; height: 96px; resize: vertical;
   border: 1.5px dashed #c9d4e0; border-radius: 10px; background: #fbfdfe;
   padding: 0.7rem 0.8rem; font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem;
   transition: border .14s, box-shadow .14s;
@@ -1059,14 +1095,14 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
   outline: none; border-style: solid; border-color: var(--ll-accent);
   box-shadow: 0 0 0 3px rgba(37,99,235,.13); background: #fff;
 }
-#dashInputBody > .drop {
+#dashInputBody > .drop, #searchBar .card-body > .drop {
   padding: 0.55rem 0.7rem; font-size: 0.74rem; margin-top: 0.55rem;
   display: flex; align-items: center; gap: 0.5rem;
 }
-#dashInputBody > .drop svg { width: 16px; height: 16px; }
+#dashInputBody > .drop svg, #searchBar .card-body > .drop svg { width: 16px; height: 16px; }
 #dashInputBody::after {
   content: '粘贴结构 → 自动处理 · 或拖放文件 · Enter 处理';
-  display: block; font-size: 0.7rem; color: #94a3b8; margin-top: 0.45rem;
+  display: block; font-size: 0.7rem; color: #94a3b8; margin-top: 0.6rem;
 }
 #dashInputBody > .action-buttons { margin-top: 0.55rem; }
 /* batch mode keeps the classic shared panel — distinct skin */
@@ -1203,6 +1239,11 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 .panel table td { padding: 0.42rem 0.6rem; }
 #props td.key, #moreProps td.key, #rules td.key, #alerts td.key { color: #64748b; }
 #props td.value, #moreProps td.value, #rules td.value, #alerts td.value { font-variant-numeric: tabular-nums; }
+/* full-width identity card: fit-content label column (the 45% td.key rule
+   belongs to the narrow inspector tables) + never wrap the copy buttons
+   (auto table layout squeezed them onto two lines) */
+#identityPanel td.key { width: 1%; white-space: nowrap; }
+#identityPanel table button { white-space: nowrap; }
 
 /* empty state */
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
@@ -1211,9 +1252,12 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 .empty-state .es-t { font-size: 0.85rem; color: #64748b; }
 .empty-state .es-s { font-size: 0.72rem; }
 
-/* single input card: paste field + slim drop + hint */
+/* single input card: paste field + slim drop + hint. Pre-populated SDF
+   normally lands in the workbench below; keep the paste box scrollable so
+   an oversized manual paste still has an affordance without bloating the
+   empty state. */
 #dashInputBody > textarea#input {
-  width: 100%; box-sizing: border-box; min-height: 160px; resize: vertical;
+  width: 100%; box-sizing: border-box; min-height: 96px; height: 96px; resize: vertical;
   border: 1.5px dashed #c9d4e0; border-radius: 10px; background: #fbfdfe;
   padding: 0.7rem 0.8rem; font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem;
   transition: border .14s, box-shadow .14s;
@@ -1222,14 +1266,14 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
   outline: none; border-style: solid; border-color: var(--ll-accent);
   box-shadow: 0 0 0 3px rgba(37,99,235,.13); background: #fff;
 }
-#dashInputBody > .drop {
+#dashInputBody > .drop, #searchBar .card-body > .drop {
   padding: 0.55rem 0.7rem; font-size: 0.74rem; margin-top: 0.55rem;
   display: flex; align-items: center; gap: 0.5rem;
 }
-#dashInputBody > .drop svg { width: 16px; height: 16px; }
+#dashInputBody > .drop svg, #searchBar .card-body > .drop svg { width: 16px; height: 16px; }
 #dashInputBody::after {
   content: '粘贴结构 → 自动处理 · 或拖放文件 · Enter 处理';
-  display: block; font-size: 0.7rem; color: #94a3b8; margin-top: 0.45rem;
+  display: block; font-size: 0.7rem; color: #94a3b8; margin-top: 0.6rem;
 }
 #dashInputBody > .action-buttons { margin-top: 0.55rem; }
 /* batch mode keeps the classic shared panel — distinct skin */
@@ -1527,7 +1571,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
           </div>
         </div>
         <div class="field" style="justify-content:flex-end;">
-          <button id="btnSearchRun" class="btn-primary" onclick="runSearch()" style="padding:0.55rem 1.6rem;">检 索</button>
+          <button id="btnSearchRun" class="btn-primary" onclick="runSearch()" style="padding:0.55rem 1.6rem; letter-spacing:0.25em; text-indent:0.25em;">检索</button>
         </div>
       </div>
       <div id="filterWrap" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
@@ -1823,19 +1867,33 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 
    <div id="analogPanel" class="panel" style="display:none;">
      <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><b>骨架探索</b><span class="card-sub">单位点基团交换 · 形状重打分 · aza-scan</span></div>
-     <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin:0.4rem 0;">
-       <span id="analogParent" class="hint" style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+     <div class="analog-source">
+       <span id="analogParent" class="hint" style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
        <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="analogDetectSites()" title="Detect replaceable terminal groups on the CURRENT single-view molecule">用当前分子</button>
-       <select id="analogSite"><option value="">— 位点 —</option></select>
-       <select id="analogFragCat" title="Fragment category (built-in set, ≤150 per run)">
-         <option value="all">全部片段</option><option value="alkyl">烷基</option><option value="halo">卤素 / CFx</option>
-         <option value="O">O 连接</option><option value="N">N 连接</option><option value="acyl">羰基连接</option><option value="aryl">芳环 / 杂芳环</option>
-       </select>
-       <button class="action-btn primary" style="width:auto;" onclick="runAnalogExplorer()">探索</button>
-       <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="runAzaScan()" title="Scaffold-hop spike: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres), then the same shape funnel">aza-scan (r5+r6, 1-2 swaps)</button>
+       <span class="card-sub">来源 = 分子工作台当前分子</span>
+     </div>
+     <div class="analog-entry-grid">
+       <div class="analog-path">
+         <div class="path-head"><b>单位点交换</b><span class="card-sub">位点 → 片段 → 形状漏斗 B·C·D</span></div>
+         <div class="analog-options">
+           <div class="path-step"><span class="f-label">位点</span><select id="analogSite" aria-label="Replaceable site"><option value="">— 位点 —</option></select></div>
+           <div class="path-step"><span class="f-label">片段类别</span><select id="analogFragCat" aria-label="Fragment category" title="Fragment category (built-in set, ≤150 per run)">
+             <option value="all">全部片段</option><option value="alkyl">烷基</option><option value="halo">卤素 / CFx</option>
+             <option value="O">O 连接</option><option value="N">N 连接</option><option value="acyl">羰基连接</option><option value="aryl">芳环 / 杂芳环</option>
+           </select></div>
+           <button class="action-btn primary" style="width:auto; height:38px;" onclick="runAnalogExplorer()">探索</button>
+         </div>
+       </div>
+       <div class="analog-path">
+         <div class="path-head"><b>aza-scan 环跃迁</b><span class="card-sub">芳环 C→N · 1-2 取代</span></div>
+         <span class="hint">对每个含氢芳环碳做 C→N 生物电子等排替换(苯环→吡啶/二嗪),同一形状漏斗重打分。</span>
+         <button class="action-btn primary" style="width:auto; align-self:flex-start; height:38px;" onclick="runAzaScan()" title="Scaffold-hop spike: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres), then the same shape funnel">aza-scan(r5+r6 · 1-2 取代)</button>
+       </div>
+     </div>
+     <div class="analog-status-row">
+       <div class="hint" id="analogStatus"></div>
        <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">取消</button>
      </div>
-     <div class="hint" id="analogStatus"></div>
      <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
        <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="Ertl synthetic accessibility — bit-exact port of RDKit sascorer (1 = easy, 10 = hard)">SA</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
      </div>
@@ -2330,7 +2388,7 @@ function rdkitAvailable() {
       let m = null;
       try { m = rdkitModule.get_mol(e.smiles); } catch (err) { m = null; }
       if (m && m.is_valid()) {
-        try { e.clogp = JSON.parse(m.get_descriptors()).CrippenClogp; } catch (err) { e.clogp = NaN; }
+        try { e.clogp = JSON.parse(m.get_descriptors()).CrippenClogP; } catch (err) { e.clogp = NaN; }
       } else { e.clogp = NaN; }
       if (m) m.delete();
     }
@@ -2590,6 +2648,7 @@ function rdkitAvailable() {
   const SEARCH_LIB_KEY = 'wb-searchLibrary';
   let searchLibrary = null;   // [{idx, name, smiles, MW, fps:{fpKey: bitstring}}]
   let searchLibRestored = false;
+  let searchLibRestoreGeneration = 0;
 
   function searchStatus(msg) {
     document.getElementById('searchStatus').textContent = msg;
@@ -2647,29 +2706,44 @@ function rdkitAvailable() {
   function restoreSearchLibrary() {
     if (searchLibRestored || searchLibrary) return;
     searchLibRestored = true;
+    const generation = ++searchLibRestoreGeneration;
     initPlatformStore().then(c => {
-      if (!c) return;
+      if (!c) { searchLibRestored = false; return; }
       // one-time read-only migration from the legacy localStorage key
       c.restoreInputs(() => {
         try {
           const v = JSON.parse(localStorage.getItem(SEARCH_LIB_KEY) || 'null');
           return Array.isArray(v) && v.length ? v : null;
         } catch (e) { return null; }
-      }).then(saved => {
-        if (!saved || !saved.length) return;
+      }).then(async saved => {
+        if (!saved || !saved.length || generation !== searchLibRestoreGeneration) return;
         const r = loadSearchLibraryFrom(saved.map(x => ({ smiles: x.smiles, name: x.name })));
-        if (r && r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
+        if (!r) return;
+        renderQueryHistory();
+        await (r.persisted || Promise.resolve());
+        if (generation !== searchLibRestoreGeneration) return;
+        if (r.lib.length) searchStatus(`Library restored from your last session: ${r.lib.length} molecule${r.lib.length === 1 ? '' : 's'}`);
         renderWorkSet();
         renderQueryHistory();
+      }).catch(err => {
+        if (generation === searchLibRestoreGeneration) searchLibRestored = false;
+        console.warn('[platform] restore failed:', err);
       });
-    }).catch(err => console.warn('[platform] restore failed:', err));
+    }).catch(err => {
+      if (generation === searchLibRestoreGeneration) searchLibRestored = false;
+      console.warn('[platform] restore failed:', err);
+    });
   }
 
   async function clearSearchLibrary() {
     searchLibrary = null;
+    searchLibRestoreGeneration++;
+    searchLibRestored = false;
     try { localStorage.removeItem(SEARCH_LIB_KEY); } catch (e) {}
     const c = await initPlatformStore().catch(() => null);
-    if (c) { try { await c.clearLibrary(); } catch (err) {} }
+    if (c) {
+      try { await c.clearLibrary(); } catch (err) { console.warn('[platform] library clear failed:', err); }
+    }
     document.getElementById('searchPanel').style.display = 'none';
     modeShown.search = false;   // cleared library invalidates the stale hit table
     searchStatus('Library cleared');
@@ -4034,6 +4108,11 @@ function rdkitAvailable() {
     return saTableLoaded;
   }
 
+  // the SA fragment table (fpscores.bin → sa_load_table_wasm) is one
+  // synchronous ~1.4s parse; warm it during idle so it never lands mid-run
+  if (window.requestIdleCallback) requestIdleCallback(() => { ensureSaTable(); });
+  else setTimeout(() => { ensureSaTable(); }, 2500);
+
   let analogParentSdf = null;      // the parent's 3D conformer (scoring ref)
   let analogParentMolblock = null; // for site detection + core surgery
   let analogRunToken = 0;
@@ -4129,7 +4208,11 @@ function rdkitAvailable() {
       atomsOut.join('') + bondsOut.join('') + 'M  END';
   }
 
-  function analogCancelRun() { analogRunToken++; }
+  function analogCancelRun() {
+    analogRunToken++;
+    analogThumbsOn = true;   // settle whatever rows are on screen
+    renderAnalogRows(analogLastResults(), analogRunToken);
+  }
 
   async function runAnalogExplorer() {
     if (!rdkitAvailable() || !window.webmm) { analogStatus('Engine not ready'); return; }
@@ -4141,6 +4224,7 @@ function rdkitAvailable() {
     // --- stage A: enumerate + filter (hard caps: ≤400 products, rotor ≤10)
     analogRunToken++;
     const token = analogRunToken;
+    analogThumbsOn = false;
     analogStatus('Enumerating…');
     const coreMb = analogCoreMolblock(siteVal.split(',').map(Number));   // 0-based (matches get_substruct_matches convention)
     if (!coreMb) { analogStatus('Site surgery failed (multi-attachment?)'); return; }
@@ -4154,8 +4238,10 @@ function rdkitAvailable() {
     const pHeavy = pDesc.NumHeavyAtoms || 0;
     parentMol.delete();
     const cands = [];
+    let nEnum = 0;
     for (const [body, fcat] of frags) {
       if (cands.length >= 400) break;
+      if (++nEnum % 20 === 0) await new Promise(r => setTimeout(r, 0));
       // plain replace, NO added parens: the core SMILES already carries the
       // grouping it needs ('c1ccc(*)cc1' -> 'c1ccc(C)cc1'; tail '*' chains
       // on: 'CC(=O)*' + 'OC' -> 'CC(=O)OC'). Invalid combinations are
@@ -4279,9 +4365,15 @@ function rdkitAvailable() {
               // ---- stage D: flexible refinement of the top-10 ----
               analogStatus('C done — D: flexible refinement of the top-10…');
               return (async () => {
+                let dDone = 0;
                 for (const r of results.slice(0, 10)) {
                   if (token !== analogRunToken) return;
                   if (!r.bestSdf || r.tanimoto >= 0.9995) continue;   // exact self-superposition: nothing to gain
+                  // flexAnalogCandidate is one synchronous WASM burst
+                  // (align+MCS+optimize); yield a REAL macrotask first so
+                  // the progress line paints and input drains between bursts
+                  analogStatus('D: flex-refining ' + (++dDone) + '/10…');
+                  await new Promise(res => setTimeout(res, 0));
                   try { r.flexT = await flexAnalogCandidate(r.bestSdf); } catch (e) { /* keep rigid */ }
                   renderAnalogRows(results, token);
                 }
@@ -4289,6 +4381,8 @@ function rdkitAvailable() {
                 document.getElementById('analogCancel').style.display = 'none';
                 const nFlex = results.filter(r => r.flexT != null).length;
                 analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop (' + (window.__azaCounts ? window.__azaCounts.single + ' single + ' + window.__azaCounts.double + ' double' : '') + ')' : ''));
+                analogThumbsOn = true;
+                renderAnalogRows(results, token);   // settled: thumbnails land on the sorted table
                 window.__azaRun = false;
               })();
             });
@@ -4310,6 +4404,7 @@ function rdkitAvailable() {
     if (!sdf3d || !sdf3d.trim()) { analogStatus('Load a molecule into the single view first'); return; }
     analogRunToken++;
     const token = analogRunToken;
+    analogThumbsOn = false;
     analogParentSdf = sdf3d;
     analogStatus('Aza-scanning…');
     // H-bearing aromatic 6-ring carbons via RDKit SMARTS
@@ -4361,9 +4456,13 @@ function rdkitAvailable() {
       cands.push({ smiles: canon, molblock: mbClean, mw: +d.amw.toFixed(2), rotb: d.NumRotatableBonds ?? 0, sa: null });
     };
     let nSingle = 0, nDouble = 0;
+    const uiYield = () => new Promise(r => setTimeout(r, 0));   // enumerate off
+    // the critical path: a warfarin-size double-swap sweep measured 1.4s of
+    // unbroken main-thread work before this
     for (const idx of ringCH) {
       nSingle++;
       addCand(trySwap([idx]));
+      if (nSingle % 20 === 0) await uiYield();
     }
     // double swaps (diazines / azoles): C(n,2) — invalid valences (e.g.
     // adjacent N pairs RDKit rejects) drop out via is_valid
@@ -4371,11 +4470,14 @@ function rdkitAvailable() {
       for (let y = x + 1; y < ringCH.length; y++) {
         nDouble++;
         addCand(trySwap([ringCH[x], ringCH[y]]));
+        if (nDouble % 20 === 0) await uiYield();
       }
     }
     if (await ensureSaTable()) {
+      let nSa = 0;
       for (const c of cands) {
         try { c.sa = +window.webmm.sa_score_wasm(c.molblock).toFixed(2); } catch (e) {}
+        if (++nSa % 20 === 0) await uiYield();
       }
     }
     if (m0) m0.delete();
@@ -4432,14 +4534,41 @@ function rdkitAvailable() {
     return res2 ? res2.tanimoto : null;
   }
 
+  let analogThumbsOn = true;   // false while the funnel runs: rows are plain
+  // SMILES text; thumbnails land only on the settled (sorted) final table —
+  // and even then they are FILLED IN BATCHES (5 rows per tick), never in one
+  // synchronous SVG burst (a 31-row burst measured 3.8s of main-thread block)
+  let analogThumbQueueToken = 0;
+  function queueAnalogThumbs(scope) {
+    const myToken = ++analogThumbQueueToken;
+    const rows = [...(scope || document.getElementById('analogRows')).querySelectorAll('tr')];
+    let i = 0;
+    const step = () => {
+      if (myToken !== analogThumbQueueToken) return;   // superseded by a rebuild
+      const t0 = performance.now();
+      while (i < rows.length) {
+        const cell = rows[i].cells[1];
+        i++;
+        if (!cell || cell.querySelector('.rowthumb')) continue;
+        const sm = cell.querySelector('.sm');
+        const html = molThumb(sm ? (sm.getAttribute('title') || sm.textContent) : '');
+        if (html) cell.insertAdjacentHTML('afterbegin', html);
+        if (performance.now() - t0 > 40) break;   // time-budgeted: one slow
+        // SVG (~70ms on warfarin-size rows) still leaves the page responsive
+      }
+      if (i < rows.length) setTimeout(step, 0);
+    };
+    setTimeout(step, 0);
+  }
   function renderAnalogRows(results, token) {
     if (token !== analogRunToken) return;
+    analogThumbQueueToken++;       // cancel any in-flight thumb batch
     const tb = document.getElementById('analogRows');
     tb.innerHTML = results.slice(0, 200).map((r, i) => {
       const mid = window.Platform ? window.Platform.Identity.syntheticMolId('analog', r.idx, r.smiles, 'builtin-v1', r.smiles) : null;
       const pinned = mid && window.__platformCompat && window.__platformCompat.getPins()[mid];
       return '<tr><td>' + (i + 1) + '</td>' +
-        '<td class="cell-smiles">' + molThumb(r.smiles) + '<span class="sm" title="' + r.smiles + '">' + r.smiles + '</span></td>' +
+        '<td class="cell-smiles">' + '<span class="sm" title="' + r.smiles + '">' + r.smiles + '</span></td>' +
         '<td class="value">' + r.mw + '</td>' +
         '<td class="value" data-heat="' + r.tanimoto.toFixed(3) + '"><strong>' + (r.tanimoto * 100).toFixed(1) + '%</strong></td>' +
         '<td class="value">' + r.rotb + '</td>' +
@@ -4448,6 +4577,7 @@ function rdkitAvailable() {
         '<td>' + (mid ? '<span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem; ' + (pinned ? '' : 'opacity:0.35;') + '" title="pin (synthetic-library identity)" onclick="analogPin(\'' + r.idx + '\',\'' + mid + '\')">' + (pinned ? '★' : '☆') + '</span>' : '') + '</td></tr>';
     }).join('');
     applyHeat(tb);
+    if (analogThumbsOn) queueAnalogThumbs(tb);
   }
 
   async function analogPin(idx, mid) {
@@ -4460,6 +4590,37 @@ function rdkitAvailable() {
   }
   window.analogPin = analogPin;
   let __analogResults = [];
+  // hover a SMILES cell -> floating structure card (works mid-run too —
+  // that's the point of deferred thumbnails). Reuses the molThumb cache.
+  (function initAnalogHover() {
+    const tb = document.getElementById('analogRows');
+    if (!tb) return;
+    let pop = null;
+    const hide = () => { if (pop) { pop.remove(); pop = null; } };
+    tb.addEventListener('mouseover', e => {
+      const cell = e.target.closest('td.cell-smiles');
+      if (!cell) { hide(); return; }
+      const sm = cell.querySelector('.sm');
+      const smiles = sm ? (sm.getAttribute('title') || sm.textContent) : '';
+      if (!smiles) { hide(); return; }
+      if (pop && pop.dataset.smiles === smiles) return;
+      hide();
+      const html = molThumb(smiles);
+      if (!html) return;
+      pop = document.createElement('div');
+      pop.className = 'thumb-pop';
+      pop.dataset.smiles = smiles;
+      pop.innerHTML = html;
+      document.body.appendChild(pop);
+      const r = cell.getBoundingClientRect();
+      const pw = 150, ph = 106;
+      let x = Math.max(10, Math.min(r.left, window.innerWidth - pw - 10));
+      let y = r.bottom + 6;
+      if (y + ph > window.innerHeight - 10) y = Math.max(10, r.top - ph - 6);
+      pop.style.left = x + 'px'; pop.style.top = y + 'px';
+    });
+    tb.addEventListener('mouseleave', hide);
+  })();
   const _origRender = renderAnalogRows;
   renderAnalogRows = function (results, token) { __analogResults = results; _origRender(results, token); };
   function analogLastResults() { return __analogResults; }
@@ -4564,7 +4725,7 @@ function rdkitAvailable() {
   }
 
   // test hook for the Search parity suite (no UI role)
-  window.__search = { loadSearchLibraryFrom, tanimotoBits, parseLibraryText, runSearch, getState: () => searchLibrary };
+  window.__search = { loadSearchLibraryFrom, tanimotoBits, parseLibraryText, runSearch, getState: () => searchLibrary, get restored() { return searchLibRestored; } };
 
 
   // ===================== Pharmacophore Query Editor =====================
@@ -6015,7 +6176,6 @@ function initTaskTicker() {
     for (const el of sources) {
       const t = el.textContent.trim();
       if (t && /…|%|streaming|refining|running|scoring|Embedding|Optimizing/i.test(t)) { best = t; break; }
-      if (t && /^Done|^restored/i.test(t) && !best) best = t;
     }
     tick.textContent = best ? '⟳ ' + best.slice(0, 90) : '';
     tick.classList.toggle('running', /…|%|streaming|refining|running|scoring/i.test(best));
@@ -6024,12 +6184,19 @@ function initTaskTicker() {
   sources.forEach(el => mo.observe(el, { childList: true, characterData: true, subtree: true }));
   update();
 }
+// imported projects restore through the search path; keep the overview
+// counters in sync without requiring the user to visit search first
+['analogStatus', 'searchStatus'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) new MutationObserver(() => { if (projectMode) renderOverview(); }).observe(el, { childList: true, characterData: true, subtree: true });
+});
 initTaskTicker();
 initSideStorage();
 syncShellChrome();
 
 // ===== single-mode 3-column dashboard (node relocation, zero behavior) =====
 const dashMoves = [];           // {el, parent, next} recorded before first move
+let searchLibBody = null;     // search-mode home for #drop (配体库 card body)
 function dashEls() {
   // after the first move the original containers are empty — return the
   // RECORDED element references, never re-query
@@ -6055,6 +6222,7 @@ function applyDashLayout() {
     q('dashSingle').style.display = '';
     q('inputPanel').style.display = 'none';
     const hasMol = q('output').style.display === 'block';
+    q('dashSingle').classList.toggle('has-molecule', hasMol);
     q('dashStructBody').style.display = hasMol ? '' : 'none';
     q('propBars').style.display = hasMol ? '' : 'none';
     q('dashInspectBody').style.display = hasMol ? '' : 'none';
@@ -6062,6 +6230,12 @@ function applyDashLayout() {
     if (idp) idp.style.display = hasMol ? '' : 'none';
   } else {
     [...dashMoves].reverse().forEach(a => a.parent.insertBefore(a.el, a.next));
+    // search mode: the shared drop zone belongs with the 配体库 card,
+    // not stranded at the bottom of the input panel
+    if (searchMode && searchLibBody) {
+      searchLibBody.prepend(q('input'));
+      searchLibBody.appendChild(q('drop'));
+    }
     q('dashSingle').style.display = 'none';
     q('dashStructBody').style.display = '';
     q('propBars').style.display = '';
@@ -6096,6 +6270,17 @@ window.studioTab = studioTab;
   const idPanel = smilesTd ? smilesTd.closest('.panel') : null;
   const dash = document.getElementById('dashSingle');
   if (dash && idPanel) dash.after(idPanel);
+})();
+
+// 高级/导出 dropdowns (native <details>): collapse when the user clicks
+// anywhere else on the page. Clicks on the summary or inside the popup are
+// contained → left to the native toggle / current behavior.
+(function dismissAdvMenus() {
+  document.addEventListener('click', (e) => {
+    for (const d of document.querySelectorAll('details.studio-adv[open]')) {
+      if (!d.contains(e.target)) d.removeAttribute('open');
+    }
+  });
 })();
 
 applyDashLayout();
@@ -6150,6 +6335,13 @@ window.segModeSet = segModeSet;
   sb.appendChild(wrap);
   qb.appendChild(queryRow);
   lb.appendChild(libRow);
+  searchLibBody = lb;
+  // when the page loads straight into search mode the layout pass already
+  // ran with searchLibBody null — put the drop zone in its card now
+  if (searchMode) {
+    lb.prepend(document.getElementById('input'));
+    lb.appendChild(document.getElementById('drop'));
+  }
   const sep = sb.querySelector('.separator');
   if (sep) sep.remove();
   // filter controls -> strip on the results card
@@ -6162,7 +6354,7 @@ window.segModeSet = segModeSet;
 function renderPropBars(d, qedMean) {
   const host = document.getElementById('propBars');
   if (!host || !d) return;
-  const lp = +d.CrippenClogp || 0;
+  const lp = +d.CrippenClogP || 0;
   const rows = [
     { l: 'QED', v: qedMean, disp: qedMean == null ? '—' : qedMean.toFixed(2), frac: qedMean == null ? 0 : qedMean, max: 1 },
     { l: 'MW', v: d.amw, disp: d.amw.toFixed(0), frac: d.amw, max: 500 },

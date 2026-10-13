@@ -59,7 +59,6 @@
       open,
       async get(store, key) {
         return new Promise((resolve, reject) => {
-          const r = tx(store, 'readonly', os => os.get(key));
           // IDB requests resolve per-request; wrap explicitly
           const t = db.transaction(store, 'readonly');
           const req = t.objectStore(store).get(key);
@@ -85,6 +84,7 @@
       },
       async all(store) {
         return new Promise((resolve, reject) => {
+          if (!db) return resolve([]);   // reload can detach before cursor settles
           const t = db.transaction(store, 'readonly');
           const out = [];
           const req = t.objectStore(store).openCursor();

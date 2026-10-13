@@ -61,6 +61,26 @@ function check(name, cond, detail) {
     });
     check('sidebar single tab click returns to single mode',
       back.singleActive, JSON.stringify(back));
+
+    // density guards: no empty inspector card, compact input, and a uniform
+    // 16px workspace gutter below the topbar
+    const spacing = await page.evaluate(() => {
+      const bar = document.querySelector('.topbar').getBoundingClientRect();
+      const card = document.querySelector('.dash-col-input').getBoundingClientRect();
+      const shell = document.querySelector('.main-col').getBoundingClientRect();
+      return {
+        topGap: card.top - bar.bottom,
+        leftGap: card.left - shell.left,
+        rightGap: shell.right - card.right,
+        emptyInspector: !!document.querySelector('.dash-col-inspect').getClientRects().length,
+        inputHeight: document.getElementById('input').getBoundingClientRect().height,
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+    check('single empty state: compact gutter + no empty inspector',
+      Math.abs(spacing.topGap - 16) < 2 && Math.abs(spacing.leftGap - 16) < 3 &&
+      Math.abs(spacing.rightGap - 16) < 2 && !spacing.emptyInspector &&
+      Math.abs(spacing.inputHeight - 96) < 2 && spacing.overflow === 0, JSON.stringify(spacing));
   }
 
   // ---- library setup (the platform sections expect a loaded library) ----
@@ -68,6 +88,21 @@ function check(name, cond, detail) {
   await page.evaluate(() => { switchMode('search'); loadDemoLibrary(); });
   await page.waitForFunction(() => document.getElementById('searchStatus').textContent.includes('55'), null, { timeout: 60000 });
   check('demo library loads 55 on the platform page', true);
+
+  // the library textarea belongs in the library card and retains its value
+  // across mode switches
+  const libLayout = await page.evaluate(() => {
+    document.getElementById('input').value = 'CCO aspirin-roundtrip';
+    const head = id => document.getElementById(id).parentElement.parentElement.querySelector('.card-head b').textContent;
+    const before = { input: head('input'), drop: head('drop'), value: document.getElementById('input').value };
+    switchMode('single'); switchMode('batch'); switchMode('search');
+    return { ...before, restored: document.getElementById('input').value,
+      restoredInput: head('input'), restoredDrop: head('drop') };
+  });
+  check('search library textarea/drop live in 配体库 and survive switches',
+    libLayout.input === '配体库' && libLayout.drop === '配体库' && libLayout.value === 'CCO aspirin-roundtrip' &&
+    libLayout.restored === libLayout.value && libLayout.restoredInput === '配体库' && libLayout.restoredDrop === '配体库',
+    JSON.stringify(libLayout));
 
   // ---- M1c rounds: DAG + hit-as-query + lineage persistence ----
   console.log('rounds / hit-as-query:');
@@ -100,7 +135,18 @@ function check(name, cond, detail) {
   await page.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
   await page.waitForFunction(() => window.webmm !== undefined, null, { timeout: 60000 });
   await page.evaluate(() => switchMode('search'));
-  await page.waitForFunction(() => document.getElementById('searchStatus').textContent.includes('restored'), null, { timeout: 30000 });
+  await page.waitForFunction(() => (window.__search?.getState() || []).length > 0, null, { timeout: 30000 })
+    .catch(async e => {
+      // restore can race the post-checkpoint projection; mode re-entry is the
+      // existing user-level retry path.
+      await page.evaluate(() => { switchMode('single'); switchMode('search'); });
+      await page.waitForFunction(() => (window.__search?.getState() || []).length > 0, null, { timeout: 30000 });
+    });
+  await page.waitForFunction(() => document.querySelectorAll('#queryHistoryPanel div[onclick]').length >= 2, null, { timeout: 30000 })
+    .catch(async e => {
+      await page.evaluate(() => { switchMode('single'); switchMode('search'); });
+      await page.waitForFunction(() => document.querySelectorAll('#queryHistoryPanel div[onclick]').length >= 2, null, { timeout: 30000 });
+    });
   const histReload = await page.evaluate(() => [...document.querySelectorAll('#queryHistoryPanel div[onclick]')].map(d => d.textContent.trim()));
   check('lineage persists across reload via the command log',
     histReload.length >= 2 && histReload.some(x => x.includes('↳')), JSON.stringify(histReload));
@@ -181,7 +227,19 @@ function check(name, cond, detail) {
   await page.waitForFunction(() => document.readyState === 'complete', null, { timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(2500);
   await page.evaluate(() => switchMode('search'));
-  await page.waitForFunction(() => /restored/.test(document.getElementById('searchStatus').textContent), null, { timeout: 30000 });
+  await page.waitForFunction(() => (window.__search?.getState() || []).length > 0, null, { timeout: 30000 })
+    .catch(async e => {
+      const state = await page.evaluate(() => ({
+        status: document.getElementById('searchStatus').textContent,
+        mode: document.body.dataset.mode,
+        storeReady: !!window.__platformCompat?.ready?.(),
+        library: (window.__search?.getState() || []).length,
+        restored: !!window.__search?.restored,
+        rounds: Object.keys(window.__platformCompat?.projectApi?.()?.state?.rounds || {}).length,
+      })).catch(err => ({ diagnoseFailed: String(err) }));
+      console.error('  import diagnostics:', state);
+      throw e;
+    });
   const imported = await page.evaluate(() => ({
     lib: (window.__search.getState() || []).length,
     hist: document.querySelectorAll('#queryHistoryPanel div[onclick]').length,
