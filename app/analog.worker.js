@@ -4,6 +4,14 @@
 // color rescoring of winners happens main-thread where RDKit lives).
 // Messages chain through one promise queue (same serialization lesson as
 // shape.worker.js).
+//
+// M3 pool contract:
+//   - 'init'    -> {type:'ready', wasmHeap}   (heap = wasm memory bytes)
+//   - 'heap'    -> {type:'heap', bytes}       (health probe from the pool)
+//   - 'score'   -> {type:'done', __job, ...}  (Result errors = chemistry,
+//                posted as done+failed — worker stays healthy)
+//   - JS exceptions / wasm traps -> {type:'poison', __job, reason}: the
+//     worker may be in a bad state; the pool recycles it and re-dispatches.
 let wasm = null;
 let initPromise = null;
 let queue = Promise.resolve();
@@ -11,9 +19,18 @@ let queue = Promise.resolve();
 self.onmessage = (e) => {
   const msg = e.data;
   queue = queue.then(() => handle(msg)).catch(err => {
-    self.postMessage({ type: 'done', idx: msg.idx, failed: String(err && err.message || err).slice(0, 120) });
+    // an exception here means the worker itself may be poisoned (bad input
+    // type, wasm trap) — NOT a chemistry failure. Report for recycling.
+    try {
+      self.postMessage({ type: 'poison', __job: msg.__job, reason: String(err && err.message || err).slice(0, 120) });
+    } catch (e2) { /* post itself failed — the pool's onerror will catch */ }
   });
 };
+
+function wasmHeap() {
+  try { return wasm && wasm.memory ? wasm.memory.buffer.byteLength : 0; }
+  catch (e) { return 0; }
+}
 
 function sdfLines(sdf) {
   const L = sdf.replace(/\r/g, '').split('\n');
@@ -48,12 +65,16 @@ async function handle(msg) {
       await wasm.default();
     })();
     await initPromise;
-    self.postMessage({ type: 'ready' });
+    self.postMessage({ type: 'ready', wasmHeap: wasmHeap() });
+    return;
+  }
+  if (msg.type === 'heap') {
+    self.postMessage({ type: 'heap', bytes: wasmHeap() });
     return;
   }
   if (msg.type === 'score') {
     const r = wasm.generate_optimized_conformers_wasm(msg.molblock, msg.nConfs, BigInt(msg.seed), 'MMFF94s', 100);
-    if (!r.get_success() || !r.get_n_confs()) { self.postMessage({ type: 'done', idx: msg.idx, failed: 'conformers' }); return; }
+    if (!r.get_success() || !r.get_n_confs()) { self.postMessage({ type: 'done', __job: msg.__job, idx: msg.idx, failed: 'conformers' }); return; }
     const template = r.get_template_sdf();
     const coords = r.get_coordinates();
     const nAtoms = parseInt(sdfLines(template)[3].substring(0, 3));
@@ -67,7 +88,7 @@ async function handle(msg) {
     // stage D (flex) needs the winning pose: hand back the raw conformer
     // SDF and its align transform when asked (backward compatible without)
     self.postMessage({
-      type: 'done', idx: msg.idx, tanimoto: best ? best.tanimoto : null,
+      type: 'done', __job: msg.__job, idx: msg.idx, tanimoto: best ? best.tanimoto : null,
       nConfs: r.get_n_confs(),
       bestSdf: msg.returnBest ? bestSdf : undefined,
       transform: msg.returnBest && best ? best.transform : undefined,

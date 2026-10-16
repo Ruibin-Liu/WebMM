@@ -4127,69 +4127,173 @@ function rdkitAvailable() {
   window.runAnalogExplorer = runAnalogExplorer;
 
   // shared funnel (B -> C -> D) over an enumerated candidate list
+  // ---- persistent analog worker pool (M3 spec: recycling is first-class) ----
+  // Workers survive across runs: cancel/finish stop CONSUMING, they never tear
+  // the pool down (spawn-per-run threw away every WASM heap on cancel).
+  // Poison (JS exception / wasm trap) recycles the worker and re-dispatches
+  // the job once; wasm heap growth past 256MB recycles idle workers.
+  const analogPool = (() => {
+    const recs = [];            // {w, ready, busy, job, heap, dead}
+    const queue = [];           // {id, payload, resolve, tries}
+    const inflight = new Map(); // id -> entry
+    let seq = 0, generation = 0, poisons = 0, heapRecycles = 0, initFails = 0;
+    let initFailed = false, readyPromise = null, doneSinceProbe = 0;
+    const HEAP_LIMIT = 256 * 1024 * 1024;
+
+    function poolSize() {
+      const cores = navigator.hardwareConcurrency || 4;
+      let n = Math.max(1, Math.min(cores - 1, 4));   // spec: min(cores-1, 4)
+      const dm = navigator.deviceMemory;             // GB (Device Memory API)
+      if (dm && dm <= 2) n = Math.max(1, n >> 1);    // low-memory devices halve
+      return n;
+    }
+
+    function drain() {
+      for (const rec of recs) {
+        if (rec.dead || !rec.ready || rec.busy) continue;
+        const job = queue.shift();
+        if (!job) return;
+        rec.busy = true; rec.job = job.id;
+        inflight.set(job.id, job);
+        rec.w.postMessage({ ...job.payload, __job: job.id });
+      }
+    }
+
+    function spawn() {
+      generation++;
+      const w = new Worker('analog.worker.js', { type: 'module' });
+      const rec = { w, ready: false, busy: false, job: null, heap: 0, dead: false };
+      w.onmessage = ev => {
+        const m = ev.data;
+        if (m.type === 'ready') { rec.ready = true; rec.heap = m.wasmHeap || 0; drain(); return; }
+        if (m.type === 'heap') {
+          rec.heap = m.bytes || 0;
+          if (rec.heap > HEAP_LIMIT && !rec.busy && !rec.dead) { heapRecycles++; recycle(rec); }
+          return;
+        }
+        if (m.type === 'poison') {
+          poisons++;
+          if (!rec.ready) initFails++;
+          if (initFails >= 3) initFailed = true;      // engine-fetch storm: stop respawning
+          const jid = m.__job != null ? m.__job : rec.job;
+          recycle(rec);
+          if (jid != null) redispatch(jid);
+          return;
+        }
+        // 'done' reply — route by job id
+        const job = inflight.get(m.__job);
+        if (job) {
+          inflight.delete(m.__job);
+          rec.busy = false; rec.job = null;
+          if (++doneSinceProbe >= 25) { doneSinceProbe = 0; probeHeap(); }
+          job.resolve(m);
+          drain();
+        }
+      };
+      w.onerror = () => {
+        poisons++;
+        const jid = rec.job;
+        recycle(rec);
+        if (jid != null) redispatch(jid);
+      };
+      w.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
+      recs.push(rec);
+      return rec;
+    }
+
+    function recycle(rec) {
+      if (rec.dead) return;
+      rec.dead = true;
+      // NOTE: do NOT touch inflight here — the poison/onerror callers
+      // redispatch (or fail) the in-flight job themselves; deleting it here
+      // would orphan the submit() promise forever.
+      try { rec.w.terminate(); } catch (e) {}
+      const i = recs.indexOf(rec);
+      if (i >= 0) recs.splice(i, 1);
+      if (!initFailed) spawn();   // keep the pool at size — unless init is storming
+      drain();
+    }
+
+    function redispatch(jobId) {
+      const job = inflight.get(jobId);
+      if (!job) return;
+      inflight.delete(jobId);
+      if (job.tries < 1) { job.tries++; queue.push(job); drain(); }
+      else job.resolve({ failed: 'poisoned twice' });
+    }
+
+    function probeHeap() {
+      for (const rec of recs) if (rec.ready && !rec.busy && !rec.dead) { try { rec.w.postMessage({ type: 'heap' }); } catch (e) {} }
+    }
+
+    function ready() {
+      if (!readyPromise) readyPromise = new Promise((res, rej) => {
+        initFailed = false; initFails = 0;
+        const n = poolSize();
+        while (recs.length < n) spawn();
+        const t0 = performance.now();
+        const iv = setInterval(() => {
+          if (initFailed) {
+            clearInterval(iv); readyPromise = null;
+            for (const r of [...recs]) { r.dead = true; try { r.w.terminate(); } catch (e) {} }
+            recs.length = 0;
+            rej(new Error('init')); return;
+          }
+          if (recs.filter(r => r.ready).length >= n) { clearInterval(iv); res(n); return; }
+          if (performance.now() - t0 > 30000) {
+            clearInterval(iv); readyPromise = null; initFailed = true;
+            for (const r of [...recs]) { r.dead = true; try { r.w.terminate(); } catch (e) {} }
+            recs.length = 0;
+            rej(new Error('timeout')); return;
+          }
+        }, 50);
+      });
+      return readyPromise;
+    }
+
+    function submit(payload) {
+      return new Promise(resolve => { queue.push({ id: ++seq, payload, resolve, tries: 0 }); drain(); });
+    }
+
+    function stats() {
+      return {
+        size: recs.length, ready: recs.filter(r => r.ready).length, queued: queue.length,
+        generation, poisons, heapRecycles, heaps: recs.map(r => r.heap),
+      };
+    }
+    return { ready, submit, stats };
+  })();
+  window.__analogPool = analogPool;   // pool health is observable (tests + console)
+
   async function runAnalogFromCands(cands, token) {
-    // --- stage B: worker farm, conformers + rigid overlay (streamed)
-    const cores = (navigator.hardwareConcurrency || 4);
-    const NW = Math.max(1, Math.min(cores - 1, 8));
+    // --- stage B: persistent pool (warm after the first run) ---
+    let NW;
+    try { NW = await analogPool.ready(); }
+    catch (e) {
+      analogStatus('Worker init failed (engine fetch) — try again');
+      document.getElementById('analogCancel').style.display = 'none';
+      return;
+    }
+    if (token !== analogRunToken) return;   // superseded during warmup — pool stays warm for the next run
     const est = Math.round(cands.length * 10 * 0.05 / NW * 10);   // ~50ms/conf rough
-    analogStatus(cands.length + ' candidates · ' + NW + ' workers · est ~' + Math.min(90, Math.max(5, est)) + 's — streaming…');
+    analogStatus(cands.length + ' candidates · ' + NW + ' workers (warm pool) · est ~' + Math.min(90, Math.max(5, est)) + 's — streaming…');
     document.getElementById('analogCancel').style.display = '';
     document.getElementById('analogResultsWrap').style.display = '';
     const tb = document.getElementById('analogRows');
     tb.innerHTML = '';
-    const wasmUrl = window.__webmmUrl;
-    const workers = [];
-    const waiters = [];
     let nextJob = 0, doneCount = 0;
     const t0 = performance.now();
     const results = [];
-    const killAll = () => { for (const w of workers) { try { w.terminate(); } catch (e) {} } };
-    let ensureFailed = false;
-    const ensure = (w) => new Promise(res => {
-      const t0e = performance.now();
-      const iv = setInterval(() => {
-        if (w.__ready) { clearInterval(iv); res(); return; }
-        if (ensureFailed || w.__initError || performance.now() - t0e > 30000) {   // init hang (e.g. engine fetch failure inside the worker)
-          clearInterval(iv); ensureFailed = true; killAll(); res(); return;
-        }
-      }, 30);
-      w.onerror = () => { ensureFailed = true; };
-    });
-    for (let i = 0; i < NW; i++) {
-      const w = new Worker('analog.worker.js', { type: 'module' });
-      w.__ready = false;
-      w.onmessage = (ev) => {
-        const msg = ev.data;
-        if (msg.type === 'ready') { w.__ready = true; return; }
-        if (!w.__ready && msg.failed) { w.__initError = msg.failed; return; }   // import/init failed before ready
-        if (msg.type === 'done') {
-          const waiter = waiters.shift();
-          if (waiter) waiter(msg);
-        }
-      };
-      w.postMessage({ type: 'init', wasmUrl });
-      workers.push(w);
-    }
-    await Promise.all(workers.map(ensure));
-    if (token !== analogRunToken) { killAll(); return; }
-    if (ensureFailed) { analogStatus('Worker init failed (engine fetch) — try again'); document.getElementById('analogCancel').style.display = 'none'; return; }
-    const scoreOne = (cand, idx) => new Promise(res => {
-      const w = workers[idx % NW];
-      waiters.push(res);
-      w.postMessage({
-        type: 'score', idx, molblock: cand.molblock, nConfs: 10,
-        seed: 4200 + idx, parentSdf: analogParentSdf,
-      });
-    });
     let INFLIGHT = 0;
     const pump = () => {
       while (INFLIGHT < NW * 2 && nextJob < cands.length) {
         const i = nextJob++;
         INFLIGHT++;
-        scoreOne(cands[i], i).then(msg => {
+        analogPool.submit({ type: 'score', idx: i, molblock: cands[i].molblock, nConfs: 10, seed: 4200 + i, parentSdf: analogParentSdf })
+          .then(msg => {
           INFLIGHT--;
           doneCount++;
-          if (token !== analogRunToken) { killAll(); return; }
+          if (token !== analogRunToken) return;   // stop consuming; the pool keeps the heaps
           if (msg.tanimoto != null) {
             results.push({ ...cands[msg.idx], tanimoto: msg.tanimoto, idx: msg.idx });
             results.sort((a, b) => b.tanimoto - a.tanimoto);
@@ -4206,13 +4310,9 @@ function rdkitAvailable() {
             analogStatus('B done (' + results.length + ' scored) — C: refining top-30 with 30 conformers…');
             const top30 = results.slice(0, 30);
             let cDone = 0;
-            Promise.all(top30.map((cand, k) => new Promise(res => {
-              const w = workers[k % NW];
-              waiters.push(msg => res(msg));
-              w.postMessage({ type: 'score', idx: cand.idx, molblock: cand.molblock, nConfs: 30,
-                seed: 4200 + 10000 + cand.idx, parentSdf: analogParentSdf, returnBest: true });
-            }))).then(msgs => {
-              if (token !== analogRunToken) { killAll(); return; }
+            Promise.all(top30.map(cand => analogPool.submit({ type: 'score', idx: cand.idx, molblock: cand.molblock, nConfs: 30,
+              seed: 4200 + 10000 + cand.idx, parentSdf: analogParentSdf, returnBest: true }))).then(msgs => {
+              if (token !== analogRunToken) return;
               for (const msg of msgs) {
                 if (msg.tanimoto == null) continue;
                 const r = results.find(x => x.idx === msg.idx);
@@ -4226,7 +4326,7 @@ function rdkitAvailable() {
               return (async () => {
                 let dDone = 0;
                 for (const r of results.slice(0, 10)) {
-                  if (token !== analogRunToken) { killAll(); return; }
+                  if (token !== analogRunToken) return;
                   if (!r.bestSdf || r.tanimoto >= 0.9995) continue;   // exact self-superposition: nothing to gain
                   // flexAnalogCandidate is one synchronous WASM burst
                   // (align+MCS+optimize); yield a REAL macrotask first so
@@ -4236,7 +4336,6 @@ function rdkitAvailable() {
                   try { r.flexT = await flexAnalogCandidate(r.bestSdf); } catch (e) { /* keep rigid */ }
                   renderAnalogRows(results, token);
                 }
-                for (const w of workers) w.terminate();
                 document.getElementById('analogCancel').style.display = 'none';
                 const nFlex = results.filter(r => r.flexT != null).length;
                 analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop (' + (window.__azaCounts ? window.__azaCounts.single + ' single + ' + window.__azaCounts.double + ' double' : '') + ')' : ''));

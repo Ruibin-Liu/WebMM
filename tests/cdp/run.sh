@@ -52,7 +52,7 @@ stop_own_server() {
 }
 trap stop_own_server EXIT
 
-ALL_ORDER="m0_core m1_3d_pipeline m2_conformers m3_site_nav m4_batch m5_search_e2e m6_platform m6_import_loop m6_restore_rdkit_race m6_csv_export m6_sa_warmup m6_analog_cancel"
+ALL_ORDER="m0_core m1_3d_pipeline m2_conformers m3_site_nav m4_batch m5_search_e2e m6_platform m6_import_loop m6_restore_rdkit_race m6_csv_export m6_sa_warmup m6_analog_cancel m6_analog_pool"
 
 if [ $# -gt 0 ]; then
   SUITES=""
