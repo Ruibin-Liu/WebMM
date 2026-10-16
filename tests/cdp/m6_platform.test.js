@@ -432,6 +432,72 @@ function check(name, cond, detail) {
   const diaz = hopRes.rows.filter(r => (r.smi.match(/n/g) || []).length >= 2);
   check('double swaps produce diazines', diaz.length >= 1, hopRes.rows.map(r => r.smi.slice(0, 22)).join(' | '));
 
+  // ---- accessibility: axe scan + keyboard activation + modal focus ring ----
+  console.log('accessibility:');
+  {
+    await page.addScriptTag({ path: '/opt/homebrew/lib/node_modules/axe-core/axe.min.js' });
+    const axe = await page.evaluate(() =>
+      axe.run(document, { resultTypes: ['violations'] })).then(r =>
+        r.violations.filter(v => ['serious', 'critical'].includes(v.impact)));
+    check('axe: no serious/critical violations', axe.length === 0, axe.map(v => v.id + ':' + (v.nodes[0] && v.nodes[0].target.join(' '))).join(',') || 'clean');
+
+    // keyboard parity on interactive rows: search rows already had it; the
+    // RGD/scaffold/history fixes from this round must hold too
+    await page.evaluate(() => switchMode('search'));
+    await page.evaluate(() => {
+      document.getElementById('searchMode').value = 'sim'; onSearchModeChange();
+      document.getElementById('searchQuery').value = 'CCO';
+      runSearch();
+    });
+    await page.waitForFunction(() => /at T/.test(document.getElementById('searchResultStatus').textContent), null, { timeout: 120000 });
+    const kb = await page.evaluate(() => {
+      const out = {};
+      const srs = [...document.querySelectorAll('#searchRows tr')];
+      out.searchRow = srs.length > 0 && srs.some(r => r.tabIndex === 0 && r.getAttribute('role') === 'button');
+      out.histEntry = !!(document.querySelector('#queryHistoryPanel div[onclick]') && document.querySelector('#queryHistoryPanel div[onclick]').tabIndex === 0);
+      out.modalApi = !!window.__modalApi;
+      return out;
+    });
+    check('search rows focusable (tabindex=0)', kb.searchRow, JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#searchRows tr')].slice(0, 3).map(r => ({ ti: r.tabIndex, role: r.getAttribute('role'), h: r.outerHTML.slice(0, 40) })))));
+    check('query-history entries focusable (tabindex=0)', kb.histEntry);
+
+    // history entry: Enter activates rerunRound (query box gets the round's query)
+    if (kb.histEntry) {
+      await page.evaluate(() => document.getElementById('searchQuery').value = '');
+      await page.waitForFunction(() => {
+        const es = document.querySelectorAll('#queryHistoryPanel div[onclick]');
+        if (!es.length) return false;
+        es[es.length - 1].focus();
+        return document.activeElement === es[es.length - 1];
+      }, null, { timeout: 10000 });
+      await page.keyboard.press('Enter');
+      const q = await page.evaluate(() => ({ v: document.getElementById('searchQuery').value, focus: (document.activeElement || {}).outerHTML ? document.activeElement.outerHTML.slice(0, 60) : 'none' }));
+      check('query-history Enter reruns the round (query restored)', q.v.length > 0, JSON.stringify(q).slice(0, 90));
+    }
+
+    // modal focus ring: open history modal, initial focus lands inside, Tab
+    // cycles within, Escape closes AND returns focus to the opener
+    if (kb.modalApi) {
+      await page.evaluate(() => {
+        switchMode('single');
+        const btn = document.querySelector('button.action-btn.history');
+        btn.focus();
+        showHistory();
+      });
+      await page.waitForFunction(() => document.getElementById('historyModal').style.display === 'block', null, { timeout: 10000 });
+      const focusInside = await page.evaluate(() => document.getElementById('historyModal').contains(document.activeElement));
+      check('modal: initial focus moves inside', focusInside);
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Tab');
+      const stillInside = await page.evaluate(() => document.getElementById('historyModal').contains(document.activeElement));
+      check('modal: Tab stays inside (focus trap)', stillInside);
+      await page.keyboard.press('Escape');
+      const closed = await page.evaluate(() => document.getElementById('historyModal').style.display !== 'block');
+      const backOnOpener = await page.evaluate(() => document.activeElement === document.querySelector('button.action-btn.history'));
+      check('modal: Escape closes and focus returns to opener', closed && backOnOpener);
+    }
+  }
+
   // ---- zero page errors ----
   check('zero page errors', errors.length === 0, errors.slice(0, 2).join(' | '));
 

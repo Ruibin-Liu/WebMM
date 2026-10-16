@@ -80,7 +80,7 @@
  }
 
  .version {
-   color: var(--muted);
+   color: #56677d;   /* --muted on the #f4f6f9 card bg is 4.43:1 — just under 4.5 */
    margin-top: 0.5rem;
    font-size: 0.8rem;
    font-family: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
@@ -829,7 +829,7 @@ body { background: var(--ll-bg); margin: 0; }
 .side-brand { font-weight: 800; font-size: 1.08rem; letter-spacing: -0.02em; color: var(--text);
   text-decoration: none; padding: 0.1rem 0.5rem 0.95rem; }
 .side-brand span { color: var(--ll-accent); }
-.side-brand small { font-size: 0.66rem; font-weight: 600; color: #94a3b8; margin-left: 0.1rem; }
+.side-brand small { font-size: 0.66rem; font-weight: 600; color: #64748b; margin-left: 0.1rem; }
 .side-brand:hover { color: var(--text); }
 .side-nav { display: flex; flex-direction: column; gap: 3px; }
 .side-item { display: flex; align-items: center; width: 100%;
@@ -852,7 +852,7 @@ body { background: var(--ll-bg); margin: 0; }
 .side-links a, .side-links button { color: #64748b; font-size: 0.72rem; text-decoration: none;
   background: none; border: none; cursor: pointer; font: inherit; font-size: 0.72rem; padding: 0; }
 .side-links a:hover, .side-links button:hover { color: var(--text); }
-.side-note { color: #94a3b8; font-size: 0.66rem; padding: 0 0.5rem; }
+.side-note { color: #64748b; font-size: 0.66rem; padding: 0 0.5rem; }
 
 /* --- topbar --- */
 .main-col { --workspace-gutter: 16px; min-width: 0; padding: 0 var(--workspace-gutter) 1rem; }
@@ -865,7 +865,7 @@ body { background: var(--ll-bg); margin: 0; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .top-tasks.running { color: var(--ll-accent-2); animation: ll-pulse 1.6s ease-in-out infinite; }
 @keyframes ll-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
-.top-ver { font-size: 0.72rem; color: #94a3b8; white-space: nowrap; }
+.top-ver { font-size: 0.72rem; color: #64748b; white-space: nowrap; }
 
 /* --- cards --- */
 .panel { background: #fff; border: 1px solid var(--ll-line); border-radius: 12px;
@@ -989,7 +989,7 @@ table td.value, table th.value { font-variant-numeric: tabular-nums; }
   border-bottom: 1px solid var(--ll-line); background: #f8fafc; }
 .card-head svg { width: 16px; height: 16px; color: var(--ll-accent-2); flex: 0 0 16px; }
 .card-head b { font-size: 0.85rem; color: #0f172a; }
-.card-sub { font-size: 0.7rem; color: #8fa1b6; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-sub { font-size: 0.7rem; color: #5c6f85; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-body { padding: 0.75rem 0.85rem; }
 .card-body textarea { width: 100%; box-sizing: border-box; }
 .prop-bars { padding: 0.7rem 0.85rem 0.2rem; }
@@ -1045,7 +1045,7 @@ body[data-mode="search"] #inputPanel { padding: 0; border: 0; background: transp
 /* segmented control (search mode) */
 .seg { display: inline-flex; background: #e8edf3; border-radius: 9px; padding: 3px; gap: 2px; }
 .seg-btn { border: none; background: transparent; font: inherit; font-size: 0.78rem; font-weight: 500;
-  color: #64748b; padding: 0.35rem 0.8rem; border-radius: 7px; cursor: pointer; transition: all .14s; }
+  color: #4d5d72; padding: 0.35rem 0.8rem; border-radius: 7px; cursor: pointer; transition: all .14s; }
 .seg-btn:hover { color: #0f172a; }
 .seg-btn.on { background: #fff; color: var(--ll-accent-2); box-shadow: 0 1px 2px rgba(16,24,40,.1); font-weight: 600; }
 
@@ -1221,6 +1221,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     <button class="side-item" id="tabProject" onclick="switchMode('project')" title="项目概览 — 库/工作集统计、项目导入导出">
       <span class="side-label">项目概览</span>
     </button>
+    <div role="tablist" aria-label="模式" style="display:contents;">
     <button class="side-item mode-tab active" id="tabSingle" role="tab" aria-selected="true" onclick="switchMode('single')" title="分子工作台 — 结构导入、2D/3D、构象、位点">
       <span class="side-label">分子工作台</span>
     </button>
@@ -1233,6 +1234,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     <button class="side-item mode-tab" id="tabAnalog" role="tab" aria-selected="false" onclick="switchMode('analog')" title="骨架探索 — 从当前分子衍生类似物:单位点基团交换 + aza-scan 环跃迁,形状重打分(不筛库,生成新候选)">
       <span class="side-label">骨架探索</span>
     </button>
+    </div>
   </nav>
   <div class="side-foot">
     <div class="side-status"><span class="ss-dot"></span><span id="sideStorage">storage…</span></div>
@@ -1333,9 +1335,9 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
         <div class="field">
           <span class="f-label">检索方式</span>
           <div class="seg" id="segMode" role="tablist" aria-label="Search mode">
-            <button type="button" class="seg-btn on" data-v="sim" onclick="segModeSet('sim')">相似</button>
-            <button type="button" class="seg-btn" data-v="sub" onclick="segModeSet('sub')">子结构</button>
-            <button type="button" class="seg-btn" data-v="shape" onclick="segModeSet('shape')">形状 3D</button>
+            <button type="button" class="seg-btn on" role="tab" aria-selected="true" data-v="sim" onclick="segModeSet('sim')">相似</button>
+            <button type="button" class="seg-btn" role="tab" aria-selected="false" data-v="sub" onclick="segModeSet('sub')">子结构</button>
+            <button type="button" class="seg-btn" role="tab" aria-selected="false" data-v="shape" onclick="segModeSet('shape')">形状 3D</button>
           </div>
           <select id="searchMode" aria-label="Search mode" style="display:none;" onchange="onSearchModeChange()">
             <option value="sim">Similarity</option>
@@ -1355,7 +1357,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
         </div>
         <div class="field">
           <span class="f-label">阈值 T ≥ <span id="searchThresholdVal">0.30</span></span>
-          <input type="range" id="searchThreshold" min="0" max="1" step="0.05" value="0.3" style="width:110px; accent-color:var(--ll-accent);" oninput="document.getElementById('searchThresholdVal').textContent = parseFloat(this.value).toFixed(2)">
+          <input type="range" id="searchThreshold" min="0" max="1" step="0.05" value="0.3" style="width:110px; accent-color:var(--ll-accent);" oninput="document.getElementById('searchThresholdVal').textContent = parseFloat(this.value).toFixed(2)" aria-label="相似度阈值 T">
         </div>
         <div class="field">
           <span class="f-label">药效团匹配</span>
@@ -1371,11 +1373,11 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
           <div style="display:flex; gap:0.8rem; align-items:center; flex-wrap:wrap;">
             <span id="shapeConfsWrap">
               <label for="shapeConfs" style="font-size:0.75rem; color:var(--muted);" title="Conformers generated per library entry (best over conformers scores each entry; 1 = single-conformer legacy path)">confs/条目</label>
-              <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()">
+              <input type="number" id="shapeConfs" min="1" max="50" value="10" style="width:3.6rem; padding:0.35rem; font-size:0.8rem;" oninput="syncShapeConfCol()" aria-label="每条目构象数">
             </span>
             <span id="shapeFlexWrap">
               <label style="font-size:0.75rem; color:var(--muted); cursor:pointer;" title="Flexible alignment: after rigid scoring the top 10 rows are torsionally refined onto the query — MCS-matched atoms restrained to the query frame (flat-bottom 0.5 Å, fc 25), MMFF94s relaxation, then rescored. Schrödinger Ligand-Alignment-style flex fit; rows without a ≥6-atom MCS keep their rigid pose.">
-                <input type="checkbox" id="shapeFlex"> flex top 10
+                <input type="checkbox" id="shapeFlex" aria-label="柔性对齐重打分"> flex top 10
               </label>
             </span>
             <details id="colorWeightsWrap">
@@ -1403,9 +1405,9 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
         </div>
       </div>
       <div id="filterWrap" style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Property filter over the result rows (view-layer; MW from the library entry, cLogP computed lazily via Crippen)">MW <input type="number" id="filterMwMin" placeholder="min" min="0" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()">–<input type="number" id="filterMwMax" placeholder="max" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()"></label>
-      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Crippen cLogP range filter">cLogP <input type="number" id="filterClogpMin" placeholder="min" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()">–<input type="number" id="filterClogpMax" placeholder="max" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()"></label>
-      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap; cursor:pointer; display:inline-flex; gap:3px; align-items:center;" title="Flag PAINS alerts (A/B/C catalog from lbdd_data) on the result rows — lazy, first 200 shown rows"><input type="checkbox" id="filterPainsFlag" onchange="renderSearchResultsCurrent()">标 PAINS</label>
+      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Property filter over the result rows (view-layer; MW from the library entry, cLogP computed lazily via Crippen)">MW <input type="number" id="filterMwMin" placeholder="min" min="0" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()" aria-label="分子量下限">–<input type="number" id="filterMwMax" placeholder="max" step="10" style="width:3.8rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()" aria-label="分子量上限"></label>
+      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Crippen cLogP range filter">cLogP <input type="number" id="filterClogpMin" placeholder="min" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()" aria-label="cLogP 下限">–<input type="number" id="filterClogpMax" placeholder="max" step="0.5" style="width:3.4rem; padding:0.25rem; font-size:0.75rem;" onchange="renderSearchResultsCurrent()" aria-label="cLogP 上限"></label>
+      <label style="font-size:0.75rem; color:var(--muted); white-space:nowrap; cursor:pointer; display:inline-flex; gap:3px; align-items:center;" title="Flag PAINS alerts (A/B/C catalog from lbdd_data) on the result rows — lazy, first 200 shown rows"><input type="checkbox" id="filterPainsFlag" onchange="renderSearchResultsCurrent()" aria-label="仅显示 PAINS 标记">标 PAINS</label>
       <span class="hint" id="filterStatus"></span>
       </div>
     </div>
@@ -1449,8 +1451,8 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
      <div class="studio-main">
        <div class="studio-head">
          <div class="vtabs" role="tablist" aria-label="结构视图">
-           <button type="button" class="vtab on" id="vtab3d" onclick="studioTab('3d')">三维</button>
-           <button type="button" class="vtab" id="vtab2d" onclick="studioTab('2d')">二维</button>
+           <button type="button" class="vtab on" id="vtab3d" role="tab" aria-selected="true" onclick="studioTab('3d')">三维</button>
+           <button type="button" class="vtab" id="vtab2d" role="tab" aria-selected="false" onclick="studioTab('2d')">二维</button>
          </div>
          <div class="studio-actions">
            <button id="btnEmbed" class="action-btn spatial primary" onclick="studioTab('3d'); embed3D()" disabled title="ETKDG v3 3D embedding (seeded, stereo-aware)">
@@ -1482,9 +1484,9 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
                <label class="mini-field" title="energy window (kcal/mol)">ΔE
                  <input id="confWin" aria-label="Energy window" type="number" step="0.5" value="5">
                </label>
-               <label class="chk"><input type="checkbox" id="chargeColor" onchange="chargeColor()"> 按部分电荷着色</label>
+               <label class="chk"><input type="checkbox" id="chargeColor" onchange="chargeColor()" aria-label="按部分电荷着色"> 按部分电荷着色</label>
                <label class="chk" title="Pharmacophore features (same sites the shape Color T / pharmacophore screen use); donor spheres at hydrogens, acceptor spheres along the lone-pair direction">
-                 <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()"> 特征
+                 <input type="checkbox" id="featSpheres" onchange="onFeatureSpheres()" aria-label="特征球显示"> 特征
                </label>
                <span id="featLegend" class="hint" style="display:inline-flex; gap:0.55rem; flex-wrap:wrap;"></span>
                <span class="hint" id="gfnffHint" style="display:none;"></span>
@@ -1620,7 +1622,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        <button id="btnBatchCSV" class="action-btn export" onclick="exportBatchCSV()">导出 CSV</button>
        <button id="btnBatchSDF" class="action-btn export" onclick="exportBatchSDF()">导出 SDF</button>
        <label for="batchFilter" style="font-size:0.75rem; color:#64748b; margin-left:0.3rem;">Filter</label>
-       <select id="batchFilter" onchange="applyBatchView()" style="font-size:0.75rem; padding:0.25rem;">
+       <select id="batchFilter" onchange="applyBatchView()" style="font-size:0.75rem; padding:0.25rem;" aria-label="批量结果过滤">
          <option value="all">全部</option>
          <option value="lipinski">Lipinski 通过</option>
          <option value="veber">Veber 通过</option>
@@ -1656,9 +1658,9 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
        <button class="action-btn edit" style="width:auto;" onclick="buildPharmQuery()" title="Take the current single-view molecule's 3D features as the query">由当前分子构建</button>
        <label for="pharmTol" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;">± 容差 (Å)</label>
-       <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
+       <input type="number" id="pharmTol" min="0.1" max="3" step="0.1" value="1.5" style="width:4.5rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;" aria-label="药效团容差(埃)">
        <label for="pharmConfs" style="font-size:0.75rem; color:var(--muted); white-space:nowrap;" title="Conformers generated per molecule (more = fewer false negatives, slower)">构象数</label>
-       <input type="number" id="pharmConfs" min="1" max="50" value="10" style="width:4rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;">
+       <input type="number" id="pharmConfs" min="1" max="50" value="10" style="width:4rem; padding:0.35rem; border-radius:8px; border:1px solid var(--border); font-size:0.8rem;" aria-label="药效团构象数">
        <button id="btnPharmQ" class="action-btn primary" style="width:auto;" onclick="screenPharmQuery()">筛选库</button>
      </div>
      <div class="version" id="pharmQStatus" aria-live="polite"></div>
@@ -1682,7 +1684,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
          <span id="workSetCounts" class="hint"></span>
          <button class="action-btn clear" style="width:auto; padding:0.25rem 0.6rem; font-size:0.72rem;" onclick="triageUndo()" title="Undo the last triage action (appends the inverse command — the log is never rewritten)">↶ 撤销</button>
          <label class="hint" style="cursor:pointer; display:inline-flex; gap:3px; align-items:center;">
-           <input type="checkbox" id="workSetHideExcluded" onchange="renderSearchResultsCurrent()"> 隐藏已排除
+           <input type="checkbox" id="workSetHideExcluded" onchange="renderSearchResultsCurrent()" aria-label="隐藏已排除分子"> 隐藏已排除
          </label>
        </div>
        <div id="workSetPins" style="margin-top:0.35rem;"></div>
@@ -1732,7 +1734,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        <input type="text" id="rgdCore" placeholder="带附着标签的核心,如 [*:1]c1ccc([*:2])cc1" aria-label="RGD core" style="flex:1; min-width:200px; padding:0.45rem; border-radius:8px; border:1px solid var(--border); font-family:ui-monospace,Menlo,monospace; font-size:0.85rem;">
        <button class="action-btn edit" onclick="fillRgdExample()" title="Fill a para-disubstituted benzene example core">Example</button>
       <button class="action-btn edit" onclick="autoRgdCore()" title="Derive a labeled core automatically: MCS of the most frequent scaffold family, attachment points from the first member">自动核心</button>
-       <select id="rgdScope" title="Run over the whole library or the current search results">
+       <select id="rgdScope" title="Run over the whole library or the current search results" aria-label="RGD 作用范围">
          <option value="library">全库</option>
          <option value="hits">当前结果</option>
        </select>
@@ -1752,7 +1754,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
    <div id="scaffoldPanel" class="panel" style="display:none;">
      <div class="card-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2l8 5v10l-8 5-8-5V7z"/></svg><b>骨架频次</b></div>
      <div class="action-buttons" style="justify-content:flex-start; margin:0.4rem 0;">
-       <select id="scaffoldScope" title="Run over the whole library or the current search results">
+       <select id="scaffoldScope" title="Run over the whole library or the current search results" aria-label="骨架频次统计范围">
          <option value="library">全库</option>
          <option value="hits">当前结果</option>
        </select><button id="btnScaffold" class="action-btn primary" style="width:auto;" onclick="analyzeScaffolds()">分析骨架</button>
@@ -3693,9 +3695,19 @@ function rdkitAvailable() {
         const tip = escHtml(label);
         return '<div title="' + tip + '" style="padding:1px 0 1px ' + (depth[k] * 14 + 4) +
           'px; font-size:0.74rem; cursor:pointer; ' + (isCur ? 'font-weight:600;' : 'color:var(--muted);') +
-          '" onclick="rerunRound(\'' + k + '\')">' + (depth[k] > 0 ? '↳ ' : '') + tip + (isCur ? ' ◂' : '') + '</div>';
+          '" tabindex="0" role="button" onclick="rerunRound(\'' + k + '\')">' + (depth[k] > 0 ? '↳ ' : '') + tip + (isCur ? ' ◂' : '') + '</div>';
       }).join('') + '</div>';
   }
+
+  // keyboard activation for query-history entries (div[onclick])
+  (function () {
+    const host = document.getElementById('queryHistoryPanel');
+    host.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      const t = ev.target.closest('div[onclick]');
+      if (t) { ev.preventDefault(); t.click(); }
+    });
+  })();
 
   function rerunRound(roundId) {
     const c = triageStore();
@@ -4965,7 +4977,10 @@ function csvField(v) {
       tr.innerHTML = `<td>${i + 1}</td><td>${escHtml(r.e.name)}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(r.e.smiles)}">${escHtml(r.e.smiles)}</td>` +
         labels.map((_, j) => `<td class="value">${escHtml(r.frags[j] || '—')}</td>`).join('');
+      tr.tabIndex = 0;
+      tr.setAttribute('role', 'button');
       tr.addEventListener('click', () => loadSearchRow(r.e));
+      tr.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); loadSearchRow(r.e); } });
       tb.appendChild(tr);
     });
   }
@@ -5018,12 +5033,14 @@ function csvField(v) {
       tr.tabIndex = 0;
       tr.setAttribute('role', 'button');
       tr.setAttribute('aria-label', 'Load scaffold ' + s);
-      tr.addEventListener('click', () => {
+      const act = () => {
         switchMode('single');
         document.getElementById('input').value = s;
         process(true);
         window.scrollTo({ top: 0, behavior: 'smooth' });
-      });
+      };
+      tr.addEventListener('click', act);
+      tr.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); act(); } });
       tr.innerHTML = `<td>${i + 1}</td>` +
         `<td class="value" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(s)} (${members.length} molecules)">${escHtml(s)}</td>` +
         `<td class="value">${members.length}</td>` +
@@ -5239,11 +5256,11 @@ function csvField(v) {
 
    function viewSource() {
      document.getElementById("sourceCode").textContent = document.documentElement.outerHTML;
-     document.getElementById("sourceModal").style.display = "block";
+     openModal("sourceModal");
    }
 
     function closeSourceModal() {
-      document.getElementById("sourceModal").style.display = "none";
+      closeModal("sourceModal");
     }
 
     function copySource() {
@@ -5263,17 +5280,42 @@ function csvField(v) {
 
   // M3: Escape closes the topmost modal; backdrop click closes; focus returns
   const MODALS = ['jsmeModal', 'historyModal', 'sourceModal'];
+  const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+  let modalOpener = null;   // element focused before a modal opened
+  const openModal = id => {
+    const m = document.getElementById(id);
+    if (!m || m.style.display === 'block') return;
+    if (!m.contains(document.activeElement)) modalOpener = document.activeElement;
+    m.style.display = 'block';
+    const f = m.querySelector(FOCUSABLE);
+    if (f) f.focus();
+  };
+  const closeModal = id => {
+    const m = document.getElementById(id);
+    if (!m || m.style.display !== 'block') return;
+    m.style.display = 'none';
+    if (modalOpener && document.contains(modalOpener)) { try { modalOpener.focus(); } catch (e) {} }
+    modalOpener = null;
+  };
+  const topModal = () => MODALS.map(id => document.getElementById(id)).find(m => m && m.style.display === 'block');
   for (const id of MODALS) {
     const m = document.getElementById(id);
-    m.addEventListener('mousedown', e => { if (e.target === m) m.style.display = 'none'; });
+    m.addEventListener('mousedown', e => { if (e.target === m) closeModal(id); });
   }
   document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape') return;
-    for (const id of MODALS) {
-      const m = document.getElementById(id);
-      if (m.style.display === 'block') { m.style.display = 'none'; return; }
-    }
+    const m = topModal();
+    if (!m) return;
+    if (e.key === 'Escape') { closeModal(m.id); return; }
+    if (e.key !== 'Tab') return;
+    // keep Tab cycling inside the open modal (focus trap)
+    const f = [...m.querySelectorAll(FOCUSABLE)].filter(el => el.offsetParent !== null || el === document.activeElement);
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!m.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
   });
+  window.__modalApi = { openModal, closeModal };   // open/close helpers shared by the modal owners
   // conformer chart: arrow keys walk the ensemble once focused
   document.getElementById('confChart').addEventListener('keydown', e => {
     if (!confEnsemble || !confEnsemble.length) return;
@@ -5345,7 +5387,7 @@ function csvField(v) {
   }
 
    function openJSME() {
-     document.getElementById("jsmeModal").style.display = "block";
+     openModal("jsmeModal");
      jsmeModalOpen = true;
 
      const currentInput = document.getElementById("input").value;
@@ -5369,7 +5411,7 @@ function csvField(v) {
   }
 
    function closeJSME() {
-     document.getElementById("jsmeModal").style.display = "none";
+     closeModal("jsmeModal");
      jsmeModalOpen = false;
      moleculeToLoad = null;
      originalName = null;
@@ -5452,11 +5494,11 @@ function csvField(v) {
       `).join('');
     }
 
-    document.getElementById('historyModal').style.display = 'block';
+    openModal('historyModal');
   }
 
   function closeHistoryModal() {
-    document.getElementById('historyModal').style.display = 'none';
+    closeModal('historyModal');
   }
 
   async function exportHistoryToCSV() {
@@ -6102,6 +6144,8 @@ function studioTab(w) {
   document.getElementById('vpane2d').style.display = w === '2d' ? '' : 'none';
   document.getElementById('vtab3d').classList.toggle('on', w === '3d');
   document.getElementById('vtab2d').classList.toggle('on', w === '2d');
+  document.getElementById('vtab3d').setAttribute('aria-selected', w === '3d');
+  document.getElementById('vtab2d').setAttribute('aria-selected', w === '2d');
 }
 window.studioTab = studioTab;
 (function initStudio() {
@@ -6142,7 +6186,7 @@ applyDashLayout();
 
 function syncSegMode() {
   const v = document.getElementById('searchMode').value;
-  document.querySelectorAll('#segMode .seg-btn').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  document.querySelectorAll('#segMode .seg-btn').forEach(b => { const on = b.dataset.v === v; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
 }
 function segModeSet(v) {
   const sel = document.getElementById('searchMode');
