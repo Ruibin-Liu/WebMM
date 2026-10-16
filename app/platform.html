@@ -4460,6 +4460,15 @@ function rdkitAvailable() {
 
   // provenance-rich CSV export: per-round ranks + consensus + triage state
   // (M2; the exit path to other tools, M0 spec §6)
+// CSV field: neutralize spreadsheet formula injection (fields starting with
+// = + - @ or tab/CR get a leading apostrophe — Office/Sheets text convention),
+// then quote per RFC 4180 only when needed (comma, quote, CR/LF inside).
+function csvField(v) {
+  let s = String(v == null ? '' : v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
   function exportResultsCSV() {
     if (!__lastRenderedRows || !__lastRenderedRows.length) { searchStatus('Nothing to export — run a search first'); return; }
     const c = triageStore();
@@ -4471,7 +4480,7 @@ function rdkitAvailable() {
       return 'rank:' + (q.mode || '?') + ':' + String(q.query || '').slice(0, 18).replace(/[",\n]/g, ' ');
     })).concat(['consensus_mean_rank', 'pinned', 'note', 'excluded']);
     const lines = [header.join(',')];
-    const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const q = csvField;
     for (const r of __lastRenderedRows.slice(0, 500)) {
       const e = r.e;
       const cells = [q(e.name), q(e.smiles), e.MW];
@@ -4962,7 +4971,7 @@ function rdkitAvailable() {
     if (!rgdResults || !rgdResults.length) { document.getElementById('rgdStatus').textContent = 'Nothing to export — run a decomposition first'; return; }
     const labels = coreLabels(document.getElementById('rgdCore').value);
     const headers = ['Name', 'SMILES', ...labels.map(n => 'R' + n)];
-    const esc = v => { const s = String(v); return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const esc = csvField;
     let csv = headers.join(',') + '\n';
     for (const r of rgdResults) {
       csv += [r.e.name || '', r.e.smiles, ...labels.map((_, j) => r.frags[j] || '')].map(esc).join(',') + '\n';
@@ -5022,7 +5031,7 @@ function rdkitAvailable() {
 
   function exportScaffoldCSV() {
     if (!scaffoldResults || !scaffoldResults.length) { document.getElementById('scaffoldStatus').textContent = 'Nothing to export — analyze first'; return; }
-    const esc = v => { const s = String(v); return (s.includes(',') || s.includes('"')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const esc = csvField;
     let csv = 'Scaffold,Molecules,SharePercent,Members\n';
     const total = searchLibrary.length;
     for (const [s, members] of scaffoldResults) {
@@ -5587,13 +5596,7 @@ function rdkitAvailable() {
           alertTooManyRings ? 'Alert' : 'OK',
           alertStereo ? 'Alert' : 'OK',
           compound.timestamp
-        ].map(field => {
-          const s = String(field);
-          if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-            return '"' + s.replace(/"/g, '""') + '"';
-          }
-          return s;
-        }).join(',');
+        ].map(csvField).join(',');
 
         csvContent += row + '\n';
         m.delete();
@@ -6558,7 +6561,7 @@ function exportBatchCSV() {
             r.exactmw || '', r.heavy || '', r.fsp3 || '',
             r.lipinski, r.veber, r.E !== null && r.E !== undefined ? r.E.toFixed(3) : ''];
   });
-  const esc = v => { const s = String(v); return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const esc = csvField;
   let csv = headers.join(',') + '\n';
   for (const row of rows) csv += row.map(esc).join(',') + '\n';
   const a = document.createElement('a');

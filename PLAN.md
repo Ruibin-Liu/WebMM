@@ -1,23 +1,23 @@
-# Plan: scripts/build-ketcher.sh(Ketcher bundle 可复现构建 + 版本 pin)
+# Plan: CSV 导出加固(公式注入中和 + RFC4180 引号)
 
-## 背景
-- app/vendor/ketcher/ketcher-bundle.js(31MB IIFE)是一次性 esbuild 产物,
-  构建命令未入库 —— 版本升级/CVE 修复时不可复现。
-- 入口封装 WebMMKetcher(mount/getMolfile/setMolecule/unmount)只存在于
-  编译产物中,源码不在库 —— 需一并还原为 scripts/ketcher-entry.js。
+## 背景(最初平台页审查发现 #5,一直未修)
+- 两页共 9 处 CSV 导出器各自实现 esc():platform.html 3 处(exportResultsCSV
+  的 q()/exportRGDCSV/exportScaffoldCSV——scaffold 版连 \n 都不查),
+  index.html 6 处(exportResultsCSV/exportRGDCSV/exportScaffoldCSV/
+  exportHistoryToCSV/exportBatchCSV + 一处内联)。
+- 风险:①字段含换行破行;②公式注入——导入库的分子名以 = + - @ 开头时
+  Excel/Sheets 打开即当公式执行(名字是用户导入数据,真实攻击面)。
 
-## 范围
-- 新增 scripts/build-ketcher.sh:临时目录 npm ci 精确版本
-  (ketcher-react 3.18.0 / ketcher-standalone 3.18.0 / esbuild pin),
-  esbuild --bundle --format=iife --minify + 守卫式 process banner,
-  产出 ketcher-bundle.js + ketcher.css + LICENSE 到 app/vendor/ketcher/。
-- 新增 scripts/ketcher-entry.js:WebMMKetcher 入口封装源码
-  (从现有 bundle 逆向还原,API 与 platform.html 调用面一致)。
-- 不改动现有 vendor 产物、platform.html、页面逻辑;默认输出到临时目录,
-  --install 才写入 app/vendor/ketcher/。
+## 改动
+- 两页各加共享 `csvField(v)`:危险前缀中和(`'` 前缀,Office/Sheets 惯例)
+  + 按需引号(含 , " \n \r 才引,引号转义 "" )。
+- 9 处调用点全部替换为 csvField(调用点形如 `const q = csvField;` 最小 diff)。
+- 新增 tests/cdp/m6_csv_export.test.js:两页 csvField 直接单测
+  (公式前缀/逗号/引号/换行/正常名)+ platform 真实导出流
+  (敌意名分子入库→sim 检索→exportResultsCSV 下载→文件内容断言)。
+
+## 不做
+- 不改列结构/文件名/状态文案;不动 m4/m5/m6 既有断言(朴素 split 兼容)。
 
 ## 验收
-- 脚本产出 bundle 含守卫 banner 与 WebMMKetcher 全 API;
-- 用重建 bundle 替换后 Ketcher 模态 mount/setMolecule/getMolfile 冒烟通过
-  (Playwright,临时替换、测完还原);
-- 版本标记 3.18.0 与现有产物一致。
+- 新测试全绿;m4/m5/m6/platform Node/loop 复跑全绿(两页回归)。
