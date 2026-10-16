@@ -1,59 +1,12 @@
-# Plan: Platform 留白与内容密度修正
+# Plan: Platform 代码审查修正(已完成)
 
-## 范围(用户指令:调整 platform 页留白;逻辑/契约不动)
-
-- 保留现有未提交修改、科学计算字体、配色、导航与计算流程。
-- 只调整 app/platform.html 的布局、节点归属及对应前端回归测试;测试暴露的
-  存储竞态仅在 app/platform/compat.js 与 app/platform/db.js 内修复。
-- 不修改 Rust、WASM API、依赖或 app/index.html;无破坏性 API 变更。
-
-## 审计结论
-
-- 已完成:真实浏览器检查单分子空态、检索、骨架探索并测量五模式。
-- header 默认 margin-bottom 24px、container margin-top 40px/padding-top
-  16px、panel margin-top 16px 叠加;单分子首卡距顶栏 56px,其余 72px。
-- 单分子空态仅隐藏检查器 body,整张 340px 宽空卡和空 grid 轨道仍占位。
-- 检索库 textarea 游离于双卡之上,占据 110px 高整行。
-- 骨架探索双卡强制等高,共享来源仅在左卡、按钮独占一行造成多余空白。
-
-## 改动(app/platform.html 与前端测试;已完成)
-
-1. 统一主内容外距:顶栏下 16px、水平 20px(手机 12px);消除叠加 margin,
-   container 内外面板对齐,不再沿用 1100px 居中上限制造宽屏侧向死区。
-2. 单分子按 has-molecule 状态隐藏整张空检查器和无用 grid 轨道;
-   有数据时保持左输入/结构、右检查器布局,检查器按内容高度而非拉伸;
-   输入框默认高度收紧,仍可手动拉高。
-3. 检索库 textarea 与拖放区一起归入配体库卡;切模式恢复原节点位置,
-   保留输入值和事件;去掉输入区双层卡片外壳,空状态行不额外占位。
-4. 骨架探索共享来源行置于两种方法上方;位点/片段/探索按紧凑表单排布;
-   两方法卡不强制等高,保留全部 id/事件/计算逻辑和结果表。
-5. 新增布局回归测试,覆盖空态/有分子/清空、模式切换与重载、检索库输入、
-   桌面/手机边距及溢出;检查真实截图,按测量修正布局细节。
-
-## 安全检查
-
-- 修改基于本轮初始脏工作区,不覆盖之前的冻结修复/缩略图/cLogP 等改动。
-- 节点搬迁遵循 dashMoves 现有恢复机制,不删除用户输入或项目数据。
-- 保留分子工作室/导出/构象/检索/骨架探索 id 与公共函数契约。
-- 不用隐藏必要控件、缩小字体或装饰内容掩盖空白。
-
-## 验收
-
-- 新布局测试 + tests/cdp/m6_platform.test.js + tests/platform/run.js 通过。
-- 五模式首卡对齐;无分子时检查器整卡不显示,处理后恢复、清空后再次隐藏。
-- single/search/batch 多次切换后 textarea 值和拖放功能位置保持正确。
-- 桌面 1440px/1280px、手机 390px 截图与几何检查,无页面横向溢出;
-  有数据时工作室、检索结果、骨架结果仍可正常查看和操作。
-- 更新 CODE_STATUS.md 的既有 Current Focus/Recently Completed,如实记录
-  验证结果及未验证项,不新增文档章节。
+## 范围
+- app/platform.html:删除逐字重复的 CSS 区块(1188–1358 = 1017–1187 副本);
+  移除未使用的 JSME 加载脚本与 meta 文案中的 JSME(Ketcher 已替换)。
 
 ## 实施结果(完成)
-
-- 主区全宽化并统一 16px/12px 边距;五模式首块与顶栏零叠加,单分子空态 top=62、左右=16px。
-- 空检查器整卡与空轨道隐藏,加载分子后恢复;输入框空态 96px,粘贴区可滚动。
-- 检索库 textarea 与拖放区迁入配体库卡,模式切换保留值;m6 新增两道布局契约。
-- 骨架来源共享行上提,双卡按内容高度排布,控件行收紧;结果表横向滚动。
-- 修复清库后 RemoveLibrary 重放复活;导入后概览计数同步;截图复检通过。
-- clearLibrary 在 compat 层固定 checkpoint;db.all 空连接回退空数组;检索库
-  恢复加入代际守卫;m6 reload 等待改为业务状态并保留一次模式重入。
-- 验收:platform Node 34/34;m6 最终复跑 32/32;1440px/1432px 桌面与 390px 溢出 0。
+- CSS 副本删除前 diff 复核零差异;删除后 design-v2 段仅存一份,级联顺序不变。
+- jsme.nocache.js 加载与 meta 中 JSME 文案移除;openJSME/jsmeModal 内部名保留,
+  vendor/jsme 保留(app/index.html 仍在用)。
+- 验收:platform Node 39/39、m6 32/32、import/reload loop 10/10、
+  jsME 网络请求 0、零 page error。
