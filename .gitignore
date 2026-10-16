@@ -36,3 +36,6 @@ gfnff_*
 # local wasm copies for the /site/ preview (copy from pkg/ when needed)
 site/webmm.js
 site/webmm_bg.wasm
+
+# stray local server log (root-owned)
+nohup.out

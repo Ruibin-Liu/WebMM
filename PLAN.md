@@ -1,27 +1,28 @@
-# Plan: platform 页无障碍收口(键盘行 + 模态焦点圈 + m6 挂 axe)
+# Plan: 收尾三件(gitignore / og:url / worker 生命周期审计修复)
 
-## 现状盘点(实测)
-- 已达标:search 行/hit 行(tabIndex+role+Enter/Space)、侧栏 role=tab、
-  drop role=button、confChart 方向键、模态 Escape/背景关闭。
-- 缺口:①RGD 结果行仅 click;②scaffold 行有 tabIndex/role 但无 keydown;
-  ③queryHistory 条目为 div[onclick],纯鼠标;④三个模态(jsme/history/source)
-  无 Tab 焦点圈、关闭后焦点不归还("focus returns" 注释是未兑现的承诺)。
+## 审计结论
+- applyDashLayout:仅移动节点(appendChild/insertBefore),从不 clone——
+  监听器随节点走,无泄漏;恢复顺序 reverse 正确(后兄弟先归位)。
+  结论:干净,不改代码,记录于 CODE_STATUS。
+- analog.worker 生命周期:两个真 bug——
+  ①init 失败挂死:ensure() 30ms 轮询 __ready 无超时,worker 内 import(wasm)
+  失败只回 done 不回 ready → Promise.all 永久 pending,≤8 个 interval 永续
+  泄漏 + worker 永不 terminate + 取消按钮无效;
+  ②陈旧 token 只 return 不 terminate:B 流式/C Promise.all/D flex 三个分支,
+  取消或重跑后 NW 个 worker(各持整份 WASM)存活到页面关闭。
+- shape 农场同款②(无 ready 轮询故无①):onmessage 陈旧分支同样不 terminate。
+  同族 bug 一并修(审计中发现),两行同款。
 
-## 改动(app/platform.html)
-1. RGD 行补 tabIndex=0 + role=button + Enter/Space(镜像 hit 行模式)。
-2. scaffold 行点击体提取为局部 act(),click 与 keydown 共用。
-3. queryHistory 条目 div 加 tabindex=0 + role=button;容器一次性委托
-   keydown(Enter/Space → 目标条目 .click())。
-4. 模态:共享 focusModal(id)(打开时聚焦首个可聚焦元素、记录外部焦点)
-   与 closeModal(id)(隐藏 + 焦点归还);document 级 Tab 圈定在最上层
-   打开模态内;Escape/背景路径改走 closeModal;display 逻辑与既有测试
-   断言零变化。
-
-## 测试(tests/cdp/m6_platform.test.js 追加)
-- axe-core 扫描 0 serious/critical(m3 同款注入)。
-- 键盘检查:search 行 tabindex/role;queryHistory 条目 Enter 触发重跑
-  (searchQuery 被写入);模态 Tab 圈定(焦点不出模态)+ Escape 归还焦点。
+## 改动
+1. .gitignore 追加 nohup.out。
+2. app/platform.html og:url → app/platform.html(当前指向 index.html,
+   平台页分享预览落错页;index.html 自身正确不动)。
+3. runAnalogFromCands:ensure() 加 30s 超时 + w.onerror → 失败即全 terminate
+   + analogStatus 报错;提取 killAll(),B/C/D 陈旧 token 分支统一 terminate。
+4. shape 农场 onmessage 陈旧分支补 terminate。
 
 ## 验收
-- m6 全绿(新检查含);loop/csv/sa_warmup/platform Node 复跑绿;
-  零 page error。index.html 不动(m0-m5 不受影响)。
+- 新增 m6_analog_cancel.test.js:①wasm 动态 fetch 拦截 → 真实 UI 触发探索 →
+  状态行报 init 失败(旧代码此处永挂);②运行中取消 → 状态行 settle、
+  后续可再跑(terminate 本身无法从页面观测,以不挂死+可重跑为行为断言)。
+- m6/loop/csv/sa_warmup/platform Node 全绿;m5(shape 路径)复跑绿。

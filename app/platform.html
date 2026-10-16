@@ -9,7 +9,7 @@
 <meta property="og:title" content="WebMM Workbench">
 <meta property="og:description" content="A lightweight, ligand-based CADD workbench: draw, inspect, embed 3D, optimize, and enumerate conformers — all locally in your browser. Powered by RDKit, Ketcher, and the WebMM force-field engine.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://ruibin-liu.github.io/WebMM/app/index.html">
+<meta property="og:url" content="https://ruibin-liu.github.io/WebMM/app/platform.html">
 <meta name="keywords" content="WebMM, molecular mechanics, CADD, conformers, ETKDG, MMFF94, GFN-FF, SMILES, Ketcher, RDKit, molecular properties, browser cheminformatics">
 <script src="vendor/3Dmol-min.js"></script>
 <style>
@@ -3300,7 +3300,7 @@ function rdkitAvailable() {
         // the phase-2 'full' jobs would land on uninitialized workers
         wk.postMessage({ type: 'initq', wasmUrl: window.__webmmUrl, qsdf, qSitesJson });
         wk.onmessage = ev => {
-          if (token !== shapeRunToken) return;
+          if (token !== shapeRunToken) { for (const w of workers) { try { w.terminate(); } catch (e) {} } return; }
           const msg = ev.data;
           if (msg.type === 'prepped') {
             const job = todo.find(x => x.e.idx === msg.idx);
@@ -4143,8 +4143,17 @@ function rdkitAvailable() {
     let nextJob = 0, doneCount = 0;
     const t0 = performance.now();
     const results = [];
+    const killAll = () => { for (const w of workers) { try { w.terminate(); } catch (e) {} } };
+    let ensureFailed = false;
     const ensure = (w) => new Promise(res => {
-      const iv = setInterval(() => { if (w.__ready) { clearInterval(iv); res(); } }, 30);
+      const t0e = performance.now();
+      const iv = setInterval(() => {
+        if (w.__ready) { clearInterval(iv); res(); return; }
+        if (ensureFailed || w.__initError || performance.now() - t0e > 30000) {   // init hang (e.g. engine fetch failure inside the worker)
+          clearInterval(iv); ensureFailed = true; killAll(); res(); return;
+        }
+      }, 30);
+      w.onerror = () => { ensureFailed = true; };
     });
     for (let i = 0; i < NW; i++) {
       const w = new Worker('analog.worker.js', { type: 'module' });
@@ -4152,6 +4161,7 @@ function rdkitAvailable() {
       w.onmessage = (ev) => {
         const msg = ev.data;
         if (msg.type === 'ready') { w.__ready = true; return; }
+        if (!w.__ready && msg.failed) { w.__initError = msg.failed; return; }   // import/init failed before ready
         if (msg.type === 'done') {
           const waiter = waiters.shift();
           if (waiter) waiter(msg);
@@ -4161,7 +4171,8 @@ function rdkitAvailable() {
       workers.push(w);
     }
     await Promise.all(workers.map(ensure));
-    if (token !== analogRunToken) { for (const w of workers) w.terminate(); return; }
+    if (token !== analogRunToken) { killAll(); return; }
+    if (ensureFailed) { analogStatus('Worker init failed (engine fetch) — try again'); document.getElementById('analogCancel').style.display = 'none'; return; }
     const scoreOne = (cand, idx) => new Promise(res => {
       const w = workers[idx % NW];
       waiters.push(res);
@@ -4178,7 +4189,7 @@ function rdkitAvailable() {
         scoreOne(cands[i], i).then(msg => {
           INFLIGHT--;
           doneCount++;
-          if (token !== analogRunToken) return;
+          if (token !== analogRunToken) { killAll(); return; }
           if (msg.tanimoto != null) {
             results.push({ ...cands[msg.idx], tanimoto: msg.tanimoto, idx: msg.idx });
             results.sort((a, b) => b.tanimoto - a.tanimoto);
@@ -4201,7 +4212,7 @@ function rdkitAvailable() {
               w.postMessage({ type: 'score', idx: cand.idx, molblock: cand.molblock, nConfs: 30,
                 seed: 4200 + 10000 + cand.idx, parentSdf: analogParentSdf, returnBest: true });
             }))).then(msgs => {
-              if (token !== analogRunToken) return;
+              if (token !== analogRunToken) { killAll(); return; }
               for (const msg of msgs) {
                 if (msg.tanimoto == null) continue;
                 const r = results.find(x => x.idx === msg.idx);
@@ -4215,7 +4226,7 @@ function rdkitAvailable() {
               return (async () => {
                 let dDone = 0;
                 for (const r of results.slice(0, 10)) {
-                  if (token !== analogRunToken) return;
+                  if (token !== analogRunToken) { killAll(); return; }
                   if (!r.bestSdf || r.tanimoto >= 0.9995) continue;   // exact self-superposition: nothing to gain
                   // flexAnalogCandidate is one synchronous WASM burst
                   // (align+MCS+optimize); yield a REAL macrotask first so
