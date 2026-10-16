@@ -3942,9 +3942,12 @@ function rdkitAvailable() {
   }
 
   // the SA fragment table (fpscores.bin → sa_load_table_wasm) is one
-  // synchronous ~1.4s parse; warm it during idle so it never lands mid-run
-  if (window.requestIdleCallback) requestIdleCallback(() => { ensureSaTable(); });
-  else setTimeout(() => { ensureSaTable(); }, 2500);
+  // synchronous ~1.4s parse; warm it during idle so it never lands mid-run.
+  // Idle can fire before the engine WASM finishes init (webmm undefined) —
+  // retry every 500ms until it is ready, so the warm actually happens.
+  const saWarmup = () => { if (window.webmm) ensureSaTable(); else setTimeout(saWarmup, 500); };
+  if (window.requestIdleCallback) requestIdleCallback(saWarmup);
+  else setTimeout(saWarmup, 2500);
 
   let analogParentSdf = null;      // the parent's 3D conformer (scoring ref)
   let analogParentMolblock = null; // for site detection + core surgery
