@@ -2597,8 +2597,12 @@ function rdkitAvailable() {
   }
 
   function onSearchModeChange() {
-    const shape = document.getElementById('searchMode').value === 'shape';
-    document.getElementById('searchFp').disabled = shape;
+    const mode = document.getElementById('searchMode').value;
+    // fingerprints feed the Tanimoto similarity path only — sub is SMARTS
+    // matching and shape uses conformer overlay, so the selector is
+    // meaningful in sim mode alone
+    document.getElementById('searchFp').disabled = mode !== 'sim';
+    const shape = mode === 'shape';
     document.getElementById('shapeConfsWrap').style.display = shape ? '' : 'none';
     document.getElementById('shapeFlexWrap').style.display = shape ? '' : 'none';
     document.getElementById('colorWeightsWrap').style.display = shape ? '' : 'none';

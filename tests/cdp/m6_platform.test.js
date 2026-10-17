@@ -104,6 +104,19 @@ function check(name, cond, detail) {
     libLayout.restored === libLayout.value && libLayout.restoredInput === '配体库' && libLayout.restoredDrop === '配体库',
     JSON.stringify(libLayout));
 
+  // fingerprint selector is meaningful in sim mode alone (sub = SMARTS,
+  // shape = overlay) — must be gated
+  {
+    const gate = await page.evaluate(() => {
+      const out = {};
+      const set = v => { document.getElementById('searchMode').value = v; onSearchModeChange(); return document.getElementById('searchFp').disabled; };
+      out.sim = set('sim'); out.sub = set('sub'); out.shape = set('shape');
+      set('sim');
+      return out;
+    });
+    check('fingerprint selector gated to sim mode only', gate.sim === false && gate.sub === true && gate.shape === true, JSON.stringify(gate));
+  }
+
   // ---- M1c rounds: DAG + hit-as-query + lineage persistence ----
   console.log('rounds / hit-as-query:');
   await page.evaluate(() => {
