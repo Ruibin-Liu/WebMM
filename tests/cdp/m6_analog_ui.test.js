@@ -90,6 +90,42 @@ function check(name, cond, detail) {
   check('SDF: metric data fields present', /<ShapeT>/.test(sdf) && /<SA>/.test(sdf));
   check('no page errors', errors.length === 0, errors.slice(0, 2).join(' | '));
 
+  // ---- bidirectional aza-scan (deaza N->CH) ----
+  const setupPicoline = async () => {
+    await page.evaluate(() => { document.getElementById('input').value = 'Cc1ccncc1'; process(true); });
+    await page.waitForFunction(() => !!document.querySelector('#svg svg'), null, { timeout: 60000 });
+    await page.evaluate(() => embed3D());
+    await page.waitForFunction(() => !!document.querySelector('#viewer3d canvas'), null, { timeout: 60000 });
+  };
+  const runAza = () => page.evaluate(() => runAzaScan());
+  const awaitAzaDone = () => page.waitForFunction(() => /Done: \d+ scored/.test(document.getElementById('analogStatus').textContent), null, { timeout: 180000 });
+
+  // default (aza only): every candidate keeps at least one ring N
+  await setupPicoline();
+  await runAza();
+  await awaitAzaDone();
+  const azaOnly = await page.evaluate(() => ({
+    rows: [...document.querySelectorAll('#analogRows .sm')].map(e => e.title || e.textContent),
+    counts: window.__azaCounts,
+  }));
+  check('aza-only run: every candidate contains a ring N', azaOnly.rows.length > 0 && azaOnly.rows.every(x => x.includes('n')), azaOnly.rows.slice(0, 3).join(' '));
+  check('aza-only run: no deaza counts reported', azaOnly.counts.deazaSingle == null, JSON.stringify(azaOnly.counts));
+
+  // deaza checked: toluene (no N) appears, counts reported
+  await page.evaluate(() => { document.getElementById('azaDeaza').checked = true; });
+  await runAza();
+  await awaitAzaDone();
+  const withDeaza = await page.evaluate(() => ({
+    rows: [...document.querySelectorAll('#analogRows .sm')].map(e => e.title || e.textContent),
+    counts: window.__azaCounts,
+    status: document.getElementById('analogStatus').textContent,
+  }));
+  check('deaza run: N-free candidate (toluene) present', withDeaza.rows.some(x => /^Cc1ccccc1$/.test(x)), withDeaza.rows.slice(0, 4).join(' '));
+  check('deaza run: counts reported (4-picoline has exactly 1 ring N)', withDeaza.counts.deazaSingle === 1 && withDeaza.counts.deazaDouble === 0, JSON.stringify(withDeaza.counts));
+  check('deaza run: Done line mentions deaza', /deaza 1 \+ 0/.test(withDeaza.status), withDeaza.status.slice(-90));
+  await page.evaluate(() => { document.getElementById('azaDeaza').checked = false; });
+  check('no page errors (deaza round)', errors.length === 0, errors.slice(0, 2).join(' | '));
+
   await browser.close();
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);

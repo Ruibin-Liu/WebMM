@@ -1716,8 +1716,11 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        </div>
        <div class="analog-path">
          <div class="path-head"><b>aza-scan 环跃迁</b><span class="card-sub" title="aza-scan 生物电子等排替换:对每个含氢芳环碳执行 C→N 元素替换(苯→吡啶/二嗪类),枚举单取代与双取代组合(邻位 N-N 由价键合法性过滤),经规范 SMILES 去重后进入与单位点交换相同的 B·C·D 形状漏斗重打分;母体构象始终为叠合参照,形状保持度(Shape T)衡量骨架跃迁的等排质量。">芳环 C→N · 1-2 取代</span></div>
-         <span class="hint">对每个含氢芳环碳做 C→N 生物电子等排替换(苯环→吡啶/二嗪),同一形状漏斗重打分。</span>
-         <button class="action-btn primary" style="width:auto; align-self:flex-start; height:38px;" onclick="runAzaScan()" title="Scaffold-hop spike: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres), then the same shape funnel">aza-scan(r5+r6 · 1-2 取代)</button>
+         <span class="hint">对每个含氢芳环碳做 C→N 生物电子等排替换(苯环→吡啶/二嗪),同一形状漏斗重打分。勾选反向则同时对吡啶型环氮做 N→CH 脱氮替换(deaza,如 7-脱氮嘌呤策略),两个方向各自枚举单/双取代后合并进漏斗。</span>
+         <label style="display:inline-flex; align-items:center; gap:0.35rem; font-size:0.78rem; color:var(--muted); margin:0.2rem 0 0.3rem; cursor:pointer;">
+           <input type="checkbox" id="azaDeaza" aria-label="含反向 deaza(N→CH)"> 含反向 deaza(N→CH)
+         </label>
+         <button class="action-btn primary" style="width:auto; align-self:flex-start; height:38px;" onclick="runAzaScan()" title="Scaffold-hop: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres); with the deaza box also swap pyridine-type ring N back to CH (e.g. 7-deazapurine strategy) — then the same shape funnel">aza-scan(r5+r6 · 1-2 取代)</button>
        </div>
      </div>
      <div class="analog-status-row">
@@ -4346,7 +4349,7 @@ function rdkitAvailable() {
                 }
                 document.getElementById('analogCancel').style.display = 'none';
                 const nFlex = results.filter(r => r.flexT != null).length;
-                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop (' + (window.__azaCounts ? window.__azaCounts.single + ' single + ' + window.__azaCounts.double + ' double' : '') + ')' : ''));
+                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop (' + (window.__azaCounts ? window.__azaCounts.single + ' single + ' + window.__azaCounts.double + ' double' + (window.__azaCounts.deazaSingle != null ? ' · deaza ' + window.__azaCounts.deazaSingle + ' + ' + window.__azaCounts.deazaDouble : '') : '') + ')' : ''));
                 analogThumbsOn = true;
                 renderAnalogRows(results, token);   // settled: thumbnails land on the sorted table
                 window.__azaRun = false;
@@ -4396,16 +4399,33 @@ function rdkitAvailable() {
       }
     } catch (e) { /* none */ }
     if (q) q.delete();
-    if (!ringCH.length) { if (m0) m0.delete(); analogStatus('No H-bearing aromatic ring carbons (need an aryl C-H)'); return; }
+    // reverse direction (deaza): pyridine-type aromatic ring N (no H) —
+    // matched on the same mol the aza indices come from, so the surgery
+    // base indexing stays consistent. [nH]-type drops out via is_valid.
+    const wantDeaza = !!(document.getElementById('azaDeaza') && document.getElementById('azaDeaza').checked);
+    let ringN = [];
+    if (wantDeaza && m0) {
+      let qn = null;
+      try { qn = rdkitModule.get_qmol('[n;r5,r6;!H1]'); } catch (e) { qn = null; }
+      if (!qn) { try { qn = rdkitModule.get_qmol('[n;r5,r6]'); } catch (e) { qn = null; } }
+      if (qn) {
+        try {
+          const arrN = JSON.parse(m0.get_substruct_matches(qn));
+          if (Array.isArray(arrN)) ringN = arrN.map(mt => mt.atoms[0]);
+        } catch (e) { /* none */ }
+        qn.delete();
+      }
+    }
+    if (!ringCH.length && !ringN.length) { if (m0) m0.delete(); analogStatus('No aromatic ring carbons (C-H) or pyridine-type nitrogens to swap'); return; }
     const base = surgeryBase;
     const na = parseInt(base[3].substring(0, 3));
     const cands = [];
     const seen = new Set();
-    const trySwap = (swapSet) => {
+    const trySwap = (swapSet, elem) => {
       const lines = base.slice();
       for (const idx of swapSet) {
         const l = lines[4 + idx];
-        lines[4 + idx] = l.substring(0, 31) + 'N   ' + l.substring(35);
+        lines[4 + idx] = l.substring(0, 31) + elem + l.substring(35);
       }
       return lines.join('\n');
     };
@@ -4427,7 +4447,7 @@ function rdkitAvailable() {
     // unbroken main-thread work before this
     for (const idx of ringCH) {
       nSingle++;
-      addCand(trySwap([idx]));
+      addCand(trySwap([idx], 'N   '));
       if (nSingle % 20 === 0) await uiYield();
     }
     // double swaps (diazines / azoles): C(n,2) — invalid valences (e.g.
@@ -4435,8 +4455,23 @@ function rdkitAvailable() {
     for (let x = 0; x < ringCH.length; x++) {
       for (let y = x + 1; y < ringCH.length; y++) {
         nDouble++;
-        addCand(trySwap([ringCH[x], ringCH[y]]));
+        addCand(trySwap([ringCH[x], ringCH[y]], 'N   '));
         if (nDouble % 20 === 0) await uiYield();
+      }
+    }
+    // reverse direction (deaza): N -> CH on pyridine-type ring nitrogens;
+    // implicit H comes back from valence on the heavy-atom surgery base
+    let dSingle = 0, dDouble = 0;
+    for (const idx of ringN) {
+      dSingle++;
+      addCand(trySwap([idx], 'C   '));
+      if (dSingle % 20 === 0) await uiYield();
+    }
+    for (let x = 0; x < ringN.length; x++) {
+      for (let y = x + 1; y < ringN.length; y++) {
+        dDouble++;
+        addCand(trySwap([ringN[x], ringN[y]], 'C   '));
+        if (dDouble % 20 === 0) await uiYield();
       }
     }
     if (await ensureSaTable()) {
@@ -4448,8 +4483,10 @@ function rdkitAvailable() {
     }
     if (m0) m0.delete();
     if (!cands.length) { analogStatus('No valid aza-isomers'); return; }
-    window.__azaCounts = { n: cands.length, single: nSingle, double: nDouble };
-    analogStatus(cands.length + ' aza-isomers (' + nSingle + ' single + ' + nDouble + ' double positions) — funnel…');
+    window.__azaCounts = { n: cands.length, single: nSingle, double: nDouble,
+      deazaSingle: ringN.length ? dSingle : undefined, deazaDouble: ringN.length ? dDouble : undefined };
+    analogStatus(cands.length + ' aza-isomers (' + nSingle + ' single + ' + nDouble + ' double positions'
+      + (ringN.length ? ' · deaza ' + dSingle + ' + ' + dDouble : '') + ') — funnel…');
     window.__azaRun = true;   // the funnel's final status appends the marker
     runAnalogFromCands(cands, token);
   }

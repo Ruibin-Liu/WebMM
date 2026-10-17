@@ -1,34 +1,26 @@
-# Plan: 骨架探索 UI 三件(缩略质量 / 流程提示 / 结果导出)
+# Plan: aza-scan 双向化(aza C→N + 可选 deaza N→CH)
 
-## 1. 缩略图质量(用户:RDKit 先设定图大小,web 严格同尺寸)
-- 根因:molThumb 单一 64×44 渲染被 CSS 拉到 140×96;小画布下 RDKit
-  最小字号与键距比例失衡。
-- 修:molThumb(smiles, w, h) 按尺寸缓存 —— 行内 128×88 渲染显示 64×44
-  (2× retina),悬停弹层 400×272 渲染显示 200×136(严格同比 400/272=
-  200/136);.thumb-pop svg CSS 200×136,弹层夹紧常量同步 210×146。
+## 设计
+- aza 卡加复选框「含反向 deaza(N→CH)」(id=azaDeaza,默认关)—— 按
+  "默认单向、勾选反向"决策;组合数翻倍故不默认全开。
+- deaza 枚举:SMARTS [n;r5,r6;!H1](吡啶型芳环氮;[nH] 型由 is_valid
+  兜底过滤)在 m0 上匹配(与 aza 同款索引口径),元素列手术 N→C
+  ('C   '),重原子 surgeryBase 上隐式氢由价态自动补;单+双取代、
+  规范 SMILES 去重、is_valid 过滤全部复用 addCand。
+- 计数与契约:__azaCounts 保持 {n, single, double}(m6 契约:Done 行
+  /single \+ \d+ double/),新增 deazaSingle/deazaDouble 仅在勾选时
+  上报并追加到状态行 ' · deaza X+Y'。
+- 不做:跨方向组合双换(一 C→N + 一 N→C)—— 组合空间再翻倍,无明确
+  需求;[nH] 型 deaza(吡咯→环戊二烯非芳香,由过滤自然排除)。
+- 卡副题 tooltip 与按钮 title 同步提及双向。
 
-## 2. 流程标签悬停说明(详细、专业)
-- 单位点交换卡副题 '位点 → 片段 → 形状漏斗 B·C·D':title 描述 A 枚举
-  (SMARTS 位点检测 6 类末端基 → 片段拼接 → 价键/转子/质量过滤)→
-  B 粗筛(10 构象 ETKDG+MMFF94s,刚性形状叠合 Tanimoto,流式)→
-  C 精化(top-30 扩 30 构象,两轮系综取 max)→ D 柔性(top-10 MCS-
-  Kabsch 核心 + 位置约束 MMFF 松弛重打分)。
-- aza 卡副题:生物电子等排 C→N 说明(苯→吡啶/二嗪,单/双取代,
-  规范 SMILES 去重,邻位 N-N 过滤,同漏斗,母体构象为参照)。
-- 检索分段控件三钮:各自相似度度量说明(Tanimoto/ECFP4、子结构、
-  构象系综形状 Tanimoto)。
+## 改动(app/platform.html 单文件)
+1. aza 卡 markup:复选框 + 说明 tooltip。
+2. runAzaScan:ringN 匹配(勾选时)、deaza 单/双枚举入同一 cands、
+   计数与状态行、早退条件改为两集合均空。
 
-## 3. 结果导出
-- analogResultsWrap 表上方加 导出 CSV / 导出 SDF 两按钮。
-- CSV(csvField 复用):SMILES,Name(枚举标签),ShapeT,FlexT,MW,
-  RotB,SA。
-- SDF:逐行 2D molblock 记录 + 数据字段(ShapeT/FlexT/SA/MW),
-  $$$$ 分隔,RDKit 可读。
-
-## 验收(新增 tests/cdp/m6_analog_ui.test.js)
-- 悬停弹层:svg naturalWidth=400/height=272,显示盒 200×136;行内
-  svg naturalWidth=128。
-- 两个卡副题与三个分段钮 title 非空(≥60 字符,含关键术语)。
-- 小跑一次探索后:导出 CSV 文件头+行数+数值列;导出 SDF 含 V2000 与
-  $$$$ 计数 == 行数;零 page error。
-- 回归:m6_platform/loop/pool/cancel + run.sh 全量绿。
+## 验收(m6_analog_ui 追加段)
+- 4-甲基吡啶父体:默认跑 → 所有行含 n(纯 aza);勾选 deaza →
+  出现无 n 行(甲苯,Cc1ccccc1)、__azaCounts.deazaSingle===1、
+  状态行含 'deaza';零 page error。
+- 回归:m6_platform(aza 段契约不变)+ run.sh 全量。
