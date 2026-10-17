@@ -187,12 +187,16 @@ const eqSet = (a, b) => a.length === b.length && [...a].sort().join('|') === [..
   {
     const gate = await page.evaluate(() => {
       const out = {};
-      const set = v => { document.getElementById('searchMode').value = v; onSearchModeChange(); return document.getElementById('searchFp').disabled; };
+      const set = v => {
+        document.getElementById('searchMode').value = v; onSearchModeChange();
+        return { fp: document.getElementById('searchFp').disabled, thr: document.getElementById('searchThreshold').disabled };
+      };
       out.sim = set('sim'); out.sub = set('sub'); out.shape = set('shape');
       set('sim');
       return out;
     });
-    check('fingerprint selector gated to sim mode only', gate.sim === false && gate.sub === true && gate.shape === true, JSON.stringify(gate));
+    check('fingerprint selector gated to sim mode only', !gate.sim.fp && gate.sub.fp && gate.shape.fp, JSON.stringify(gate));
+    check('threshold slider disabled in sub mode only', !gate.sim.thr && gate.sub.thr && !gate.shape.thr, JSON.stringify(gate));
   }
   console.log('substructure parity vs search_refs.json:');
   for (const [qn, q] of Object.entries(REFS.queries)) {

@@ -2128,6 +2128,9 @@ function rdkitAvailable() {
     // matching and shape uses conformer overlay, so the selector is
     // meaningful in sim mode alone
     document.getElementById('searchFp').disabled = mode !== 'sim';
+    // the threshold feeds the sim Tanimoto cutoff and the shape overlay
+    // cutoff; substructure matching is boolean — no threshold applies
+    document.getElementById('searchThreshold').disabled = mode === 'sub';
     const shape = mode === 'shape';
     document.getElementById('shapeConfsWrap').style.display = shape ? '' : 'none';
     document.getElementById('shapeFlexWrap').style.display = shape ? '' : 'none';
