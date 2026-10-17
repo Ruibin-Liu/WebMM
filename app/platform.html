@@ -904,7 +904,7 @@ body[data-mode="analog"] .container { display: none; }
 #analogResultsWrap { overflow-x: auto; }
 .thumb-pop { position: fixed; z-index: 90; background: #fff; border: 1px solid var(--ll-line);
   border-radius: 10px; padding: 4px; box-shadow: 0 6px 20px rgba(16,24,40,.14); pointer-events: none; }
-.thumb-pop svg { width: 140px; height: 96px; display: block; }
+.thumb-pop svg { width: 200px; height: 136px; display: block; }   /* exact half of the 400x272 render */
 @media (max-width: 1150px) { .analog-entry-grid { grid-template-columns: 1fr; } }
 .separator { color: #8fa1b6; letter-spacing: 0.04em; }
 
@@ -1335,9 +1335,9 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
         <div class="field">
           <span class="f-label">检索方式</span>
           <div class="seg" id="segMode" role="tablist" aria-label="Search mode">
-            <button type="button" class="seg-btn on" role="tab" aria-selected="true" data-v="sim" onclick="segModeSet('sim')">相似</button>
-            <button type="button" class="seg-btn" role="tab" aria-selected="false" data-v="sub" onclick="segModeSet('sub')">子结构</button>
-            <button type="button" class="seg-btn" role="tab" aria-selected="false" data-v="shape" onclick="segModeSet('shape')">形状 3D</button>
+            <button type="button" class="seg-btn on" role="tab" aria-selected="true" data-v="sim" title="相似性检索:ECFP4(Morgan r2,2048 位)圆形指纹的 Tanimoto 系数,0-1,阈值滑杆设定下限" onclick="segModeSet('sim')">相似</button>
+            <button type="button" class="seg-btn" role="tab" aria-selected="false" data-v="sub" title="子结构检索:查询结构作为 SMARTS 子模式匹配库分子,命中为布尔结果(无阈值)" onclick="segModeSet('sub')">子结构</button>
+            <button type="button" class="seg-btn" role="tab" aria-selected="false" data-v="shape" title="形状检索:库分子嵌入 3D 构象系综后与查询 3D 参照做刚体形状叠合,报告形状 Tanimoto(原子体积重叠),可叠加柔性精化" onclick="segModeSet('shape')">形状 3D</button>
           </div>
           <select id="searchMode" aria-label="Search mode" style="display:none;" onchange="onSearchModeChange()">
             <option value="sim">Similarity</option>
@@ -1704,7 +1704,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
      </div>
      <div class="analog-entry-grid">
        <div class="analog-path">
-         <div class="path-head"><b>单位点交换</b><span class="card-sub">位点 → 片段 → 形状漏斗 B·C·D</span></div>
+         <div class="path-head"><b>单位点交换</b><span class="card-sub" title="完整流程 — A 枚举:SMARTS 检测当前分子的可替换末端基(卤素/甲基/羟基/伯胺/甲氧基/腈 6 类),按所选类别拼接内置片段集,经价键合法性、重原子窗口、转子数(≤10)过滤,硬顶 400 产物; B 粗筛:每候选 ETKDG 嵌入 10 构象并 MMFF94s 优化,逐构象与母体参照构象刚性形状叠合,取最佳 Tanimoto 流式排序(持久 worker 池);C 精化:top-30 扩至 30 构象系综,与 B 轮取最大值; D 柔性:top-10 从最优刚姿出发,MCS 配对核心 + Kabsch 核心入位 + 位置约束(fc=25)MMFF 扭转松弛后重打分,Flex T 单列独立呈现(可低于刚性,如实显示)。SA 列为 Ertl 合成可达性(1=易,10=难)。">位点 → 片段 → 形状漏斗 B·C·D</span></div>
          <div class="analog-options">
            <div class="path-step"><span class="f-label">位点</span><select id="analogSite" aria-label="Replaceable site"><option value="">— 位点 —</option></select></div>
            <div class="path-step"><span class="f-label">片段类别</span><select id="analogFragCat" aria-label="Fragment category" title="Fragment category (built-in set, ≤150 per run)">
@@ -1715,7 +1715,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
          </div>
        </div>
        <div class="analog-path">
-         <div class="path-head"><b>aza-scan 环跃迁</b><span class="card-sub">芳环 C→N · 1-2 取代</span></div>
+         <div class="path-head"><b>aza-scan 环跃迁</b><span class="card-sub" title="aza-scan 生物电子等排替换:对每个含氢芳环碳执行 C→N 元素替换(苯→吡啶/二嗪类),枚举单取代与双取代组合(邻位 N-N 由价键合法性过滤),经规范 SMILES 去重后进入与单位点交换相同的 B·C·D 形状漏斗重打分;母体构象始终为叠合参照,形状保持度(Shape T)衡量骨架跃迁的等排质量。">芳环 C→N · 1-2 取代</span></div>
          <span class="hint">对每个含氢芳环碳做 C→N 生物电子等排替换(苯环→吡啶/二嗪),同一形状漏斗重打分。</span>
          <button class="action-btn primary" style="width:auto; align-self:flex-start; height:38px;" onclick="runAzaScan()" title="Scaffold-hop spike: swap every H-bearing aromatic ring carbon of the CURRENT molecule for N (benzene→pyridine/diazine bioisosteres), then the same shape funnel">aza-scan(r5+r6 · 1-2 取代)</button>
        </div>
@@ -1725,6 +1725,10 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">取消</button>
      </div>
      <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
+       <div class="action-buttons" style="justify-content:flex-start; margin:0 0 0.4rem;">
+         <button class="action-btn edit" style="width:auto;" onclick="exportAnalogCSV()" title="导出当前结果表为 CSV(SMILES/ShapeT/FlexT/MW/RotB/SA)">导出 CSV</button>
+         <button class="action-btn edit" style="width:auto;" onclick="exportAnalogSDF()" title="导出当前结果为多记录 2D SDF,每记录携带 ShapeT/FlexT/SA/MW 数据字段(RDKit 可读)">导出 SDF</button>
+       </div>
        <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="Ertl synthetic accessibility — bit-exact port of RDKit sascorer (1 = easy, 10 = hard)">SA</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
      </div>
    </div>
@@ -3772,18 +3776,22 @@ function rdkitAvailable() {
 
   // presentational: 2D structure thumbnails for result rows (cached per SMILES)
   const _thumbCache = new Map();
-  function molThumb(smiles) {
-    if (!smiles) return '';
-    if (_thumbCache.has(smiles)) return _thumbCache.get(smiles);
+  // Render AT (2x) the displayed size: RDKit's minimum atom-label font and
+  // bond spacing only come out proportionally right when the canvas matches
+  // the display scale — upscaling a 64x44 render cramps the layout.
+  function molThumb(smiles, w, h) {
+    w = w || 128; h = h || 88;   // rows display at 64x44 (retina 2x)
+    const key = smiles + '|' + w + 'x' + h;
+    if (_thumbCache.has(key)) return _thumbCache.get(key);
     let svg = '';
     let m = null;
     try { m = rdkitModule.get_mol(smiles); } catch (e) { m = null; }
     if (m && m.is_valid()) {
-      try { svg = m.get_svg(64, 44); } catch (e) { svg = ''; }
+      try { svg = m.get_svg(w, h); } catch (e) { svg = ''; }
     }
     if (m) m.delete();
     const html = svg ? '<span class="rowthumb" title="结构预览">' + svg + '</span>' : '';
-    _thumbCache.set(smiles, html);
+    _thumbCache.set(key, html);
     return html;
   }
 
@@ -4563,15 +4571,19 @@ function rdkitAvailable() {
       if (!smiles) { hide(); return; }
       if (pop && pop.dataset.smiles === smiles) return;
       hide();
-      const html = molThumb(smiles);
+      const html = molThumb(smiles, 400, 272);   // displayed 200x136 — exact aspect
       if (!html) return;
       pop = document.createElement('div');
       pop.className = 'thumb-pop';
       pop.dataset.smiles = smiles;
       pop.innerHTML = html;
+      // unwrap the .rowthumb span: its 64x44 row sizing must not follow the
+      // preview into the pop (the pop's own 200x136 rule then applies)
+      const wrap = pop.querySelector('.rowthumb');
+      if (wrap) wrap.replaceWith(...wrap.childNodes);
       document.body.appendChild(pop);
       const r = cell.getBoundingClientRect();
-      const pw = 150, ph = 106;
+      const pw = 210, ph = 146;
       let x = Math.max(10, Math.min(r.left, window.innerWidth - pw - 10));
       let y = r.bottom + 6;
       if (y + ph > window.innerHeight - 10) y = Math.max(10, r.top - ph - 6);
@@ -4582,6 +4594,51 @@ function rdkitAvailable() {
   const _origRender = renderAnalogRows;
   renderAnalogRows = function (results, token) { __analogResults = results; _origRender(results, token); };
   function analogLastResults() { return __analogResults; }
+
+  // ---- analog explorer results export (CSV + SDF) ----
+  function exportAnalogCSV() {
+    const rows = analogLastResults() || [];
+    if (!rows.length) { analogStatus('Nothing to export — run the explorer first'); return; }
+    const header = ['SMILES', 'ShapeT', 'FlexT', 'MW', 'RotB', 'SA'];
+    const lines = [header.join(',')];
+    for (const r of rows) {
+      lines.push([csvField(r.smiles), csvField(r.tanimoto.toFixed(4)),
+        r.flexT != null ? csvField(r.flexT.toFixed(4)) : '', csvField(r.mw != null ? r.mw.toFixed(2) : ''),
+        csvField(r.rotb != null ? String(r.rotb) : ''), r.sa != null ? csvField(r.sa.toFixed(2)) : ''].join(','));
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' }));
+    a.download = 'analogs_' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+  window.exportAnalogCSV = exportAnalogCSV;
+
+  function exportAnalogSDF() {
+    const rows = analogLastResults() || [];
+    if (!rows.length) { analogStatus('Nothing to export — run the explorer first'); return; }
+    let out = '';
+    for (const r of rows) {
+      const mb = (r.molblock || '').replace(/\r/g, '');
+      if (!/V2000/.test(mb)) continue;
+      // SDF data fields carry the funnel metrics with each record
+      const fields = [['ShapeT', r.tanimoto != null ? r.tanimoto.toFixed(4) : null],
+        ['FlexT', r.flexT != null ? r.flexT.toFixed(4) : null],
+        ['MW', r.mw != null ? r.mw.toFixed(2) : null],
+        ['RotB', r.rotb != null ? String(r.rotb) : null],
+        ['SA', r.sa != null ? r.sa.toFixed(2) : null]];
+      let rec = mb.replace(/M  END.*/, 'M  END');
+      for (const [k, v] of fields) if (v != null) rec += '\n>  <' + k + '>\n' + v + '\n';
+      out += rec + '\n$$$$\n';
+    }
+    if (!out) { analogStatus('Export failed — no valid molblocks in results'); return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([out], { type: 'chemical/x-mdl-sdf' }));
+    a.download = 'analogs_' + new Date().toISOString().slice(0, 10) + '.sdf';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+  window.exportAnalogSDF = exportAnalogSDF;
 
   // provenance-rich CSV export: per-round ranks + consensus + triage state
   // (M2; the exit path to other tools, M0 spec §6)

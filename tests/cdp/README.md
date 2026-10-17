@@ -31,6 +31,7 @@ Or just run everything, in dependency order:
 | `m6_sa_warmup` | platform | SA-table idle warmup firing before the engine is ready (holds the engine script; red/green) |
 | `m6_analog_cancel` | platform | analog worker lifecycle: engine-fetch failure fails fast, superseded runs complete |
 | `m6_analog_pool` | platform | persistent M3 worker pool: reuse across runs, poison recycling + job re-dispatch, pool health after chaos |
+| `m6_analog_ui` | platform | explorer UI: thumbnail rendering at display scale, process-label tooltips, results CSV/SDF export |
 
 Note: since the workbench swap, m0–m5 run against `app/index.html` (the
 former platform page, classic UI, full LBDD surface); m6* run against
