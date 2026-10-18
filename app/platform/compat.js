@@ -45,6 +45,17 @@
       const storage = deps.storage || (DB ? DB.createIdbStorage(dbName) : null);
       if (!storage) throw new Error('compat: no storage');
       if (storage.open) await storage.open();
+      // M4 P2 §3 write gate: reads the registry entry straight from IDB on
+      // every write — a cached copy would make the gate worthless
+      const registryStorage = deps.registryStorage || null;
+      const writableGuard = registryStorage
+        ? async () => {
+            const rec = await registryStorage.get(projectId);
+            if (rec && (rec.state === 'repointing' || rec.state === 'deleting')) {
+              throw new Error('project is being repointed — writes refused, reload after it completes');
+            }
+          }
+        : null;
       const lockNameFor = pid => pid === 'default' ? 'project' : 'project:' + pid;
       const withLock = DB
         ? (name, fn) => DB.withLock(name === 'project' ? lockNameFor(projectId) : name, fn)
@@ -54,7 +65,7 @@
       activeStorage = storage; activeLock = withLock; projectModule = deps.Project;
       // M2b: read-only tabs re-init their projection when another tab writes
       if (channel) channel.onmessage = () => { needsReinit = true; };
-      project = await deps.Project.init(storage, { withLock, channel });
+      project = await deps.Project.init(storage, { withLock, channel, writableGuard });
       // durability script (persist/estimate/vanish-detect) — surfaced to
       // console + meta in M1a; the UI banner is M1b
       if (DB) { try { await DB.durability(storage); } catch (e) {} }

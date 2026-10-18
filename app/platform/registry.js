@@ -32,7 +32,7 @@
     if (typeof window !== 'undefined') {
       try { channel = new BroadcastChannel('webmm-registry'); } catch (e) { /* worker without BC */ }
     }
-    const notify = (kind, projectId) => { try { if (channel) channel.postMessage({ kind, projectId }); } catch (e) {} };
+    const notify = (kind, projectId, extra) => { try { if (channel) channel.postMessage({ kind, projectId, ...extra }); } catch (e) {} };
     const withRegistryLock = fn => DB.withLock('registry', fn);
 
     async function open() { if (storage.open) await storage.open(); return storage; }
@@ -127,6 +127,66 @@
       return withRegistryLock(async () => { await storage.del(id); notify('purged', id); });
     }
 
+    // ---- pointer repoint (docs/project-management.md §3) ----
+    // restore-into-current writes a NEW database then atomically swaps the
+    // entry's dbName. Between prepare and commit the entry is 'repointing'
+    // and every write path must refuse (the write gate reads this DIRECTLY
+    // from IDB — never a cached copy).
+    async function repointPrepare(id) {
+      return withRegistryLock(async () => {
+        const rec = await storage.get(id);
+        if (!rec) throw new Error('registry: unknown project ' + id);
+        if (rec.state !== 'ready') throw new Error('registry: repoint requires ready state, got ' + rec.state);
+        const oldDb = rec.dbName, newDb = dbOf(uuid());
+        rec.state = 'repointing';
+        await storage.put(id, rec);
+        return { id, oldDb, newDb };
+      });
+    }
+    async function repointCommit(id, newDb, oldDb) {
+      return withRegistryLock(async () => {
+        const rec = await storage.get(id);
+        if (!rec || rec.state !== 'repointing') throw new Error('registry: repointCommit without prepare');
+        rec.dbName = newDb;
+        rec.state = 'ready';
+        rec.repointedAt = Date.now();
+        await storage.put(id, rec);
+        // the old database goes to the trash record (retention, then purge)
+        const trash = (await storage.get('__trash')) || { dbs: [] };
+        trash.dbs.push({ dbName: oldDb, at: Date.now() });
+        await storage.put('__trash', trash);
+        notify('repointed', id, { oldDb, newDb });
+        return rec;
+      });
+    }
+    async function repointAbort(id, newDb) {
+      return withRegistryLock(async () => {
+        const rec = await storage.get(id);
+        if (rec && rec.state === 'repointing') {
+          rec.state = 'ready';   // old dbName untouched
+          await storage.put(id, rec);
+        }
+        notify('repoint-aborted', id, {});
+      });
+    }
+    async function purgeTrashedDbs(retentionMs) {
+      // drop trashed databases older than the retention window
+      const trash = (await storage.get('__trash')) || { dbs: [] };
+      const now = Date.now();
+      const keep = [], drop = [];
+      for (const t of trash.dbs) (now - t.at >= (retentionMs || 0) ? drop : keep).push(t);
+      if (drop.length) {
+        await storage.put('__trash', { dbs: keep });
+        if (typeof indexedDB !== 'undefined' && indexedDB.deleteDatabase) {
+          for (const t of drop) await new Promise(res => {
+            const r = indexedDB.deleteDatabase(t.dbName);
+            r.onsuccess = r.onerror = r.onblocked = () => res();
+          });
+        }
+      }
+      return drop.length;
+    }
+
     // startup reconciliation (docs §1.2): advisory only — the registry is
     // the source of truth, databases() can be stale on Safari
     async function reconcile() {
@@ -149,6 +209,7 @@
     return {
       open, ensureMigrated, list, get, create, markReady, rename, touch, trash, purge,
       removeMem, reconcile, dbOf, lockOf, onRegistryMessage,
+      repointPrepare, repointCommit, repointAbort, purgeTrashedDbs,
       _storage: storage,
     };
   }

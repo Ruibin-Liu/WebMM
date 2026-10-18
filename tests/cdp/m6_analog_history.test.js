@@ -41,6 +41,9 @@ function check(name, cond, detail) {
     runAnalogExplorer();
   });
   await page.waitForFunction(() => /Done: \d+ scored/.test(document.getElementById('analogStatus').textContent), null, { timeout: 180000 });
+  // the save marker lands a beat AFTER the Done line (async commit) — wait
+  // for it explicitly instead of racing the single-tick sample
+  await page.waitForFunction(() => /已保存/.test(document.getElementById('analogStatus').textContent), null, { timeout: 30000 });
 
   // ---- auto-commit: status carries the save marker + history renders ----
   const committed = await page.evaluate(() => ({

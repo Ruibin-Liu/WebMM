@@ -39,6 +39,10 @@
       storage, meta, state,
       withLock: opts && opts.withLock ? opts.withLock : (async (n, fn) => fn()),
       channel: opts && opts.channel ? opts.channel : null,
+      // M4 P2 §3 write gate: async () => undefined, or throws when the
+      // registry says this project is being repointed/deleted. Reads must
+      // hit IDB directly — the caller (compat) owns that discipline.
+      writableGuard: opts && opts.writableGuard ? opts.writableGuard : null,
       _commandsSinceSnapshot: tail.length,
       _undoStack: [],           // {inverse, describes} of undoable commands
       _redoStack: [],           // undone commands, redoable in order
@@ -98,6 +102,7 @@
         let res;
         const id = await p.withLock('project', async () => {
           if (p._dead) throw new Error('project replaced; reload required');
+          if (p.writableGuard) await p.writableGuard();   // §3 write gate
           res = State.applyCommand(p.state, cmd);
           if (res.error) throw new Error('command rejected: ' + res.error);
           const seqRec = await p.storage.get('meta', 'cmdSeq');
@@ -161,6 +166,7 @@
     let res;
     const id = await p.withLock('project', async () => {
       if (p._dead) throw new Error('project replaced; reload required');
+      if (p.writableGuard) await p.writableGuard();   // repointing/deleting: refuse writes
       res = State.applyCommand(p.state, cmd);
       if (res.error) throw new Error('command rejected: ' + res.error);
       p.state = res.state;
@@ -186,6 +192,7 @@
     if (p._dead) return;
     await p.withLock('project', async () => {
       if (p._dead) return;
+      if (p.writableGuard) await p.writableGuard();   // §3: snapshot writes pass the same gate
       const seq = (await p.storage.get('meta', 'cmdSeq')) || 0;
       // never persist a projection that does not match the persisted log
       // (stale tab, or log replaced underneath us by an import)

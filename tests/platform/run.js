@@ -388,6 +388,41 @@ console.log('project (mem storage):');
     check('replay: analogRuns + hiddenRuns survive reload', proj2.state.analogRuns.a1 && proj2.state.hiddenRuns.a1);
   }
 
+  // ---- M4 P2 §3: write gate + repoint lifecycle ----
+  console.log('repoint protocol:');
+  {
+    const reg = Registry.create({ DB, mem: true });
+    await reg.ensureMigrated();
+    const prep = await reg.repointPrepare('default');
+    check('prepare: repointing state + new dbName', (await reg.get('default')).state === 'repointing' && prep.newDb !== prep.oldDb);
+    let dup = false;
+    try { await reg.repointPrepare('default'); } catch (e) { dup = /ready/.test(e.message); }
+    check('prepare: not idempotent (second prepare rejected)', dup);
+    // write gate: a project guarded by the registry refuses writes mid-repoint
+    const gate = async () => {
+      const rec = await reg._storage.get('default');
+      if (rec && (rec.state === 'repointing' || rec.state === 'deleting')) throw new Error('project is being repointed');
+    };
+    const st = DB.createMemStorage();
+    const proj = await Project.init(st, { writableGuard: gate });
+    let refused = false;
+    try { await proj.apply({ type: 'Pin', molId: 'm1' }); } catch (e) { refused = /repointed/.test(e.message); }
+    check('write gate refuses during repointing (nothing written)', refused && (await st.count('commands')) === 0 && !proj.state.pins.m1);
+    await reg.repointCommit('default', prep.newDb, prep.oldDb);
+    check('commit: pointer swapped, ready again', (await reg.get('default')).dbName === prep.newDb && (await reg.get('default')).state === 'ready');
+    await proj.apply({ type: 'Pin', molId: 'm1' });
+    check('write gate opens after commit', !!proj.state.pins.m1 && (await st.count('commands')) === 1);
+    // abort path: old dbName untouched
+    const p2 = await reg.repointPrepare('default');
+    await reg.repointAbort('default', p2.newDb);
+    check('abort: state ready, dbName unchanged', (await reg.get('default')).dbName === prep.newDb && (await reg.get('default')).state === 'ready');
+    // no guard (legacy path) keeps working
+    const st2 = DB.createMemStorage();
+    const proj2 = await Project.init(st2);
+    await proj2.apply({ type: 'Pin', molId: 'x' });
+    check('no guard: writes work (back-compat)', !!proj2.state.pins.x);
+  }
+
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });

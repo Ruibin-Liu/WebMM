@@ -1284,6 +1284,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
    <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
      <button class="action-btn edit" style="width:auto; padding:0.35rem 0.8rem; font-size:0.8rem;" onclick="exportProjectFile()" title="The whole project as JSON (libraries, query rounds, triage — the command log itself). Import restores everything on any machine">⬇ 导出项目</button>
      <input type="file" id="projectImportFile" accept=".json,application/json" style="display:none;" onchange="importProjectFile(this)">
+     <input type="file" id="projectRestoreFile" accept=".json,application/json" style="display:none;" onchange="restoreIntoCurrentProject(this)">
      <button class="action-btn primary" style="width:auto; padding:0.35rem 0.8rem; font-size:0.8rem;" onclick="switchMode('search')" title="去相似性检索装载库">打开检索 →</button>
    </div>
  </div>
@@ -2544,9 +2545,13 @@ function rdkitAvailable() {
           dbName = entry.dbName;
           window.__projectRegistry = reg;
           window.__activeProject = { id: projectId, name: entry.name };
+          reg.onRegistryMessage(msg => {
+            if (msg.kind === 'repointed' && msg.projectId === projectId) showRepointedModal();
+          });
+          try { reg.purgeTrashedDbs(7 * 24 * 3600 * 1000); } catch (e) {}   // trash retention
         }
         const storage = P.DB.createIdbStorage(dbName);
-        await P.Compat.init({ storage, projectId, dbName, Identity: P.Identity, DB: P.DB, Project: P.Project });
+        await P.Compat.init({ storage, projectId, dbName, Identity: P.Identity, DB: P.DB, Project: P.Project, registryStorage: window.__projectRegistry ? window.__projectRegistry._storage : null });
         window.__platformCompat = P.Compat;
         // advisory per-project size ("约"): serialize what's stored once per boot
         try {
@@ -4872,6 +4877,20 @@ function csvField(v) {
 
   // M2b: project export/import (facts only — the command log; deterministic
   // derivatives recompute on load, stochastic facts ride in 'facts')
+  // M4 P2 §3: forced reload prompt when another tab repointed this project
+  function showRepointedModal() {
+    if (document.getElementById('repointedModal')) return;
+    const m = document.createElement('div');
+    m.id = 'repointedModal';
+    m.style.cssText = 'position:fixed; inset:0; z-index:200; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center;';
+    m.innerHTML = '<div style="background:#fff; border-radius:12px; padding:1.4rem 1.6rem; max-width:420px; box-shadow:0 12px 40px rgba(16,24,40,.25);">' +
+      '<b style="font-size:1rem;">项目已在其他标签页恢复到新版本</b>' +
+      '<p style="font-size:0.85rem; color:var(--muted); margin:0.5rem 0 1rem;">当前标签持有的数据库已更换,继续写入会丢失。请重载以切换到新数据。</p>' +
+      '<button class="action-btn primary" style="width:auto;" onclick="location.reload()">立即重载</button></div>';
+    document.body.appendChild(m);
+  }
+  window.showRepointedModal = showRepointedModal;
+
   // ===== M4 P1: project management (docs/project-management.md) =====
   function fmtBytes(n) {
     if (typeof n !== 'number' || !isFinite(n)) return '—';
@@ -4924,7 +4943,8 @@ function csvField(v) {
         '<span style="font-weight:600; font-size:0.85rem;">' + escHtml(r.name) + '</span>' +
         '<span class="hint" style="font-size:0.72rem;">约 ' + fmtBytes(r.approxBytes) + ' · ' + new Date(r.lastOpened || r.createdAt).toLocaleDateString() + '</span>' +
         '<span style="flex:1"></span>' +
-        (isCur ? '<span class="hint" style="font-size:0.75rem; color:var(--ll-accent-2);">当前</span>' :
+        (isCur ? '<span class="hint" style="font-size:0.75rem; color:var(--ll-accent-2);">当前</span>' +
+          '<button class="action-btn edit" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="document.getElementById(\'projectRestoreFile\').click()" title="用导出的备份文件恢复此项目:写入全新数据库后原子切换指针(旧库入回收站,可恢复期内保留);其他标签会收到重载提示">恢复备份</button>' :
           '<button class="action-btn edit" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="switchProjectUI(\'' + r.id + '\')">打开</button>') +
         '<button class="action-btn edit" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="renameProjectUI(\'' + r.id + '\')" title="重命名(只改注册库,数据不动)">改名</button>' +
         (r.id === 'default' ? '' : '<button class="action-btn clear" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="trashProjectUI(\'' + r.id + '\')" title="软删除(回收站)">删除</button>') +
@@ -5030,6 +5050,37 @@ function csvField(v) {
       searchStatus('Import failed: ' + (err.message || err));
     }
   }
+  // M4 P2 §3: restore-into-current = write a NEW database, then atomically
+  // swap the registry pointer. Between prepare and commit the write gate
+  // refuses every other write to this project (registry read straight from
+  // IDB). Failure aborts with the old database untouched.
+  async function restoreIntoCurrentProject(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    const P = window.Platform, reg = window.__projectRegistry;
+    if (!reg || !P) { searchStatus('项目注册库不可用'); return; }
+    let prep = null;
+    try {
+      const parsed = P.Format.parseImport(JSON.parse(await f.text()));
+      if (parsed.logHash && parsed.hashOk === false && !confirm('文件校验哈希与内容不一致。仍要恢复吗?')) return;
+      const id = (window.__activeProject || {}).id || 'default';
+      if (!confirm('用此文件恢复当前项目「' + ((window.__activeProject || {}).name) + '」?\n现有数据将整体替换为新文件内容(旧数据进回收站,保留 7 天)。')) return;
+      prep = await reg.repointPrepare(id);
+      const storage = P.DB.createIdbStorage(prep.newDb);
+      if (storage.open) await storage.open();
+      const lockName = id === 'default' ? 'project' : 'project:' + id;
+      const r = await P.Project.replaceProject(storage, { schemaVersion: parsed.schemaVersion, commands: parsed.commands }, { withLock: (n2, fn) => P.DB.withLock(lockName, fn) });
+      for (const fr of parsed.facts) { try { await storage.put('facts', fr.key, fr.value); } catch (e) {} }
+      await reg.repointCommit(id, prep.newDb, prep.oldDb);
+      searchStatus('已恢复(新库 ' + r.applied + ' 条命令)— 重载中…');
+      setTimeout(() => location.reload(), 400);
+    } catch (err) {
+      if (prep) { try { await reg.repointAbort(prep.id, prep.newDb); } catch (e2) {} }
+      searchStatus('恢复失败(原数据未受影响): ' + (err.message || err));
+    }
+  }
+  window.restoreIntoCurrentProject = restoreIntoCurrentProject;
   window.importProjectFile = importProjectFile;
 
   function loadSearchRow(e, alignedSdf, pharm) {
