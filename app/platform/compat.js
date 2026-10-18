@@ -17,6 +17,7 @@
   let projectModule = null;
   let needsReinit = false;   // another tab wrote; callers may poll stale()
   let activeProjectId = 'default';
+  let writableGuardRef = null;
 
   // M2b import: replace the whole project with an exported one; the caller
   // then reloads the page (explicit, not silent — the in-memory projection
@@ -60,6 +61,7 @@
       const withLock = DB
         ? (name, fn) => DB.withLock(name === 'project' ? lockNameFor(projectId) : name, fn)
         : null;
+      writableGuardRef = writableGuard;
       const channel = DB ? DB.createStoreChannel(dbName) : null;
       activeProjectId = projectId;
       activeStorage = storage; activeLock = withLock; projectModule = deps.Project;
@@ -123,6 +125,9 @@
   const __scoreCache = new Map();   // roundId -> hits [{molId, score, ...}]
   async function saveRoundScores(roundId, hits) {
     if (!project) return;
+    // R2-1 (r2): L1 facts are never silently dropped — a gate refusal
+    // THROWS so the caller can surface "retry after the restore finishes"
+    if (writableGuardRef) await writableGuardRef();
     __scoreCache.set(roundId, hits);
     try {
       await project.storagePut('facts', 'scores:' + roundId, {
@@ -145,12 +150,17 @@
 
   // M4 P1: all facts records for export; untagged legacy records are
   // upcast to 'stochastic' at read time (docs/project-management.md §2.1)
-  async function listFacts() {
+  async function listFacts(layers) {
+    // a (review r1): export filters layer ∈ {fact, stochastic}; L2/derived
+    // facts stay out of the envelope. Untagged legacy records upcast.
+    const allow = layers || ['fact', 'stochastic'];
     if (!project || !project.storageAll) return [];
     const out = [];
     for (const r of await project.storageAll('facts')) {
       const v = r.value || {};
-      out.push({ key: r.key, value: { ...v, layer: v.layer || 'stochastic' } });
+      const layer = v.layer || 'stochastic';
+      if (!allow.includes(layer)) continue;
+      out.push({ key: r.key, value: { ...v, layer } });
     }
     return out;
   }

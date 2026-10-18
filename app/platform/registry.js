@@ -139,6 +139,7 @@
         if (rec.state !== 'ready') throw new Error('registry: repoint requires ready state, got ' + rec.state);
         const oldDb = rec.dbName, newDb = dbOf(uuid());
         rec.state = 'repointing';
+        rec.repointingAt = Date.now();   // R2-2: stale-repointing detection
         await storage.put(id, rec);
         return { id, oldDb, newDb };
       });
@@ -147,14 +148,26 @@
       return withRegistryLock(async () => {
         const rec = await storage.get(id);
         if (!rec || rec.state !== 'repointing') throw new Error('registry: repointCommit without prepare');
-        rec.dbName = newDb;
-        rec.state = 'ready';
-        rec.repointedAt = Date.now();
-        await storage.put(id, rec);
-        // the old database goes to the trash record (retention, then purge)
-        const trash = (await storage.get('__trash')) || { dbs: [] };
-        trash.dbs.push({ dbName: oldDb, at: Date.now() });
-        await storage.put('__trash', trash);
+        // U1 (review r1): the pointer swap must not race in-flight writes.
+        // Writers hold the project lock while putting; taking it here (we
+        // already hold 'registry' — ordering registry -> project is safe
+        // because writers never take 'registry') drains them, and any NEW
+        // writer now sees state 'repointing' and refuses.
+        // R2-2 (r2): tombstone FIRST, pointer second. A crash between the
+        // two leaves "tombstone + repointing" = interpretable interrupted
+        // restore; the reverse order would orphan the old DB (reconcile
+        // false-positive).
+        await storage.put('db-' + uuid(), {
+          dbName: oldDb, name: '(旧数据库)', state: 'trashed', dbOnly: true,
+          trashedAt: Date.now(), approxBytes: rec.approxBytes || null,
+        });
+        await DB.withLock(lockOf(id), async () => {
+          rec.dbName = newDb;
+          rec.state = 'ready';
+          rec.repointedAt = Date.now();
+          // U4: carry the size estimate onto the new database entry
+          await storage.put(id, rec);
+        });
         notify('repointed', id, { oldDb, newDb });
         return rec;
       });
@@ -169,6 +182,27 @@
         notify('repoint-aborted', id, {});
       });
     }
+    // d (review r1): registry writes go through the registry lock —
+    // export lineage (hash + time) is no exception
+    // R2-3 (r2): structured export lineage — dedup requires BOTH hashes and
+    // the same algorithm version. Legacy scalar values upcast on read.
+    async function setExportHash(id, commandsHash, factsHash) {
+      return withRegistryLock(async () => {
+        const rec = await storage.get(id);
+        if (!rec) return null;
+        rec.lastExport = { commandsHash, factsHash: factsHash || null, algoVersion: 'v1-facts' };
+        rec.lastExportAt = Date.now();
+        await storage.put(id, rec);
+        return rec;
+      });
+    }
+    function exportLineage(rec) {
+      // legacy scalar lastExportHash upcast: commands-only, pre-factsHash
+      if (rec && rec.lastExport) return rec.lastExport;
+      if (rec && rec.lastExportHash) return { commandsHash: rec.lastExportHash, factsHash: null, algoVersion: 'v1' };
+      return null;
+    }
+
     // P3: trashed PROJECT entries purge after the retention window
     // (drops the project DB and the registry entry)
     async function purgeTrashedProjects(retentionMs) {
@@ -177,39 +211,39 @@
       for (const rec of await storage.all()) {
         if (rec.state === 'trashed' && rec.trashedAt && now - rec.trashedAt >= (retentionMs || 0)) dropped.push(rec);
       }
+      const remaining = [];
       for (const rec of dropped) {
-        if (rec.id === 'default') continue;   // the default project is never purged
-        await storage.del(rec.id);
-        if (typeof indexedDB !== 'undefined' && indexedDB.deleteDatabase && rec.dbName !== 'webmm-platform') {
-          await new Promise(res => { const r = indexedDB.deleteDatabase(rec.dbName); r.onsuccess = r.onerror = r.onblocked = () => res(); });
-        }
+        if (rec.id === 'default') { remaining.push(rec); continue; }   // never purged
+        try {
+          if (rec.dbName !== 'webmm-platform') await dropDb(rec.dbName);
+          await storage.del(rec.id);
+        } catch (e) { remaining.push(rec); }   // blocked: retry next boot
       }
-      if (dropped.length) notify('purged-batch', null, {});
-      return dropped.length;
+      return dropped.length - remaining.length;
     }
 
-    async function purgeTrashedDbs(retentionMs) {
-      // drop trashed databases older than the retention window
-      const trash = (await storage.get('__trash')) || { dbs: [] };
-      const now = Date.now();
-      const keep = [], drop = [];
-      for (const t of trash.dbs) (now - t.at >= (retentionMs || 0) ? drop : keep).push(t);
-      if (drop.length) {
-        await storage.put('__trash', { dbs: keep });
-        if (typeof indexedDB !== 'undefined' && indexedDB.deleteDatabase) {
-          for (const t of drop) await new Promise(res => {
-            const r = indexedDB.deleteDatabase(t.dbName);
-            r.onsuccess = r.onerror = r.onblocked = () => res();
-          });
-        }
-      }
-      return drop.length;
-    }
+    // U5 (review r1): deleteDatabase must NOT resolve on 'blocked' — a held
+    // connection means the DB still exists; keep the entry and retry on a
+    // later boot instead of pretending it was dropped.
+    const dropDb = dbName => new Promise((resolve, reject) => {
+      if (typeof indexedDB === 'undefined' || !indexedDB.deleteDatabase) return resolve();
+      const r = indexedDB.deleteDatabase(dbName);
+      r.onsuccess = () => resolve();
+      r.onerror = () => reject(r.error);
+      r.onblocked = () => reject(new Error('deleteDatabase blocked (a tab still holds ' + dbName + ')'));
+    });
 
     // startup reconciliation (docs §1.2): advisory only — the registry is
     // the source of truth, databases() can be stale on Safari
     async function reconcile() {
-      const out = { orphans: [], missing: [] };
+      const out = { orphans: [], missing: [], interruptedRestores: [] };
+      // interrupted restores need no databases() — scan first (Node-safe)
+      const now = Date.now();
+      for (const r of await storage.all()) {
+        if (r.state === 'repointing' && r.repointingAt && now - r.repointingAt > 5 * 60 * 1000) {
+          out.interruptedRestores.push(r.id);
+        }
+      }
       if (typeof indexedDB === 'undefined' || !indexedDB.databases) return out;
       let dbs = [];
       try { dbs = await indexedDB.databases(); } catch (e) { return out; }
@@ -228,7 +262,7 @@
     return {
       open, ensureMigrated, list, get, create, markReady, rename, touch, trash, purge,
       removeMem, reconcile, dbOf, lockOf, onRegistryMessage,
-      repointPrepare, repointCommit, repointAbort, purgeTrashedDbs, purgeTrashedProjects,
+      repointPrepare, repointCommit, repointAbort, purgeTrashedProjects, setExportHash, exportLineage,
       _storage: storage,
     };
   }

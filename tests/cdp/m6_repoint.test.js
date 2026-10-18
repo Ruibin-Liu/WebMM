@@ -65,10 +65,11 @@ const libSize = page => page.evaluate(() => (window.__search.getState() || []).l
   const reg = await A.evaluate(async () => {
     const r = window.__projectRegistry;
     const rec = await r.get('default');
-    const trash = await r._storage.get('__trash');
-    return { state: rec.state, dbName: rec.dbName, trashed: trash ? trash.dbs.map(t => t.dbName) : [] };
+    const entries = await r._storage.all();   // U6 (r1): tombstone ENTRIES are the single truth
+    const trashed = entries.filter(e => e.state === 'trashed' && e.dbOnly).map(e => e.dbName);
+    return { state: rec.state, dbName: rec.dbName, trashed };
   });
-  check('registry: default ready on the new DB, old DB trashed',
+  check('registry: default ready on the new DB, old DB trashed (tombstone entry)',
     reg.state === 'ready' && /webmm-project-/.test(reg.dbName) && reg.trashed.includes('webmm-platform'),
     JSON.stringify(reg));
   check('no page errors', errors.length === 0, errors.slice(0, 2).join(' | '));

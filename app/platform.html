@@ -2548,12 +2548,17 @@ function rdkitAvailable() {
           reg.onRegistryMessage(msg => {
             if (msg.kind === 'repointed' && msg.projectId === projectId) showRepointedModal();
           });
-          try { reg.purgeTrashedDbs(7 * 24 * 3600 * 1000); } catch (e) {}   // trash retention
           try { reg.purgeTrashedProjects(7 * 24 * 3600 * 1000); } catch (e) {}
         }
         const storage = P.DB.createIdbStorage(dbName);
         await P.Compat.init({ storage, projectId, dbName, Identity: P.Identity, DB: P.DB, Project: P.Project, registryStorage: window.__projectRegistry ? window.__projectRegistry._storage : null });
         window.__platformCompat = P.Compat;
+        // e (r1): §1.2 reconciliation — runs AFTER the active project's DB is
+        // open (a fresh profile would otherwise flag its not-yet-created
+        // database as missing). Advisory only; orphans are never auto-deleted.
+        if (window.__projectRegistry) {
+          window.__projectRegistry.reconcile().then(r => { if (r && (r.orphans.length || r.missing.length)) window.__registryAudit = r; }).catch(() => {});
+        }
         // advisory per-project size ("约"): serialize what's stored once per boot
         try {
           const cmds = await storage.all('commands'), facts = await storage.all('facts');
@@ -3710,7 +3715,10 @@ function rdkitAvailable() {
       const hits = (rows || [])
         .filter(r => r.e && r.e.molId && isFinite(r.score))
         .map(r => ({ molId: r.e.molId, score: +r.score.toFixed(6), colorT: r.colorT != null ? +r.colorT.toFixed(6) : null, conf: r.conf ?? null }));
-      c.saveRoundScores(roundId, hits);
+      c.saveRoundScores(roundId, hits).catch(e => {   // R2-1: gate refusal surfaces, never silent
+        searchStatus('轮次分数暂存被拒(项目正在恢复)— 稍后重跑该轮即可补记');
+        console.warn('[platform] round scores refused:', e.message);
+      });
       renderQueryHistory();
     } catch (err) { console.warn('[platform] round not recorded:', err); return null; }
     return roundId;
@@ -4930,6 +4938,16 @@ function csvField(v) {
     if (id === (window.__activeProject || {}).id) switchProjectUI('default');
     else renderProjectList();
   }
+  function registryAuditHint() {
+    const a = window.__registryAudit;
+    if (!a) return '';
+    const parts = [];
+    if (a.orphans.length) parts.push(a.orphans.length + ' 个未注册数据库(孤儿)');
+    if (a.missing.length) parts.push(a.missing.length + ' 个注册条目缺库');
+    if (a.interruptedRestores && a.interruptedRestores.length) parts.push(a.interruptedRestores.length + ' 个中断的恢复(若你刚发起过恢复请忽略此提示)');
+    return parts.length ? '<div class="hint" style="font-size:0.72rem; color:#b45309; margin-top:0.3rem;">⚠ 对账:' + parts.join(' · ') + '(可忽略或导出后删除)</div>' : '';
+  }
+
   async function renderProjectList() {
     const host = document.getElementById('projectList');
     const reg = window.__projectRegistry;
@@ -4950,7 +4968,7 @@ function csvField(v) {
         '<button class="action-btn edit" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="renameProjectUI(\'' + r.id + '\')" title="重命名(只改注册库,数据不动)">改名</button>' +
         (r.id === 'default' ? '' : '<button class="action-btn clear" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="trashProjectUI(\'' + r.id + '\')" title="软删除(回收站)">删除</button>') +
         '</div>';
-    }).join('');
+    }).join('') + registryAuditHint();
   }
   window.createProjectUI = createProjectUI; window.renameProjectUI = renameProjectUI;
   window.trashProjectUI = trashProjectUI; window.switchProjectUI = switchProjectUI;
@@ -4970,7 +4988,7 @@ function csvField(v) {
     if (!raw) { searchStatus('Nothing to export'); return; }
     let facts = [];
     try {
-      const allFacts = await (c.listFacts ? c.listFacts() : []);
+      const allFacts = await (c.listFacts ? c.listFacts(['fact', 'stochastic']) : []);   // L2 stays out (a, r1)
       facts = allFacts;
     } catch (e) { facts = []; }
     const commands = raw.commands;
@@ -4992,11 +5010,7 @@ function csvField(v) {
       },
     };
     if (window.__projectRegistry) {
-      try {
-        await window.__projectRegistry.touch(data.sourceProjectId);
-        const e3 = await window.__projectRegistry.get(data.sourceProjectId);
-        if (e3) { e3.lastExportHash = hash; await window.__projectRegistry._storage.put(data.sourceProjectId, e3); }
-      } catch (e) {}
+      try { await window.__projectRegistry.setExportHash(data.sourceProjectId, hash, data.factsHash); } catch (e) {}   // registry-locked, structured (d/R2-3)
     }
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -5030,8 +5044,11 @@ function csvField(v) {
       // dedup: same source project exported before?
       if (data.sourceProjectId) {
         const existing = await reg.get(data.sourceProjectId);
-        if (existing && existing.lastExportHash === data.logHash) {
-          if (!confirm('已存在相同项目(「' + existing.name + '」)。\n确定 = 仍导入为副本;取消 = 打开已有项目。')) { switchProjectUI(data.sourceProjectId); return; }
+        const lineage = existing && reg.exportLineage ? reg.exportLineage(existing) : (existing && existing.lastExportHash ? { commandsHash: existing.lastExportHash, factsHash: null, algoVersion: 'v1' } : null);
+        const same = lineage && lineage.algoVersion === 'v1-facts'
+          && lineage.commandsHash === data.logHash && lineage.factsHash === data.factsHash;
+        if (same) {
+          if (!confirm('已存在相同项目(「' + existing.name + '」,命令与结果均一致)。\n确定 = 仍导入为副本;取消 = 打开已有项目。')) { switchProjectUI(data.sourceProjectId); return; }
         }
       }
       const rec = await reg.create((data.projectMeta && data.projectMeta.name) || ('导入 ' + new Date().toISOString().slice(5, 10)));
@@ -6246,7 +6263,11 @@ function csvField(v) {
     if (!c) return;
     const cur = (window.__search && window.__search.getState()) || [];
     const items = cur.map(e => ({ smiles: e.smiles, name: e.name }));
-    if (!items.some(x => x.smiles === c.smiles)) items.unshift({ smiles: c.smiles, name: c.name || c.smiles });
+    // h (r1): dedup on the CANONICAL form (R5 merge key) — CCO and OCC
+    // are the same molecule
+    let canon = c.smiles;
+    try { const m = rdkitModule.get_mol(c.smiles); if (m && m.is_valid()) { canon = m.get_smiles(); m.delete(); } } catch (e) {}
+    if (!items.some(x => x.smiles === canon)) items.unshift({ smiles: canon, name: c.name || canon });
     closeModal('historyModal');
     switchMode('search');
     loadSearchLibraryFrom(items);

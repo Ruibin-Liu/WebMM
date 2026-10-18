@@ -45,7 +45,13 @@
           // run registered migrations sequentially (none at v1)
           for (const store of STORES) if (!d.objectStoreNames.contains(store)) d.createObjectStore(store);
         };
-        req.onsuccess = () => { db = req.result; resolve(db); };
+        req.onsuccess = () => {
+          db = req.result;
+          // let upgrades/deletes from other tabs proceed (§1.2/§3): a held
+          // connection would block them forever
+          db.onversionchange = () => { try { db.close(); } catch (e) {} };
+          resolve(db);
+        };
         req.onerror = () => reject(req.error);
       });
     }
@@ -73,9 +79,12 @@
       async put(store, key, val) {
         return new Promise((resolve, reject) => {
           const t = db.transaction(store, 'readwrite');
-          const req = t.objectStore(store).put(val, key);
-          req.onsuccess = () => resolve();
-          req.onerror = () => reject(req.error);
+          t.objectStore(store).put(val, key);
+          // resolve on TRANSACTION commit (r2: req.onsuccess fires before the
+          // tx is durable — the repoint drain relies on commit completion)
+          t.oncomplete = () => resolve();
+          t.onerror = () => reject(t.error);
+          t.onabort = () => reject(t.error || new Error('put aborted'));
         });
       },
       async del(store, key) {

@@ -180,3 +180,27 @@ ready ──删除──▶ trashed ──保留期/配额清理──▶ deleti
 
 实现 checklist(评审遗留):状态迁移表为首件交付物;写闸三缝隙;
 logHash 穷举测试(含 -0/NaN/Infinity 拒绝路径)。
+
+## 10. 实现评审补记(r1/r2 两轮)
+
+- **写事务 await 点**:所有写路径(put/putBatch)以 `tx.oncomplete`
+  为 resolve 点 —— 重指排干依赖提交完成,而非请求级 onsuccess。
+- **registry 频道挂载纪律**:所有标签**启动即挂** 'webmm-registry'
+  频道(不得"打开项目时才挂"的性能优化——重指通知依赖它)。
+- **default 重指政策**:允许(恢复到 default 是正当需求),代价是
+  store 频道名随 dbName 漂移;强制重载模态保证所有标签迅速收敛到
+  新频道,窗口期只漏 applied 通知(次要),无数据风险。
+- **已知未覆盖(非不需要覆盖)**:五项崩溃注入测试 —— ①putBatch
+  中途配额失败零残留 ②repointCommit 切指针后广播前被杀的重启状态
+  ③清理 onblocked 的 pendingDelete 重试 ④导入 creating 中途崩溃的
+  对账呈现 ⑤老 facts 缺 versions 字段的渲染。**触发条件**:任一
+  L2 facts 类型落地前、或配额自逐出(P3+)开工前必须兑现。
+- **债务触发条件**:R2-3 结构化导出谱系已实现(v1-facts);若未来
+  改哈希算法,必须 bump algoVersion 并写 upcast。
+- **repointingAt 语义**(签发补丁):repointCommit 后该字段保留,
+  含义 = "最近一次 repointPrepare 启动时间",仅供审计,不参与任何
+  自动分类的判定时刻。
+- **跨 algoVersion 去重降级**(签发补丁):algoVersion 不匹配(如
+  legacy 'v1' 项目遇 'v1-facts' 文件)时去重保守放行为副本 —— 这是
+  预期行为而非能力回退:误判"已存在"会让用户以为打开的是新文件、
+  实际是旧库,代价不对称。

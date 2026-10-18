@@ -423,6 +423,30 @@ console.log('project (mem storage):');
     check('no guard: writes work (back-compat)', !!proj2.state.pins.x);
   }
 
+  // ---- r2 review fixes: structured export lineage + interrupted restores ----
+  console.log('r2 hardening:')
+  {
+    const reg = Registry.create({ DB, mem: true });
+    await reg.ensureMigrated();
+    await reg.setExportHash('default', 'deadbeefdeadbeef', 'cafebabecafebabe');
+    const lin = reg.exportLineage(await reg.get('default'));
+    check('structured lineage {commandsHash, factsHash, algoVersion}',
+      lin.commandsHash === 'deadbeefdeadbeef' && lin.factsHash === 'cafebabecafebabe' && lin.algoVersion === 'v1-facts');
+    // legacy scalar upcast
+    await reg._storage.put('default', { dbName: 'x', state: 'ready', lastExportHash: 'aaaa' });
+    const lin2 = reg.exportLineage(await reg.get('default'));
+    check('legacy scalar lastExportHash upcasts (commands-only, v1)',
+      lin2.commandsHash === 'aaaa' && lin2.factsHash === null && lin2.algoVersion === 'v1');
+    // stale repointing -> interruptedRestores category (not orphan/missing)
+    await reg._storage.put('default', { dbName: 'x', state: 'ready' });
+    const prep = await reg.repointPrepare('default');
+    await reg._storage.put('default', { ...(await reg.get('default')), repointingAt: Date.now() - 10 * 60 * 1000 });
+    const rec = await reg.reconcile();
+    check('stale repointing classified as interrupted restore',
+      rec.interruptedRestores.includes('default') && !rec.orphans.includes('webmm-platform'));
+    await reg.repointAbort('default', prep.newDb);
+  }
+
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });

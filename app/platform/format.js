@@ -10,10 +10,16 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  function canonJson(v) {
+  function canonJson(v, path) {
+    path = path || '$';
+    if (typeof v === 'number' && !isFinite(v)) {
+      // NaN/Infinity/-0 cannot round-trip JSON; refusing them HERE (before
+      // any commit transaction) beats a silently-corrupted log (U10, r1)
+      throw new Error('canonJson: non-finite number at ' + path + ' (' + v + ')');
+    }
     if (v === null || typeof v !== 'object') return JSON.stringify(v);
-    if (Array.isArray(v)) return '[' + v.map(canonJson).join(',') + ']';
-    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canonJson(v[k])).join(',') + '}';
+    if (Array.isArray(v)) return '[' + v.map((x, i) => canonJson(x, path + '[' + i + ']')).join(',') + ']';
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canonJson(v[k], path + '.' + k)).join(',') + '}';
   }
 
   function logHash(commands) {
@@ -31,11 +37,13 @@
   function buildExport(opts) {
     const raw = opts.raw, facts = opts.facts || [];
     const hash = logHash(raw.commands);
+    const factsHash = logHash(facts.map(f => [f.key, f.value]));
     return {
       format: 'webmm-project', version: 1,
       schemaVersion: raw.schemaVersion,
       sourceProjectId: opts.sourceProjectId || 'default',
       logHash: hash,
+      factsHash,
       projectMeta: { name: opts.name || '项目' },
       commands: raw.commands,
       facts,
@@ -58,12 +66,13 @@
     }
     const facts = Array.isArray(data.facts) ? data.facts : [];
     const hashOk = data.logHash ? logHash(commands) === data.logHash : null;
+    const factsHashOk = data.factsHash ? logHash(facts.map(f => [f.key, f.value])) === data.factsHash : null;
     return {
       commands, facts,
       schemaVersion: data.schemaVersion || 1,
       sourceProjectId: data.sourceProjectId || null,
       logHash: data.logHash || null,
-      hashOk,
+      hashOk, factsHashOk,
       name: (data.projectMeta && data.projectMeta.name) || null,
     };
   }
