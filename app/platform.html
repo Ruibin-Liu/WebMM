@@ -6620,6 +6620,12 @@ function syncShellChrome() {
   document.getElementById('crumbNow').innerHTML = '<b>' + (SECTION_LABEL[m] || m) + '</b>';
 }
 function renderOverview() {
+  // the store initializes lazily (search mode tripped it historically) — a
+  // fresh page going STRAIGHT to the overview must boot it too, then the
+  // cards/list re-render with real data (fixes "项目注册库不可用" on 新建)
+  if (!window.__platformCompat && typeof initPlatformStore === 'function') {
+    initPlatformStore().then(() => { if (document.getElementById('overviewPanel').style.display !== 'none') renderOverview(); }).catch(() => {});
+  }
   try {
     renderProjectList();
     const st = (window.__search && window.__search.getState()) || [];

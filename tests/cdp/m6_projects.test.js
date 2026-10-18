@@ -27,8 +27,18 @@ const ready = async page => {
   page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message.slice(0, 200)));
   page.on('dialog', d => d.accept(d.type() === 'prompt' ? '测试项目B' : undefined));
 
-  // ---- 1. default boot: zero-copy migration + list rendering ----
   await page.goto(URL, { waitUntil: 'load' });
+  await page.waitForFunction(() => typeof switchMode === 'function', null, { timeout: 60000 });
+
+  // ---- 0. fresh page straight into the overview boots the store ----
+  // (regression: the lazy init was only tripped by search mode; the project
+  // overview used to show "注册库不可用" and 新建 alerted)
+  await page.evaluate(() => switchMode('project'));
+  await page.waitForFunction(() => (document.getElementById('projectList') || { textContent: '' }).textContent.includes('默认项目'), null, { timeout: 30000 });
+  const freshBoot = await page.evaluate(() => ({ compat: !!window.__platformCompat, reg: !!window.__projectRegistry }));
+  check('fresh page → overview directly: store + registry boot', freshBoot.compat && freshBoot.reg, JSON.stringify(freshBoot));
+
+  // ---- 1. default boot: zero-copy migration + list rendering ----
   await ready(page);
   await page.evaluate(() => { switchMode('search'); loadDemoLibrary(); });
   await page.waitForFunction(() => (window.__search.getState() || []).length === 55, null, { timeout: 60000 });
