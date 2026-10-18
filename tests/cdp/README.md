@@ -33,6 +33,7 @@ Or just run everything, in dependency order:
 | `m6_analog_pool` | platform | persistent M3 worker pool: reuse across runs, poison recycling + job re-dispatch, pool health after chaos |
 | `m6_analog_ui` | platform | explorer UI: thumbnail rendering at display scale, process-label tooltips, results CSV/SDF export |
 | `m6_projects` | platform | M4 P1 project management: registry, per-project DBs, zero-copy migration, URL active project, export v1 envelope, import-as-new |
+| `m6_analog_history` | platform | M4 P2 explorer persistence: auto-commit with lineage, history restore across reload, hide-as-undo |
 
 Note: since the workbench swap, m0–m5 run against `app/index.html` (the
 former platform page, classic UI, full LBDD surface); m6* run against

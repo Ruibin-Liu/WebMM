@@ -26,6 +26,7 @@
       async del(store, key) { data[store].delete(key); },
       async all(store) { return [...data[store].entries()].map(([k, v]) => ({ key: k, value: v })); },
       async count(store) { return data[store].size; },
+      async putBatch(ops) { for (const o of ops) data[o.store].set(o.key, o.value); },   // trivially atomic in mem
       _data: data,
     };
   }
@@ -105,6 +106,18 @@
           const req = t.objectStore(store).count();
           req.onsuccess = () => resolve(req.result);
           req.onerror = () => reject(req.error);
+        });
+      },
+      // ONE transaction across stores — the analog-run commit path (docs §4:
+      // command + facts land atomically or not at all)
+      async putBatch(ops) {
+        return new Promise((resolve, reject) => {
+          const stores = [...new Set(ops.map(o => o.store))];
+          const t = db.transaction(stores, 'readwrite');
+          for (const o of ops) t.objectStore(o.store).put(o.value, o.key);
+          t.oncomplete = () => resolve();
+          t.onerror = () => reject(t.error);
+          t.onabort = () => reject(t.error || new Error('putBatch aborted'));
         });
       },
     };

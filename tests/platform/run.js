@@ -355,6 +355,39 @@ console.log('project (mem storage):');
     check('source store untouched by import-as-new', (await src.exportProject()).commands.length === 2);
   }
 
+  // ---- M4 P2: analog run persistence (single-transaction commit) ----
+  console.log('analog run persistence:');
+  {
+    const st = DB.createMemStorage();
+    const proj = await Project.init(st);
+    check('applyWithFacts: command + facts land together',
+      await proj.applyWithFacts(
+        { type: 'CreateAnalogRun', runId: 'a1', parentSmiles: 'CCO', mode: 'aza', versions: { webmm: 'v1', rdkit: 'r1', fragmentSet: 'builtin-v1' } },
+        [{ key: 'analog:a1', value: { layer: 'stochastic', versions: { webmm: 'v1' }, results: [{ smiles: 'CCN', tanimoto: 0.9 }], truncated: false } }])
+      && proj.state.analogRuns.a1.mode === 'aza'
+      && (await proj.storageGet('facts', 'analog:a1')).results.length === 1
+      && (await st.all('commands')).length === 1);
+    const r2 = await proj.applyWithFacts(
+      { type: 'Pin', molId: 'm1', productSmiles: 'CCN', provenanceAnalogRun: 'a1' }, []);
+    check('applyWithFacts: second commit seq advances', r2.commandId === 2 && (await st.count('commands')) === 2);
+    // undo is LIFO: first the pin, then the run — the run's undo appends
+    // HideAnalogRun; facts are never deleted (docs §4)
+    const u1 = await proj.undo();
+    const u = await proj.undo();
+    check('undo(create-run) appends Hide; facts survive', u1.ok && u1.undone.type === 'Pin'
+      && u.ok && u.undone.type === 'CreateAnalogRun'          // the described cmd; the appended inverse is Hide
+      && proj.state.hiddenRuns.a1 && proj.state.analogRuns.a1  // hidden but the run (and its facts) stay
+      && (await proj.storageGet('facts', 'analog:a1')).results.length === 1);
+    // rejected command leaves NOTHING behind (atomicity)
+    let threw = false;
+    try { await proj.applyWithFacts({ type: 'CreateAnalogRun', runId: 'a1' }, [{ key: 'analog:x', value: {} }]); } catch (e) { threw = true; }
+    const nCmds = await st.count('commands');   // 2 applies + 2 undo-appends
+    check('applyWithFacts: rejection is atomic (no command, no facts)', threw && nCmds === 4 && (await proj.storageGet('facts', 'analog:x')) == null);
+    // replay across reload keeps runs + hidden
+    const proj2 = await Project.init(st);
+    check('replay: analogRuns + hiddenRuns survive reload', proj2.state.analogRuns.a1 && proj2.state.hiddenRuns.a1);
+  }
+
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });

@@ -1736,6 +1736,13 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        <div class="hint" id="analogStatus"></div>
        <button class="action-btn clear" id="analogCancel" style="width:auto; display:none;" onclick="analogCancelRun()">取消</button>
      </div>
+     <div id="analogHistoryWrap" style="display:none; margin-top:0.5rem; border:1px solid var(--ll-line); border-radius:10px; padding:0.55rem 0.7rem;">
+       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.3rem;">
+         <b style="font-size:0.85rem;">探索历史</b>
+         <span class="hint" style="font-size:0.72rem;" title="每次探索完成后自动存入当前项目(命令 + 带谱系的结果);重载后可恢复。撤销 = 隐藏,结果事实永不删除。">已保存的探索运行 · 随项目持久</span>
+       </div>
+       <div id="analogHistory" style="display:flex; flex-direction:column; gap:0.25rem;"></div>
+     </div>
      <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
        <div class="action-buttons" style="justify-content:flex-start; margin:0 0 0.4rem;">
          <button class="action-btn edit" style="width:auto;" onclick="exportAnalogCSV()" title="导出当前结果表为 CSV(SMILES/ShapeT/FlexT/MW/RotB/SA)">导出 CSV</button>
@@ -4120,6 +4127,7 @@ function rdkitAvailable() {
     if (!siteVal || !analogParentMolblock) { analogStatus('Pick a site first (use current molecule → site)'); return; }
     const cat = document.getElementById('analogFragCat').value;
     const frags = ANALOG_FRAGMENTS.filter(f => cat === 'all' || f[1] === cat);
+    try { window.__analogRunCtx = { mode: 'swap', site: siteVal, fragCat: cat, deaza: false, parentSmiles: rdkitModule.get_mol(analogParentMolblock).get_smiles() }; } catch (e) { window.__analogRunCtx = { mode: 'swap', site: siteVal, fragCat: cat, deaza: false }; }
     if (!frags.length) { analogStatus('No fragments in category'); return; }
     // --- stage A: enumerate + filter (hard caps: ≤400 products, rotor ≤10)
     analogRunToken++;
@@ -4394,6 +4402,32 @@ function rdkitAvailable() {
                 analogThumbsOn = true;
                 renderAnalogRows(results, token);   // settled: thumbnails land on the sorted table
                 window.__azaRun = false;
+                // M4 P2 (docs §4): persist the run — command + L3 facts land
+                // in ONE storage transaction; cancel earlier wrote nothing.
+                try {
+                  const c2 = window.__platformCompat;
+                  if (c2 && c2.applyWithFacts) {
+                    const runId = 'a' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+                    const ctx = window.__analogRunCtx || {};
+                    const versions = {
+                      webmm: window.__webmmVersion || (typeof WEBMM_VERSION !== 'undefined' ? WEBMM_VERSION : ''),
+                      rdkit: document.getElementById('rdkitVersion').textContent,
+                      fragmentSet: 'builtin-v1',
+                    };
+                    const top = results.slice(0, 100).map(r => ({
+                      smiles: r.smiles, tanimoto: r.tanimoto,
+                      flexT: r.flexT != null ? r.flexT : null, sa: r.sa != null ? r.sa : null,
+                      mw: r.mw != null ? r.mw : null, rotb: r.rotb != null ? r.rotb : null, idx: r.idx,
+                    }));
+                    await c2.applyWithFacts(
+                      { type: 'CreateAnalogRun', runId, parentSmiles: ctx.parentSmiles || null,
+                        mode: ctx.mode || 'swap', site: ctx.site || null, fragCat: ctx.fragCat || null,
+                        deaza: !!ctx.deaza, versions },
+                      [{ key: 'analog:' + runId, value: { layer: 'stochastic', versions, results: top, truncated: results.length > top.length } }]);
+                    analogStatus(document.getElementById('analogStatus').textContent + ' · 已保存 ' + runId.slice(0, 6));
+                    analogRenderHistory();
+                  }
+                } catch (e2) { console.warn('[analog] run not persisted:', e2); }
               })();
             });
           }
@@ -4526,6 +4560,7 @@ function rdkitAvailable() {
     if (!cands.length) { analogStatus('No valid aza-isomers'); return; }
     window.__azaCounts = { n: cands.length, single: nSingle, double: nDouble,
       deazaSingle: ringN.length ? dSingle : undefined, deazaDouble: ringN.length ? dDouble : undefined };
+    try { window.__analogRunCtx = { mode: 'aza', site: null, fragCat: null, deaza: wantDeaza, parentSmiles: rdkitModule.get_mol(analogParentMolblock).get_smiles() }; } catch (e) { window.__analogRunCtx = { mode: 'aza', deaza: wantDeaza }; }
     analogStatus(cands.length + ' aza-isomers (' + nSingle + ' single + ' + nDouble + ' double positions'
       + (ringN.length ? ' · deaza ' + dSingle + ' + ' + dDouble : '') + ') — funnel…');
     window.__azaRun = true;   // the funnel's final status appends the marker
@@ -4628,11 +4663,79 @@ function rdkitAvailable() {
     const c = window.__platformCompat;
     if (!c) return;
     if (c.getPins()[mid]) await c.unpin(mid);
-    else await c.pin(mid, 'analog #' + idx);
+    else {
+      const r = (analogLastResults() || []).find(x => String(x.idx) === String(idx));
+      const runId = Object.keys((c.projectApi().state.analogRuns) || {}).slice(-1)[0] || null;
+      await c.pin(mid, 'analog #' + idx, null, { productSmiles: r ? r.smiles : null, analogRun: r ? runId : null });
+    }
     renderAnalogRows(analogLastResults(), analogRunToken);
     renderWorkSet();
   }
   window.analogPin = analogPin;
+
+  // ---- M4 P2: saved explorer runs (docs/project-management.md §4) ----
+  function analogRunLabel(meta) {
+    const d = new Date(meta.at || 0);
+    const base = meta.mode === 'aza'
+      ? 'aza-scan' + (meta.deaza ? ' + deaza' : '')
+      : '位点交换 ' + (meta.site || '?').slice(0, 14) + (meta.fragCat ? ' · ' + meta.fragCat : '');
+    return base + ' · ' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  function analogVersionsCurrent() {
+    return {
+      webmm: window.__webmmVersion || (typeof WEBMM_VERSION !== 'undefined' ? WEBMM_VERSION : ''),
+      rdkit: document.getElementById('rdkitVersion').textContent,
+      fragmentSet: 'builtin-v1',
+    };
+  }
+  async function analogRestoreRun(runId) {
+    const c = window.__platformCompat;
+    if (!c) return;
+    const fact = await c.getFact('analog:' + runId);
+    if (!fact || !Array.isArray(fact.results) || !fact.results.length) { analogStatus('该运行的结果已被回收或为空'); return; }
+    const results = fact.results.map(r => ({ ...r }));
+    for (const r of results) {
+      if (!r.molblock) {   // SDF export path needs a molblock; rebuild from SMILES
+        try { const m = rdkitModule.get_mol(r.smiles); if (m && m.is_valid()) { r.molblock = m.get_molblock(); m.delete(); } } catch (e) {}
+      }
+    }
+    __analogResults = results;
+    analogThumbsOn = true;
+    renderAnalogRows(results, ++analogRunToken);
+    document.getElementById('analogResultsWrap').style.display = '';
+    // explicit warning on version mismatch — never silently recompute (docs §4)
+    const cur = analogVersionsCurrent(), v = fact.versions || {};
+    const stale = ['webmm', 'rdkit', 'fragmentSet'].some(k => v[k] && cur[k] && v[k] !== cur[k]);
+    analogStatus((stale ? '⚠ 历史结果由旧版本生成(' + Object.keys(v).filter(k => v[k] !== cur[k]).join('/') + ')— 只读展示;重新探索将生成新运行。' : '已恢复运行 ' + runId.slice(0, 6) + ' · ' + results.length + ' 个候选'));
+  }
+  window.analogRestoreRun = analogRestoreRun;
+  async function analogHideRun(runId) {
+    const c = window.__platformCompat;
+    if (!c) return;
+    await c.projectApi().apply({ type: 'HideAnalogRun', runId });   // undo semantics: hide, facts stay
+    analogRenderHistory();
+  }
+  window.analogHideRun = analogHideRun;
+  async function analogRenderHistory() {
+    const host = document.getElementById('analogHistory');
+    const wrap = document.getElementById('analogHistoryWrap');
+    if (!host || !wrap) return;
+    const c = window.__platformCompat;
+    if (!c || !c.projectApi) { wrap.style.display = 'none'; return; }
+    let runs = [];
+    try {
+      const st = c.projectApi().state || {};
+      runs = Object.entries(st.analogRuns || {}).filter(([id]) => !(st.hiddenRuns || {})[id]);
+    } catch (e) { runs = []; }
+    wrap.style.display = runs.length ? '' : 'none';
+    host.innerHTML = runs.map(([id, meta]) =>
+      '<div style="display:flex; align-items:center; gap:0.5rem; padding:0.3rem 0.45rem; border:1px solid var(--ll-line); border-radius:8px; font-size:0.8rem;">' +
+      '<span>' + escHtml(analogRunLabel(meta)) + '</span><span style="flex:1"></span>' +
+      '<button class="action-btn edit" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="analogRestoreRun(\'' + id + '\')" title="恢复结果表到当前会话(不改写历史)">恢复</button>' +
+      '<button class="action-btn clear" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="analogHideRun(\'' + id + '\')" title="撤销该运行(隐藏;结果事实保留,可撤销隐藏)">隐藏</button>' +
+      '</div>').join('');
+  }
+  window.analogRenderHistory = analogRenderHistory;
   let __analogResults = [];
   // hover a SMILES cell -> floating structure card (works mid-run too —
   // that's the point of deferred thumbnails). Reuses the molThumb cache.
@@ -6669,6 +6772,7 @@ function switchMode(m) {
   document.getElementById('searchPanel').style.display = (searchMode && modeShown.search) ? 'block' : 'none';
   document.getElementById('rgdPanel').style.display = searchMode ? (rgdResults ? 'block' : 'none') : 'none';
   document.getElementById('analogPanel').style.display = analogMode ? 'block' : 'none';
+    if (analogMode && typeof analogRenderHistory === 'function') analogRenderHistory();
   document.getElementById('scaffoldPanel').style.display = searchMode ? (scaffoldResults ? 'block' : 'none') : 'none';
   document.getElementById('pharmQueryPanel').style.display = searchMode ? 'block' : 'none';
   if (searchMode) restoreSearchLibrary();

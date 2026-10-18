@@ -81,8 +81,21 @@
 
   // ---- M1b triage facade (pin/exclude/notes/undo over the command log) ----
   // Molecule-level overlay + provenance; rounds/propagation arrive in M1c.
-  async function pin(molId, note, provenanceRound) {
-    await project.apply({ type: 'Pin', molId, note: note || null, provenanceRound: provenanceRound || null });
+  async function pin(molId, note, provenanceRound, lineage) {
+    // lineage (M4 P2): {productSmiles, analogRun} makes the pin
+    // self-contained — it resolves without the run's facts (docs §4)
+    await project.apply({ type: 'Pin', molId, note: note || null, provenanceRound: provenanceRound || null,
+      productSmiles: lineage && lineage.productSmiles || null,
+      provenanceAnalogRun: lineage && lineage.analogRun || null });
+  }
+
+  async function applyWithFacts(cmd, factPuts) {
+    if (!project || !project.applyWithFacts) throw new Error('compat: applyWithFacts unavailable');
+    return project.applyWithFacts(cmd, factPuts);
+  }
+  async function getFact(key) {
+    if (!project || !project.storageGet) return null;
+    return project.storageGet('facts', key);
   }
   async function unpin(molId) { await project.apply({ type: 'Unpin', molId }); }
   async function exclude(molId, reason) {
@@ -173,7 +186,7 @@
   }
 
   return { init, saveLibraryInputs, restoreInputs, clearLibrary, LEGACY_KEY, LIB_ID,
-    pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi,
+    pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi, applyWithFacts, getFact,
     saveRoundScores, getRoundScores, cachedRoundScores, exportProjectData, listFacts,
     importProject, stale };
 });

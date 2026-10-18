@@ -89,6 +89,40 @@
 
       // checkpoint events (import/reconcile/round complete) also trigger
       async checkpoint() { await snapshot(p); },
+
+      // M4 P2 (docs §4): apply a command and land its L3 facts in ONE
+      // storage transaction inside one lock — the analog-run commit path.
+      // Cancel semantics: this either fully lands or throws; nothing partial.
+      async applyWithFacts(cmd, factPuts) {
+        if (p._dead) throw new Error('project replaced; reload required');
+        let res;
+        const id = await p.withLock('project', async () => {
+          if (p._dead) throw new Error('project replaced; reload required');
+          res = State.applyCommand(p.state, cmd);
+          if (res.error) throw new Error('command rejected: ' + res.error);
+          const seqRec = await p.storage.get('meta', 'cmdSeq');
+          const seq = (seqRec || 0) + 1;
+          const ops = [
+            { store: 'commands', key: seq, value: cmd },
+            { store: 'meta', key: 'cmdSeq', value: seq },
+          ];
+          for (const f of (factPuts || [])) ops.push({ store: 'facts', key: f.key, value: f.value });
+          if (p.storage.putBatch) await p.storage.putBatch(ops);
+          else { for (const o of ops) await p.storage.put(o.store, o.key, o.value); }
+          if (!p._hadData) { p._hadData = true; try { await p.storage.put('meta', 'hadData', true); } catch (e) {} }
+          return seq;
+        });
+        p.state = res.state;
+        p._cmdId = id;
+        try { if (p.channel) p.channel.postMessage({ kind: 'applied', commandId: id }); } catch (e) {}
+        // same undo bookkeeping as a user apply: push the inverse, clear redo
+        const inv = State.inverse(cmd, res.state);
+        if (inv) p._undoStack.push({ inverse: inv, describes: cmd });
+        p._redoStack = [];
+        p._commandsSinceSnapshot += 1;
+        if (p._commandsSinceSnapshot >= SNAPSHOT_EVERY) await snapshot(p);
+        return { commandId: id };
+      },
       invalidate() { p._dead = true; },
 
       // export = facts only (commands + meta). Golden fixtures + CI use

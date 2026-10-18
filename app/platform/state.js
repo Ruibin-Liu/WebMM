@@ -32,6 +32,8 @@
       rounds: {},              // roundId -> {parentId, inputRef, querySpec, threshold, archived, name}
       pins: {},                // molId -> {note, provenanceRound}
       excludes: {},            // molId -> {reason}
+      analogRuns: {},          // runId -> {parentSmiles, mode, site, fragCat, deaza, versions, at} (M4 P2, docs §4)
+      hiddenRuns: {},          // runId -> true (undo/hide; facts are never deleted)
       maxCommandId: 0,
     };
   }
@@ -105,12 +107,35 @@
         r.threshold = cmd.value;
         return { state: s };
       }
+      case 'CreateAnalogRun': {
+        if (!cmd.runId) return { state: prev, error: 'CreateAnalogRun: runId required' };
+        if (s.analogRuns[cmd.runId]) return { state: prev, error: 'CreateAnalogRun: duplicate runId' };
+        s.analogRuns[cmd.runId] = {
+          parentSmiles: cmd.parentSmiles || null,
+          mode: cmd.mode || 'swap',           // swap | aza
+          site: cmd.site || null, fragCat: cmd.fragCat || null,
+          deaza: !!cmd.deaza,
+          versions: cmd.versions || {},
+          at: cmd.at || Date.now(),
+        };
+        return { state: s };
+      }
+      case 'HideAnalogRun': {
+        if (!s.analogRuns[cmd.runId]) return { state: prev, error: 'HideAnalogRun: unknown run' };
+        s.hiddenRuns[cmd.runId] = true;
+        return { state: s };
+      }
+      case 'UnhideAnalogRun': {
+        if (!s.analogRuns[cmd.runId]) return { state: prev, error: 'UnhideAnalogRun: unknown run' };
+        delete s.hiddenRuns[cmd.runId];
+        return { state: s };
+      }
       case 'Pin': {
         // ANY molId may be pinned: synthetic-library molecules (the analog
         // explorer) and orphaned ids (removed libraries) are legitimate
         // triage targets — library membership is not a precondition
         if (!cmd.molId) return { state: prev, error: 'Pin: molId required' };
-        s.pins[cmd.molId] = { note: cmd.note || null, provenanceRound: cmd.provenanceRound || null };
+        s.pins[cmd.molId] = { note: cmd.note || null, provenanceRound: cmd.provenanceRound || null, productSmiles: cmd.productSmiles || null, provenanceAnalogRun: cmd.provenanceAnalogRun || null };
         return { state: s };
       }
       case 'Unpin': {
@@ -156,6 +181,8 @@
       rounds: cloneRounds(prev.rounds),
       pins: { ...prev.pins },
       excludes: { ...prev.excludes },
+      analogRuns: { ...prev.analogRuns },
+      hiddenRuns: { ...prev.hiddenRuns },
       maxCommandId: prev.maxCommandId,
     };
   }
@@ -186,6 +213,9 @@
   function inverse(cmd, state) {
     switch (cmd.type) {
       case 'Pin': return { type: 'Unpin', molId: cmd.molId };
+      case 'CreateAnalogRun': return { type: 'HideAnalogRun', runId: cmd.runId };   // undo = hide (facts stay, docs §4)
+      case 'HideAnalogRun': return { type: 'UnhideAnalogRun', runId: cmd.runId };
+      case 'UnhideAnalogRun': return { type: 'HideAnalogRun', runId: cmd.runId };
       case 'Unpin': return null;                       // needs prior value; caller snapshots overlay for undo stack
       case 'Exclude': return { type: 'Include', molId: cmd.molId };
       case 'Include': return null;
