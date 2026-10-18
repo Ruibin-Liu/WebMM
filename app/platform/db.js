@@ -31,11 +31,14 @@
   }
 
   // ---- IndexedDB adapter (browser) ----
-  function createIdbStorage() {
+  // dbName: each project gets its own database (docs/project-management.md
+  // §1); the default (legacy singleton) keeps the historical name.
+  function createIdbStorage(dbName) {
+    dbName = dbName || DB_NAME;
     let db = null;
     function open() {
       return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        const req = indexedDB.open(dbName, DB_VERSION);
         req.onupgradeneeded = (ev) => {
           const d = req.result;
           // run registered migrations sequentially (none at v1)
@@ -140,10 +143,62 @@
     }
     return fn();   // Node / old browsers: single-writer assumption
   }
-  function createStoreChannel() {
-    try { return new BroadcastChannel('webmm-platform-store'); }
+  function createStoreChannel(dbName) {
+    // the legacy singleton keeps its historical channel name (multi-tab
+    // tests + old tabs keep hearing each other); per-project channels are
+    // namespaced by database
+    const nm = !dbName || dbName === DB_NAME ? 'webmm-platform-store' : 'webmm-store:' + dbName;
+    try { return new BroadcastChannel(nm); }
     catch (e) { return null; }   // Node: no BroadcastChannel
   }
 
-  return { DB_NAME, DB_VERSION, STORES, MIGRATIONS, createMemStorage, createIdbStorage, durability, withLock, createStoreChannel };
+  // ---- registry adapter: one DB ('webmm-projects'), one store, one
+  // record per project {id, dbName, name, createdAt, lastOpened, state,
+  // approxBytes, schemaVersion} — docs/project-management.md §1 ----
+  const REGISTRY_DB = 'webmm-projects';
+  function createRegistryStorage(kind) {
+    if (kind === 'mem') {
+      const m = new Map();
+      return {
+        kind: 'mem',
+        async get(id) { return m.get(id); },
+        async put(id, val) { m.set(id, val); },
+        async del(id) { m.delete(id); },
+        async all() { return [...m.entries()].map(([k, v]) => ({ id: k, ...v })); },
+      };
+    }
+    let db = null;
+    function open() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(REGISTRY_DB, 1);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains('projects')) req.result.createObjectStore('projects');
+        };
+        req.onsuccess = () => { db = req.result; resolve(db); };
+        req.onerror = () => reject(req.error);
+      });
+    }
+    const req1 = (mode, fn) => new Promise((resolve, reject) => {
+      const t = db.transaction('projects', mode);
+      const r = fn(t.objectStore('projects'));
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    return {
+      kind: 'idb', open,
+      async get(id) { return req1('readonly', os => os.get(id)); },
+      async put(id, val) { return req1('readwrite', os => os.put(val, id)); },
+      async del(id) { return req1('readwrite', os => os.delete(id)); },
+      async all() {
+        return new Promise((resolve, reject) => {
+          const out = [];
+          const r = db.transaction('projects', 'readonly').objectStore('projects').openCursor();
+          r.onsuccess = () => { const c = r.result; if (c) { out.push({ id: c.key, ...c.value }); c.continue(); } else resolve(out); };
+          r.onerror = () => reject(r.error);
+        });
+      },
+    };
+  }
+
+  return { DB_NAME, DB_VERSION, REGISTRY_DB, STORES, MIGRATIONS, createMemStorage, createIdbStorage, createRegistryStorage, durability, withLock, createStoreChannel };
 });

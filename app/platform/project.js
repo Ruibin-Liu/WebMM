@@ -105,6 +105,7 @@
       // inline on a hot interaction path beyond M1a's trivial sizes.
       snapshot: () => snapshot(p),
       storagePut: (store, key, val) => p.storage.put(store, key, val),
+      storageAll: (store) => p.storage.all(store),
       storageGet: (store, key) => p.storage.get(store, key),
     };
   }

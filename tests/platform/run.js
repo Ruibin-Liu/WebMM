@@ -8,6 +8,8 @@ const State = require(path.join(__dirname, '../../app/platform/state.js'));
 const DB = require(path.join(__dirname, '../../app/platform/db.js'));
 const Project = require(path.join(__dirname, '../../app/platform/project.js'));
 const Compat = require(path.join(__dirname, '../../app/platform/compat.js'));
+const Registry = require(path.join(__dirname, '../../app/platform/registry.js'));
+const Format = require(path.join(__dirname, '../../app/platform/format.js'));
 
 let pass = 0, fail = 0;
 function check(name, cond, detail) {
@@ -271,6 +273,86 @@ console.log('project (mem storage):');
     await st2.put('meta', 'cmdSeq', 7);
     await a.checkpoint();
     check('checkpoint skipped when log moved under us', (await st2.all('snapshots')).length === 0);
+  }
+
+  // ---- M4 P1: format v1 + registry ----
+  console.log('project format v1:');
+  {
+    const F = Format;
+    const cmds = [
+      { type: 'ImportLibrary', libraryId: 'main', entries: [{ molId: 'm1', ordinal: 0, raw: { smiles: 'CCO', name: 'eth' }, structureKey: 'K1' }] },
+      { type: 'Pin', molId: 'm1', note: 'x' },
+    ];
+    // object KEY order must not matter; command SEQUENCE must (array order preserved)
+    const keyShuffled = [
+      { libraryId: 'main', type: 'ImportLibrary', entries: [{ raw: { name: 'eth', smiles: 'CCO' }, ordinal: 0, structureKey: 'K1', molId: 'm1' }] },
+      { note: 'x', type: 'Pin', molId: 'm1' },
+    ];
+    check('logHash: object key order independent', F.logHash(cmds) === F.logHash(keyShuffled));
+    check('logHash: command sequence matters', F.logHash(cmds) !== F.logHash([...cmds].reverse()));
+    check('logHash: content sensitive', F.logHash(cmds) !== F.logHash([{ type: 'Pin', molId: 'm2' }]));
+    check('logHash: number via toString, no toFixed (1 vs 1.0 identical)', F.logHash([{ v: 1 }]) === F.logHash([{ v: 1.0 }]));
+    check('logHash: distinct for float precision', F.logHash([{ v: 0.1234567 }]) !== F.logHash([{ v: 0.1234568 }]));
+    const env = F.buildExport({ raw: { schemaVersion: 1, commands: cmds }, facts: [{ key: 'scores:r1', value: { layer: 'stochastic', hits: [] } }], sourceProjectId: 'p1', name: 'T', engineVersions: { webmm: 'v1' } });
+    check('buildExport: v1 envelope shape', env.format === 'webmm-project' && env.version === 1 && env.logHash === F.logHash(cmds) && env.facts.length === 1 && env.sourceProjectId === 'p1');
+    const parsed = F.parseImport(JSON.parse(JSON.stringify(env)));
+    check('parseImport: round-trip + hash verifies', parsed.hashOk === true && parsed.commands.length === 2);
+    const tampered = JSON.parse(JSON.stringify(env)); tampered.commands[1].note = 'evil';
+    check('parseImport: tamper detected', F.parseImport(tampered).hashOk === false);
+    const legacy = F.parseImport({ schemaVersion: 1, commands: cmds });
+    check('parseImport: legacy commands-only file ok (hashOk null)', legacy.hashOk === null && legacy.facts.length === 0);
+    let threw = false;
+    try { F.parseImport({ format: 'webmm-project', version: 9, commands: [] }); } catch (e) { threw = /version/.test(e.message); }
+    check('parseImport: future format rejected', threw);
+  }
+
+  console.log('registry (mem):');
+  {
+    const reg = Registry.create({ DB, mem: true });
+    const d = await reg.ensureMigrated();
+    await reg.ensureMigrated();   // idempotent
+    check('zero-copy migration: default entry, idempotent', d.id === 'default' && d.dbName === 'webmm-platform' && d.state === 'ready');
+    check('lock mapping: default keeps legacy name', reg.lockOf('default') === 'project' && reg.lockOf('abc').startsWith('project:'));
+    const p = await reg.create('二次战役');
+    await reg.markReady(p.id);
+    await reg.rename(p.id, '改名');
+    const got = await reg.get(p.id);
+    check('create -> ready -> rename lifecycle', got.state === 'ready' && got.name === '改名' && got.dbName === 'webmm-project-' + p.id);
+    await reg.touch(p.id, 12345);
+    check('touch records approx bytes', (await reg.get(p.id)).approxBytes === 12345);
+    await reg.trash(p.id);
+    await reg.removeMem(p.id);
+    check('trash -> purge removes entry', !(await reg.get(p.id)));
+    const list = await reg.list();
+    check('default survives purge; list intact', list.length === 1 && list[0].id === 'default');
+  }
+
+  console.log('facts layer + import-as-new (mem):');
+  {
+    // export from one store, import into a FRESH store (new-project semantics)
+    const srcStore = DB.createMemStorage();
+    const src = await Project.init(srcStore);
+    await src.apply({ type: 'ImportLibrary', libraryId: 'main', entries: [{ molId: 'm1', ordinal: 0, raw: { smiles: 'CCO' }, structureKey: 'K' }] });
+    await src.apply({ type: 'Pin', molId: 'm1', note: 'anchor' });
+    await src.storagePut('facts', 'scores:r1', { engine: 'webmm-v1.11', hits: [1, 2] });   // untagged = legacy record
+    const F = Format;
+    const raw = await src.exportProject();
+    const facts = await (async () => {
+      const out = [];
+      for (const r of await src.storageAll('facts')) out.push({ key: r.key, value: { ...r.value, layer: r.value.layer || 'stochastic' } });
+      return out;
+    })();
+    check('legacy facts upcast to stochastic at export', facts.length === 1 && facts[0].value.layer === 'stochastic');
+    const env = F.buildExport({ raw, facts, sourceProjectId: 'default', name: 'exp' });
+    const parsed = F.parseImport(JSON.parse(JSON.stringify(env)));
+    const dstStore = DB.createMemStorage();
+    const r = await Project.replaceProject(dstStore, { schemaVersion: parsed.schemaVersion, commands: parsed.commands }, {});
+    for (const fr of parsed.facts) await dstStore.put('facts', fr.key, fr.value);
+    const dst = await Project.init(dstStore);
+    check('import-as-new: projection + facts restored in a fresh store',
+      r.applied === 2 && dst.state.pins.m1 && dst.state.pins.m1.note === 'anchor'
+        && (await dst.storageGet('facts', 'scores:r1')).hits.length === 2);
+    check('source store untouched by import-as-new', (await src.exportProject()).commands.length === 2);
   }
 
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');

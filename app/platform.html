@@ -1262,7 +1262,17 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 
 
  <div id="overviewPanel" class="panel overview" style="display:none;">
-   <strong>项目概览</strong> <span class="hint">— 库 / 工作集 / 引擎 / 持久化一览</span>
+   <strong>项目概览</strong> <span class="hint">— 项目 / 库 / 工作集 / 引擎 / 持久化</span>
+   <div id="projectListCard" style="margin:0.5rem 0; border:1px solid var(--ll-line); border-radius:10px; padding:0.6rem 0.75rem;">
+     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.35rem;">
+       <b style="font-size:0.85rem;">项目</b>
+       <div style="display:flex; gap:0.4rem;">
+         <button class="action-btn edit" style="width:auto; padding:0.25rem 0.7rem; font-size:0.78rem;" onclick="createProjectUI()" title="新建一个空项目(独立 IndexedDB,与当前项目互不影响)">＋ 新建</button>
+         <button class="action-btn edit" style="width:auto; padding:0.25rem 0.7rem; font-size:0.78rem;" onclick="document.getElementById('projectImportFile').click()" title="导入导出的项目文件为新项目(不影响当前项目)">⬆ 导入为新项目</button>
+       </div>
+     </div>
+     <div id="projectList" style="display:flex; flex-direction:column; gap:0.3rem;"></div>
+   </div>
    <div class="ov-grid">
      <div class="ov-card"><div class="ov-num" id="ovLib">–</div><div class="ov-cap">库分子</div><div class="hint" id="ovLibDetail"></div></div>
      <div class="ov-card"><div class="ov-num" id="ovPins">–</div><div class="ov-cap">工作集钉选</div><div class="hint" id="ovPinsDetail"></div></div>
@@ -1273,7 +1283,6 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
    <div class="ov-banner" title="honest by design">本地确定性引擎 — 不含 QSAR / ADMET 预测模型;相似性与 SA 分数用于研究优先级排序,不构成活性或性质预测。</div>
    <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
      <button class="action-btn edit" style="width:auto; padding:0.35rem 0.8rem; font-size:0.8rem;" onclick="exportProjectFile()" title="The whole project as JSON (libraries, query rounds, triage — the command log itself). Import restores everything on any machine">⬇ 导出项目</button>
-     <button class="action-btn edit" style="width:auto; padding:0.35rem 0.8rem; font-size:0.8rem;" onclick="document.getElementById('projectImportFile').click()" title="Replace the current project with an exported .webmm-project.json (the page reloads after import)">⬆ 导入项目</button>
      <input type="file" id="projectImportFile" accept=".json,application/json" style="display:none;" onchange="importProjectFile(this)">
      <button class="action-btn primary" style="width:auto; padding:0.35rem 0.8rem; font-size:0.8rem;" onclick="switchMode('search')" title="去相似性检索装载库">打开检索 →</button>
    </div>
@@ -1891,6 +1900,8 @@ function rdkitAvailable() {
 <script src="platform/state.js"></script>
 <script src="platform/db.js"></script>
 <script src="platform/project.js"></script>
+<script src="platform/registry.js"></script>
+<script src="platform/format.js"></script>
 <script src="platform/compat.js"></script>
 <script>initRDKit();</script>
 
@@ -2512,9 +2523,32 @@ function rdkitAvailable() {
           m.delete();
           return ik;
         });
-        const storage = P.DB.createIdbStorage();
-        await P.Compat.init({ storage, Identity: P.Identity, DB: P.DB, Project: P.Project });
+        // M4 P1: per-tab active project via ?project=<id>; the registry
+        // maps id -> dbName (zero-copy migration, docs/project-management.md)
+        let projectId = 'default';
+        try { const q = new URLSearchParams(location.search).get('project'); if (q) projectId = q; } catch (e) {}
+        let dbName = null;
+        if (P.Registry) {
+          const reg = P.Registry.create({ DB: P.DB });
+          await reg.open();
+          await reg.ensureMigrated();          // idempotent, zero-copy
+          let entry = await reg.get(projectId);
+          if (!entry || entry.state === 'trashed' || entry.state === 'deleting') { projectId = 'default'; entry = await reg.get('default'); }
+          dbName = entry.dbName;
+          window.__projectRegistry = reg;
+          window.__activeProject = { id: projectId, name: entry.name };
+        }
+        const storage = P.DB.createIdbStorage(dbName);
+        await P.Compat.init({ storage, projectId, dbName, Identity: P.Identity, DB: P.DB, Project: P.Project });
         window.__platformCompat = P.Compat;
+        // advisory per-project size ("约"): serialize what's stored once per boot
+        try {
+          const cmds = await storage.all('commands'), facts = await storage.all('facts');
+          let bytes = 0;
+          for (const r of cmds) bytes += JSON.stringify(r.value).length;
+          for (const r of facts) bytes += JSON.stringify(r.value).length;
+          if (window.__projectRegistry) window.__projectRegistry.touch(projectId, bytes);
+        } catch (e) {}
         return P.Compat;
       } catch (err) {
         console.warn('[platform] init failed (app continues without the project store):', err);
@@ -4735,34 +4769,160 @@ function csvField(v) {
 
   // M2b: project export/import (facts only — the command log; deterministic
   // derivatives recompute on load, stochastic facts ride in 'facts')
+  // ===== M4 P1: project management (docs/project-management.md) =====
+  function fmtBytes(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return '—';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function switchProjectUI(id) {
+    const u = new URL(location.href);
+    u.searchParams.set('project', id);
+    location.href = u.href;   // reload into the project (per-tab active)
+  }
+  async function createProjectUI() {
+    const reg = window.__projectRegistry;
+    if (!reg) { alert('项目注册库不可用'); return; }
+    const name = prompt('新项目名称:', '项目 ' + new Date().toISOString().slice(5, 10).replace('-', ''));
+    if (name === null) return;
+    const rec = await reg.create(name || undefined);
+    await reg.markReady(rec.id);
+    switchProjectUI(rec.id);
+  }
+  async function renameProjectUI(id) {
+    const reg = window.__projectRegistry;
+    const cur = reg && await reg.get(id);
+    const name = prompt('重命名项目:', cur ? cur.name : '');
+    if (name === null || !name.trim() || !reg) return;
+    await reg.rename(id, name.trim());
+    renderProjectList();
+  }
+  async function trashProjectUI(id) {
+    const reg = window.__projectRegistry;
+    if (!reg) return;
+    const cur = await reg.get(id);
+    if (!confirm('删除项目「' + (cur && cur.name) + '」?\n可先导出备份;删除后进入回收站。')) return;
+    await reg.trash(id);
+    if (id === (window.__activeProject || {}).id) switchProjectUI('default');
+    else renderProjectList();
+  }
+  async function renderProjectList() {
+    const host = document.getElementById('projectList');
+    const reg = window.__projectRegistry;
+    if (!host) return;
+    if (!reg) { host.innerHTML = '<span class="hint">注册库不可用 — 单项目模式</span>'; return; }
+    const active = (window.__activeProject || {}).id;
+    const list = (await reg.list()).filter(r => r.state !== 'trashed' && r.state !== 'deleting');
+    host.innerHTML = list.map(r => {
+      const isCur = r.id === active;
+      return '<div style="display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0.5rem; border:1px solid ' +
+        (isCur ? 'var(--ll-accent)' : 'var(--ll-line)') + '; border-radius:8px;' + (isCur ? ' background:#eff6ff;' : '') + '">' +
+        '<span style="font-weight:600; font-size:0.85rem;">' + escHtml(r.name) + '</span>' +
+        '<span class="hint" style="font-size:0.72rem;">约 ' + fmtBytes(r.approxBytes) + ' · ' + new Date(r.lastOpened || r.createdAt).toLocaleDateString() + '</span>' +
+        '<span style="flex:1"></span>' +
+        (isCur ? '<span class="hint" style="font-size:0.75rem; color:var(--ll-accent-2);">当前</span>' :
+          '<button class="action-btn edit" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="switchProjectUI(\'' + r.id + '\')">打开</button>') +
+        '<button class="action-btn edit" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="renameProjectUI(\'' + r.id + '\')" title="重命名(只改注册库,数据不动)">改名</button>' +
+        (r.id === 'default' ? '' : '<button class="action-btn clear" style="width:auto; padding:0.2rem 0.6rem; font-size:0.75rem;" onclick="trashProjectUI(\'' + r.id + '\')" title="软删除(回收站)">删除</button>') +
+        '</div>';
+    }).join('');
+  }
+  window.createProjectUI = createProjectUI; window.renameProjectUI = renameProjectUI;
+  window.trashProjectUI = trashProjectUI; window.switchProjectUI = switchProjectUI;
+  window.renderProjectList = renderProjectList;
+
+  const logHash = c => window.Platform.Format.logHash(c);   // frozen in platform/format.js (v1)
+  window.__logHash = logHash;
+
   async function exportProjectFile() {
     const c = triageStore();
     if (!c) { searchStatus('Project store not available'); return; }
-    const data = await c.exportProjectData();
-    if (!data) { searchStatus('Nothing to export'); return; }
+    const proj = c.projectApi();
+    // v1 envelope (docs/project-management.md §2): commands + L1/L3 facts,
+    // lineage ids and a canonical logHash
+    const P = window.Platform;
+    const raw = await c.exportProjectData();
+    if (!raw) { searchStatus('Nothing to export'); return; }
+    let facts = [];
+    try {
+      const allFacts = await (c.listFacts ? c.listFacts() : []);
+      facts = allFacts;
+    } catch (e) { facts = []; }
+    const commands = raw.commands;
+    const hash = logHash(commands);
+    const projMeta = (window.__activeProject && window.__activeProject.name) || '项目';
+    const data = {
+      format: 'webmm-project', version: 1,
+      schemaVersion: raw.schemaVersion,
+      sourceProjectId: (window.__activeProject || {}).id || 'default',
+      logHash: hash,
+      projectMeta: { name: projMeta },
+      commands,
+      facts,
+      exportedAt: new Date().toISOString(),
+      engineVersions: {
+        webmm: (typeof WEBMM_VERSION !== 'undefined' ? WEBMM_VERSION : '') || (window.__webmmVersion || ''),
+        rdkit: document.getElementById('rdkitVersion').textContent,
+        fragmentSet: 'builtin-v1',
+      },
+    };
+    if (window.__projectRegistry) {
+      try {
+        await window.__projectRegistry.touch(data.sourceProjectId);
+        const e3 = await window.__projectRegistry.get(data.sourceProjectId);
+        if (e3) { e3.lastExportHash = hash; await window.__projectRegistry._storage.put(data.sourceProjectId, e3); }
+      } catch (e) {}
+    }
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'webmm-project-v' + data.schemaVersion + '-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.download = 'webmm-' + (projMeta) + '-' + new Date().toISOString().slice(0, 10) + '.json';
     a.click();
     URL.revokeObjectURL(a.href);
-    searchStatus('Project exported: ' + data.commands.length + ' commands (schema v' + data.schemaVersion + ')');
+    searchStatus('Project exported: ' + commands.length + ' commands · ' + facts.length + ' facts · hash ' + hash.slice(0, 8));
   }
   window.exportProjectFile = exportProjectFile;
 
+  // M4 P1: import CREATES A NEW PROJECT (docs/project-management.md §2.3)
+  // — the destructive replace path is retired. Dedup by sourceProjectId +
+  // logHash; legacy (commands-only) files import unchanged.
   async function importProjectFile(input) {
     const f = input.files && input.files[0];
     input.value = '';
     if (!f) return;
-    const c = triageStore();
-    if (!c) { searchStatus('Project store not available'); return; }
+    const P = window.Platform;
+    const reg = window.__projectRegistry;
+    if (!reg || !P) { searchStatus('项目注册库不可用 — 无法导入'); return; }
     try {
       const data = JSON.parse(await f.text());
-      if (!confirm('Import this project? This REPLACES the current one (' +
-        (data.commands ? data.commands.length : 0) + ' commands). The page will reload.')) return;
-      const r = await c.importProject(data);
-      searchStatus('Project imported (' + r.applied + ' commands) — reloading…');
-      setTimeout(() => location.reload(), 600);
+      const commands = Array.isArray(data.commands) ? data.commands : null;
+      if (!commands) throw new Error('no commands array');
+      if (data.format === 'webmm-project' && data.version !== 1) throw new Error('unsupported format version ' + data.version);
+      // hash check (v1 files): recompute canonically and warn on mismatch
+      if (data.logHash && logHash(commands) !== data.logHash) {
+        if (!confirm('文件校验哈希与内容不一致(可能被修改过)。仍要导入吗?')) return;
+      }
+      // dedup: same source project exported before?
+      if (data.sourceProjectId) {
+        const existing = await reg.get(data.sourceProjectId);
+        if (existing && existing.lastExportHash === data.logHash) {
+          if (!confirm('已存在相同项目(「' + existing.name + '」)。\n确定 = 仍导入为副本;取消 = 打开已有项目。')) { switchProjectUI(data.sourceProjectId); return; }
+        }
+      }
+      const rec = await reg.create((data.projectMeta && data.projectMeta.name) || ('导入 ' + new Date().toISOString().slice(5, 10)));
+      const storage = P.DB.createIdbStorage(rec.dbName);
+      if (storage.open) await storage.open();
+      const lockName = rec.id === 'default' ? 'project' : 'project:' + rec.id;
+      const r = await P.Project.replaceProject(storage, { schemaVersion: data.schemaVersion || 1, commands }, { withLock: (n2, fn) => P.DB.withLock(lockName, fn) });
+      // v1 files restore their L1/L3 facts alongside the log
+      if (Array.isArray(data.facts)) {
+        for (const fr of data.facts) { try { await storage.put('facts', fr.key, fr.value); } catch (e) {} }
+      }
+      await reg.markReady(rec.id);
+      if (data.logHash) { try { const e2 = await reg.get(rec.id); e2.lastExportHash = data.logHash; await reg._storage.put(rec.id, e2); } catch (e) {} }
+      searchStatus('已导入为新项目「' + ((await reg.get(rec.id)) || {}).name + '」(' + r.applied + ' 条命令)— 切换中…');
+      switchProjectUI(rec.id);
     } catch (err) {
       searchStatus('Import failed: ' + (err.message || err));
     }
@@ -6232,6 +6392,7 @@ function syncShellChrome() {
 }
 function renderOverview() {
   try {
+    renderProjectList();
     const st = (window.__search && window.__search.getState()) || [];
     document.getElementById('ovLib').textContent = st.length;
     document.getElementById('ovLibDetail').textContent = st.length ? '装载于相似性检索' : '未装载 — 侧栏「相似性检索」导入或 Demo 库';

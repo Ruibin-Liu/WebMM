@@ -16,6 +16,7 @@
   let activeLock = null;
   let projectModule = null;
   let needsReinit = false;   // another tab wrote; callers may poll stale()
+  let activeProjectId = 'default';
 
   // M2b import: replace the whole project with an exported one; the caller
   // then reloads the page (explicit, not silent — the in-memory projection
@@ -34,11 +35,22 @@
     initPromise = (async () => {
       identity = deps.Identity;
       const DB = deps.DB || null;
-      const storage = deps.storage || (DB ? DB.createIdbStorage() : null);
+      // M4 P1: per-project storage/lock/channel (docs/project-management.md
+      // §1.4). deps.storage still wins (tests inject mem storage); absent
+      // it, dbName selects the project database. The lock adapter maps the
+      // store's internal 'project' lock onto the project-scoped name — the
+      // default keeps the legacy 'project' name so old tabs stay exclusive.
+      const projectId = deps.projectId || 'default';
+      const dbName = deps.dbName || (projectId === 'default' ? undefined : 'webmm-project-' + projectId);
+      const storage = deps.storage || (DB ? DB.createIdbStorage(dbName) : null);
       if (!storage) throw new Error('compat: no storage');
       if (storage.open) await storage.open();
-      const withLock = DB ? DB.withLock : null;
-      const channel = DB ? DB.createStoreChannel() : null;
+      const lockNameFor = pid => pid === 'default' ? 'project' : 'project:' + pid;
+      const withLock = DB
+        ? (name, fn) => DB.withLock(name === 'project' ? lockNameFor(projectId) : name, fn)
+        : null;
+      const channel = DB ? DB.createStoreChannel(dbName) : null;
+      activeProjectId = projectId;
       activeStorage = storage; activeLock = withLock; projectModule = deps.Project;
       // M2b: read-only tabs re-init their projection when another tab writes
       if (channel) channel.onmessage = () => { needsReinit = true; };
@@ -91,6 +103,7 @@
     try {
       await project.storagePut('facts', 'scores:' + roundId, {
         engine: 'webmm-' + (typeof WEBMM_VERSION !== 'undefined' ? WEBMM_VERSION : ''),
+        layer: 'stochastic',   // L3 result with lineage (docs/project-management.md §2.1)
         hits,
       });
     } catch (e) { console.warn('[platform] round scores not persisted:', e); }
@@ -105,6 +118,18 @@
   function cachedRoundScores() { return __scoreCache; }
   function projectApi() { return project; }
   function stale() { return needsReinit; }
+
+  // M4 P1: all facts records for export; untagged legacy records are
+  // upcast to 'stochastic' at read time (docs/project-management.md §2.1)
+  async function listFacts() {
+    if (!project || !project.storageAll) return [];
+    const out = [];
+    for (const r of await project.storageAll('facts')) {
+      const v = r.value || {};
+      out.push({ key: r.key, value: { ...v, layer: v.layer || 'stochastic' } });
+    }
+    return out;
+  }
 
   async function exportProjectData() {
     if (!project) return null;
@@ -149,6 +174,6 @@
 
   return { init, saveLibraryInputs, restoreInputs, clearLibrary, LEGACY_KEY, LIB_ID,
     pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi,
-    saveRoundScores, getRoundScores, cachedRoundScores, exportProjectData,
+    saveRoundScores, getRoundScores, cachedRoundScores, exportProjectData, listFacts,
     importProject, stale };
 });

@@ -269,7 +269,9 @@ function check(name, cond, detail) {
     imported.lib === 55 && imported.hist >= 1 && /1 已钉/.test(imported.pins), JSON.stringify(imported));
   // multi-tab: a second page in the same context hears the broadcast
   const page2 = await ctx.newPage();   // SAME context: shared storage + broadcast
-  await page2.goto(URL, { waitUntil: 'load' });
+  // M4: broadcast channels are per-project now — page2 must follow the
+  // active project of page1 (page1 may be on an imported copy by now)
+  await page2.goto(page.url(), { waitUntil: 'load' });
   await page2.waitForFunction(() => document.getElementById('rdkitVersion').textContent !== 'Loading...', null, { timeout: 60000 });
   await page2.waitForFunction(() => window.webmm !== undefined, null, { timeout: 60000 });
   await page2.evaluate(() => switchMode('search'));
