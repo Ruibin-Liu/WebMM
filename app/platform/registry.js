@@ -169,6 +169,25 @@
         notify('repoint-aborted', id, {});
       });
     }
+    // P3: trashed PROJECT entries purge after the retention window
+    // (drops the project DB and the registry entry)
+    async function purgeTrashedProjects(retentionMs) {
+      const now = Date.now();
+      const dropped = [];
+      for (const rec of await storage.all()) {
+        if (rec.state === 'trashed' && rec.trashedAt && now - rec.trashedAt >= (retentionMs || 0)) dropped.push(rec);
+      }
+      for (const rec of dropped) {
+        if (rec.id === 'default') continue;   // the default project is never purged
+        await storage.del(rec.id);
+        if (typeof indexedDB !== 'undefined' && indexedDB.deleteDatabase && rec.dbName !== 'webmm-platform') {
+          await new Promise(res => { const r = indexedDB.deleteDatabase(rec.dbName); r.onsuccess = r.onerror = r.onblocked = () => res(); });
+        }
+      }
+      if (dropped.length) notify('purged-batch', null, {});
+      return dropped.length;
+    }
+
     async function purgeTrashedDbs(retentionMs) {
       // drop trashed databases older than the retention window
       const trash = (await storage.get('__trash')) || { dbs: [] };
@@ -209,7 +228,7 @@
     return {
       open, ensureMigrated, list, get, create, markReady, rename, touch, trash, purge,
       removeMem, reconcile, dbOf, lockOf, onRegistryMessage,
-      repointPrepare, repointCommit, repointAbort, purgeTrashedDbs,
+      repointPrepare, repointCommit, repointAbort, purgeTrashedDbs, purgeTrashedProjects,
       _storage: storage,
     };
   }

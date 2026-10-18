@@ -213,5 +213,43 @@
     };
   }
 
-  return { DB_NAME, DB_VERSION, REGISTRY_DB, STORES, MIGRATIONS, createMemStorage, createIdbStorage, createRegistryStorage, durability, withLock, createStoreChannel };
+  // scratch pad (docs §5): a global cross-project molecule clipboard, its
+  // own database — same tiny one-store shape as the registry
+  const SCRATCH_DB = 'webmm-scratch';
+  function createScratchStorage(kind) {
+    if (kind === 'mem') {
+      const m = new Map();
+      return { kind: 'mem', async get(k) { return m.get(k); }, async put(k, v) { m.set(k, v); },
+        async del(k) { m.delete(k); }, async all() { return [...m.entries()].map(([k, v]) => ({ key: k, ...v })); } };
+    }
+    let db = null;
+    function open() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(SCRATCH_DB, 1);
+        req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains('molecules')) req.result.createObjectStore('molecules'); };
+        req.onsuccess = () => { db = req.result; resolve(db); };
+        req.onerror = () => reject(req.error);
+      });
+    }
+    const req1 = (mode, fn) => new Promise((resolve, reject) => {
+      const t = db.transaction('molecules', mode);
+      const r = fn(t.objectStore('molecules'));
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    return { kind: 'idb', open,
+      async get(k) { return req1('readonly', os => os.get(k)); },
+      async put(k, v) { return req1('readwrite', os => os.put(v, k)); },
+      async del(k) { return req1('readwrite', os => os.delete(k)); },
+      async all() {
+        return new Promise((resolve, reject) => {
+          const out = [];
+          const r = db.transaction('molecules', 'readonly').objectStore('molecules').openCursor();
+          r.onsuccess = () => { const c = r.result; if (c) { out.push({ key: c.key, ...c.value }); c.continue(); } else resolve(out); };
+          r.onerror = () => reject(r.error);
+        });
+      } };
+  }
+
+  return { DB_NAME, DB_VERSION, REGISTRY_DB, SCRATCH_DB, STORES, MIGRATIONS, createMemStorage, createIdbStorage, createRegistryStorage, createScratchStorage, durability, withLock, createStoreChannel };
 });

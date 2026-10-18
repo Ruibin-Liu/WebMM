@@ -2549,6 +2549,7 @@ function rdkitAvailable() {
             if (msg.kind === 'repointed' && msg.projectId === projectId) showRepointedModal();
           });
           try { reg.purgeTrashedDbs(7 * 24 * 3600 * 1000); } catch (e) {}   // trash retention
+          try { reg.purgeTrashedProjects(7 * 24 * 3600 * 1000); } catch (e) {}
         }
         const storage = P.DB.createIdbStorage(dbName);
         await P.Compat.init({ storage, projectId, dbName, Identity: P.Identity, DB: P.DB, Project: P.Project, registryStorage: window.__projectRegistry ? window.__projectRegistry._storage : null });
@@ -5961,20 +5962,53 @@ function csvField(v) {
   }
 
   let compoundHistory = [];
+  let __scratch = null, __scratchReady = null;
 
-  function loadHistory() {
-    const saved = localStorage.getItem('wb-compoundHistory');
-    if (saved) {
-      try {
-        compoundHistory = JSON.parse(saved);
-      } catch (e) {
-        compoundHistory = [];
-      }
+  // M4 P3 (docs §5): the molecule clipboard lives in its own global IDB —
+  // cross-project, async, no localStorage quota/race limits. One-time
+  // migration imports the legacy wb-compoundHistory (workbench heritage);
+  // the legacy key itself stays for app/index.html, which still uses it.
+  function scratchStore() {
+    if (!__scratchReady) {
+      __scratchReady = (async () => {
+        __scratch = window.Platform.DB.createScratchStorage();
+        if (__scratch.open) await __scratch.open();
+        let all = await __scratch.all();
+        if (!all.length) {
+          // one-time import from the legacy localStorage history
+          try {
+            const legacy = JSON.parse(localStorage.getItem('wb-compoundHistory') || '[]');
+            if (Array.isArray(legacy) && legacy.length) {
+              const seen = new Set();
+              for (const c of legacy) {
+                if (!c || !c.smiles || seen.has(c.smiles)) continue;
+                seen.add(c.smiles);
+                await __scratch.put(c.smiles, { smiles: c.smiles, name: c.name || null, timestamp: c.timestamp || '', at: Date.now() });
+              }
+              all = await __scratch.all();
+            }
+          } catch (e) { /* keep scratch empty */ }
+        }
+        compoundHistory = all
+          .map(r => ({ smiles: r.smiles, name: r.name || r.smiles, timestamp: r.timestamp || '' }))
+          .slice(0, 50);
+        return __scratch;
+      })();
     }
+    return __scratchReady;
   }
 
-  function saveHistory() {
-    localStorage.setItem('wb-compoundHistory', JSON.stringify(compoundHistory));
+  async function loadHistory() {
+    await scratchStore();
+  }
+
+  async function saveHistory() {
+    const st = await scratchStore();
+    const prev = new Map((await st.all()).map(r => [r.smiles, r]));
+    for (let i = compoundHistory.length - 1; i >= 0; i--) {   // newest first wins the LIFO order
+      const c = compoundHistory[i];
+      await st.put(c.smiles, { smiles: c.smiles, name: c.name || null, timestamp: c.timestamp || '', at: (prev.get(c.smiles) || {}).at || Date.now() });
+    }
   }
 
   function addToHistory(smiles, name) {
@@ -5991,8 +6025,8 @@ function csvField(v) {
     saveHistory();
   }
 
-  function showHistory() {
-    loadHistory();
+  async function showHistory() {
+    await loadHistory();
     const historyList = document.getElementById('historyList');
 
     if (compoundHistory.length === 0) {
@@ -6000,6 +6034,7 @@ function csvField(v) {
     } else {
       historyList.innerHTML = compoundHistory.map((compound, index) => `
         <div class="hist-item" onclick="loadFromHistory(${index})">
+          <button class="history-item-delete" style="margin-right:0.25rem; color:var(--ll-accent-2);" onclick="event.stopPropagation(); scratchToLibrary(${index})" title="发送到当前项目的检索库(草稿 → 项目,docs §5)">＋</button>
           <button class="history-item-delete" onclick="event.stopPropagation(); deleteFromHistory(${index})" title="Delete from history">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
               <line x1="18" y1="6" x2="6" y2="18"/>
@@ -6202,10 +6237,28 @@ function csvField(v) {
     }
   }
 
-  function clearHistory() {
+  // M4 P3 §5: the scratch → project gesture. Appends (or creates) the
+  // molecule in the current project's search library via the standard
+  // ImportLibrary persist chain.
+  async function scratchToLibrary(index) {
+    await scratchStore();
+    const c = compoundHistory[index];
+    if (!c) return;
+    const cur = (window.__search && window.__search.getState()) || [];
+    const items = cur.map(e => ({ smiles: e.smiles, name: e.name }));
+    if (!items.some(x => x.smiles === c.smiles)) items.unshift({ smiles: c.smiles, name: c.name || c.smiles });
+    closeModal('historyModal');
+    switchMode('search');
+    loadSearchLibraryFrom(items);
+    searchStatus('草稿「' + (c.name || c.smiles) + '」已加入检索库(' + items.length + ' 分子)');
+  }
+  window.scratchToLibrary = scratchToLibrary;
+
+  async function clearHistory() {
     if (confirm('Are you sure you want to clear all history?')) {
+      const st = await scratchStore();
+      for (const r of await st.all()) { try { await st.del(r.smiles); } catch (e) {} }
       compoundHistory = [];
-      saveHistory();
       showHistory();
     }
   }
