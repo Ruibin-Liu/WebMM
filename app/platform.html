@@ -853,6 +853,9 @@ body { background: var(--ll-bg); margin: 0; }
   background: none; border: none; cursor: pointer; font: inherit; font-size: 0.72rem; padding: 0; }
 .side-links a:hover, .side-links button:hover { color: var(--text); }
 .side-note { color: #64748b; font-size: 0.66rem; padding: 0 0.5rem; }
+.crumb-proj { color: #546074; font-size: 0.8rem; cursor: pointer; }
+.crumb-proj:hover { color: var(--ll-accent-2); text-decoration: underline; }
+#sideProject { font-size: 0.72rem; color: #546074; font-weight: 600; }
 
 /* --- topbar --- */
 .main-col { --workspace-gutter: 16px; min-width: 0; padding: 0 var(--workspace-gutter) 1rem; }
@@ -1238,6 +1241,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     </div>
   </nav>
   <div class="side-foot">
+    <div class="side-status" id="sideProject" title="当前项目(项目概览中切换)" style="cursor:pointer;" onclick="switchMode('project')" role="button" tabindex="0" aria-label="当前项目,点击打开项目概览">项目 …</div>
     <div class="side-status"><span class="ss-dot"></span><span id="sideStorage">storage…</span></div>
     <div class="side-links">
       <a href="../index.html">← Workbench</a>
@@ -2554,6 +2558,7 @@ function rdkitAvailable() {
         const storage = P.DB.createIdbStorage(dbName);
         await P.Compat.init({ storage, projectId, dbName, Identity: P.Identity, DB: P.DB, Project: P.Project, registryStorage: window.__projectRegistry ? window.__projectRegistry._storage : null });
         window.__platformCompat = P.Compat;
+        if (typeof syncShellChrome === 'function') syncShellChrome();   // crumb/sidebar gain the project name
         // e (r1): §1.2 reconciliation — runs AFTER the active project's DB is
         // open (a fresh profile would otherwise flag its not-yet-created
         // database as missing). Advisory only; orphans are never auto-deleted.
@@ -6617,7 +6622,13 @@ const MODE_SECTION = { single: 'output', batch: 'batchPanel', search: 'searchPan
 const SECTION_LABEL = { project: '项目概览', single: '分子工作台', batch: '批量处理', search: '相似性检索', analog: '骨架探索' };
 function syncShellChrome() {
   const m = projectMode ? 'project' : batchMode ? 'batch' : searchMode ? 'search' : analogMode ? 'analog' : 'single';
-  document.getElementById('crumbNow').innerHTML = '<b>' + (SECTION_LABEL[m] || m) + '</b>';
+  const proj = window.__activeProject;
+  const prefix = proj
+    ? '<span class="crumb-proj" role="button" tabindex="0" title="项目概览 — 切换/管理项目" onclick="switchMode(\'project\')">' + escHtml(proj.name) + '</span> / '
+    : '';
+  document.getElementById('crumbNow').innerHTML = prefix + '<b>' + (SECTION_LABEL[m] || m) + '</b>';
+  const sp = document.getElementById('sideProject');
+  if (sp && proj) sp.textContent = '项目 ' + proj.name;
 }
 function renderOverview() {
   // the store initializes lazily (search mode tripped it historically) — a

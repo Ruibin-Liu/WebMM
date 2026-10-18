@@ -88,6 +88,14 @@ function check(name, cond, detail) {
   await page.evaluate(() => { switchMode('search'); loadDemoLibrary(); });
   await page.waitForFunction(() => document.getElementById('searchStatus').textContent.includes('55'), null, { timeout: 60000 });
   check('demo library loads 55 on the platform page', true);
+  // M4: the crumb carries the current project name once the store boots
+  // (clickable → overview); sidebar footer mirrors it
+  await page.waitForFunction(() => /默认项目/.test(document.getElementById('crumbNow').textContent), null, { timeout: 15000 });
+  const crumbProj = await page.evaluate(() => ({
+    clickable: !!document.querySelector('.crumb-proj'),
+    side: document.getElementById('sideProject').textContent,
+  }));
+  check('crumb + sidebar show the current project', crumbProj.clickable && /默认项目/.test(crumbProj.side), JSON.stringify(crumbProj));
 
   // the library textarea belongs in the library card and retains its value
   // across mode switches
