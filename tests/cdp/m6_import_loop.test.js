@@ -54,7 +54,10 @@ async function waitReady(page) {
       await page.reload({ waitUntil: 'load' });                  // race: no lock flush
       await waitReady(page);
       await page.evaluate(() => switchMode('search'));
-      await page.waitForFunction(() => (window.__search?.getState() || []).length > 0, null, { timeout: 30000 }).catch(() => {});
+      // lib restores first, the pin-count render (renderWorkSet) lands a beat
+      // later — wait for BOTH before sampling (r8 flake)
+      await page.waitForFunction(() => (window.__search?.getState() || []).length > 0
+        && /已钉/.test((document.getElementById('workSetCounts') || { textContent: '' }).textContent), null, { timeout: 30000 }).catch(() => {});
       st = await page.evaluate(() => ({
         lib: (window.__search.getState() || []).length,
         hist: document.querySelectorAll('#queryHistoryPanel div[onclick]').length,
