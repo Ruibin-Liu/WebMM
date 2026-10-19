@@ -55,15 +55,6 @@
         req.onerror = () => reject(req.error);
       });
     }
-    function tx(store, mode, fn) {
-      return new Promise((resolve, reject) => {
-        const t = db.transaction(store, mode);
-        const os = t.objectStore(store);
-        const out = fn(os);
-        t.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
-        t.onerror = () => reject(t.error);
-      });
-    }
     return {
       kind: 'idb',
       open,
@@ -90,9 +81,13 @@
       async del(store, key) {
         return new Promise((resolve, reject) => {
           const t = db.transaction(store, 'readwrite');
-          const req = t.objectStore(store).delete(key);
-          req.onsuccess = () => resolve();
-          req.onerror = () => reject(req.error);
+          t.objectStore(store).delete(key);
+          // resolve on TRANSACTION commit, same durability argument as put()
+          // above (r2 hardening) — a delete must be durable before callers
+          // act on it
+          t.oncomplete = () => resolve();
+          t.onerror = () => reject(t.error);
+          t.onabort = () => reject(t.error || new Error('del aborted'));
         });
       },
       async all(store) {
