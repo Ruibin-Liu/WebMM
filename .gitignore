@@ -25,7 +25,11 @@ target
 
 # Tool directories
 .opencode/
+.claude/
 proptest-regressions/
+
+# local pi session pointer (regenerated per session)
+pi_resume
 
 # Generated validation/type-comparison artifacts (regenerable via scripts/ + examples/)
 scripts/webmm_atom_types.json
