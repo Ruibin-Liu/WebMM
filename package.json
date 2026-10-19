@@ -1,8 +1,8 @@
 {
   "name": "webmm",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Molecular Geometry Optimization in WebAssembly",
-  "main": "pkg/index.js",
+  "main": "pkg/webmm.js",
   "scripts": {
     "build": "wasm-pack build --target web --out-dir pkg",
     "serve": "python3 pkg/server.py",
