@@ -1999,7 +1999,6 @@ mod tests_color_weights {
         // w = 1.0 must not perturb the overlap: multiplying by 1.0 keeps
         // every f64 bit (zero drift for default-weight callers)
         let (q, t) = two_type_sites(1.0, 1.0);
-        let qs = q.clone();
         let a = color_overlap_grad(&q, &t, &[0.0; 3], &[0.0; 3]).0;
         // hand-computed: same as the unweighted kernel (regression anchor)
         assert!(a > 0.0);

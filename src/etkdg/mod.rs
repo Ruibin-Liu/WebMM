@@ -888,7 +888,7 @@ fn is_bond_in_ring(bid: usize, bond_rings: &[Vec<usize>]) -> bool {
 
 fn check_amide_ester_14(
     mol: &Molecule,
-    aid1: usize,
+    _aid1: usize,
     aid2: usize,
     aid3: usize,
     aid4: usize,
@@ -4079,10 +4079,7 @@ fn match_torsion_pattern(
     let ar2 = is_arom(mol, a2);
     let ar3 = is_arom(mol, a3);
     let ar4 = is_arom(mol, a4);
-    let hc1 = h_count(mol, a1);
-    let hc2 = h_count(mol, a2);
     let hc3 = h_count(mol, a3);
-    let hc4 = h_count(mol, a4);
     let b23_ring = bond_in_ring(rings, a2, a3);
 
     // RDKit `[*:1][X3,X2:2]=[X3,X2:3][*:4]`: any C=C double bond is planarizing
@@ -4463,9 +4460,7 @@ fn build_torsion_preferences(mol: &Molecule, et_version: u32) -> Vec<TorsionPref
     let rings = crate::molecule::graph::find_rings(mol);
     let mut prefs = Vec::new();
 
-    // ETversion-specific parameter adjustments
-    let sp3_sp3_v3 = if et_version >= 2 { 5.0 } else { 7.0 };
-    let sp3_sp3_ring_v3 = if et_version >= 2 { 1.5 } else { 2.0 };
+    // ETversion-specific sp3-sp3 weights live in match_torsion_pattern
     let mut done_bonds = vec![false; mol.bonds.len()];
 
     // Bridged ring exclusion: bonds shared by >1 ring where at least one is small (<9)
@@ -4706,7 +4701,7 @@ fn etkdg_energy_with_pairs(
     torsion_prefs: &[TorsionPreference],
     bonds_12: &[(usize, usize)],
     angles_13: &[(usize, usize, usize)],
-    mol: &Molecule,
+    _mol: &Molecule,
     hb_triples: &[(usize, usize, usize)],
 ) -> f64 {
     let t_e = instr::clock();
@@ -4883,7 +4878,6 @@ fn etkdg_gradient_with_pairs(
     hb_triples: &[(usize, usize, usize)],
     grad: &mut [[f64; 3]],
 ) {
-    let t_term = instr::clock();
     let t_term = instr::clock();
     // Distance bounds gradient (with basin threshold + long-range force)
     for lp in lr_pairs {

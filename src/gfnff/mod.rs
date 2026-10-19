@@ -1310,7 +1310,7 @@ impl Gfnff {
     }
 
     /// pi system detection + iterative HMO (gfnff_ini.f90 357-390, 975-1121)
-    fn setup_hmo(&mut self, xyz: &[[f64; 3]]) {
+    fn setup_hmo(&mut self, _xyz: &[[f64; 3]]) {
         let n = self.at.len();
         // pi atom list (organic subset of piadr rules)
         let mut piadr = vec![false; n];
@@ -1416,7 +1416,6 @@ impl Gfnff {
                 for b in &self.bonds {
                     if pimvec[b.i] != pis || pimvec[b.j] != pis { continue; }
                     let (ia, ja) = (pos(b.i), pos(b.j));
-                    let dum = 1e-9 * dist2(xyz, b.i, b.j).sqrt();
                     let ho = (self.p.hoff(self.at[b.i]) * self.p.hoff(self.at[b.j])).sqrt();
                     let mut dum2 = self.p.hiter;
                     if self.topo.hyb[b.i] == 1 || self.topo.hyb[b.j] == 1 { dum2 *= self.p.htriple; }
@@ -2507,7 +2506,6 @@ impl Gfnff {
         let rab = norm3(drab);
         let rab2 = rab * rab;
         let rax = norm3(drax) + 1e-12;
-        let rax2 = rax * rax;
         let rbx = norm3(drbx) + 1e-12;
         // smooth short-range damping (clash_damp3 over A···B / A-X / B···X)
         let (cdamp, cgd) = clash_damp3(xyz, a, b, x);
@@ -3580,7 +3578,7 @@ impl Params {
     }
 
     /// d rab0 / d(cn_i, cn_j) = (cnfak_i, cnfak_j) * ff  (gfnffdrab rabdcn)
-    pub fn gfnffrab_dcnd(&self, ati: usize, atj: usize, shift: f64) -> (f64, f64) {
+    pub fn gfnffrab_dcnd(&self, ati: usize, atj: usize, _shift: f64) -> (f64, f64) {
         // ff recomputed (same as gfnffrab)
         const P: [[f64; 2]; 6] = [
             [29.84522887, -8.87843763], [-1.70549806, 2.10878369],
@@ -3964,7 +3962,7 @@ fn solve_sym(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
 /// returns (charges q, ES energy) (goedeckera / goed_gfnff, gfnff_eg.f90 1758-1914)
 #[allow(clippy::too_many_arguments)]
 fn solve_eeq(p: &Params, at: &[usize], rabd: &[Vec<f64>], nb: &[Vec<usize>],
-             charge: f64, topology_mode: bool, _hyb: &[i32], dxi: &[f64],
+             _charge: f64, topology_mode: bool, _hyb: &[i32], dxi: &[f64],
              fraglist: &[usize], qfrag: &[f64], imetal: &[i32]) -> (Vec<f64>, f64) {
     let n = at.len();
     let nfrag = qfrag.len();

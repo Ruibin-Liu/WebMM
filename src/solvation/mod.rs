@@ -281,7 +281,6 @@ impl<'a> ForceField for GBSA<'a> {
                 let dy = coords[i][1] - coords[j][1];
                 let dz = coords[i][2] - coords[j][2];
                 let r2 = dx * dx + dy * dy + dz * dz;
-                let r = r2.sqrt().max(1e-10);
                 let a = born[i] * born[j];
                 let exp_term = (-r2 / (4.0 * a)).exp();
                 let f2 = r2 + a * exp_term;

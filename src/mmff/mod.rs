@@ -567,8 +567,6 @@ impl MMFFForceField {
             })
             .collect();
 
-        let vdw_params: Vec<VDWParams> = atom_types.iter().map(|&at| get_vdw_params(at)).collect();
-
         let vdw_pairs_src: Vec<VDWParams> =
             atom_types.iter().map(|&at| get_vdw_params(at)).collect();
         let nonbonded_pairs: Vec<(usize, usize, bool, f64, f64, f64)> = {
@@ -1127,7 +1125,6 @@ impl MMFFForceField {
                         let neighbor_idx = mol.adjacency[idx]
                             .first()
                             .expect("H must have exactly one neighbor");
-                        let neighbor = &mol.atoms[*neighbor_idx];
                         Self::determine_h_subtype(idx, mol, *neighbor_idx, &aromatic_atoms)
                     }
 

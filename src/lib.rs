@@ -1,8 +1,6 @@
 //! Molecular geometry optimizer using MMFF94/MMFF94s force field
 //! and L-BFGS optimization algorithm
 
-#![allow(unused_variables)]
-
 use wasm_bindgen::prelude::*;
 
 /// Core molecular data structures
@@ -146,7 +144,7 @@ impl Default for ConvergenceOptions {
 #[wasm_bindgen]
 #[derive(Debug, Clone)]
 pub struct OptimizationOptions {
-    #[wasm_bindgen(getter_with_clone, setter)]
+    #[wasm_bindgen(getter_with_clone)]
     pub mmff_variant: String,
     /// Force-field engine: "MMFF94s" (default), "MMFF94", or "GFNFF".
     /// Empty falls back to the legacy mmff_variant field.
@@ -1192,7 +1190,7 @@ impl MDResult {
 
 fn md_snapshot(
     runner: &crate::md::MDRunner,
-    n_atoms: usize,
+    _n_atoms: usize,
     coords: &mut Vec<f64>,
     energies: &mut Vec<f64>,
     temperatures: &mut Vec<f64>,
@@ -7491,7 +7489,6 @@ mod aniline_etkdg_planarity {
         let n = coords[6];
         let h7 = coords[7];
         let h8 = coords[8];
-        let c0 = coords[0];
 
         // H-N-H angle
         let v1 = [h7[0] - n[0], h7[1] - n[1], h7[2] - n[2]];
@@ -7546,14 +7543,6 @@ mod aniline_etkdg_planarity {
             "aniline H-N-H angle {} out of [110, 125]",
             hnh
         );
-        let h7_oop = ((h7[0] - center[0]) * nhat[0]
-            + (h7[1] - center[1]) * nhat[1]
-            + (h7[2] - center[2]) * nhat[2])
-            .abs();
-        let h8_oop = ((h8[0] - center[0]) * nhat[0]
-            + (h8[1] - center[1]) * nhat[1]
-            + (h8[2] - center[2]) * nhat[2])
-            .abs();
         // NH2 may be planar (MMFF94s) or pyramidal (RDKit ETKDG) — both valid.
         // The old fix_aniline_nh2_geometry enforced pyramidal but placed H's at
         // wrong C-N-H angles; it's now disabled. Just check H-N-H is sane.

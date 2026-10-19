@@ -232,7 +232,10 @@ pub fn vdw_energy_and_gradient(
     j: usize,
     params_i: &VDWParams,
     params_j: &VDWParams,
-    is_14: bool,
+    // MMFF94 has NO special 1-4 VDW scaling (unlike OPLS/AMBER): 1-4 pairs
+    // are plain nonbonded after 1-2/1-3 exclusion. The flag documents that
+    // semantics — asserted by test_vdw_no_14_scaling — and is unused here.
+    _is_14: bool,
 ) -> (f64, [f64; 3], [f64; 3]) {
     let r_vec = [
         coords[j][0] - coords[i][0],
