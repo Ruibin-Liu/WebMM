@@ -1,34 +1,35 @@
-# Plan: P1 — 项目注册库 + 每项目一库 + 概览管理 UI(docs/project-management.md 收敛稿)
+# Plan: 全面 Review 应修项修复(6 项,零行为变化为主)
 
-## 范围
-- app/platform/db.js:createIdbStorage(dbName) 参数化(默认 'webmm-platform'
-  零行为变化);新增注册库 createRegistryStorage('webmm-projects')。
-- 新增 app/platform/registry.js:状态机(creating/ready/repointing/trashed/
-  deleting + 对账 orphan/missing)、list/create/rename/trash/setBytes、
-  'registry' 锁与广播、零拷贝迁移(registerLegacy)、databases() 对账。
-- app/platform/compat.js:init({projectId}) —— lock 名映射
-  (default→'project',其余 'project:<id>')、频道按项目分域。
-- app/platform.html:URL ?project=<id> 每标签活跃项目;概览页管理 UI
-  (列表/新建/重命名/复制/切换/软删除/导入=新建/导出 v1 格式/用量"约"/
-  persist 引导);导出升级 {format:'webmm-project', version:1, facts(layer
-  补标), sourceProjectId, logHash(canonical 序列化,V3-1 修正:结构排序 +
-  volatile 排除 + toString 数字、禁 toFixed)};导入接受 v1 老格式
-  (commands-only)+ 新格式,导入=新建项目(importedFrom 谱系,同 id 同
-  hash 提示已存在)。
-- facts 层标记:saveRoundScores 写 layer:'stochastic';导出过滤
-  layer∈{fact,stochastic}。
+## 范围(对应 Review 发现,逐项)
 
-## 不做(P2/P3)
-- analog run 持久化、指针重指(恢复到当前)完整流程(P1 先退位破坏性
-  替换为"导入=新建",重指协议 P2 随 analog 一起)、草稿板迁移、逐出。
+1. **README 刷新**:删除 "workflow stepper" 陈旧描述(Stepper 已移除);
+   核对平台描述其余指控(task ticker/概览面板/诚实横幅均存在)后修正。
+2. **版本对齐**:package.json 1.10.0 → 1.11.0(对齐 Cargo.toml,
+   后者为 webmm_version() 的真相源);"main": "pkg/index.js" →
+   "pkg/webmm.js"(实际构建产物名)。
+3. **src/lib.rs crate 级 `#![allow(unused_variables)]` 移除**:
+   移除后跑 clippy,逐个修复真实警告(下划线前缀或删除未用绑定);
+   clippy --all-targets 必须回到 0 警告、cargo test 全绿。
+4. **db.js 两处**:`tx()` 死代码删除;`del()` resolve 点从
+   req.onsuccess 改为 tx.oncomplete + onabort reject(镜像 r2 加固后
+   的 put/putBatch;删除持久性同论证)。
+5. **site/ CDN 本地化**:site/index.html 与 site/playground.html 的
+   jsdelivr 3Dmol 改为 vendored 引用(按 pages.yml 部署结构选路径,
+   产物 app/vendor/3Dmol-min.js 已在库);部署工作流如需携带该文件
+   则同步补 copy 步骤。
+6. **杂项**:`git rm --cached pi_resume` + .gitignore 加 pi_resume 与
+   .claude/(镜像 .opencode/ 条目)。
+
+## 不做
+- 不动观察项(CODE_STATUS 归档/lib.rs 测试迁移/vendor 体积/logHash)。
+- 不改任何 Rust 逻辑(第 3 项只删 allow 属性与消警,行为零变化)。
 
 ## 安全
-- 迁移幂等零拷贝;老路径(无 ?project)打开 default,15 套件零改动为
-  验收线;锁名 default 沿用 'project'(新老代码互斥)。
+- db.js del() 变更触及存储层:Node 73 + CDP 全量 19 套件为验收线。
+- site 改动只动 script src 与工作流拷贝,不动页面逻辑。
 
 ## 验收
-- Node 新增:registry 状态机/迁移幂等/导入去重谱系/logHash 规范化稳定
-  性(含 volatile 排除)/导出含 facts。
-- m6:概览页出现项目列表与操作;新建项目切换后存储隔离(库互不可见);
-  导入文件→新项目;默认项目迁移后原 55 库无损。
-- run.sh 全量 15/15 复跑绿。
+- cargo clippy --all-targets 0 警告;cargo test 328 全绿。
+- node tests/platform/run.js 73/73;tests/cdp/run.sh 19/19。
+- 两 site 页面经本地服务器确认 3Dmol 从 vendored 路径 200 加载、零外联。
+- git status 干净(除本轮改动);CODE_STATUS.md 记录修复条目。
