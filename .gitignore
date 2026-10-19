@@ -37,5 +37,9 @@ gfnff_*
 site/webmm.js
 site/webmm_bg.wasm
 
+# local vendored 3Dmol for the /site/ preview (copy from app/vendor/ when needed;
+# the Pages workflow stages the same file from app/vendor)
+site/vendor/
+
 # stray local server log (root-owned)
 nohup.out

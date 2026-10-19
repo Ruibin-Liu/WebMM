@@ -58,6 +58,8 @@ jobs:
       run: |
         cp site/index.html pkg/index.html
         cp site/playground.html pkg/playground.html
+        mkdir -p pkg/vendor
+        cp app/vendor/3Dmol-min.js pkg/vendor/3Dmol-min.js
 
     - name: Stage Workbench app
       run: cp -r app pkg/app
