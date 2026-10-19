@@ -207,7 +207,6 @@ fn sa_penalty_components() {
     assert_eq!(bad, 0, "{} penalty mismatches", bad);
 }
 
-
 #[test]
 fn ecfp4_fold_parity() {
     // engine ecfp4_fingerprint == fold of the golden unfolded identifier set
@@ -247,10 +246,18 @@ fn tanimoto_identities() {
     assert_eq!(sascore::tanimoto(&a, &b), sascore::tanimoto(&b, &a));
     assert!((0.0..1.0).contains(&sascore::tanimoto(&a, &b)));
     // expected value recomputed from the golden unfolded sets directly
-    let ua: std::collections::BTreeSet<u32> =
-        items[0]["fp"].as_object().unwrap().keys().map(|k| k.parse::<u32>().unwrap() % 2048).collect();
-    let ub: std::collections::BTreeSet<u32> =
-        items[1]["fp"].as_object().unwrap().keys().map(|k| k.parse::<u32>().unwrap() % 2048).collect();
+    let ua: std::collections::BTreeSet<u32> = items[0]["fp"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.parse::<u32>().unwrap() % 2048)
+        .collect();
+    let ub: std::collections::BTreeSet<u32> = items[1]["fp"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.parse::<u32>().unwrap() % 2048)
+        .collect();
     let inter = ua.intersection(&ub).count();
     let uni = ua.union(&ub).count();
     assert_eq!(sascore::tanimoto(&a, &b), inter as f64 / uni as f64);
