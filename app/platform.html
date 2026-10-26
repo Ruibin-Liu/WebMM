@@ -1744,6 +1744,33 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
     <div class="hint" style="margin-top:0.4rem;">InChI 骨架仅规范化杂原子 1,3-氢迁移类互变(酰胺/至酚酮);酮-烯醇、环-链互变不覆盖。旗标为 provenance 记录,绝不改写结构。</div>
   </div>
 </div>
+
+<div id="sarPanel" class="card" style="display:none; margin-top:0.6rem;">
+  <div class="card-head"><b>SAR 分析</b>
+    <span class="hint" style="margin-left:auto;">固定核心 R 基团分解 + 透明 MPO(逐准则原始值/得分/贡献,绝不只给总分)</span>
+  </div>
+  <div class="card-body">
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-bottom:0.5rem;">
+      <input id="sarCore" placeholder="核心 SMILES(如 c1ccccc1)" style="flex:1; min-width:200px; padding:0.4rem 0.6rem; border:1px solid var(--border); border-radius:8px; font-family:ui-monospace,Menlo,monospace; font-size:0.82rem;" aria-label="SAR 核心 SMILES">
+      <button class="action-btn" style="width:auto; padding:0.35rem 0.7rem;" onclick="sarGuessMcs()" title="对已 pin 的分子集(无 pin 则前 30 条)求 MCS 作为核心建议——只是建议,确认后才是核心">从 MCS 猜测</button>
+      <button class="action-btn primary" style="width:auto; padding:0.35rem 0.7rem;" onclick="runSarAnalysis()">分析</button>
+      <button class="action-btn" style="width:auto; padding:0.35rem 0.7rem;" onclick="sarExportCsv()">导出 CSV</button>
+      <label class="hint" style="cursor:pointer; display:inline-flex; gap:4px; align-items:center;" title="把所选 assay 的最小测量值作为 MPO 活性准则(IC50 类:越低越好)">
+        <input type="checkbox" id="sarUseActivity"> 活性入 MPO
+      </label>
+    </div>
+    <div id="sarStatus" class="hint"></div>
+    <div id="sarUnmatched" class="hint" style="margin-top:0.3rem;"></div>
+    <div id="sarRTableWrap" style="margin-top:0.5rem; overflow-x:auto; display:none;">
+      <div style="font-size:0.78rem; font-weight:600; margin-bottom:0.3rem;">R 基团表(列 = 核心附着位)</div>
+      <table id="sarTable" style="width:100%; font-size:0.78rem;"></table>
+    </div>
+    <div id="mpoWrap" style="margin-top:0.6rem; overflow-x:auto; display:none;">
+      <div style="font-size:0.78rem; font-weight:600; margin-bottom:0.3rem;">多参数 MPO(Lead-like 预设;空值不计入,透明可审计)</div>
+      <table id="mpoTable" style="width:100%; font-size:0.78rem;"></table>
+    </div>
+  </div>
+</div>
      <div id="workSetPanel" style="display:none; margin-top:0.5rem; padding:0.5rem; border:1px solid var(--border); border-radius:8px;">
        <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
          <strong style="font-size:0.82rem;">工作集</strong>
@@ -1862,6 +1889,8 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
       <div id="ketcher_container" style="width: 100%; height: 540px;"></div>
     </div>
     <div class="modal-footer">
+      <button class="btn-accent" onclick="ketcherSmartsToSearch()" title="把当前画布(含查询特征:任意原子/环键/取代数)导出为 SMARTS,填入检索查询并切到子结构模式——画图即查询">SMARTS → 检索</button>
+      <button class="btn-accent" onclick="ketcherSelectionTo3D()" title="读取画布选中的原子(序号=molfile 序,经原子账本核对)并在 3D 视图高亮;可顺带启用约束拾取">选区 → 3D</button>
       <button class="btn-danger" onclick="closeJSME()">取消</button>
       <button class="btn-primary" onclick="applyJSME()">应用到工作台</button>
     </div>
@@ -1967,6 +1996,7 @@ function rdkitAvailable() {
 <script src="platform/registry.js"></script>
 <script src="platform/format.js"></script>
 <script src="platform/m5.js"></script>
+<script src="platform/sar.js"></script>
 <script src="platform/compat.js"></script>
 <script>initRDKit();</script>
 
@@ -6063,6 +6093,44 @@ function csvField(v) {
       });
   }
 
+
+  // ---- Top-3 second half: Ketcher query-as-drawing + selection bridge ----
+  async function ketcherSmartsToSearch() {
+    let smarts = '';
+    try { smarts = await WebMMKetcher.getSmarts(); }
+    catch (e) { const st = document.getElementById('ketcherStatus'); if (st) { st.style.display = ''; st.textContent = '此 Ketcher 构建不支持 getSmarts:' + e.message; } return; }
+    if (!smarts || !smarts.trim()) { const st = document.getElementById('ketcherStatus'); if (st) { st.style.display = ''; st.textContent = '画布为空——先画一个查询结构(可用任意原子/环键/取代数等查询特征)'; } return; }
+    switchMode('search');
+    document.getElementById('searchQuery').value = smarts;
+    segModeSet('sub');
+    closeJSME();
+    searchStatus('已从画布导入 SMARTS 查询(画图即查询)——点「检索」执行');
+  }
+  window.ketcherSmartsToSearch = ketcherSmartsToSearch;
+  async function ketcherSelectionTo3D() {
+    let sel;
+    try { sel = await WebMMKetcher.getSelection(); }
+    catch (e) { const st = document.getElementById('ketcherStatus'); if (st) { st.style.display = ''; st.textContent = '此 Ketcher 构建不支持选区:' + e.message; } return; }
+    const atoms = (sel && sel.atoms) || [];
+    if (!atoms.length) { const st = document.getElementById('ketcherStatus'); if (st) { st.style.display = ''; st.textContent = '先在画布上选中原子(框选或点击),再点「选区 → 3D」'; } return; }
+    if (!sdf3d) { const st = document.getElementById('ketcherStatus'); if (st) { st.style.display = ''; st.textContent = '当前分子还没有 3D 结构——先回工作台「嵌入 3D」'; } return; }
+    // atom ledger: ketcher molfile order == sourceMolblock order == heavy-atom
+    // prefix of sdf3d (H appended after). Verify each serial's symbol.
+    const bad = [];
+    const lines = typeof sdfLines === 'function' ? sdfLines(sdf3d) : sdf3d.split('\n');
+    for (const a of atoms) {
+      const sym = (lines[4 + a - 1] || '').substring(31, 34).trim();
+      if (!sym) bad.push(a + '(越界)');
+    }
+    if (bad.length) { showError('⌖ 选区账本校验失败:' + bad.slice(0, 4).join(', ') + ' —— 拒绝高亮'); return; }
+    if (!pickMode) togglePickMode();
+    picked = atoms.slice(0, 4);
+    pickUpdateUi();
+    closeJSME();
+    set3dStatus(`⌖ 已从 Ketcher 选区导入 ${atoms.length} 个原子(账本核对通过)——可建约束或冻结`);
+  }
+  window.ketcherSelectionTo3D = ketcherSelectionTo3D;
+
    function closeJSME() {
      closeModal("jsmeModal");
      jsmeModalOpen = false;
@@ -6393,6 +6461,148 @@ function csvField(v) {
       showHistory();
     }
   }
+
+  // ===================== Top-4: SAR analysis (sar.js) =====================
+  let sarLast = null;   // { core, rows: [{entry, rgroups, rByPos}], unmatched, mpo }
+  function sarCoreGraph(smi) {
+    const m = rdkitModule.get_mol(smi);
+    if (!m || !m.is_valid()) { if (m) m.delete(); return null; }
+    const mb = m.get_molblock();
+    m.delete();
+    return window.Platform.SAR.parseMolGraph(mb);
+  }
+  function sarCanonicalFrag(smi) {
+    try {
+      const m = rdkitModule.get_mol(smi);
+      if (m && m.is_valid()) { const s = m.get_smiles(); m.delete(); return s; }
+      if (m) m.delete();
+    } catch (e) {}
+    return smi;
+  }
+  window.sarGuessMcs = function () {
+    const c = triageStore();
+    const pins = c ? Object.keys(c.getPins()) : [];
+    const set = (pins.length ? pins.map(id => { for (const e of searchLibrary) if (e.molId === id) return e; return null; }).filter(Boolean) : searchLibrary.slice(0, 30)).filter(e => e && e.smiles);
+    if (set.length < 2) { document.getElementById('sarStatus').textContent = 'MCS 需要 ≥2 个分子(pin 集或库)'; return; }
+    try {
+      const ml = new rdkitModule.MolList();
+      let n = 0;
+      for (const e of set.slice(0, 30)) {
+        const m = rdkitModule.get_mol(e.smiles);
+        if (m && m.is_valid()) { ml.append(m); n++; }
+        else if (m) m.delete();
+      }
+      if (n < 2) throw new Error('parsed < 2 mols');
+      const d = JSON.parse(rdkitModule.get_mcs_as_json(ml));
+      const smi = d && d.smarts;
+      if (!smi || d.canceled) throw new Error('MCS canceled/empty');
+      document.getElementById('sarCore').value = smi;
+      document.getElementById('sarStatus').textContent = `MCS 建议(来自 ${set.length} 分子,SMARTS):${smi} —— 逐字核对后点「分析」(MCS 只是建议,不是真相)`;
+    } catch (e) {
+      document.getElementById('sarStatus').textContent = 'MCS 猜测失败(' + (e.message || e) + ')——请手填核心 SMILES';
+    }
+  };
+  function entryDescriptors(e) {
+    if (e._sarProps) return e._sarProps;
+    let p = null;
+    try {
+      const m = rdkitModule.get_mol(e.smiles);
+      if (m && m.is_valid()) {
+        const d = JSON.parse(m.get_descriptors());
+        p = { MW: d.amw, cLogP: d.CrippenClogP, TPSA: d.tpsa, HBD: d.NumHBD };
+        m.delete();
+      } else if (m) m.delete();
+    } catch (err) {}
+    e._sarProps = p || {};
+    return e._sarProps;
+  }
+  function sarActivityFor(molId) {
+    if (!m5SelectedAssay) return null;
+    const st = projStateM5(); const a = st && st.activities[m5SelectedAssay];
+    const recs = a && a.records.get(molId);
+    if (!recs || !recs.length) return null;
+    const vals = recs.map(r => r.value).filter(v => typeof v === 'number' && isFinite(v));
+    return vals.length ? Math.min(...vals) : null;   // best potency = min (IC50 convention)
+  }
+  window.runSarAnalysis = function () {
+    const host = document.getElementById('sarStatus');
+    const smi = document.getElementById('sarCore').value.trim();
+    if (!smi) { host.textContent = '先填核心 SMILES(或点「从 MCS 猜测」)'; return; }
+    if (!searchLibrary || !searchLibrary.length) { host.textContent = '先装载配体库'; return; }
+    const core = sarCoreGraph(smi);
+    if (!core) { host.textContent = '核心无法解析为结构:' + smi; return; }
+    const SARN = window.Platform.SAR;
+    const rows = [], unmatched = [];
+    for (const e of searchLibrary) {
+      const tg = sarCoreGraph(e.smiles);
+      if (!tg) { unmatched.push({ e, why: '解析失败' }); continue; }
+      const r = SARN.extractRgroups(core, tg);
+      if (!r) { unmatched.push({ e, why: '核心不匹配' }); continue; }
+      // R positions ordered by core atom index
+      const rByPos = [...r.rgroups.entries()].sort((a, b) => a[0] - b[0]).map(([cIdx, g]) => ({ coreAtom: cIdx, smi: g.smi, canon: sarCanonicalFrag(g.smi) }));
+      rows.push({ e, rByPos });
+    }
+    // R columns = union of attachment positions
+    const posSet = new Set();
+    for (const row of rows) for (const g of row.rByPos) posSet.add(g.coreAtom);
+    const positions = [...posSet].sort((a, b) => a - b);
+    sarLast = { coreSmi: smi, rows, unmatched, positions };
+    // ---- R table ----
+    const rt = document.getElementById('sarTable');
+    rt.innerHTML = '<thead><tr><th>#</th><th>名称</th>' + positions.map((p, i) => `<th title="核心原子 ${p + 1} 的附着位">R${i + 1}</th>`).join('') + '</tr></thead><tbody>' +
+      rows.map((row, i) => `<tr><td>${i + 1}</td><td class="cell-name">${molThumb(row.e.smiles)}<span class="nm">${escHtml(row.e.name || row.e.smiles)}</span></td>` +
+        positions.map(p => {
+          const g = row.rByPos.find(x => x.coreAtom === p);
+          return `<td class="value" title="${escHtml(g ? g.smi : '')}">${g ? escHtml(g.canon) : '<span style="color:var(--muted);">H</span>'}</td>`;
+        }).join('') + '</tr>').join('') + '</tbody>';
+    document.getElementById('sarRTableWrap').style.display = rows.length ? '' : 'none';
+    document.getElementById('sarUnmatched').textContent = unmatched.length
+      ? `未匹配 ${unmatched.length} 条(核心不匹配/解析失败,未静默丢弃):${unmatched.slice(0, 6).map(u => escHtml(u.e.name || u.e.smiles)).join('、')}${unmatched.length > 6 ? '…' : ''}` : '';
+    // ---- MPO ----
+    const useAct = document.getElementById('sarUseActivity').checked && m5SelectedAssay;
+    const criteria = [...window.Platform.SAR.LEAD_LIKE];
+    if (useAct) criteria.push({ key: 'activity', label: '活性(min, IC50 类)', dir: 'low', hi: 0.05, softHi: 10, weight: 2 });
+    const mpoRows = rows.map(row => ({
+      molId: row.e.molId, name: row.e.name || row.e.smiles,
+      props: entryDescriptors(row.e),
+      activity: sarActivityFor(row.e.molId),
+    }));
+    const scored = window.Platform.SAR.scoreMpo(mpoRows, criteria);
+    scored.sort((a, b) => (b.total ?? -1) - (a.total ?? -1));
+    sarLast.mpo = { criteria, scored };
+    const mt = document.getElementById('mpoTable');
+    mt.innerHTML = '<thead><tr><th>#</th><th>名称</th>' +
+      criteria.map(c => `<th title="${escHtml(c.label)}:原始值(得分)">${escHtml(c.label.split(' ')[0])}</th>`).join('') +
+      '<th>MPO 总分</th></tr></thead><tbody>' +
+      scored.map((s, i) => `<tr><td>${i + 1}</td><td>${escHtml(s.name)}</td>` +
+        criteria.map(c => {
+          const raw = s.raw[c.key], sc = s.scores[c.key];
+          const rawTxt = raw == null ? '—' : (Math.abs(raw) >= 100 ? raw.toFixed(0) : raw.toFixed(2));
+          return `<td class="value" title="${escHtml(c.label)} 贡献 ${s.contrib[c.key] == null ? '—(不计入)' : s.contrib[c.key].toFixed(2)}">${rawTxt}<span style="color:${sc === 1 ? 'var(--good)' : sc != null && sc < 0.5 ? 'var(--bad)' : 'var(--muted)'}; font-size:0.7rem;"> (${sc == null ? '—' : sc.toFixed(2)})</span></td>`;
+        }).join('') +
+        `<td class="value"><strong>${s.total == null ? '—' : s.total.toFixed(3)}</strong> <span class="hint" style="font-size:0.68rem;">${s.nScored}/${criteria.length}</span></td></tr>`).join('') + '</tbody>';
+    document.getElementById('mpoWrap').style.display = scored.length ? '' : 'none';
+    host.textContent = `核心 ${smi} · 匹配 ${rows.length}/${searchLibrary.length} · R 位 ${positions.length}${useAct ? ' · 活性准则:所选 assay 最小值' : ''}`;
+  };
+  window.sarExportCsv = function () {
+    if (!sarLast || !sarLast.mpo) return;
+    const { positions, mpo, rows } = sarLast;
+    const lines = ['molId,name,smiles,' + positions.map((p, i) => 'R' + (i + 1)).join(',') +
+      mpo.criteria.map(c => c.key + '_raw,' + c.key + '_score').join(',') + ',mpo_total'];
+    for (let i = 0; i < rows.length; i++) {
+      const s = mpo.scored.find(x => x.molId === rows[i].e.molId) || {};
+      lines.push([rows[i].e.molId || '', csvField(rows[i].e.name || ''), csvField(rows[i].e.smiles || '')]
+        .concat(positions.map(p => { const g = rows[i].rByPos.find(x => x.coreAtom === p); return csvField(g ? g.canon : 'H'); }))
+        .concat(mpo.criteria.flatMap(c => [s.raw && s.raw[c.key] != null ? s.raw[c.key] : '', s.scores && s.scores[c.key] != null ? s.scores[c.key].toFixed(4) : '']))
+        .concat(s.total != null ? s.total.toFixed(4) : '').join(','));
+    }
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'sar-mpo.csv'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  };
+
   // ===================== M5: 实测活性 + 身份审计 (docs/assay-foundation.md) =====================
   (function initM5() {
     const M5 = window.Platform && window.Platform.M5, I = window.Platform && window.Platform.Identity;
@@ -6525,7 +6735,7 @@ function csvField(v) {
     return `<td class="value" title="${escHtml(tip)}">${escHtml(recs.length > 1 ? shown + ' (n=' + recs.length + ')' : shown)}</td>`;
   }
   var __m5GlueReady = false;   // var-hoisted: startup renders before the glue consts initialize
-  function renderM5Panels() { if (!__m5GlueReady) return; renderActivityPanel(); renderIdentityAudit(); }
+  function renderM5Panels() { if (!__m5GlueReady) return; renderActivityPanel(); renderIdentityAudit(); const sp = document.getElementById('sarPanel'); if (sp && searchLibrary) sp.style.display = searchLibrary.length ? '' : 'none'; }
 
   // ---- import (two-step preview) ----
   function activityImportUI() {
