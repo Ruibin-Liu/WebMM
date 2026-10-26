@@ -596,6 +596,58 @@ console.log('project (mem storage):');
     check('audit: degraded keys never crash, flagged', An.families.length === 0 && An.flags.nonInchiKey.length === 1);
   }
 
+
+  // ================= Top-4: SAR tools (sar.js) =================
+  console.log('sar: match / rgroups / mpo:');
+  {
+    const SARn = require(path.join(__dirname, '../../app/platform/sar.js'));
+    const mb = (na, nb, A, B) => 'm\n\n\n' + String(na).padStart(3) + String(nb).padStart(3) + '  0  0  0  0  0  0  0  0999 V2000\n' + A.join('\n') + '\n' + B.join('\n') + '\nM  END';
+    const ring = Array.from({ length: 6 }, (_, i) => '    ' + i + '.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0');
+    const rb = Array.from({ length: 6 }, (_, i) => String(i + 1).padStart(3) + String((i + 1) % 6 + 1).padStart(3) + String(i % 2 ? 1 : 2).padStart(3) + '  0');
+    const core = SARn.parseMolGraph(mb(6, 6, ring, rb));
+    check('parse: ring graph 6 atoms 6 bonds', core && core.atoms.length === 6 && core.bonds.length === 6);
+    // p-xylene: methyls at 1 and 4
+    const tA = ring.concat(['    6.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0', '    9.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0']);
+    const tB = rb.concat(['  1  7  1  0', '  4  8  1  0']);
+    const px = SARn.parseMolGraph(mb(8, 8, tA, tB));
+    const r = SARn.extractRgroups(core, px);
+    const rg = r ? [...r.rgroups.values()].map(x => x.smi) : null;
+    check('rgroups: p-xylene -> two [*]C methyls', rg && rg.length === 2 && rg.every(s => s === '[*]C'), JSON.stringify(rg));
+    check('rgroups: toluene core match on benzene itself -> no substituents',
+      (() => { const x = SARn.extractRgroups(core, core); return x && x.rgroups.size === 0; })());
+    // chain + ring substituents
+    const tA2 = ring.concat(Array.from({ length: 4 }, (_, k) => '    ' + (6 + k) + '.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0'));
+    const tB2 = rb.concat(['  1  7  1  0', '  7  8  1  0', '  8  9  1  0', '  9 10  1  0']);
+    check('fragment smiles: butyl chain', [...SARn.extractRgroups(core, SARn.parseMolGraph(mb(10, 10, tA2, tB2))).rgroups.values()][0].smi === '[*]CCCC');
+    const tA3 = ring.concat(Array.from({ length: 3 }, (_, k) => '    ' + (6 + k) + '.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0'));
+    const tB3 = rb.concat(['  1  7  1  0', '  7  8  1  0', '  8  9  1  0', '  9  7  1  0']);
+    check('fragment smiles: cyclopropyl ring closure', [...SARn.extractRgroups(core, SARn.parseMolGraph(mb(9, 10, tA3, tB3))).rgroups.values()][0].smi === '[*]C1CC1');
+    const ph = Array.from({ length: 6 }, (_, k) => '    ' + (6 + k) + '.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0');
+    const phb = Array.from({ length: 6 }, (_, k) => String(7 + k).padStart(3) + String(7 + (k + 1) % 6).padStart(3) + String(k % 2 ? 1 : 2).padStart(3) + '  0');
+    const tA4 = ring.concat(ph); const tB4 = rb.concat(['  1  7  1  0'], phb);
+    check('fragment smiles: phenyl (kekulé ring)', [...SARn.extractRgroups(core, SARn.parseMolGraph(mb(12, 13, tA4, tB4))).rgroups.values()][0].smi === '[*]C1=CC=CC=C1');
+    // aromatic tolerance
+    const rb4 = rb.map((_, i) => String(i + 1).padStart(3) + String((i + 1) % 6 + 1).padStart(3) + String(4).padStart(3) + '  0');
+    check('aromatic bond 4 matches kekulé 1/2 (and vice versa)',
+      SARn.matchCore(SARn.parseMolGraph(mb(6, 6, ring, rb4)), core, 1).length === 1 &&
+      SARn.matchCore(core, SARn.parseMolGraph(mb(6, 6, ring, rb4)), 1).length === 1);
+    // mismatch: pyridine core vs benzene (symbol mismatch on one atom)
+    const pyr = ring.slice(); pyr[1] = '    1.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0';
+    check('symbol mismatch: pyridine core does not match benzene', SARn.matchCore(SARn.parseMolGraph(mb(6, 6, pyr, rb)), core, 1).length === 0);
+    // MPO transparency
+    const s1 = SARn.scoreMpo([{ props: { MW: 300, cLogP: 2, TPSA: 80, HBD: 1 } }], SARn.LEAD_LIKE)[0];
+    check('MPO: perfect row scores 1.0 with all four raws + scores present',
+      s1.total === 1 && s1.nScored === 4 && s1.raw.MW === 300 && s1.scores.HBD === 1);
+    const s2 = SARn.scoreMpo([{ props: { MW: 600, cLogP: 6 } }], SARn.LEAD_LIKE)[0];
+    check('MPO: missing props score null (transparent, not zero)',
+      s2.scores.TPSA === null && s2.scores.MW === 0 && s2.raw.cLogP === 6);
+    const d = SARn.desirability;
+    check('desirability: window / ramps / directions',
+      d(300, SARn.LEAD_LIKE[0]) === 1 && d(50, SARn.LEAD_LIKE[0]) === 0 && Math.abs(d(150, SARn.LEAD_LIKE[0]) - 0.5) < 1e-9 &&
+      d(1, { dir: 'low', hi: 2, softHi: 4 }) === 1 && d(3, { dir: 'low', hi: 2, softHi: 4 }) === 0.5 &&
+      d(8, { dir: 'high', lo: 7, softLo: 5 }) === 1 && d(6, { dir: 'high', lo: 7, softLo: 5 }) === 0.5);
+  }
+
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });
