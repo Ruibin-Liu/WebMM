@@ -201,7 +201,7 @@ impl InternalCoords {
 
         // order columns by eigenvalue, keep the non-null space
         let mut order: Vec<usize> = (0..n_prim).collect();
-        order.sort_by(|&a, &bb| g[bb * n_prim + bb].partial_cmp(&g[a * n_prim + a]).unwrap());
+        order.sort_by(|&a, &bb| g[bb * n_prim + bb].total_cmp(&g[a * n_prim + a]));
         let lmax = g[order[0] * n_prim + order[0]].max(1e-30);
         let cutoff = lmax * 1e-6;
         let kept: Vec<usize> = order

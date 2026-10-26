@@ -755,7 +755,7 @@ impl Gfnff {
                 if frag_cnt[fi] > 0.0 { frag_en[fi] /= frag_cnt[fi]; }
             }
             let most_electropos = (0..nfrag)
-                .min_by(|a, b| frag_en[*a].partial_cmp(&frag_en[*b]).unwrap())
+                .min_by(|a, b| frag_en[*a].total_cmp(&frag_en[*b]))
                 .unwrap_or(0);
             qfrag[most_electropos] = charge;
         }
@@ -1614,7 +1614,7 @@ impl Gfnff {
             if !pi_center && self.at[i] != 7 { continue; }
             let mut nbs = self.topo.nb[i].clone();
             nbs.sort_by(|&a, &b| dist2(&self.xyz0, a, i)
-                .partial_cmp(&dist2(&self.xyz0, b, i)).unwrap());
+                .total_cmp(&dist2(&self.xyz0, b, i)));
             let (jj, kk, ll) = (nbs[0], nbs[1], nbs[2]);
             if !pi_center && self.at[i] == 7 {
                 // saturated N: cos-based double well at +/- phi0
@@ -3345,7 +3345,7 @@ fn jacobi_eig(a0: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
         }}
     }
     let mut evals: Vec<(f64, usize)> = (0..n).map(|i| (a[i][i], i)).collect();
-    evals.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+    evals.sort_by(|x, y| x.0.total_cmp(&y.0));
     let vals: Vec<f64> = evals.iter().map(|x| x.0).collect();
     let mut vecs = vec![vec![0.0f64; n]; n];
     for (newc, (_, oldc)) in evals.iter().enumerate() {

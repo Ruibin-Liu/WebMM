@@ -879,7 +879,7 @@ fn principal_axes(atoms: &[ShapeAtom]) -> [[f64; 3]; 3] {
     // order eigenvector columns by descending eigenvalue (m diagonal after solve)
     let mut order: [usize; 3] = [0, 1, 2];
     let vals = [m[0], m[4], m[8]];
-    order.sort_by(|&a, &b| vals[b].partial_cmp(&vals[a]).unwrap());
+    order.sort_by(|&a, &b| vals[b].total_cmp(&vals[a]));
     let mut axes = [[0.0f64; 3]; 3];
     for (r, col) in order.iter().enumerate() {
         for i in 0..3 {
@@ -891,7 +891,7 @@ fn principal_axes(atoms: &[ShapeAtom]) -> [[f64; 3]; 3] {
         let (mi, _) = axis
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.abs().partial_cmp(&b.abs()).unwrap())
+            .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
             .unwrap();
         if axis[mi] < 0.0 {
             for x in axis.iter_mut() {
@@ -1257,7 +1257,7 @@ pub fn align_colored(
         runs.push((o, w, t));
     }
     if !opts.screen {
-        runs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        runs.sort_by(|a, b| b.0.total_cmp(&a.0));
     }
     // Phase B: full rescoring of the top-K poses only
     for &(o, w, t) in runs.iter().take(opts.rescore_top.max(1)) {
@@ -1394,6 +1394,29 @@ fn centroid(atoms: &[ShapeAtom]) -> [f64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn principal_axes_nan_does_not_panic() {
+        // Degenerate input (NaN coords) flows into the eigenvalue sort;
+        // partial_cmp().unwrap() used to abort — total_cmp orders NaN
+        // deterministically (NaN sorts last in descending order)
+        let atoms = vec![
+            ShapeAtom {
+                c: [0.0, 0.0, 0.0],
+                alpha: 1.0,
+            },
+            ShapeAtom {
+                c: [f64::NAN, 1.0, 0.0],
+                alpha: 1.0,
+            },
+            ShapeAtom {
+                c: [1.0, 0.0, f64::NAN],
+                alpha: 1.0,
+            },
+        ];
+        let axes = principal_axes(&atoms);
+        assert_eq!(axes.len(), 3);
+    }
 
     fn sa(c: [f64; 3], z: u8) -> ShapeAtom {
         ShapeAtom {

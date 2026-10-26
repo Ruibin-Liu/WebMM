@@ -1802,7 +1802,7 @@ fn generate_initial_coords_from_bounds(bounds: &DistanceBounds, rng: &mut Rng) -
     }
     let (eigenvalues, eigenvectors) = jacobi_eigen(&b, 100);
     let mut indices: Vec<usize> = (0..n).collect();
-    indices.sort_by(|&a, &b| eigenvalues[b].partial_cmp(&eigenvalues[a]).unwrap());
+    indices.sort_by(|&a, &b| eigenvalues[b].total_cmp(&eigenvalues[a]));
     let dim = 4.min(n);
     let mut coords_4d = vec![[0.0f64; 4]; n];
     for i in 0..n {
