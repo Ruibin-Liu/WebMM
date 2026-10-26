@@ -44,6 +44,37 @@
     return keyFn(molInput);
   }
 
+  // ---- M5 identity layering (docs/assay-foundation.md §1) — pure, Node-testable ----
+  const IK_RE = /^[A-Z]{14}-[A-Z]{10}-[A-Z]$/;
+  // 'SMI:<canonical>' fallback keys (InChI generation failed) are valid
+  // identity but carry no block structure
+  function isInchiKey(k) { return typeof k === 'string' && IK_RE.test(k); }
+  // {block1, block2, block3} or null for non-InChI keys. Block2's last two
+  // chars are version/flag markers — excluded from comparison everywhere.
+  function inchiKeyBlocks(k) {
+    if (!isInchiKey(k)) return null;
+    return { block1: k.slice(0, 14), block2: k.slice(15, 23), block3: k.slice(26, 27), full: k };
+  }
+  // Block2 comparable hash of a layerless molecule (no stereo / isotope /
+  // charge); the full marker is UHFFFAOYSA — the last two chars are the
+  // version/flag pair excluded from comparison, so the comparable form is 8
+  const NO_LAYER_BLOCK2 = 'UHFFFAOY';
+  function isLayerless(b) { return !!b && b.block2 === NO_LAYER_BLOCK2; }
+  // Duplicate tier between two keys (either may be null → 'unknown'):
+  //   'same'      full key equal (same compound)
+  //   'block2'    same skeleton, different non-main layers (stereo/isotope/
+  //               charge — disambiguated by the caller with stereoSpecified)
+  //   'proton'    same block1+block2, different protonation layer
+  //   'different' different skeleton
+  function dupeTier(a, b) {
+    const A = inchiKeyBlocks(a), B = inchiKeyBlocks(b);
+    if (!A || !B) return 'unknown';
+    if (A.full === B.full) return 'same';
+    if (A.block1 !== B.block1) return 'different';
+    if (A.block2 !== B.block2) return 'block2';
+    return 'proton';
+  }
+
   // Append-only row-id allocator with tombstones (M0 spec §2): Merge
   // tombstones rows (never physically removes), Split allocates fresh ids,
   // compaction happens only at snapshot time and only for unreferenced rows.
@@ -79,5 +110,6 @@
     };
   }
 
-  return { hash64, molId, syntheticMolId, setKeyFn, structureKey, createRowAllocator };
+  return { hash64, molId, syntheticMolId, setKeyFn, structureKey, createRowAllocator,
+    isInchiKey, inchiKeyBlocks, isLayerless, dupeTier, NO_LAYER_BLOCK2 };
 });

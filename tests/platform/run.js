@@ -447,6 +447,155 @@ console.log('project (mem storage):');
     await reg.repointAbort('default', prep.newDb);
   }
 
+  // ================= M5: identity layering + activity data (docs/assay-foundation.md) =================
+  console.log('m5 identity:');
+  {
+    const fakeIK = (b1, b2, b3) => b1.padEnd(14, 'A').slice(0, 14) + '-' + b2.padEnd(10, 'B').slice(0, 10) + '-' + b3;
+    check('isInchiKey: 27-char format validated',
+      Identity.isInchiKey(fakeIK('KQ', 'UHFFFAOYSA', 'N')) && !Identity.isInchiKey('SMI:CCO') && !Identity.isInchiKey('bad'));
+    const k1 = fakeIK('SAME', 'UHFFFAOYSA', 'N');
+    const k2 = fakeIK('SAME', 'UHFFFAOYSA', 'O');       // protonation differs
+    const k3 = fakeIK('SAME', 'STEREOXXXY', 'N');       // block2 differs
+    const k4 = fakeIK('OTHER', 'UHFFFAOYSA', 'N');
+    check('dupeTier: same/proton/block2/different',
+      Identity.dupeTier(k1, k1) === 'same' && Identity.dupeTier(k1, k2) === 'proton' &&
+      Identity.dupeTier(k1, k3) === 'block2' && Identity.dupeTier(k1, k4) === 'different');
+    check('dupeTier: non-InChI keys degrade to unknown', Identity.dupeTier('SMI:CCO', k1) === 'unknown');
+    check('blocks: version-flag chars excluded from block2',
+      Identity.inchiKeyBlocks(fakeIK('SAME', 'STEREO', 'N')).block2 === 'STEREOBBB'.slice(0, 8));
+    check('isLayerless: UHFFFAOYSA detects no stereo/isotope/charge',
+      Identity.isLayerless(Identity.inchiKeyBlocks(k1)) && !Identity.isLayerless(Identity.inchiKeyBlocks(k3)));
+  }
+
+  console.log('m5 activity reducer:');
+  {
+    let st = State.initialState();
+    const lib = (n) => ({ type: 'ImportLibrary', libraryId: 'L', name: 't', entries: [
+      { molId: 'm1', ordinal: 0, raw: { smiles: 'CCO', name: 'a' } },
+      { molId: 'm2', ordinal: 1, raw: { smiles: 'CCC', name: 'b' } }] });
+    st = State.applyCommand(st, lib()).state;
+    st = State.applyCommand(st, lib()).state;   // replace: rejected list must reset cleanly
+    check('ImportLibrary keeps rejected rows (L1)',
+      (() => { const s2 = State.applyCommand(State.initialState(), { type: 'ImportLibrary', libraryId: 'L2', name: 't', entries: [
+        { molId: 'x1', ordinal: 0, raw: { smiles: 'C', name: 'c' } }], rejected: [{ row: 2, raw: { name: 'junk' } }] }).state;
+        return s2.libraries.L2.rejected.length === 1 && s2.libraries.L2.rejected[0].row === 2; })());
+
+    const recs = [['m1', [{ value: 8.2, qualifier: '=', valueRaw: '8.2' }, { value: 12, qualifier: '>', valueRaw: '>12 (batch2)' }]]];
+    let r = State.applyCommand(st, { type: 'SetActivityData', assayId: 'A1', meta: { name: 'IC50', unit: 'uM' }, records: recs });
+    check('SetActivityData projects records (array per molId)',
+      !r.error && r.state.activities.A1.records.get('m1').length === 2 && r.state.activities.A1.meta.name === 'IC50');
+    st = r.state;
+    r = State.applyCommand(st, { type: 'SetActivityData', assayId: 'A1', meta: { name: 'IC50', unit: 'uM' }, records: [['m2', [{ value: null, qualifier: 'ND', valueRaw: 'ND' }]]] });
+    check('full replace semantics per assayId', !r.error && !r.state.activities.A1.records.has('m1') && r.state.activities.A1.records.get('m2')[0].qualifier === 'ND');
+    check('unknown molId rejected whole-batch',
+      !!State.applyCommand(st, { type: 'SetActivityData', assayId: 'A2', meta: { name: 'x' }, records: [['m1', [{ value: 1, valueRaw: '1' }]], ['ghost', [{ value: 2, valueRaw: '2' }]]] }).error);
+    check('NaN/Infinity rejected',
+      !!State.applyCommand(st, { type: 'SetActivityData', assayId: 'A2', meta: { name: 'x' }, records: [['m1', [{ value: NaN, valueRaw: 'x' }]]] }).error);
+    check('bad qualifier rejected',
+      !!State.applyCommand(st, { type: 'SetActivityData', assayId: 'A2', meta: { name: 'x' }, records: [['m1', [{ value: 1, qualifier: '≈', valueRaw: 'x' }]]] }).error);
+    check('meta.name required',
+      !!State.applyCommand(st, { type: 'SetActivityData', assayId: 'A2', meta: {}, records: [] }).error);
+    // records sorted by molId for stable hashing
+    const rs = [['m2', [{ value: 1, valueRaw: '1' }]], ['m1', [{ value: 2, valueRaw: '2' }]]];
+    const s3 = State.applyCommand(st, { type: 'SetActivityData', assayId: 'A3', meta: { name: 'x' }, records: rs }).state;
+    check('records sorted by molId (stable logHash)', [...s3.activities.A3.records.keys()][0] === 'm1');
+    // merge lifecycle: records follow the merge, conflicts coexist
+    let stM = State.applyCommand(s3, { type: 'SetActivityData', assayId: 'A3', meta: { name: 'x' }, records: [
+      ['m1', [{ value: 1, valueRaw: '1' }]], ['m2', [{ value: 9, valueRaw: '9' }]]] }).state;
+    stM = State.applyCommand(stM, { type: 'IdentityMerged', fromMolId: 'm2', intoMolId: 'm1' }).state;
+    check('IdentityMerged concatenates activity records (conflicts coexist)',
+      !stM.activities.A3.records.has('m2') && stM.activities.A3.records.get('m1').length === 2);
+    // RemoveLibrary keeps orphans; re-Set on an orphan id is allowed, on a ghost is not
+    let stO = State.applyCommand(stM, { type: 'RemoveLibrary', libraryId: 'L' }).state;
+    check('RemoveLibrary keeps activity records (orphans)', stO.activities.A3.records.get('m1').length === 2);
+    r = State.applyCommand(stO, { type: 'SetActivityData', assayId: 'A3', meta: { name: 'x' }, records: [['m1', [{ value: 5, valueRaw: '5' }]]] });
+    check('orphan molId re-writable', !r.error && r.state.activities.A3.records.get('m1').length === 1);
+    check('ghost molId still rejected after library removal',
+      !!State.applyCommand(stO, { type: 'SetActivityData', assayId: 'A4', meta: { name: 'x' }, records: [['ghost2', [{ value: 1, valueRaw: '1' }]]] }).error);
+    check('RemoveActivityData removes + unknown assay errors',
+      !!State.applyCommand(st, { type: 'RemoveActivityData', assayId: 'nope' }).error &&
+      !State.applyCommand(s3, { type: 'RemoveActivityData', assayId: 'A3' }).state.activities.A3);
+  }
+
+  console.log('m5 activity store round-trip (project + undo + snapshot):');
+  {
+    const mem = DB.createMemStorage();
+    const p = await Project.init(mem, {});
+    await p.apply({ type: 'ImportLibrary', libraryId: 'L', name: 't', entries: [
+      { molId: 'm1', ordinal: 0, raw: { smiles: 'CCO', name: 'a' } },
+      { molId: 'm2', ordinal: 1, raw: { smiles: 'CCC', name: 'b' } }] });
+    await p.apply({ type: 'SetActivityData', assayId: 'A1', meta: { name: 'IC50', unit: 'uM', source: 'lab' },
+      records: [['m1', [{ value: 8.2, qualifier: '=', valueRaw: '8.2' }]]] });
+    await p.apply({ type: 'SetActivityData', assayId: 'A1', meta: { name: 'IC50', unit: 'uM', source: 'lab' },
+      records: [['m2', [{ value: 3.1, qualifier: '<', valueRaw: '<3.1' }]]] });
+    const undo1 = await p.undo();
+    check('undo restores prior assay snapshot (pre mechanism)',
+      undo1.ok && p.state.activities.A1.records.has('m1') && !p.state.activities.A1.records.has('m2'));
+    const rm = await p.apply({ type: 'RemoveActivityData', assayId: 'A1' });
+    await p.undo();
+    check('undo of RemoveActivityData restores the assay', p.state.activities.A1 && p.state.activities.A1.records.has('m1'));
+    await p.checkpoint();
+    const snap = await mem.get('snapshots', (await mem.all('meta')).filter(x => x.key === 'cmdSeq')[0].value);
+    check('snapshot serializes activities maps', snap && snap.state.activities && Array.isArray(snap.state.activities.A1.records));
+    // replay from scratch reproduces activities
+    const cmds = (await mem.all('commands')).sort((a, b) => a.key - b.key).map(c => c.value);
+    let rs = State.initialState();
+    for (const c of cmds) { const x = State.applyCommand(rs, c); rs = x.error ? rs : x.state; }
+    check('replay rebuilds activities identically', rs.activities.A1 && rs.activities.A1.records.get('m1')[0].value === 8.2);
+  }
+
+  // ================= M5 pure logic: CSV / ladder / audit (m5.js) =================
+  console.log('m5 csv + ladder + audit:');
+  {
+    const M5 = require(path.join(__dirname, '../../app/platform/m5.js'));
+    M5.setDupeFn(Identity.dupeTier);
+    const P = M5.parseActivityCell;
+    check('cell: µM unit tolerated', (() => { const r = P('10 µM'); return r.qualifier === '=' && r.value === 10 && r.valueRaw === '10 µM'; })());
+    check('cell: μ/µ both codepoints + ≥ ≤ ~ < >',
+      P('≥3.1').qualifier === '>=' && P('≤4').qualifier === '<=' && P('~5').qualifier === '~' &&
+      P('>12 (batch2)').qualifier === '>' && P('<0.5').qualifier === '<');
+    check('cell: euro comma vs thousands', P('1,2').value === 1.2 && P('1,234.5').value === 1234.5);
+    check('cell: e-notation', P('1.2e-6').value === 1.2e-6 && P('-2E3').value === -2000);
+    check('cell: ND family', P('ND').qualifier === 'ND' && P('inactive').qualifier === 'ND' && P('N/A').qualifier === 'ND' && P('ND').value === null);
+    check('cell: garbage → null', P('') === null && P('junk') === null && P('>') === null);
+    check('csv: BOM + quoted + ; sniffing',
+      (() => { const rows = M5.parseCsv('\uFEFFa;b\n"x;1";2\n'); return rows.length === 2 && rows[1][0] === 'x;1' && rows[1][1] === '2'; })());
+    check('csv: CRLF + trailing newline', M5.parseCsv('a,b\r\n1,2\r\n').length === 2);
+    // match ladder
+    const fakeIK2 = (b1, b2, b3) => b1.padEnd(14, 'A').slice(0, 14) + '-' + b2.padEnd(10, 'B').slice(0, 10) + '-' + b3;
+    const idx = { byMolId: new Map([['m1', 1]]),
+      byKey: new Map([[fakeIK2('AA', 'X', 'N'), ['m1']]]),
+      byParentKey: new Map([[fakeIK2('AA', 'X', 'N'), ['m1']]]),
+      byBlock1: new Map([['AAAAAAAAAAAAAA', ['m1']]]),
+      byName: new Map([['ethanol', ['m1']]]) };
+    const L = M5.matchLadder;
+    check('ladder: molId column wins', L([{ molId: 'm1', name: 'other' }], idx).resolved[0].tier === 'molId');
+    check('ladder: exact key second', L([{ key: fakeIK2('AA', 'X', 'N') }], idx).resolved[0].tier === 'exact');
+    check('ladder: block1 tier recorded', L([{ block1: 'AAAAAAAAAAAAAA' }], idx).resolved[0].tier === 'block1');
+    check('ladder: name fallback normalized', L([{ name: ' ETHANOL ' }], idx).resolved[0].tier === 'name');
+    check('ladder: ghost → unresolved', L([{ name: 'nope' }], idx).unresolved.length === 1);
+    idx.byName.set('ethanol', ['m1', 'm2']);
+    check('ladder: ambiguous never picks first silently', L([{ name: 'ethanol' }], idx).ambiguous.length === 1);
+    // audit grouping
+    const A = M5.identityAudit([
+      { molId: 'a', smiles: 'X', structureKey: fakeIK2('SB', 'UHFFFAOY', 'N'), stereoSpecified: true },
+      { molId: 'b', smiles: 'X.Cl', structureKey: fakeIK2('SB', 'UHFFFAOY', 'N'), salt: true },
+      { molId: 'c', smiles: 'Y', structureKey: fakeIK2('SB', 'STEREOXY', 'N') },
+    ], 'full');
+    check('audit: full-key families only true dupes', A.families.length === 1 && A.families[0].members.length === 2 && A.families[0].pairs[0].note === '同物');
+    check('audit: salt flag', A.flags.salt.length === 1 && A.flags.salt[0] === 'b');
+    const Ap = M5.identityAudit([
+      { molId: 'a', structureKey: fakeIK2('SB', 'UHFFFAOY', 'N'), parentKey: 'p1', stereoSpecified: true },
+      { molId: 'c', structureKey: fakeIK2('SB', 'STEREOXY', 'N'), parentKey: 'p1', stereoSpecified: true },
+      { molId: 'd', structureKey: fakeIK2('SB', 'OTHERXXY', 'N'), parentKey: 'p1' },
+    ], 'parent');
+    check('audit: parent view sub-classifies block2 pairs',
+      Ap.families.length === 1 &&
+      Ap.families[0].pairs.some(p => p.note === '立体异构对') && Ap.families[0].pairs.some(p => p.note === '指定/未指定'));
+    const An = M5.identityAudit([{ molId: 'z', smiles: 'QQ', structureKey: 'SMI:QQ' }], 'full');
+    check('audit: degraded keys never crash, flagged', An.families.length === 0 && An.flags.nonInchiKey.length === 1);
+  }
+
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });

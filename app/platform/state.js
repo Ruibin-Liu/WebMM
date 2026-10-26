@@ -34,6 +34,7 @@
       excludes: {},            // molId -> {reason}
       analogRuns: {},          // runId -> {parentSmiles, mode, site, fragCat, deaza, versions, at} (M4 P2, docs §4)
       hiddenRuns: {},          // runId -> true (undo/hide; facts are never deleted)
+      activities: {},          // M5 (docs/assay-foundation.md §2): assayId -> {meta, records: Map(molId -> [{value,qualifier,valueRaw,note?,replicateId?,matchTier?}])}
       maxCommandId: 0,
     };
   }
@@ -54,7 +55,9 @@
           if (e.molId == null || e.raw == null) return { state: prev, error: 'ImportLibrary: each entry needs molId and raw' };
           entries.set(e.molId, { ordinal: e.ordinal, raw: e.raw, structureKey: e.structureKey || null, rowId: e.rowId });
         }
-        s.libraries[id] = { name: cmd.name || id, importedAt: cmd.importedAt || Date.now(), entries };
+        // M5: rejected rows ride WITH the command (L1, tiny) so the audit
+        // panel can list them after reload instead of only at import time
+        s.libraries[id] = { name: cmd.name || id, importedAt: cmd.importedAt || Date.now(), entries, rejected: Array.isArray(cmd.rejected) ? cmd.rejected.slice(0, 200) : [] };
         return { state: s };
       }
       case 'RemoveLibrary': {
@@ -78,6 +81,17 @@
         delete s.pins[cmd.fromMolId];
         delete s.excludes[cmd.fromMolId];
         from.lib.entries.delete(cmd.fromMolId);
+        // M5 (docs/assay-foundation.md §2 molId lifecycle): activity records
+        // FOLLOW the merge — from-array is concatenated onto into-array
+        // (conflicting replicates coexist; aggregation is an MPO-era concern)
+        for (const a of Object.values(s.activities)) {
+          const fromRecs = a.records.get(cmd.fromMolId);
+          if (fromRecs && fromRecs.length) {
+            const intoRecs = a.records.get(cmd.intoMolId);
+            a.records.set(cmd.intoMolId, (intoRecs || []).concat(fromRecs));
+            a.records.delete(cmd.fromMolId);
+          }
+        }
         return { state: s };
       }
       case 'IdentitySplit': {
@@ -128,6 +142,44 @@
       case 'UnhideAnalogRun': {
         if (!s.analogRuns[cmd.runId]) return { state: prev, error: 'UnhideAnalogRun: unknown run' };
         delete s.hiddenRuns[cmd.runId];
+        return { state: s };
+      }
+      // ---- M5: measured activity data (docs/assay-foundation.md §2) ----
+      // SetActivityData fully REPLACES one assay (idempotent re-import; the
+      // undo inverse is snapshotted by the caller's `pre` mechanism in
+      // project.js applyInternal, mirroring Unpin/Include). records arrive
+      // as [molId, recordsArray] pairs (structured-clone/JSON safe); the
+      // reducer sorts by molId so identical imports hash identically.
+      case 'SetActivityData': {
+        if (!cmd.assayId || !Array.isArray(cmd.records)) return { state: prev, error: 'SetActivityData: assayId and records required' };
+        if (!cmd.meta || !cmd.meta.name) return { state: prev, error: 'SetActivityData: meta.name required' };
+        const VALID_Q = new Set(['=', '<', '>', '<=', '>=', '~', 'ND']);
+        const unknown = [];
+        const recs = new Map();
+        for (const [molId, arr] of cmd.records) {
+          if (!Array.isArray(arr) || !arr.length) return { state: prev, error: 'SetActivityData: records[' + molId + '] must be a non-empty array' };
+          if (!findEntry(s, molId) && !isOrphanMolId(prev, molId)) unknown.push(molId);
+          for (const r of arr) {
+            if (!r || typeof r !== 'object') return { state: prev, error: 'SetActivityData: bad record object for ' + molId };
+            if (r.qualifier == null) r.qualifier = '=';
+            if (!VALID_Q.has(r.qualifier)) return { state: prev, error: 'SetActivityData: qualifier \'' + r.qualifier + '\' not in =,<,>,<=,>=,~,ND' };
+            if (r.qualifier === 'ND') { r.value = null; }
+            else if (typeof r.value !== 'number' || !isFinite(r.value)) return { state: prev, error: 'SetActivityData: value must be a finite number (got ' + r.value + ') for ' + molId };
+          }
+          recs.set(molId, arr);
+        }
+        if (unknown.length) return { state: prev, error: 'SetActivityData: ' + unknown.length + ' unknown molId(s): ' + unknown.slice(0, 5).join(', ') };
+        s.activities[cmd.assayId] = {
+          meta: { name: cmd.meta.name, endpoint: cmd.meta.endpoint || null, unit: cmd.meta.unit || null,
+                  source: cmd.meta.source || null, direction: cmd.meta.direction || null,
+                  importedAt: cmd.meta.importedAt || Date.now() },
+          records: new Map([...recs.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))),
+        };
+        return { state: s };
+      }
+      case 'RemoveActivityData': {
+        if (!s.activities[cmd.assayId]) return { state: prev, error: 'RemoveActivityData: unknown assay' };
+        delete s.activities[cmd.assayId];
         return { state: s };
       }
       case 'Pin': {
@@ -183,8 +235,18 @@
       excludes: { ...prev.excludes },
       analogRuns: { ...prev.analogRuns },
       hiddenRuns: { ...prev.hiddenRuns },
+      activities: cloneActivities(prev.activities),
       maxCommandId: prev.maxCommandId,
     };
+  }
+  // activities: {assayId -> {meta, records: Map(molId -> Array<record>)}};
+  // clone shares immutable record objects (reducer replaces arrays, never mutates)
+  function cloneActivities(acts) {
+    const out = {};
+    for (const [aid, a] of Object.entries(acts || {})) {
+      out[aid] = { meta: { ...a.meta }, records: new Map(a.records) };
+    }
+    return out;
   }
   function cloneLibs(libs) {
     const out = {};
@@ -204,6 +266,15 @@
       if (entry) return { lib, entry };
     }
     return null;
+  }
+  // M5: a molId whose library was removed but whose activity records were
+  // kept (orphan policy, docs §2) — writing to it again is legitimate; only
+  // brand-new unknown ids are rejected
+  function isOrphanMolId(s, molId) {
+    for (const a of Object.values(s.activities || {})) {
+      if (a.records.has(molId)) return true;
+    }
+    return false;
   }
 
   // ---- inverses (undo = append the inverse; M0 spec §4) ----

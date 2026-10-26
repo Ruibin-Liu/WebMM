@@ -161,6 +161,14 @@
       pre = { type: 'Pin', molId: cmd.molId, ...p.state.pins[cmd.molId] };
     } else if (cmd.type === 'Include' && p.state.excludes[cmd.molId]) {
       pre = { type: 'Exclude', molId: cmd.molId, ...p.state.excludes[cmd.molId] };
+    } else if (cmd.type === 'SetActivityData' && p.state.activities[cmd.assayId]) {
+      const a = p.state.activities[cmd.assayId];   // prior snapshot = the undo inverse
+      pre = { type: 'SetActivityData', assayId: cmd.assayId, meta: { ...a.meta }, records: [...a.records.entries()] };
+    } else if (cmd.type === 'SetActivityData') {
+      pre = { type: 'RemoveActivityData', assayId: cmd.assayId };   // first import: undo = absence
+    } else if (cmd.type === 'RemoveActivityData' && p.state.activities[cmd.assayId]) {
+      const a = p.state.activities[cmd.assayId];
+      pre = { type: 'SetActivityData', assayId: cmd.assayId, meta: { ...a.meta }, records: [...a.records.entries()] };
     }
     if (p._dead) throw new Error('project replaced; reload required');
     let res;
@@ -209,7 +217,9 @@
     return {
       ...state,
       libraries: Object.fromEntries(Object.entries(state.libraries).map(([k, lib]) =>
-        [k, { ...lib, entries: [...lib.entries.entries()] }]))
+        [k, { ...lib, entries: [...lib.entries.entries()] }])),
+      activities: Object.fromEntries(Object.entries(state.activities || {}).map(([aid, a]) =>
+        [aid, { meta: a.meta, records: [...a.records.entries()] }])),
     };
   }
   function deserializeState(raw) {
@@ -217,7 +227,12 @@
     for (const [k, lib] of Object.entries(raw.libraries || {})) {
       libraries[k] = { ...lib, entries: new Map(lib.entries) };
     }
-    return { ...raw, libraries };
+    // pre-M5 snapshots have no activities — default empty (replays forward)
+    const activities = {};
+    for (const [aid, a] of Object.entries(raw.activities || {})) {
+      activities[aid] = { meta: a.meta, records: new Map(a.records) };
+    }
+    return { ...raw, libraries, activities };
   }
   init._deserializeState = deserializeState;
 
