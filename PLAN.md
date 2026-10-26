@@ -1,25 +1,28 @@
-# Plan: BeautifulRust lint 分级接入(clippy.toml 激活)
+# Plan: M5 结构-数据底座(Top-1 展开;Fable-5.1 评审一轮收敛)
 
-## 范围
+## 范围(docs/assay-foundation.md 冻结稿,7 必修全采纳)
+- **身份分层**(L2 派生):identity.js 增 isInchiKey/inchiKeyBlocks(块2 可比
+  部分=前 8 位)/dupeTier/isLayerless(UHFFFAOY 常量);m5.js 纯函数
+  identityAudit(完整键/母体键双分组 + 立体交叉细分 + 降级键不崩);
+  QC 旗标(盐/立体已指定/非 InChI 键/母体判定不确定,页面侧 L2 缓存)。
+- **实测活性**(L1 命令):SetActivityData(assayId 全量替换,records
+  [molId, 数组] 对,qualifier ∈ =,<,>,<=,>=,~,ND,valueRaw 保留,
+  matchTier 入档)/RemoveActivityData;撤销走 pre 快照(首导入逆=
+  RemoveActivityData);IdentityMerged 并置记录(冲突共存);
+  RemoveLibrary 留孤儿(重写允许孤儿 id,幽灵仍拒);ImportLibrary
+  保留 rejected 行;快照序列化 activities Maps;旧快照前向兼容默认空。
+- **CSV 两步导入**:m5.parseCsv(BOM/引号/;嗅探)+parseActivityCell
+  (µ/μ、≥≤、e-记数、欧逗号、ND 族、单位尾缀)+normalizeName
+  (NFKC/大小写/空白)+matchLadder(molId→精确键→母体键→块1→名称,
+  歧义绝不静默取首);预览报告(匹配/歧义/未解析/松匹配警告)→确认提交。
+- **UI**(检索模式):活性面板(导入/列选择/导出带 molId 列/删除/孤儿
+  提示)+ 结果表活性列(qualifier 显示,tooltip 全部重复测量+raw+tier)
+  + 身份审计卡(家族/旗标/互变覆盖说明);模态注册入 MODALS(空守卫)。
+- **测试**:Node +40(reducer 全语义/往返/撤销/快照/重放/纯函数表驱动);
+  CDP 新套件 m7_activity 14 断言;run.sh 20 套件。
 
-1. **Cargo.toml [lints] 分级集合**(用户已放置上游 clippy.toml,无 [lints] 则惰性):
-   启用 —— rust: unsafe_op_in_unsafe_fn/rust_2018_idioms/unreachable_pub;
-   clippy: all + unwrap_used/expect_used(allow)/panic_in_result_fn/
-   dbg_macro/todo/string_add/wildcard_imports/redundant_clone。
-   延期(注释记录理由):pedantic、as_conversions/cast_*(数值内核 2000+ 条)、
-   print_stdout/stderr(examples/benches 是诊断 CLI)、missing_docs 族
-   (584 项,内部 crate)、allow_attributes*(41 处存量,随改随转)。
-   实测全量 4810 警告 → 分级后清零可行。
-2. **src 修到零**:29 处 unwrap→expect(带理由:gfnff 内嵌参数编译期不变式/
-   graph BFS 树性质/shape colored 蕴含/etkdg 环原子必键/internal_opt 缓存成
-   对设置);8 处 redundant_clone 删除;unreachable_pub 降级(instr 计时模块
-   →pub(super),sascore→pub(crate));6 处隐藏生命周期补 <'_>;
-   sascore 两个 _public 测试专用访问器 allow(dead_code) 带理由(仅金测
-   直含文件使用)。
-3. **诊断文件豁免**:benches/examples/tests/sascore_golden 文件级
-   #![allow(clippy::unwrap_used)] 带理由(诊断工具,panic 即报告)。
-4. clippy.toml(上游逐字节一致)随 [lints] 入库成套。
+## 不做
+MPO/聚合、立体枚举、互变感知、盐改写、kNN、单位换算(评审记录在案)。
 
 ## 验收
-- clippy --all-targets 与 --target wasm32 双 0 警告;fmt clean;
-  cargo test 328+7 全绿;WASM 重编 + CDP 全量 19/19。
+Node 113/113;m7_activity 14/14;run.sh 全量 20/20;零 page error。
