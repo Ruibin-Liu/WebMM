@@ -272,6 +272,7 @@ textarea {
 textarea:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);   /* visible ring — outline alone was too weak */
 }
 
   .controls {
@@ -506,25 +507,15 @@ textarea:focus {
     background: #1d4ed8;
     color: #fff;
   }
-  .ctl-group .mini-field {
-    border: none;
-    border-radius: 0;
-    border-left: 1px solid var(--border);
-  }
   .ctl-group .engine-sel {
     border: none;
     border-radius: 0;
   }
   .ctl-group .action-btn:disabled,
-  .ctl-group .engine-sel:disabled,
-  .ctl-group .mini-field:disabled {
+  .ctl-group .engine-sel:disabled {
     background: #f8fafc;
     color: var(--muted);
     opacity: 0.6;
-  }
-  .ctl-group .action-btn.primary:disabled {
-    background: var(--accent);
-    color: #fff;
   }
   .ctl-group .action-btn {
     width: auto;                      /* no fixed 110px — labels differ */
@@ -810,6 +801,8 @@ details {
 
 /* ===== LigandLab-style shell (UI layer; ids/behaviors unchanged) ===== */
 :root {
+  /* platform shell tokens (design v2) — the base palette in the first :root
+     above stays live for the shared workbench controls */
   --ll-navy: #16202e; --ll-navy-2: #1d2a3b; --ll-accent: #2563eb; --ll-accent-2: #1d4ed8;
   --ll-bg: #f4f6f9; --ll-line: #e5e9f0;
 }
@@ -1214,6 +1207,12 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 .exp-item:hover { background: #eff6ff; color: var(--ll-accent-2); }
 .exp-item:disabled { color: #b6c2d0; cursor: default; background: none; }
 .exp-divider { height: 1px; background: var(--ll-line); margin: 0.4rem 0.25rem; }
+
+/* respect reduced-motion preferences (breathing dots, hovers, smooth scroll) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  html { scroll-behavior: auto; }
+}
 </style>
 </head>
 <body>
@@ -5823,6 +5822,8 @@ function csvField(v) {
    function showError(e) {
    document.getElementById("error").textContent = (e && e.toString) ? e.toString() : String(e);
  }
+ // surface uncaught async failures — they used to vanish silently for users
+ addEventListener('unhandledrejection', ev => { showError(ev.reason && ev.reason.message ? ev.reason.message : ev.reason); });
   function clearError() {
     document.getElementById("error").textContent = "";
   }

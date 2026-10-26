@@ -40,7 +40,7 @@
    color: var(--text); text-decoration: none;
  }
  .topnav .brand span { color: var(--accent); }
- .topnav .links { margin-left: auto; display: flex; gap: 4px; }
+ .topnav .links { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
  .topnav .links a {
    color: var(--muted); text-decoration: none; font-size: 0.88em;
    padding: 6px 12px; border-radius: 8px;
@@ -274,6 +274,7 @@ textarea {
 textarea:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);   /* visible ring — outline alone was too weak */
 }
 
   .controls {
@@ -508,25 +509,15 @@ textarea:focus {
     background: #1d4ed8;
     color: #fff;
   }
-  .ctl-group .mini-field {
-    border: none;
-    border-radius: 0;
-    border-left: 1px solid var(--border);
-  }
   .ctl-group .engine-sel {
     border: none;
     border-radius: 0;
   }
   .ctl-group .action-btn:disabled,
-  .ctl-group .engine-sel:disabled,
-  .ctl-group .mini-field:disabled {
+  .ctl-group .engine-sel:disabled {
     background: #f8fafc;
     color: var(--muted);
     opacity: 0.6;
-  }
-  .ctl-group .action-btn.primary:disabled {
-    background: var(--accent);
-    color: #fff;
   }
   .ctl-group .action-btn {
     width: auto;                      /* no fixed 110px — labels differ */
@@ -809,6 +800,12 @@ details {
     font-size: 0.8rem;
     margin-top: auto;
   }
+
+/* respect reduced-motion preferences (breathing dots, hovers, smooth scroll) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  html { scroll-behavior: auto; }
+}
 </style>
 </head>
 <body>
@@ -4674,6 +4671,8 @@ function csvField(v) {
    function showError(e) {
    document.getElementById("error").textContent = (e && e.toString) ? e.toString() : String(e);
  }
+ // surface uncaught async failures — they used to vanish silently for users
+ addEventListener('unhandledrejection', ev => { showError(ev.reason && ev.reason.message ? ev.reason.message : ev.reason); });
   function clearError() {
     document.getElementById("error").textContent = "";
   }
