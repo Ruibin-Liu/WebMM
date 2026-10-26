@@ -1,27 +1,25 @@
-# Plan: 前端 Review 应修项修复(6 项,单轮打包)
+# Plan: BeautifulRust lint 分级接入(clippy.toml 激活)
 
-## 范围(承接 frontend-design + web-artifacts-builder 双基准审查)
+## 范围
 
-1. **CSS 同名选择器合并**:两页各删三块死码/被覆盖块(.ctl-group .mini-field
-   死变体、组选择器中已被 v2 覆盖的 .mini-field:disabled、与 v2 逐字相同的
-   .action-btn.primary:disabled 早期副本);platform 第二 :root 加注释(并存
-   token 族,非死码,防未来误判)。
-2. **焦点环**:两页 textarea:focus 补 box-shadow(outline:none 单换边框色
-   不达 WCAG 2.4.11;探针实证 #input 焦点不可见 1→0)。
-3. **390px 溢出**:index.html .topnav .links 加 flex-wrap(探针 47px→0)。
-4. **prefers-reduced-motion**:四页 style 尾部注入减弱动效块。
-5. **全局错误面**:两页挂 unhandledrejection → showError(#error 本有
-   role=alert/aria-live)。
-6. **本地部署暂存**:scripts/stage-pkg.sh(清坟场 + wasm-pack + index/
-   playground/vendor/app 全量暂存,镜像 pages.yml);package.json "stage"
-   脚本;AGENTS.md 构建命令行同步。
-
-## 不做(审查记录在案)
-- landmark/region(axe moderate,低价值);platform prompt/confirm(项目
-  已记 v1.1);内联 onclick(内部 id 无现实风险);conf/shape 农场持久化
-  (文档化范围决策)。
+1. **Cargo.toml [lints] 分级集合**(用户已放置上游 clippy.toml,无 [lints] 则惰性):
+   启用 —— rust: unsafe_op_in_unsafe_fn/rust_2018_idioms/unreachable_pub;
+   clippy: all + unwrap_used/expect_used(allow)/panic_in_result_fn/
+   dbg_macro/todo/string_add/wildcard_imports/redundant_clone。
+   延期(注释记录理由):pedantic、as_conversions/cast_*(数值内核 2000+ 条)、
+   print_stdout/stderr(examples/benches 是诊断 CLI)、missing_docs 族
+   (584 项,内部 crate)、allow_attributes*(41 处存量,随改随转)。
+   实测全量 4810 警告 → 分级后清零可行。
+2. **src 修到零**:29 处 unwrap→expect(带理由:gfnff 内嵌参数编译期不变式/
+   graph BFS 树性质/shape colored 蕴含/etkdg 环原子必键/internal_opt 缓存成
+   对设置);8 处 redundant_clone 删除;unreachable_pub 降级(instr 计时模块
+   →pub(super),sascore→pub(crate));6 处隐藏生命周期补 <'_>;
+   sascore 两个 _public 测试专用访问器 allow(dead_code) 带理由(仅金测
+   直含文件使用)。
+3. **诊断文件豁免**:benches/examples/tests/sascore_golden 文件级
+   #![allow(clippy::unwrap_used)] 带理由(诊断工具,panic 即报告)。
+4. clippy.toml(上游逐字节一致)随 [lints] 入库成套。
 
 ## 验收
-- 前端探针复跑:focus 不可见 0、390px 溢出 0、零 page error。
-- run.sh 全量 19/19(m6_projects 首轮导航竞态 flake,单跑 12/12 + 全量
-  复跑 19/19 确认)。
+- clippy --all-targets 与 --target wasm32 双 0 警告;fmt clean;
+  cargo test 328+7 全绿;WASM 重编 + CDP 全量 19/19。
