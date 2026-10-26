@@ -521,6 +521,13 @@ pub fn find_rings(mol: &Molecule) -> Vec<Vec<usize>> {
 
         for bond in &mol.bonds {
             let (a, b) = (bond.atom1, bond.atom2);
+            // Defense in depth: parse_sdf rejects out-of-range bonds, but a
+            // hand-built Molecule could still carry them — the parent[]
+            // indexing below would panic (adjacency construction silently
+            // skips such bonds, leaving bonds inconsistent with atoms)
+            if a >= n || b >= n {
+                continue;
+            }
             if parent[a] == Some(b) || parent[b] == Some(a) {
                 continue;
             }
@@ -818,6 +825,26 @@ mod tests {
 
     fn mol_from_block(block: &str) -> Molecule {
         crate::molecule::parser::parse_sdf(block).unwrap()
+    }
+
+    #[test]
+    fn find_rings_tolerates_out_of_range_bonds() {
+        // A hand-built Molecule whose bonds disagree with atoms (parser
+        // rejects these; adjacency construction silently skips them) must
+        // not panic ring perception — used to index parent[9] on a
+        // 3-atom molecule
+        let mut mol = mol_from_block(
+            "probe\n\n\n  3  1  0  0  0  0  0  0  0  0999 V2000\n    0.0    0.0    0.0 C   0  0  0  0  0\n    1.0    0.0    0.0 C   0  0  0  0  0\n    2.0    0.0    0.0 C   0  0  0  0  0\n  1  2  1  0\nM  END\n",
+        );
+        mol.bonds.push(super::super::Bond {
+            atom1: 0,
+            atom2: 8,
+            bond_type: super::super::BondType::Single,
+            stereo: super::super::BondStereo::None,
+            kekule_type: None,
+        });
+        let rings = crate::molecule::graph::find_rings(&mol);
+        assert!(rings.is_empty());
     }
 
     const MALEIMIDE: &str = "maleimide\n     RDKit          3D\n\n 10 10  0  0  0  0  0  0  0  0999 V2000\n   -1.1905   -2.0775   -0.0430 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5649   -1.0363   -0.0214 C   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7738   -0.8719   -0.0146 N   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0963    0.4376    0.0113 C   0  0  0  0  0  0  0  0  0  0  0  0\n    2.2047    0.9348    0.0238 O   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.1629    1.1890    0.0223 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.1614    0.3031    0.0027 C   0  0  0  0  0  0  0  0  0  0  0  0  0\n    1.4414   -1.6240   -0.0272 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.2148    2.2629    0.0427 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -2.2217    0.4823    0.0033 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  2  0\n  2  3  1  0\n  3  4  1  0\n  4  5  2  0\n  4  6  1  0\n  6  7  2  0\n  7  2  1  0\n  3  8  1  0\n  6  9  1  0\n  7 10  1  0\nM  END\n";
