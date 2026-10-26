@@ -36,5 +36,26 @@ window.WebMMKetcher = {
   },
   async setMolecule(mol) {
     await (await readyPromise).setMolecule(mol);
+  },
+  // ---- Top-3 second half: query-as-drawing + selection bridge ----
+  // The raw Ketcher instance, for anything not wrapped (feature-detect at
+  // the call site — the exact surface varies across bundle versions).
+  api() { return editorApi; },
+  // SMARTS with the query features the user drew (any-atoms, ring bonds,
+  // substitution counts). Throws when this bundle lacks it.
+  async getSmarts() {
+    const a = await readyPromise;
+    if (!a || typeof a.getSmarts !== 'function') throw new Error('getSmarts unavailable in this ketcher build');
+    return a.getSmarts();
+  },
+  // Current editor selection: { atoms?: number[], bonds?: number[] }
+  // (1-based atom numbering in molfile order — feeds the atom ledger).
+  async getSelection() {
+    const a = await readyPromise;
+    const ed = a && a.editor;
+    if (!ed || typeof ed.selection !== 'function') throw new Error('selection unavailable in this ketcher build');
+    const sel = ed.selection();
+    if (!sel) return { atoms: [], bonds: [] };
+    return { atoms: sel.atoms || [], bonds: sel.bonds || [] };
   }
 };
