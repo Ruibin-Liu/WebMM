@@ -74,10 +74,10 @@ mod instr {
     thread_local! {
         pub static LOG: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
     }
-    pub fn enabled() -> bool {
+    pub(super) fn enabled() -> bool {
         LOG.with(|l| l.borrow().is_some())
     }
-    pub fn begin() {
+    pub(super) fn begin() {
         if std::env::var("ETKDG_ITERS").is_ok() {
             LOG.with(|l| {
                 if l.borrow().is_none() {
@@ -86,7 +86,7 @@ mod instr {
             });
         }
     }
-    pub fn line(msg: String) {
+    pub(super) fn line(msg: String) {
         if !enabled() {
             return;
         }
@@ -103,26 +103,26 @@ mod instr {
     }
     /// None when instrumentation is off — the hot-loop call sites pay one
     /// branch, not a clock read.
-    pub fn clock() -> Option<std::time::Instant> {
+    pub(super) fn clock() -> Option<std::time::Instant> {
         if enabled() {
             Some(std::time::Instant::now())
         } else {
             None
         }
     }
-    pub fn tick(name: &'static str, t0: Option<std::time::Instant>) {
+    pub(super) fn tick(name: &'static str, t0: Option<std::time::Instant>) {
         if let Some(t0) = t0 {
             TERMS.with(|m| {
                 m.borrow_mut().entry(name).or_insert((0, 0)).1 += t0.elapsed().as_nanos();
             });
         }
     }
-    pub fn count(name: &'static str) {
+    pub(super) fn count(name: &'static str) {
         TERMS.with(|m| {
             m.borrow_mut().entry(name).or_insert((0, 0)).0 += 1;
         });
     }
-    pub fn flush() {
+    pub(super) fn flush() {
         if !enabled() {
             return;
         }
@@ -1230,10 +1230,13 @@ fn build_distance_bounds(mol: &Molecule, config: &ETKDGConfig) -> DistanceBounds
         if rsize < 4 {
             continue;
         }
-        let mut bid1 = find_bond_index(mol, ring[rsize - 1], ring[0]).unwrap();
+        let mut bid1 = find_bond_index(mol, ring[rsize - 1], ring[0])
+            .expect("consecutive ring atoms are bonded (rings derive from bonds)");
         for i in 0..rsize {
-            let bid2 = find_bond_index(mol, ring[i], ring[(i + 1) % rsize]).unwrap();
-            let bid3 = find_bond_index(mol, ring[(i + 1) % rsize], ring[(i + 2) % rsize]).unwrap();
+            let bid2 = find_bond_index(mol, ring[i], ring[(i + 1) % rsize])
+                .expect("consecutive ring atoms are bonded (rings derive from bonds)");
+            let bid3 = find_bond_index(mol, ring[(i + 1) % rsize], ring[(i + 2) % rsize])
+                .expect("consecutive ring atoms are bonded (rings derive from bonds)");
             let id1 = (bid1, bid2, bid3);
             let id2 = (bid3, bid2, bid1);
             done_14_paths.insert(id1);
@@ -3243,7 +3246,7 @@ fn build_planarity_constraints(mol: &Molecule) -> PlanarityConstraints {
     // Without its torsions/impropers the embedder burns its attempt budget
     // fighting ring puckers (remdesivir heavy embed: 13 s vs 0.26 s for a
     // similar-size purine).
-    let mut planar_atoms = aromatic_atoms.clone();
+    let mut planar_atoms = aromatic_atoms;
     for ring in &rings {
         if !(5..=6).contains(&ring.len()) {
             continue;

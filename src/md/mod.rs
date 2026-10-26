@@ -602,8 +602,8 @@ mod tests {
         // Cold start (0 K → zero velocities) → MB re-initialization.
         let mut cold = MDRunner::new(
             Rc::new(HarmonicOscillator { n: 8, k: 1.0 }),
-            masses.clone(),
-            coords.clone(),
+            masses,
+            coords,
             cfg(0.0),
         );
         assert_eq!(cold.temperature(), 0.0);
@@ -637,7 +637,7 @@ mod tests {
                 seed: 3,
             },
         );
-        let check = |md: &MDRunner| {
+        let check = |md: &MDRunner<'_>| {
             let mags = md.force_magnitudes();
             let mut grad = vec![[0.0; 3]; mol.atoms.len()];
             ff.energy_and_gradient(md.coords(), &mut grad);

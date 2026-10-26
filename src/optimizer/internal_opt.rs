@@ -62,7 +62,10 @@ impl<'a> InternalObjective<'a> {
     /// back-transform saved per iteration.
     fn map_cached(&mut self, z: &[f64]) -> Vec<[f64; 3]> {
         if self.z_mapped.as_deref() == Some(z) {
-            return self.x_mapped.clone().unwrap();
+            return self
+                .x_mapped
+                .clone()
+                .expect("z_cached and x_cached are set together");
         }
         let dx = self.ic.back_transform(z);
         let mut x = self.x_ref.clone();

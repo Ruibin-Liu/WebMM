@@ -385,9 +385,9 @@ fn prepared_view(specs: &[TermSpec]) -> PreparedView<'_> {
 }
 
 fn overlap_prepared_view(
-    pa: &PreparedView,
+    pa: &PreparedView<'_>,
     a: &[ShapeAtom],
-    pb: &PreparedView,
+    pb: &PreparedView<'_>,
     b: &[ShapeAtom],
 ) -> f64 {
     if a.is_empty() || b.is_empty() {
@@ -892,7 +892,7 @@ fn principal_axes(atoms: &[ShapeAtom]) -> [[f64; 3]; 3] {
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.abs().total_cmp(&b.abs()))
-            .unwrap();
+            .expect("axis always has 3 components");
         if axis[mi] < 0.0 {
             for x in axis.iter_mut() {
                 *x = -*x;
@@ -1274,7 +1274,12 @@ pub fn align_colored(
             0.0
         };
         let cj = if colored {
-            color_tanimoto_at(q_sites_ref.unwrap(), t_sites_ref.unwrap(), &w, &t)
+            color_tanimoto_at(
+                q_sites_ref.expect("colored implies query sites"),
+                t_sites_ref.expect("colored implies target sites"),
+                &w,
+                &t,
+            )
         } else {
             0.0
         };
@@ -1337,7 +1342,12 @@ pub fn align_colored(
             0.0
         };
         let cj2 = if colored {
-            color_tanimoto_at(q_sites_ref.unwrap(), t_sites_ref.unwrap(), &w2, &t2)
+            color_tanimoto_at(
+                q_sites_ref.expect("colored implies query sites"),
+                t_sites_ref.expect("colored implies target sites"),
+                &w2,
+                &t2,
+            )
         } else {
             0.0
         };

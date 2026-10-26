@@ -899,7 +899,7 @@ fn optimize_dispatch(
             } else {
                 "MMFF94s"
             };
-            let charges = ff.charges.clone();
+            let charges = ff.charges;
             (r, terms.to_string(), used.to_string(), charges)
         }
     }
@@ -1189,7 +1189,7 @@ impl MDResult {
 }
 
 fn md_snapshot(
-    runner: &crate::md::MDRunner,
+    runner: &crate::md::MDRunner<'_>,
     _n_atoms: usize,
     coords: &mut Vec<f64>,
     energies: &mut Vec<f64>,
@@ -1560,7 +1560,7 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
     let mut energies = Vec::new();
     let mut cv_values = Vec::new();
     let mut times_fs = Vec::new();
-    let mut snap_fn = |runner: &crate::md::MDRunner, metad: &crate::metad::MetaDynamics| {
+    let mut snap_fn = |runner: &crate::md::MDRunner<'_>, metad: &crate::metad::MetaDynamics| {
         for row in runner.coords() {
             coordinates.push(row[0]);
             coordinates.push(row[1]);
@@ -5916,7 +5916,7 @@ mod acetic_debug {
     use crate::optimizer;
     use crate::{ConvergenceOptions, MMFFVariant};
 
-    pub fn dihedral(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
+    pub(crate) fn dihedral(coords: &[[f64; 3]], i: usize, j: usize, k: usize, l: usize) -> f64 {
         let b1 = [
             coords[j][0] - coords[i][0],
             coords[j][1] - coords[i][1],
@@ -6025,7 +6025,7 @@ M  END"#;
             result.optimized_coords.clone()
         } else {
             eprintln!("  Optimizer did not converge, using ETKDG coordinates for planarity check");
-            coords.clone()
+            coords
         };
 
         eprintln!("\n=== After MMFF94s optimization ===");

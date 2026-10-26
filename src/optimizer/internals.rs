@@ -722,7 +722,7 @@ mod tests {
         let gx_flat: Vec<f64> = (0..(3 * x.len()))
             .map(|j| 2.0 * (flat_at(&x, j) - flat_at(&target, j)))
             .collect();
-        let mut gproj = gx_flat.clone();
+        let mut gproj = gx_flat;
         project_out_tr(&x, &mut gproj);
         let gq = ic.grad_q(&gproj);
         let e_of = |dq: &[f64]| -> f64 {

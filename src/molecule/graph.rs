@@ -539,13 +539,13 @@ pub fn find_rings(mol: &Molecule) -> Vec<Vec<usize>> {
             let mut v = a;
             while v != start {
                 path_a.push(v);
-                v = parent[v].unwrap();
+                v = parent[v].expect("BFS tree: every visited node chains to start");
             }
             let mut path_b = Vec::new();
             v = b;
             while v != start {
                 path_b.push(v);
-                v = parent[v].unwrap();
+                v = parent[v].expect("BFS tree: every visited node chains to start");
             }
 
             path_b.reverse();
@@ -555,7 +555,10 @@ pub fn find_rings(mol: &Molecule) -> Vec<Vec<usize>> {
 
             if ring.len() >= 3 {
                 if let Some(&min_idx) = ring.iter().min() {
-                    let pos = ring.iter().position(|&x| x == min_idx).unwrap();
+                    let pos = ring
+                        .iter()
+                        .position(|&x| x == min_idx)
+                        .expect("min_idx is a member of ring");
                     ring.rotate_left(pos);
                 }
 
@@ -580,7 +583,10 @@ pub fn find_rings(mol: &Molecule) -> Vec<Vec<usize>> {
     let mut unique: Vec<Vec<usize>> = Vec::new();
     for mut ring in rings {
         if let Some(&min_idx) = ring.iter().min() {
-            let pos = ring.iter().position(|&x| x == min_idx).unwrap();
+            let pos = ring
+                .iter()
+                .position(|&x| x == min_idx)
+                .expect("min_idx is a member of ring");
             ring.rotate_left(pos);
         }
         let rev: Vec<usize> = ring.iter().rev().copied().collect();

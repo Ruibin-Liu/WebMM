@@ -199,11 +199,11 @@ impl Params {
             .expect("embedded gfnff_params.json");
         let g = &raw.generator;
         let gf = |k: &str| g[k].as_f64().expect(k);
-        let bstren: Vec<f64> = g["bstren"].as_array().unwrap().iter()
-            .map(|v| v.as_f64().unwrap()).collect();
+        let bstren: Vec<f64> = g["bstren"].as_array().expect("embedded static GFN-FF params").iter()
+            .map(|v| v.as_f64().expect("embedded static GFN-FF params")).collect();
         let mut bsmat = [[-999.0f64; 4]; 4];
         for i in 0..4 { for j in 0..4 {
-            bsmat[i][j] = g["bsmat"][i][j].as_f64().unwrap();
+            bsmat[i][j] = g["bsmat"][i][j].as_f64().expect("embedded static GFN-FF params");
         }}
         let m = &raw.misc;
         let mf = |k: &str| m[k].as_f64().expect(k);
@@ -219,35 +219,35 @@ impl Params {
         // (param_ref.fh covers 118 elements; keep only Z <= 104)
         let ok = |p: &[usize]| p.iter().all(|&x| (1..=104).contains(&x));
         for (k, v) in &raw.d4.refn {
-            let z: usize = k.parse().unwrap();
+            let z: usize = k.parse().expect("embedded static GFN-FF params");
             if z <= 104 { refn[z-1] = *v; }
         }
         for (k, v) in &raw.d4.refsys {           // key "iref,iat"
-            let p: Vec<usize> = k.split(',').map(|x| x.parse().unwrap()).collect();
+            let p: Vec<usize> = k.split(',').map(|x| x.parse().expect("embedded static GFN-FF params")).collect();
             if ok(&p) { refsys[p[1]-1][p[0]-1] = *v; }
         }
         for (k, v) in &raw.d4.refcn {            // key "iref,iat"
-            let p: Vec<usize> = k.split(',').map(|x| x.parse().unwrap()).collect();
+            let p: Vec<usize> = k.split(',').map(|x| x.parse().expect("embedded static GFN-FF params")).collect();
             if ok(&p) { refcn[p[1]-1][p[0]-1] = v[0]; }
         }
         for (k, v) in &raw.d4.ascale {           // key "iref,iat"
-            let p: Vec<usize> = k.split(',').map(|x| x.parse().unwrap()).collect();
+            let p: Vec<usize> = k.split(',').map(|x| x.parse().expect("embedded static GFN-FF params")).collect();
             if ok(&p) { ascale[p[1]-1][p[0]-1] = v[0]; }
         }
         for (k, v) in &raw.d4.hcount {           // key "iref,iat"
-            let p: Vec<usize> = k.split(',').map(|x| x.parse().unwrap()).collect();
+            let p: Vec<usize> = k.split(',').map(|x| x.parse().expect("embedded static GFN-FF params")).collect();
             if ok(&p) { hcount[p[1]-1][p[0]-1] = v[0]; }
         }
         for (k, v) in &raw.d4.sscale {            // key "is" (1-based system id)
-            let is: usize = k.split(',').next().unwrap().parse().unwrap();
+            let is: usize = k.split(',').next().expect("embedded static GFN-FF params").parse().expect("embedded static GFN-FF params");
             if is <= 18 { sscale[is-1] = *v; }
         }
         for (k, v) in &raw.d4.secaiw {            // key "is", 23 grid values
-            let is: usize = k.split(',').next().unwrap().parse().unwrap();
+            let is: usize = k.split(',').next().expect("embedded static GFN-FF params").parse().expect("embedded static GFN-FF params");
             if is <= 18 { for (w, val) in v.iter().enumerate() { secaiw[w][is-1] = *val; } }
         }
         for (k, v) in &raw.d4.alphaiw {           // key "iref,iat", 23 grid values
-            let p: Vec<usize> = k.split(',').map(|x| x.parse().unwrap()).collect();
+            let p: Vec<usize> = k.split(',').map(|x| x.parse().expect("embedded static GFN-FF params")).collect();
             if ok(&p) {
                 let (iref, iat) = (p[0]-1, p[1]-1);
                 for (w, val) in v.iter().enumerate() { alphaiw[w][iat][iref] = *val; }
@@ -268,7 +268,7 @@ impl Params {
             hhfac: gf("hhfac"), hh13rep: gf("hh13rep"), hh14rep: gf("hh14rep"),
             bstren, qfacben: gf("qfacBEN"), rabshift: gf("rabshift"), rabshifth: gf("rabshifth"),
             rfgoed1: gf("rfgoed1"), qfacbm0: gf("qfacbm0"), fringbo: gf("fringbo"),
-            qfacbm: g["qfacbm"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect(),
+            qfacbm: g["qfacbm"].as_array().expect("embedded static GFN-FF params").iter().map(|v| v.as_f64().expect("embedded static GFN-FF params")).collect(),
             metal1_shift: gf("metal1_shift"), metal2_shift: gf("metal2_shift"),
             metal3_shift: gf("metal3_shift"), eta_shift: gf("eta_shift"),
             hyper_shift: gf("hyper_shift"),
@@ -1400,7 +1400,7 @@ impl Gfnff {
             let nel = nel as usize;
             // iterative HMO (gfnff_ini.f90 1031-1066)
             let idx: Vec<usize> = atoms.clone();
-            let pos = |a: usize| idx.iter().position(|&x| x == a).unwrap();
+            let pos = |a: usize| idx.iter().position(|&x| x == a).expect("a is a member of idx (same iterator)");
             let mut pold = vec![vec![2.0/3.0; npi]; npi];
             let mut dens = pold.clone();
             let mut eold = 0.0f64;
@@ -3933,7 +3933,7 @@ fn solve_eeq_kkt(a2: &[Vec<f64>], x2: &[f64], n: usize) -> Vec<f64> {
 fn solve_sym(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
     let n = b.len();
     let mut m: Vec<Vec<f64>> = a.iter().cloned().zip(b.iter()).map(|(r, &v)| {
-        let mut row = r.clone(); row.push(v); row
+        let mut row = r; row.push(v); row
     }).collect();
     for col in 0..n {
         let mut piv = col;
@@ -5597,7 +5597,7 @@ mod tests_clash_gate {
             ..Default::default()
         };
         let coords = crate::etkdg::generate_initial_coords_with_config(&mol, &cfg);
-        let mut m2 = mol.clone();
+        let mut m2 = mol;
         for (a, c) in m2.atoms.iter_mut().zip(coords.iter()) {
             a.position = *c;
         }

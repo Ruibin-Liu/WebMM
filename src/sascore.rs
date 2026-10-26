@@ -29,7 +29,7 @@ static TABLE: std::sync::OnceLock<SaTable> = std::sync::OnceLock::new();
 /// Load the fragment table: raw bytes = `<u32 count LE>` then count ×
 /// `<u32 bit LE><f32 score LE>` (the format exported from
 /// Contrib/SA_Score/fpscores.pkl.gz). Returns the entry count.
-pub fn sa_load_table(bytes: &[u8]) -> Result<usize, String> {
+pub(crate) fn sa_load_table(bytes: &[u8]) -> Result<usize, String> {
     if TABLE.get().is_some() {
         return Err("sa table already loaded".into());
     }
@@ -88,7 +88,7 @@ fn hpair(a: u32, b: u32) -> u32 {
 // graph model (from the engine's own molblock parser output)
 // ---------------------------------------------------------------------------
 
-pub struct SaGraph {
+pub(crate) struct SaGraph {
     /// atomic number per atom
     pub z: Vec<u32>,
     /// formal charge per atom
@@ -215,7 +215,7 @@ fn implicit_hs(z: u32, chg: i32, accum_x10: i64, aromatic: bool, deg: u32) -> u3
 
 /// Build the SA graph from a parsed molecule (bonds as (a, b, order) with
 /// order 1/2/3 aromatic=4 as in the engine's BondType).
-pub fn build_graph(
+pub(crate) fn build_graph(
     zs: &[u32],
     charges: &[i32],
     dms: &[i32],
@@ -471,7 +471,7 @@ fn shortest_path(
 
 /// Morgan radius-2 sparse-count fingerprint — bit-exact with RDKit
 /// (validated against the golden corpus; see the module docs).
-pub fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
+pub(crate) fn morgan_sparse_counts(g: &SaGraph, radius: usize) -> HashMap<u32, u32> {
     let n = g.z.len();
     let mut nbrs: Vec<Vec<(usize, u32)>> = vec![Vec::new(); n];
     let mut own_bonds: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -629,7 +629,7 @@ fn detect_cycles(nbrs: &[Vec<usize>], ring: &mut [bool]) {
 
 /// SA score from the graph (sascorer.py formula verbatim; the fragment
 /// table must be loaded).
-pub fn sa_score_from_graph(g: &SaGraph) -> Result<f64, String> {
+pub(crate) fn sa_score_from_graph(g: &SaGraph) -> Result<f64, String> {
     let table = TABLE
         .get()
         .ok_or("sa table not loaded (sa_load_table first)")?;
@@ -740,7 +740,7 @@ fn potential_stereocenters(g: &SaGraph) -> usize {
 /// identifier set folded mod n_bits — the same folding semantics as
 /// RDKit's GetMorganFingerprintAsBitVect(mol, 2, n_bits). Returns
 /// sorted unique bit indices.
-pub fn ecfp4_fingerprint(g: &SaGraph, n_bits: u32) -> Vec<u32> {
+pub(crate) fn ecfp4_fingerprint(g: &SaGraph, n_bits: u32) -> Vec<u32> {
     let counts = morgan_sparse_counts(g, 2);
     let mut bits: Vec<u32> = counts.keys().map(|&k| k % n_bits).collect();
     bits.sort_unstable();
@@ -751,7 +751,7 @@ pub fn ecfp4_fingerprint(g: &SaGraph, n_bits: u32) -> Vec<u32> {
 /// Tanimoto over two sorted-unique bit-index sets: |A∩B| / |A∪B|.
 /// Empty union returns 0.0 (mirrors the app's tanimotoBits convention,
 /// which in turn mirrors RDKit's DataStructs.TanimotoSimilarity).
-pub fn tanimoto(a: &[u32], b: &[u32]) -> f64 {
+pub(crate) fn tanimoto(a: &[u32], b: &[u32]) -> f64 {
     let (mut i, mut j, mut inter, mut uni) = (0usize, 0usize, 0usize, 0usize);
     while i < a.len() && j < b.len() {
         if a[i] == b[j] {
@@ -867,10 +867,14 @@ fn ring_penalties(g: &SaGraph) -> (f64, f64, f64) {
 }
 
 /// Public wrappers for the penalty-parity test.
-pub fn potential_stereocenters_public(g: &SaGraph) -> usize {
+// dead in the lib target by design: exercised only by
+// tests/sascore_golden.rs, which includes this file directly
+#[allow(dead_code)]
+pub(crate) fn potential_stereocenters_public(g: &SaGraph) -> usize {
     potential_stereocenters(g)
 }
-pub fn ring_penalties_public(g: &SaGraph) -> (f64, f64, f64) {
+#[allow(dead_code)]
+pub(crate) fn ring_penalties_public(g: &SaGraph) -> (f64, f64, f64) {
     ring_penalties(g)
 }
 
