@@ -56,10 +56,11 @@ self.onmessage = async (e) => {
   if (msg.type === 'optimize') {
     try {
       await initPromise;
-      const { sdf, engine, maxIter } = msg;
+      const { sdf, engine, maxIter, restraints } = msg;
       const opts = new wasm.OptimizationOptions();
       opts.engine = engine;
       opts.set_max_iterations(maxIter);
+      if (restraints) opts.set_restraints(restraints);   // user constraints (atom picking)
       const res = wasm.optimize_from_sdf(sdf, opts);
       const coords = [];
       for (let a = 0; a < res.n_atoms; a++)

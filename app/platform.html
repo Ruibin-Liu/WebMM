@@ -1469,6 +1469,15 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
 
    <div class="panel grid studio">
      <div class="studio-main">
+       <div id="pickBar" style="display:none; padding:0.35rem 0.55rem; border-bottom:1px solid var(--border); font-size:0.78rem; align-items:center; gap:0.45rem; flex-wrap:wrap;" aria-live="polite">
+         <strong>⌖ 拾取</strong>
+         <span id="pickStatus">点击 3D 视图中的原子(2→距离 / 3→角度 / 4→二面角)</span>
+         <span id="pickGeom" style="font-variant-numeric:tabular-nums; color:var(--ll-accent); font-weight:600;"></span>
+         <input id="pickR0" type="number" step="0.05" style="width:4.4rem; padding:0.25rem; font-size:0.78rem;" title="目标值(距离 Å / 角度 °)——默认取当前几何" aria-label="约束目标值">
+         <button class="action-btn" id="pickAdd" style="display:none; width:auto; padding:0.25rem 0.6rem;" onclick="pickAddConstraint()">加入约束</button>
+         <button class="action-btn" id="pickFreeze" style="display:none; width:auto; padding:0.25rem 0.6rem;" onclick="pickFreezeAtoms()">冻结所选</button>
+         <button class="action-btn clear" style="width:auto; padding:0.25rem 0.6rem;" onclick="pickClear(true)">清空(Esc)</button>
+       </div>
        <div class="studio-head">
          <div class="vtabs" role="tablist" aria-label="结构视图">
            <button type="button" class="vtab on" id="vtab3d" role="tab" aria-selected="true" onclick="studioTab('3d')">三维</button>
@@ -1487,6 +1496,10 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
            <button id="btnOpt" class="action-btn spatial" onclick="optimize3D()" disabled title="L-BFGS geometry optimization">
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
              优化
+           </button>
+           <button id="btnPick" class="action-btn spatial" onclick="togglePickMode()" disabled title="原子拾取:在 3D 视图点选 2/3/4 个原子建距离/角度/二面角约束,或冻结所选原子;约束随「优化」生效(原子序号与 SDF 逐一核对,不核对不上就拒绝——绝不指错原子)">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2"/></svg>
+             ⌖ 约束
            </button>
            <button id="btnConf" class="action-btn spatial" onclick="runConformers()" disabled>
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="17" r="3"/></svg>
@@ -1546,7 +1559,8 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
            <button class="view-reset" id="btn-viewreset" title="Reset view" aria-label="Reset view">⟲</button>
          </div>
          <div class="version" id="status3d" aria-live="polite" style="margin:0.4rem 0 0;"></div>
-         <details id="energyPanel" style="display:none;">
+         <div id="restraintChips" style="display:none; padding:0.3rem 0.55rem; border-top:1px dashed var(--border); font-size:0.75rem; flex-wrap:wrap; gap:0.35rem; align-items:center;" aria-live="polite"></div>
+       <details id="energyPanel" style="display:none;">
            <summary id="energyTitle" style="cursor:pointer; font-size:0.8rem; color:#475569;">WebMM 能量分解 (kcal/mol)</summary>
            <table id="eterms"></table>
          </details>
@@ -6868,6 +6882,7 @@ function clear3DViewer() {
 // energy panel, conformer ensemble, charges, and button availability.
 function reset3DState() {
   molEpoch++;
+  if (typeof clearRestraintsWithMolecule === 'function') clearRestraintsWithMolecule();   // stale restraints die with their molecule (Top-3)
   if (confRun) cancelConformers();
   confEnsemble = null;
   selConf = -1;
@@ -6925,9 +6940,11 @@ document.getElementById('btn-viewreset').onclick = () => {
 
 function showSdfIn3D(sdf) {
   sdf3d = sdf;
+  clearRestraintsWithMolecule();
   const v = initViewer();
   v.clear();
   v.addModel(sdf, 'sdf');
+  v.setClickable({}, true, atom => { if (pickMode) pickAtom(atom.serial, atom.elem); });
   v.setStyle({}, { stick: { radius: 0.15 }, sphere: { scale: 0.25 } });
   // pharmacophore overlay follows the Features toggle on every fresh model
   const fsEl = document.getElementById('featSpheres');
@@ -7743,6 +7760,145 @@ function getOptWorker() {
   return optWorker;
 }
 
+  // ===================== Top-3: atom picking + user restraints =====================
+  // Atom ledger: 3Dmol serial (1-based) == SDF atom order; WebMM's V2000
+  // parser keeps file order and appends H after heavy atoms — so serials are
+  // stable Ketcher molblock → RDKit → viewer → engine. Every pick verifies
+  // the symbol against the SDF line: a mismatch REJECTS the pick (a feature
+  // that points at the wrong atom is worse than no feature).
+  let pickMode = false;
+  let picked = [];            // 1-based serials, pick order
+  let userRestraints = [];    // {type:'distance'|'angle'|'dihedral'|'freeze', idx:[0-based], v0, fc}
+  let restraintEpoch = -1;    // constraints die with the molecule that made them
+
+  function sdfAtomSymbol(i0) {
+    const lines = sdfLines(sdf3d);
+    return (lines[4 + i0] || '').substring(31, 34).trim();
+  }
+  function sdfAtomCoord(i0) {
+    const l = sdfLines(sdf3d)[4 + i0] || '';
+    return [parseFloat(l.substring(0, 10)), parseFloat(l.substring(10, 20)), parseFloat(l.substring(20, 30))];
+  }
+  const vSub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const vNorm = a => Math.hypot(a[0], a[1], a[2]);
+  const vDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const vCross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  function geomNow() {
+    if (!sdf3d) return null;
+    const p = picked.map(s => sdfAtomCoord(s - 1));
+    if (p.length === 2) return vNorm(vSub(p[0], p[1]));
+    if (p.length === 3) {
+      const a = vSub(p[0], p[1]), b = vSub(p[2], p[1]);
+      return Math.acos(Math.max(-1, Math.min(1, vDot(a, b) / (vNorm(a) * vNorm(b))))) * 180 / Math.PI;
+    }
+    if (p.length === 4) {
+      const b1 = vSub(p[0], p[1]), b2 = vSub(p[2], p[1]), b3 = vSub(p[2], p[3]);
+      const n1 = vCross(b1, b2), n2 = vCross(b2, b3);
+      const m = vCross(n1, b2);
+      const x = vDot(n1, n2), y = vDot(m, n2) / (vNorm(b2) || 1e-12);
+      return Math.atan2(y, x) * 180 / Math.PI;
+    }
+    return null;
+  }
+  function pickUpdateUi() {
+    const bar = document.getElementById('pickBar');
+    bar.style.display = pickMode ? 'flex' : 'none';
+    const names = picked.map(s => `${s}(${sdfAtomSymbol(s - 1) || '?'})`).join('–');
+    document.getElementById('pickStatus').textContent = picked.length
+      ? `已选 ${picked.length}:${names} — ${picked.length === 2 ? '距离' : picked.length === 3 ? '角度' : '二面角'}`
+      : '点击 3D 视图中的原子(2→距离 / 3→角度 / 4→二面角)';
+    const g = geomNow();
+    const gEl = document.getElementById('pickGeom');
+    const rEl = document.getElementById('pickR0');
+    const unit = picked.length === 2 ? ' Å' : ' °';
+    if (g != null) {
+      gEl.textContent = `当前 ${g.toFixed(2)}${unit}`;
+      if (rEl && (rEl.value === '' || rEl.dataset.auto === '1')) { rEl.value = g.toFixed(2); rEl.dataset.auto = '1'; }
+    } else gEl.textContent = '';
+    const ready = picked.length >= 2;
+    document.getElementById('pickAdd').style.display = ready ? '' : 'none';
+    document.getElementById('pickAdd').textContent = picked.length === 2 ? '加入距离约束' : picked.length === 3 ? '加入角度约束' : '加入二面角约束';
+    document.getElementById('pickFreeze').style.display = picked.length ? '' : 'none';
+    if (viewer) {
+      for (const s of picked) viewer.addStyle({ serial: s }, { sphere: { scale: 0.42, color: 'orange' } });
+      viewer.render();
+    }
+  }
+  window.pickAtom = function (serial, elem) {
+    if (!pickMode || !sdf3d) return;
+    if (picked.includes(serial)) { picked = picked.filter(s => s !== serial); pickUpdateUi(); return; }
+    if (picked.length >= 4) return;
+    // atom ledger: 3Dmol's element must equal the SDF line's symbol — else
+    // the index spaces disagree and we refuse to act on it
+    const sym = sdfAtomSymbol(serial - 1);
+    if (!sym || sym.toUpperCase() !== String(elem || '').toUpperCase()) {
+      showError(`⌖ 原子账本校验失败:视图称 #${serial} 为 ${elem},SDF 第 ${serial} 行是 ${sym || '?'} —— 拒绝拾取(绝不指错原子)`);
+      return;
+    }
+    picked.push(serial);
+    if (restraintEpoch !== molEpoch) { userRestraints = []; restraintEpoch = molEpoch; }
+    pickUpdateUi();
+  };
+  window.togglePickMode = function () {
+    if (!sdf3d) { showError('先嵌入 3D 结构再使用约束拾取'); return; }
+    pickMode = !pickMode;
+    if (!pickMode) { picked = []; }
+    pickUpdateUi();
+    set3dStatus(pickMode ? '⌖ 拾取模式:点击原子(再点取消);选 2/3/4 个建约束,或冻结所选' : '拾取已关闭');
+  };
+  window.pickClear = function () { picked = []; pickUpdateUi(); };
+  window.pickAddConstraint = function () {
+    if (picked.length < 2) return;
+    const v0 = parseFloat(document.getElementById('pickR0').value);
+    const g = geomNow();
+    const val = isFinite(v0) ? v0 : g;
+    if (!isFinite(val)) return;
+    userRestraints.push({
+      type: picked.length === 2 ? 'distance' : picked.length === 3 ? 'angle' : 'dihedral',
+      idx: picked.slice(), v0: val, fc: 50,
+    });
+    document.getElementById('pickR0').dataset.auto = '1';
+    picked = [];
+    renderRestraintChips();
+    pickUpdateUi();
+  };
+  window.pickFreezeAtoms = function () {
+    if (!picked.length) return;
+    userRestraints.push({ type: 'freeze', idx: picked.slice() });
+    picked = [];
+    renderRestraintChips();
+    pickUpdateUi();
+  };
+  window.removeRestraint = function (i) { userRestraints.splice(i, 1); renderRestraintChips(); };
+  function restraintJson() {
+    const out = { freeze: [], distance: [], angle: [], dihedral: [] };
+    for (const r of userRestraints) {
+      if (r.type === 'freeze') out.freeze.push(...r.idx.map(s => s - 1));
+      else out[r.type].push({ i: r.idx[0] - 1, j: r.idx[1] - 1, ...(r.type !== 'distance' ? { k: r.idx[2] - 1 } : {}), ...(r.type === 'dihedral' ? { l: r.idx[3] - 1 } : {}),
+        ...(r.type === 'distance' ? { r0: r.v0 } : { a0: r.v0 }), fc: r.fc != null ? r.fc : 10, tol: 0 });
+    }
+    return out;
+  }
+  function renderRestraintChips() {
+    const host = document.getElementById('restraintChips');
+    if (!host) return;
+    host.style.display = userRestraints.length ? 'flex' : 'none';
+    host.innerHTML = userRestraints.map((r, i) => {
+      const label = r.type === 'freeze'
+        ? `❄ 冻结 ${r.idx.join(',')}`
+        : `${r.type === 'distance' ? 'd' : r.type === 'angle' ? '∠' : 'φ'}(${r.idx.join(',')}) = ${r.v0.toFixed(2)}${r.type === 'distance' ? ' Å' : ' °'} ×${r.fc}`;
+      return `<span class="result-badge pass" style="cursor:pointer;" title="移除该约束" onclick="removeRestraint(${i})">${escHtml(label)} ✕</span>`;
+    }).join('') + (userRestraints.length ? '<span class="hint">约束随「优化」生效(可继续调整目标值后再优化)</span>' : '');
+  }
+  function clearRestraintsWithMolecule() {
+    if (restraintEpoch !== molEpoch) { userRestraints = []; restraintEpoch = molEpoch; }
+    picked = [];
+    renderRestraintChips();
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && pickMode && !document.querySelector('.modal[style*="block"]')) { pickClear(); }
+  });
+
 function optimize3D() {
   clearError();
   try {
@@ -7773,7 +7929,8 @@ function optimize3D() {
       }
     };
     worker.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
-    worker.postMessage({ type: 'optimize', sdf: sdf3d, engine, maxIter });
+    worker.postMessage({ type: 'optimize', sdf: sdf3d, engine, maxIter,
+      restraints: userRestraints.length ? JSON.stringify(restraintJson()) : undefined });
   } catch (e) { showError(e); }
 }
 
