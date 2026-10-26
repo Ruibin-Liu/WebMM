@@ -77,7 +77,7 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
 
     for (i, line) in lines[atom_start..atom_end].iter().enumerate() {
         // Extract coordinates using whitespace splitting (more robust than fixed columns)
-        let prefix = if line.len() > 40 { &line[..40] } else { line };
+        let prefix = line.get(..40).unwrap_or(line);
         let parts: Vec<&str> = prefix.split_whitespace().collect();
         if parts.len() < 4 {
             return Err(format!("Atom line {} has too few fields: {}", i + 1, line));
@@ -109,25 +109,53 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
 
     if lines.len() >= bond_end {
         for line in lines[bond_start..bond_end].iter() {
-            if line.len() < 7 {
+            // A well-formed V2000 bond line carries three 3-column fields
+            // (18 chars with columns). Shorter lines are skipped (historic
+            // lenient behavior); 7-8 char lines used to PANIC on the
+            // [6..9] slice below (fixed-column get is boundary-safe).
+            if line.len() < 9 {
                 continue;
             }
 
-            let atom1: usize = line[0..3]
+            // get(a..b) is None on out-of-bounds OR a non-char-boundary
+            // (multi-byte UTF-8) — both are malformed fixed-column fields
+            let f1 = line
+                .get(0..3)
+                .ok_or_else(|| format!("Malformed bond line (atom1 field): {:?}", line))?;
+            let atom1: usize = f1
                 .trim()
                 .parse::<usize>()
                 .map_err(|e| format!("Failed to parse atom1: {}", e))?
                 .checked_sub(1)
                 .ok_or_else(|| "Invalid atom1 index".to_string())?;
 
-            let atom2: usize = line[3..6]
+            let f2 = line
+                .get(3..6)
+                .ok_or_else(|| format!("Malformed bond line (atom2 field): {:?}", line))?;
+            let atom2: usize = f2
                 .trim()
                 .parse::<usize>()
                 .map_err(|e| format!("Failed to parse atom2: {}", e))?
                 .checked_sub(1)
                 .ok_or_else(|| "Invalid atom2 index".to_string())?;
 
-            let bond_type_num: i32 = line[6..9]
+            // Out-of-range references must be REJECTED, not silently
+            // dropped: mol.bonds would disagree with atoms/adjacency and
+            // every bonds-iterating consumer (ring perception, typing)
+            // indexes per-atom arrays with these (was a panic chain)
+            if atom1 >= num_atoms || atom2 >= num_atoms {
+                return Err(format!(
+                    "Bond {}-{} references an atom out of range (molecule has {} atoms)",
+                    atom1 + 1,
+                    atom2 + 1,
+                    num_atoms
+                ));
+            }
+
+            let f3 = line
+                .get(6..9)
+                .ok_or_else(|| format!("Malformed bond line (type field): {:?}", line))?;
+            let bond_type_num: i32 = f3
                 .trim()
                 .parse::<i32>()
                 .map_err(|e| format!("Failed to parse bond type: {}", e))?;
@@ -142,7 +170,11 @@ fn parse_v2000(lines: &[&str]) -> Result<Molecule, String> {
             };
 
             let stereo = if line.len() >= 12 {
-                let stereo_code: i32 = line[9..12].trim().parse().unwrap_or(0);
+                // boundary-safe: None on short or multi-byte-column lines
+                let stereo_code: i32 = line
+                    .get(9..12)
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(0);
                 match stereo_code {
                     // V2000: 1 = wedge up, 6 = hash down (CTFile spec)
                     1 => BondStereo::Wedge,
@@ -414,7 +446,11 @@ fn parse_charge(line: &str) -> f64 {
     // V2000 charge field encoding (column 36-39)
     // 0=none, 1=+3, 2=+2, 3=+1, 4=doublet radical, 5=-1, 6=-2, 7=-3
     if line.len() > 39 {
-        let charge_code: i32 = line[36..40].trim().parse().unwrap_or(0);
+        // boundary-safe on non-ASCII lines (get is None → charge 0, was a panic)
+        let charge_code: i32 = line
+            .get(36..40)
+            .map(|f| f.trim().parse().unwrap_or(0))
+            .unwrap_or(0);
         match charge_code {
             0 => 0.0,
             1 => 3.0,
@@ -435,7 +471,9 @@ fn parse_stereo_parity(line: &str) -> u8 {
     // V2000 atom stereo parity field (column 39-42)
     // 0=not specified, 1=odd (CCW), 2=even (CW), 3=either
     if line.len() > 42 {
-        line[39..42].trim().parse().unwrap_or(0)
+        line.get(39..42)
+            .map(|f| f.trim().parse().unwrap_or(0))
+            .unwrap_or(0)
     } else {
         0
     }
@@ -461,6 +499,52 @@ fn parse_v3000_stereo_parity(data: &str) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- review regressions: malformed input must Err/skip, never panic ----
+    const PROBE_HDR: &str = "probe\n\n\n  2  1  0  0  0  0  0  0  0  0999 V2000\n";
+    const C_LINE: &str =
+        "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0  0\n";
+    const C_LINE2: &str =
+        "    1.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0  0\n";
+
+    #[test]
+    fn bond_line_short_is_skipped_not_panicking() {
+        // 8-char bond line: used to panic on the [6..9] slice
+        let sdf = format!("{}{}{} 1  2  1\nM  END\n", PROBE_HDR, C_LINE, C_LINE2);
+        let r = parse_sdf(&sdf);
+        assert!(
+            r.is_ok(),
+            "short bond line should be skipped, got {:?}",
+            r.err()
+        );
+        assert_eq!(r.unwrap().bonds.len(), 0);
+    }
+
+    #[test]
+    fn bond_out_of_range_is_rejected() {
+        // used to be silently kept in mol.bonds → inconsistent state →
+        // downstream per-atom indexing panics (ring perception, typing)
+        let sdf = format!(
+            "{}{}{}  1  9  1  0  0  0\nM  END\n",
+            PROBE_HDR, C_LINE, C_LINE2
+        );
+        let err = parse_sdf(&sdf).unwrap_err();
+        assert!(err.contains("out of range"), "got: {}", err);
+    }
+
+    #[test]
+    fn multibyte_columns_do_not_panic() {
+        // non-ASCII crossing a fixed-column boundary used to panic the slice
+        let atom_line = "    0.0000    0.0000    0.0000 C  µ²0  0  0  0  0  0  0  0  0\n";
+        let sdf = format!(
+            "{}{}{}  1  2  1  0  0  0\nM  END\n",
+            PROBE_HDR, atom_line, C_LINE2
+        );
+        let _ = parse_sdf(&sdf); // must not panic
+        let bond_line = "  1 µ2  1  0  0  0\n";
+        let sdf = format!("{}{}{}{}M  END\n", PROBE_HDR, C_LINE, C_LINE2, bond_line);
+        let _ = parse_sdf(&sdf); // must not panic (Err is fine)
+    }
 
     #[test]
     fn test_parse_water_sdf() {
