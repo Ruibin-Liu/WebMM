@@ -47,8 +47,9 @@ This repository uses **cargo** as the sole Rust dependency and build manager.
 - Remove dependencies: `cargo remove <crate>`
 - Build/test: `cargo build` / `cargo test`
 - Lint: `cargo clippy --all-targets`
-- WASM build: `wasm-pack build --target web --release`, then stage
-  `site/index.html` into `pkg/` as the landing page
+- WASM build + local deploy staging: `npm run stage` (`scripts/stage-pkg.sh`:
+  wasm-pack build, then stage `site/index.html`/`playground.html`, vendored
+  3Dmol and `app/` into `pkg/`, pruning stale files — mirrors pages.yml)
 
 ### Forbidden Commands
 - `cargo install` for project-local tooling (use the pinned wasm-pack devDependency)
