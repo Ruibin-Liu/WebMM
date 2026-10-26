@@ -1,27 +1,28 @@
-# Plan: 双轮 —— Top-4 SAR 决策工具 + Ketcher bundle 扩展(已完成)
+# Plan: Top-5 统一任务执行器 + 计算漏斗(设计已冻结,待用户批准实施)
 
-## 交付
-**Part B:Top-4 SAR 工具**
-- sar.js 纯模块:V2000 图解析/小核心回溯匹配(芳香键 4↔1/2 双向容差,
-  度剪枝)/附着点检测/R 基团提取(核外连通片→环感知 kekulé SMILES 写出器,
-  [*] 附着,先分类树边/回边后发射——祖先开环后代闭合)/透明 MPO(梯形
-  desirability 窗口/双向;空值 null 不计入;Lead-like 预设)。
-- UI(检索模式「SAR 分析」卡):核心 SMILES/MCS 建议(MolList API,MCS
-  只是建议非真相)/R 表(列=附着位,RDKit 再规范化片段+tooltip 保留原始
-  [*] SMILES,未匹配行明示不静默丢)/MPO 表(逐准则 原始值(得分)+总分
-  +n/N;活性准则可选=所选 assay 最小值,IC50 类越低越好)/CSV 导出。
-- 测试:Node +11(124/124);m10_sar 15 断言。
+设计文档:**docs/task-executor-design.md**(Fable-5.1 设计评审 + GPT-6-Astra 红队,收敛稿已冻结)。
 
-**Part A:Ketcher bundle 扩展**
-- ketcher-entry.js 增 api()/getSmarts()/getSelection()(防御式,缺失时
-  明确报错);build-ketcher.sh --install 重建 30MB bundle(sanity 过)。
-- 运行时探针实证:getSmarts 返回完整 SMARTS(aspirin);getSelection 形状
-  {atoms,bonds};editor 有 highlightAtomById(后续可用)。
-- 桥接 UI(模态两钮):「SMARTS → 检索」画布含查询特征导出→填查询→切
-  sub 模式(画图即查询,m11 断言真实检索命中);「选区 → 3D」molfile 序
-  经原子账本核对→3D 高亮+拾取(空选区教学提示不报错)。
-- 测试:m11_ketcher 7 断言。
+## 实施计划(批准后执行)
+
+### 阶段 1:契约 + 骨架
+1. `docs/task-contract.md`:冻结信封(TaskSpec 字段/状态机含 interrupted/seed 域分离规则/参数指纹规范化算法/buildId=SHA-256(wasm)/四分类记账)。
+2. `app/tasks/` 五模块骨架:contract.js(类型化构造+指纹)/ scheduler.js(两级优先级+全局令牌+预留槽+取消队列层)/ pools.js(模块分池+N 任务回收+预热备用+taskId+generation 迟到丢弃)/ funnel.js(barrier+确定性预算截断+检查点)/ store.js(IDB tasks 旁表 upsert+同库跨 store Done 事务+对账+sessionId 心跳)。
+3. Node 测试:指纹规范化(-0/默认/数组序)、状态机迁移、对账(幽灵 complete/无主 abandoned)、幂等(重复 Done)。
+
+### 阶段 2:analogScan 迁移(验收里程碑)
+4. A/B/C/D 胶水 → typed pipeline 数据 + funnel.js runner;有效 stages 快照入 spec;四分类计数;同步 A 阶段输入上限+阻塞实测。
+5. **并发等价测试:同 spec 并发 1 vs 4 逐位相等**(CDP);干净/用过/重建 worker 一致性(Node)。
+6. 任务托盘最小版:全局活动入口(计数→任务/阶段/取消/结果去向),页面状态行保留。
+7. CDP m12_tasks;CreateAnalogRun 走任务层(CreateAnalogRun 契约不变,facts 结构不变)。
+
+### 阶段 3:optimize3D + shapeAlign
+8. optimize3D:inputRevision=molblock 哈希+restraints 指纹;stale 路径(结构变更→"对旧结构重算/丢弃")。
+9. shapeAlign:query+target 姿态哈希+color_scale 入 revision。
+10. 各自 kind input schema 冻结进 task-contract.md。
+
+### 不做(设计 §11):DSL/断点续跑/worker 内抢占/阶段让路/水位降载/每阶段 fact/桌面托盘/主线程同步任务/工作台批量迁移。
 
 ## 验收
-Node 124/124;CDP 24 套件(run.sh 含新 m10/m11);零 page error;
-Ketcher 既有闭环(mount/getMolfile/setMolecule/apply)零回归。
+- Node + 新增任务层套件全绿;CDP m12 + 既有 24 套件零回归;analogScan 并发等价逐位相等;
+- CreateAnalogRun/facts 既有契约零破坏(m6_analog_history 全绿即证);
+- clippy/fmt/cargo test 不受影响(纯 JS 层,引擎零改动)。
