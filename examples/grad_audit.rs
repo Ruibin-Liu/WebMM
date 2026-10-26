@@ -2,6 +2,7 @@
 //! the MMFF validation corpus (scripts/val_set*) and the GFN-FF fixtures,
 //! at multiple perturbed geometries. Correctness infrastructure — run with:
 //!   cargo run --release --example grad_audit [-- --mmff | --gfnff]
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::path::PathBuf;
 
 fn corpus_sdfs() -> Vec<PathBuf> {

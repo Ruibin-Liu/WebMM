@@ -1,6 +1,7 @@
 //! Print WebMM MMFF94s atom types for all test molecules -> JSON.
 //! Run: cargo run --release --example dump_atom_types > scripts/webmm_atom_types.json
 
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::io::Write;
 use webmm::mmff::{MMFFAtomType, MMFFForceField};
 use webmm::molecule::parser::parse_sdf;

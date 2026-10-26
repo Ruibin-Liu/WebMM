@@ -22,3 +22,48 @@ proptest = "1.0"
 opt-level = 3
 lto = true
 codegen-units = 1
+
+# BeautifulRust drop-in lints
+#
+# Paste this into your Cargo.toml (or replace [lints] with [workspace.lints] in a
+# workspace root and add `[lints] workspace = true` to each member). It makes clippy
+# enforce the rules from the rust-best-practices skill that a machine can check.
+# Everything is "warn"; make CI strict with:
+#
+#     cargo clippy --all-targets --all-features -- -D warnings
+#
+# Silence a lint locally with a reason, which the config below requires:
+#
+#     #[expect(clippy::unwrap_used, reason = "the regex is a literal and always compiles")]
+#
+# Lints marked [lib] fit libraries; applications can drop them.
+
+# BeautifulRust lints — phased adoption (clippy.toml alongside configures
+# allow-unwrap/expect/print-in-tests). Full set measured at 4810 warnings on
+# this codebase; the deferred lints below stay off with rationale until the
+# corresponding cleanup lands:
+#   pedantic / as_conversions / cast_*  — 2000+ findings in a validated
+#     numeric kernel; literal-separator & doc-backtick churn has no payoff
+#   print_stdout / print_stderr         — examples/ & benches/ are diagnostic
+#     CLIs, printing is their purpose
+#   missing_docs / missing_debug_implementations — 584 items, internal crate
+#   allow_attributes*                   — 41 existing allows; convert to
+#     #[expect(..., reason)] as code is touched
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# panics: prefer expect("reason") over unwrap(); tests are exempt via
+# clippy.toml (allow-unwrap-in-tests)
+unwrap_used = "warn"
+expect_used = "allow"           # expect with a reason is the sanctioned form
+panic_in_result_fn = "warn"
+# leftovers & hygiene
+dbg_macro = "warn"
+todo = "warn"
+string_add = "warn"
+wildcard_imports = "warn"
+redundant_clone = "warn"

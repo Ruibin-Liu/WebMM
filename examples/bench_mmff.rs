@@ -7,6 +7,7 @@
 //!     steady-state numbers)
 //!   * warmup: 20 ops
 //!   * steady state: calculate_energy_and_gradient until >= min-ms elapsed
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::hint::black_box;
 use std::io::Write;
 use std::time::{Duration, Instant};

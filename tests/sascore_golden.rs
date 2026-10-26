@@ -1,5 +1,6 @@
-// Native golden test: SA score + bit-exact Morgan vs Python-generated
-// references (tests/fixtures/sascore/*.json). Run: cargo test --test sascore_golden
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
+                               // Native golden test: SA score + bit-exact Morgan vs Python-generated
+                               // references (tests/fixtures/sascore/*.json). Run: cargo test --test sascore_golden
 use std::collections::HashMap;
 
 #[path = "../src/sascore.rs"]

@@ -1,5 +1,6 @@
 //! Diagnose WebMM ETKDG embedding of a small conjugated molecule (butadiene default):
 //! prints MMFF energy breakdown + key bond lengths + the conjugated dihedral.
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use webmm::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
 use webmm::mmff::MMFFForceField;
 use webmm::molecule::parser::parse_sdf;

@@ -1,6 +1,7 @@
 //! MD / metadynamics performance audit.
 //! - MD throughput: steps/ms x molecule x engine (NVE, fixed seed)
 //! - Metad degradation: per-step cost vs deposited hill count
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::rc::Rc;
 use webmm::forces::ForceField;
 use webmm::md::{MDConfig, MDRunner};

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use webmm::etkdg::generate_initial_coords;
 use webmm::molecule::parser::parse_sdf;
 

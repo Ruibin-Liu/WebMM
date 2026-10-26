@@ -1,6 +1,7 @@
 //! Dump webmm's resolved per-bond / per-angle / per-type-vdW params for an SDF dir.
 //! Run: cargo run --release --example dump_params -- <SDF_DIR> > params.json
 //! Used by the parameter audit (scripts/audit_params.py) to compare against RDKit.
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::io::Write;
 use webmm::mmff::{
     get_angle_params_with_bond_info, get_bond_params, get_mmff_bond_type, get_vdw_params,

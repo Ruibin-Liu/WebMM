@@ -2,6 +2,7 @@
 //!
 //! Run with: `cargo bench`
 
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::time::Instant;
 
 fn main() {

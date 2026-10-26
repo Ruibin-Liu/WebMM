@@ -1,6 +1,7 @@
 //! Dump WebMM atom types + energy (at SDF coords) for all validation SDFs -> JSON.
 //! Run: cargo run --release --example dump_types_energy [SDF_DIR]
 //! (SDF_DIR defaults to scripts/val_set)
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::io::Write;
 use webmm::mmff::MMFFForceField;
 use webmm::molecule::parser::parse_sdf;

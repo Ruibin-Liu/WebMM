@@ -4,6 +4,7 @@
 //! Prints per-atom (idx symbol hybridization x y z), bond lengths, key 1-3 angles,
 //! and the MMFF94s single-point energy, as TSV/JSON-ish lines for comparison
 //! against RDKit embeddings (see scripts/diag_compare.py).
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::env;
 
 use webmm::etkdg::{generate_initial_coords_with_config, ETKDGConfig};

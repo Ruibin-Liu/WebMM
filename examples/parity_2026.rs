@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 fn main() {
     let refs: std::collections::HashMap<String, Option<f64>> =
         serde_json::from_str(&std::fs::read_to_string("/tmp/frag_ref_2026.json").unwrap()).unwrap();

@@ -7,6 +7,7 @@
 //!
 //! Run: cargo run --release --example dump_etkdg_geom [sdf_dir] > scripts/etkdg_val/webmm_ref.json
 //!   WEBMM_SEEDS=42,43,100,7 cargo run --release --example dump_etkdg_geom
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use std::io::Write;
 use webmm::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
 use webmm::mmff::MMFFForceField;

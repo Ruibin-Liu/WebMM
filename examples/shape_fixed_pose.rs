@@ -3,6 +3,7 @@
 //!
 //! Usage: cargo run --release --example shape_fixed_pose -- a.sdf b.sdf
 
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {

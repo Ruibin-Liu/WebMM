@@ -1,6 +1,7 @@
 //! Run WebMM ETKDG on the RDKit #9143 reporter macrocycle and report amide
 //! bond planarity. Amide is planar when the O=C-N-X dihedral ~ 0°/180°;
 //! the #9143 bug produces ~90° (twisted).
+#![allow(clippy::unwrap_used)] // diagnostic tool: a panic on bad input is the report
 use webmm::etkdg::{generate_initial_coords_with_config, ETKDGConfig};
 use webmm::molecule::graph::find_rings;
 use webmm::molecule::parser::parse_sdf;
