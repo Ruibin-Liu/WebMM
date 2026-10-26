@@ -37,7 +37,11 @@ pub fn sa_load_table(bytes: &[u8]) -> Result<usize, String> {
         return Err("sa table too short".into());
     }
     let n = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-    if bytes.len() < 4 + n * 8 {
+    // u64 arithmetic: on wasm32 (32-bit usize) `4 + n * 8` wraps for large
+    // declared counts and used to slip past this check, then panic on the
+    // `bytes[o]` indexing below
+    let need = 4u64 + (n as u64) * 8; // n came from u32: lossless
+    if (bytes.len() as u64) < need {
         return Err(format!(
             "sa table truncated: {} entries declared, {} bytes",
             n,
@@ -873,6 +877,22 @@ pub fn ring_penalties_public(g: &SaGraph) -> (f64, f64, f64) {
 #[cfg(test)]
 mod tests_cycle {
     use super::*;
+
+    #[test]
+    fn sa_load_rejects_huge_declared_count() {
+        // n = 0xFFFFFFF0: `4 + n*8` wraps on 32-bit usize (wasm32) and used
+        // to bypass the truncation check — must be a clean Err on every
+        // target
+        let mut bytes = vec![0u8; 16];
+        bytes[0..4].copy_from_slice(&0xFFFFFFF0u32.to_le_bytes());
+        let r = sa_load_table(&bytes);
+        assert!(
+            r.is_err(),
+            "huge declared count must be rejected, got {:?}",
+            r
+        );
+    }
+
     #[test]
     fn benzene_ring_detected() {
         let g = build_graph(
