@@ -107,11 +107,11 @@ async function handle(msg) {
       return;
     }
     if (msg.type === 'full') {
-      const { idx, ci, esdf, tSitesJson, useColor } = msg;
+      const { idx, ci, esdf, tSitesJson, useColor, colorOpts } = msg;
       try {
         if (!initPromise) throw new Error('worker not initialized');
         const res = JSON.parse(useColor
-          ? wasm.shape_align_color_wasm(qsdf, esdf, qSitesJson, tSitesJson, '{"random_starts": 8}')
+          ? wasm.shape_align_color_wasm(qsdf, esdf, qSitesJson, tSitesJson, colorOpts || '{"random_starts": 8}')
           : wasm.shape_align_wasm(qsdf, esdf, '{"random_starts": 8}'));
         self.postMessage({
           type: 'fulled', idx, ci,

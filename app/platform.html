@@ -1394,6 +1394,12 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
                 <input type="checkbox" id="shapeFlex" aria-label="柔性对齐重打分"> flex top 10
               </label>
             </span>
+            <label style="display:inline-flex; align-items:center; gap:0.3rem; font-size:0.75rem; color:var(--muted);" title="Combo = Shape×w + Color×(1−w)。拖动即时重排(固定姿势,不重新叠合);「重新叠合检索」用同一权重作为联合优化的 color_scale 去重新搜索姿态。无 color 分数的行按 shape 排(不罚分)。">
+              Shape↔Color
+              <input type="range" id="shapeColorW" min="0" max="1" step="0.05" value="0.5" style="width:88px; accent-color:var(--ll-accent);" oninput="onComboWChange()" aria-label="combo 权重(shape vs color)">
+              <span id="shapeColorWVal" style="min-width:4.6em; font-variant-numeric:tabular-nums;">50/50</span>
+            </label>
+            <button class="action-btn" id="shapeRealignBtn" style="display:none; width:auto; padding:0.3rem 0.6rem; font-size:0.72rem;" onclick="runSearch()" title="当前权重与硬编码 50:50 不同:重跑检索时将以该权重作为联合优化的 color_scale(姿态重新搜索;非固定姿势重排)">按此权重重新叠合检索</button>
             <details id="colorWeightsWrap">
               <summary style="cursor:pointer; font-size:0.75rem; color:var(--muted); display:inline-flex; align-items:center;" title="Per-type color force field weights: how many times each feature type counts in Color T / Combo (1.0 = ROCS-style uniform)">色权重</summary>
               <div style="position:absolute; z-index:50; background:#fff; border:1px solid var(--border); border-radius:8px; padding:0.6rem; display:flex; flex-wrap:wrap; gap:0.5rem; max-width:340px; box-shadow:0 4px 12px rgba(0,0,0,0.12); white-space:normal;">
@@ -3191,12 +3197,53 @@ function rdkitAvailable() {
     }
     const matched = best.filter(x => x >= 0.5).length;
     const tMatched = tBest.filter(x => x >= 0.5).length;
-    return { matched, total: qSites.length, best, tBest, tMatched, tTotal: tSites.length };
+    // per-query-site feature type (same order as `best`) — powers the
+    // per-feature contribution tooltip (Top-2: 排名可解释)
+    const types = qSites.map(s => s.type);
+    return { matched, total: qSites.length, best, tBest, tMatched, tTotal: tSites.length, types };
   }
 
   const SHAPE_SCREEN_THRESHOLD = 300; // entries; above this, two-phase search
   let shapeRunToken = 0;             // stale async shape runs drop their results
   const SHAPE_TOP_N = 50;              // full-quality re-rank count
+
+  // ---- Top-2: combo weight + fair ranking ----
+  function comboW() { const el = document.getElementById('shapeColorW'); return el ? Math.max(0, Math.min(1, parseFloat(el.value))) : 0.5; }
+  // SORTING combo (order-preserving form): score + k·colorT with
+  // k=(1-w)/w — at the default w=0.5 this is EXACTLY the historical
+  // score+colorT (row order and the m6 lead-hop contract unchanged); a row
+  // without a color score ranks by shape (no -1 penalty — "no evidence"
+  // is not "zero score")
+  function comboFor(r) { const w = comboW(); return r.colorT == null ? r.score : r.score + (1 - w) / Math.max(w, 0.05) * r.colorT; }
+  // DISPLAY combo (normalized 0–1 blend for the % column)
+  function comboDisp(r) { const w = comboW(); return r.colorT == null ? r.score : w * r.score + (1 - w) * r.colorT; }
+  function onComboWChange() {
+    const w = comboW();
+    const val = document.getElementById('shapeColorWVal');
+    if (val) val.textContent = Math.round(w * 100) + '/' + Math.round((1 - w) * 100);
+    const btn = document.getElementById('shapeRealignBtn');
+    if (btn) btn.style.display = Math.abs(w - 0.5) > 1e-9 ? '' : 'none';
+    // fixed-pose re-rank of the CURRENT shape results (no re-alignment —
+    // the poses were optimized under the search-time objective)
+    if (__lastRenderedRows && __lastRenderedMode === 'shape' && __lastRenderedRows.length > 1) {
+      const rows = __lastRenderedRows.slice().sort((a, b) => comboFor(b) - comboFor(a));
+      renderSearchResults(rows, 'shape', (__lastRenderedMsg || '').replace(/ · 重排[^·]*$/, '') + ` · 重排 Shape ${Math.round(w * 100)}/Color ${Math.round((1 - w) * 100)}(固定姿势,未重新叠合)`);
+    }
+  }
+  window.onComboWChange = onComboWChange;
+  // per-feature contribution tooltip text (Top-2: 排名可解释) — the ratios
+  // come from pharmMatch.best (same order as qSites)
+  function pharmFeatureTip(pharm) {
+    if (!pharm || !pharm.best || !pharm.types) return '';
+    const parts = pharm.best.map((r, i) => {
+      const t = pharm.types[i] || '?';
+      return `${t} ${r >= 0.5 ? '✓' : '✗'} ${r.toFixed(2)}`;
+    });
+    return parts.join(' · ');   // escaped by the caller
+  }
+  // search-time joint-objective color scale derived from the same slider:
+  // 0.5 keeps the historical 1.0; 1.0 -> 0 (pure shape); 0 -> capped 20
+  function comboColorScale() { const w = comboW(); return w === 0.5 ? null : Math.min(20, (1 - w) / Math.max(w, 1e-9)); }
 
   async function runShapeSearch(q) {
     if (!window.webmm) { searchStatus('WebMM engine not loaded — shape search unavailable'); return; }
@@ -3266,7 +3313,7 @@ function rdkitAvailable() {
         // joint shape+color optimization when both sides have sites
         const useColor = qSitesJson && tSitesJson;
         const res = JSON.parse(useColor
-          ? window.webmm.shape_align_color_wasm(qsdf, esdf, qSitesJson, tSitesJson, '{"random_starts": 8}')
+          ? window.webmm.shape_align_color_wasm(qsdf, esdf, qSitesJson, tSitesJson, JSON.stringify({ random_starts: 8, ...(comboColorScale() != null ? { color_scale: comboColorScale() } : {}) }))
           : window.webmm.shape_align_wasm(qsdf, esdf, '{"random_starts": 8}'));
         if (res.tanimoto >= thr) {
           const colorT = useColor ? res.color_tanimoto : null;
@@ -3289,7 +3336,7 @@ function rdkitAvailable() {
         await new Promise(r => setTimeout(r, 0));
       }
     }
-    rows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+    rows.sort((a, b) => comboFor(b) - comboFor(a));   // slider-aware; missing color = shape-only, not -1
     // pharmacophore filter (share of query features matched)
     const pharmMin = parseFloat(document.getElementById('pharmFilter').value) || 0;
     const before = rows.length;
@@ -3302,7 +3349,7 @@ function rdkitAvailable() {
     let flexMsg = '';
     if (document.getElementById('shapeFlex').checked && shownRows.length) {
       const fr = await flexRefineTop(shownRows, qsdf, qSites, qCoordsCache, cw);
-      shownRows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+      shownRows.sort((a, b) => comboFor(b) - comboFor(a));
       flexMsg = ` · flex refined ${fr.refined}/${fr.attempted}`;
     }
     await recordSearchRound('shape', shownRows);
@@ -3482,7 +3529,8 @@ function rdkitAvailable() {
       const wk = workers[i % workers.length];
       fullWaiters.push({ idx: job.e.idx, ci: job.ci, resolve });
       wk.postMessage({ type: 'full', idx: job.e.idx, ci: job.ci, esdf: job.esdf,
-        tSitesJson: job.tSitesJson, useColor: job.useColor });
+        tSitesJson: job.tSitesJson, useColor: job.useColor,
+        colorOpts: JSON.stringify({ random_starts: 8, ...(comboColorScale() != null ? { color_scale: comboColorScale() } : {}) }) });
     })));
     if (token !== shapeRunToken) { for (const w of workers) w.terminate(); return; }
     // pick the winner per entry (max combo)
@@ -3490,7 +3538,7 @@ function rdkitAvailable() {
     for (let i = 0; i < jobs.length; i++) {
       const job = jobs[i], res = results[i];
       if (!res || res.failed || res.ci !== job.ci) continue;   // stale/failed slot
-      const combo = res.tanimoto + (job.useColor ? res.color_tanimoto : 0);
+      const combo = comboFor({ score: res.tanimoto, colorT: job.useColor ? res.color_tanimoto : null });
       const cur = byEntry.get(job.e.idx);
       if (!cur || combo > cur.combo) {
         let pharm = null;
@@ -3516,7 +3564,7 @@ function rdkitAvailable() {
       }
     }
     for (const w of workers) w.terminate();
-    rows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+    rows.sort((a, b) => comboFor(b) - comboFor(a));   // slider-aware; missing color = shape-only, not -1
     const pharmMin = parseFloat(document.getElementById('pharmFilter').value) || 0;
     const before = rows.length;
     const shownRows = pharmMin > 0 && qCoordsCache
@@ -3525,12 +3573,17 @@ function rdkitAvailable() {
     let flexMsg = '';
     if (document.getElementById('shapeFlex').checked && shownRows.length) {
       const fr = await flexRefineTop(shownRows, qsdf, qSites, qCoordsCache, cw);
-      shownRows.sort((a, b) => (b.score + (b.colorT ?? -1)) - (a.score + (a.colorT ?? -1)));
+      shownRows.sort((a, b) => comboFor(b) - comboFor(a));
       flexMsg = ` · flex refined ${fr.refined}/${fr.attempted}`;
     }
     await recordSearchRound('shape', shownRows);
+    // ensemble-fairness probe (Astra): effective conformer counts per entry —
+    // uneven generation favors entries with more conformers under best-over-N
+    const effN = shownRows.map(r => r.e.confs ? r.e.confs.length : nConfs);
+    const fairMsg = effN.length > 1 && Math.min(...effN) !== Math.max(...effN)
+      ? ` · ⚠ 构象数不均(${Math.min(...effN)}–${Math.max(...effN)}):best-over-N 偏向构象多的分子` : '';
     renderSearchResults(shownRows, 'shape',
-      `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${flexMsg} · ${nConfs} confs/entry (best over conformers)` +
+      `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${flexMsg} · ${nConfs} confs/entry (best over conformers)${fairMsg}` +
       (cacheHits ? ` · ${cacheHits} cached` : '') +
       (cacheHits + todo.length > 0 && genCount < todo.length ? ` · ${todo.length - genCount} rescreened` : '') +
       ` · two-phase (screen ${searchLibrary.length}×${nConfs} → full ${candidates.length}×${TOP_CONF}, screen ${(screenMs / 1000).toFixed(1)} s)` +
@@ -3983,11 +4036,11 @@ function rdkitAvailable() {
         (mode === 'sub'
           ? `<td><span class="result-badge pass">Match</span></td>` + consCell
           : shapeMode
-          ? (conf != null ? `<td class="value" title="entry conformer that produced this score">${conf + 1}</td>` : '') +
+          ? (conf != null ? `<td class="value" title="获胜构象 #${conf + 1}${e.confs ? ' / 有效构象 ' + e.confs.length : ''}(取系综最优:构象更多的分子占有更大采样优势——比较时留意)">${conf + 1}</td>` : '') +
             `<td class="value" data-heat="${score.toFixed(3)}">${(score * 100).toFixed(1)}%</td>` +
             `<td class="value" ${colorT != null ? `data-heat="${colorT.toFixed(3)}"` : ''}>${colorT != null ? (colorT * 100).toFixed(1) + '%' : '—'}</td>` +
-            `<td class="value" title="pharmacophore features matched">${pharm ? pharm.matched + '/' + pharm.total : '—'}</td>` +
-            `<td class="value" data-heat="${((score + (colorT || 0)) / 2).toFixed(3)}"><strong>${((score + (colorT || 0)) * 100).toFixed(1)}%</strong></td>`
+            `<td class="value" title="${escHtml('per-feature best match (≥0.5 = matched)\n' + (pharmFeatureTip(pharm) || ''))}">${pharm ? pharm.matched + '/' + pharm.total : '—'}</td>` +
+            `<td class="value" data-heat="${comboDisp(shown[i]).toFixed(3)}"><strong>${(comboDisp(shown[i]) * 100).toFixed(1)}%</strong></td>`
           : `<td class="value" data-heat="${score.toFixed(3)}">${(score * 100).toFixed(1)}%</td>`) + consCell + triageCell;
       tb.appendChild(tr);
     }
