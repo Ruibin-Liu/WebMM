@@ -795,6 +795,13 @@ pub struct AlignOptions {
     /// best combo within 0.018 of the exhaustive rescore (7/20 pairs differ
     /// at all); usize::MAX = rescore every start.
     pub rescore_top: usize,
+    /// Global shape↔color balance for the JOINT optimization objective:
+    /// multiplies every color-site weight (default 1.0 = the historical
+    /// 50:50-aligned balance). 0.0 = pure-shape alignment; >1 biases the
+    /// optimization toward feature overlap. The post-hoc shape/color
+    /// Tanimotos stay scale-invariant (both self- and cross-overlaps scale),
+    /// so only the pose search changes, never the reported scores.
+    pub color_scale: f64,
 }
 
 impl Default for AlignOptions {
@@ -802,6 +809,7 @@ impl Default for AlignOptions {
         AlignOptions {
             random_starts: 16,
             max_iter: 200,
+            color_scale: 1.0,
             seed: 42,
             screen: false,
             rescore_top: 8,
@@ -1075,7 +1083,7 @@ pub fn align_colored(
                 c: [x.c[0] - q_com[0], x.c[1] - q_com[1], x.c[2] - q_com[2]],
                 alpha: x.alpha,
                 type_id: x.type_id,
-                w: x.w,
+                w: x.w * opts.color_scale,
             })
             .collect()
     });
@@ -1085,7 +1093,7 @@ pub fn align_colored(
                 c: [x.c[0] - t_com[0], x.c[1] - t_com[1], x.c[2] - t_com[2]],
                 alpha: x.alpha,
                 type_id: x.type_id,
-                w: x.w,
+                w: x.w * opts.color_scale,
             })
             .collect()
     });
@@ -1590,6 +1598,7 @@ mod tests {
             &AlignOptions {
                 random_starts: 6,
                 max_iter: 250,
+                color_scale: 1.0,
                 screen: false,
                 rescore_top: 8,
                 seed: 3,
@@ -1803,6 +1812,7 @@ mod tests {
             &AlignOptions {
                 random_starts: 6,
                 max_iter: 250,
+                color_scale: 1.0,
                 screen: false,
                 rescore_top: 8,
                 seed: 5,
@@ -1836,6 +1846,7 @@ mod tests {
         let opts = AlignOptions {
             random_starts: 16,
             max_iter: 200,
+            color_scale: 1.0,
             seed: 42,
             screen: true,
             rescore_top: 3,
@@ -1893,6 +1904,7 @@ mod tests {
                     &AlignOptions {
                         random_starts: 12,
                         max_iter: 200,
+                        color_scale: 1.0,
                         seed: 7,
                         screen: false,
                         rescore_top: 8,
@@ -1904,6 +1916,7 @@ mod tests {
                     &AlignOptions {
                         random_starts: 12,
                         max_iter: 200,
+                        color_scale: 1.0,
                         seed: 7,
                         screen: false,
                         rescore_top: usize::MAX,
@@ -2038,6 +2051,67 @@ mod tests_color_weights {
         let (o_w, g_w) = color_overlap_grad(&q, &t, &[0.1, -0.1, 0.05], &[0.3, 0.0, -0.2]);
         // gradient path runs with weights too
         assert!(o_w.is_finite() && g_w.iter().all(|x| x.is_finite()));
+    }
+
+    #[test]
+    fn color_scale_zero_equals_shape_only_alignment() {
+        // color_scale = 0 removes color from the JOINT pose search: the
+        // shape Tanimoto must then equal a pure-shape alignment under the
+        // same starts/seed (and the pose search must remain deterministic)
+        let qa = shape_mol_from_atoms(&[
+            ShapeAtom {
+                c: [0.0, 0.0, 0.0],
+                alpha: 2.0,
+            },
+            ShapeAtom {
+                c: [1.5, 0.0, 0.0],
+                alpha: 2.0,
+            },
+            ShapeAtom {
+                c: [3.0, 0.3, 0.0],
+                alpha: 2.0,
+            },
+        ]);
+        let ta = shape_mol_from_atoms(&[
+            ShapeAtom {
+                c: [0.4, 0.2, 0.0],
+                alpha: 2.0,
+            },
+            ShapeAtom {
+                c: [1.9, 0.1, 0.1],
+                alpha: 2.0,
+            },
+            ShapeAtom {
+                c: [3.3, 0.4, 0.2],
+                alpha: 2.0,
+            },
+        ]);
+        let (qs, ts) = two_type_sites(1.0, 1.0);
+        let base = AlignOptions {
+            random_starts: 8,
+            ..Default::default()
+        };
+        let shape_only = align(&qa, &ta, &base);
+        let zeroed = align_colored(
+            &qa,
+            &ta,
+            Some(&qs),
+            Some(&ts),
+            &AlignOptions {
+                color_scale: 0.0,
+                ..base
+            },
+        );
+        assert!(
+            (shape_only.tanimoto - zeroed.tanimoto).abs() < 1e-9,
+            "color_scale=0 must reduce to the shape-only pose search: {} vs {}",
+            shape_only.tanimoto,
+            zeroed.tanimoto
+        );
+        // default (1.0) keeps color in the objective — the pose may differ,
+        // but the reported shape Tanimoto must stay a valid score
+        let joint = align_colored(&qa, &ta, Some(&qs), Some(&ts), &base);
+        assert!(joint.tanimoto.is_finite() && (0.0..=1.0).contains(&joint.tanimoto));
     }
 
     #[test]

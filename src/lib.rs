@@ -8500,6 +8500,11 @@ pub fn shape_align_color_wasm(
         if let Some(k) = v.get("rescore_top").and_then(|x| x.as_u64()) {
             opts.rescore_top = k.min(64) as usize;
         }
+        if let Some(cs) = v.get("color_scale").and_then(|x| x.as_f64()) {
+            // global shape↔color balance for the joint pose search (0 = pure
+            // shape); post-hoc Tanimotos are scale-invariant
+            opts.color_scale = cs.clamp(0.0, 20.0);
+        }
     }
     let res = crate::shape::align_colored(&qa, &ta, qs.as_deref(), ts.as_deref(), &opts);
     #[derive(serde::Serialize)]
