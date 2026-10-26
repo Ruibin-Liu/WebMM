@@ -36,6 +36,7 @@ Or just run everything, in dependency order:
 | `m6_analog_history` | platform | M4 P2 explorer persistence: auto-commit with lineage, history restore across reload, hide-as-undo |
 | `m6_repoint` | platform | M4 P2 §3 pointer repoint: restore-into-current swaps the DB atomically, other tabs get the forced-reload modal, old DB trashed |
 | `m6_scratch` | platform | M4 P3 scratch pad: legacy-history migration to webmm-scratch, IDB-backed clipboard, send-to-library gesture |
+| `m7_activity` | platform | M5 assay foundation (docs/assay-foundation.md; suite number = sequence): activity CSV two-step import with match ladder + tiers, result-table activity column, identity audit families (full/parent), undo incl. first-import, reload replay, export |
 
 Note: since the workbench swap, m0–m5 run against `app/index.html` (the
 former platform page, classic UI, full LBDD surface); m6* run against

@@ -1661,7 +1661,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
      <div style="overflow-x:auto;">
      <table id="searchTable">
        <thead>
-         <tr><th>#</th><th>名称</th><th>SMILES</th><th>MW</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th><th title="consensus = mean rank across every recorded round that scored this molecule (explicit rank-fusion column; lower is better; needs >= 2 rounds)">Cons.</th><th title="pin to the working set / exclude from triage (persisted in the project store, undoable)">★</th></tr>
+         <tr><th>#</th><th>名称</th><th>SMILES</th><th>MW</th><th id="actCol" style="display:none;" title="measured activity of the selected assay (qualifier shown; hover = all replicates + raw cells)">活性</th><th id="confCol" style="display:none;" title="the entry conformer that produced the score">Conf</th><th id="searchScoreCol">Tanimoto</th><th id="colorCol" style="display:none;">Color T</th><th id="pharmCol" style="display:none;">Pharm</th><th id="comboCol" style="display:none;">Combo</th><th title="consensus = mean rank across every recorded round that scored this molecule (explicit rank-fusion column; lower is better; needs >= 2 rounds)">Cons.</th><th title="pin to the working set / exclude from triage (persisted in the project store, undoable)">★</th></tr>
        </thead>
        <tbody id="searchRows"></tbody>
      </table>
@@ -1692,6 +1692,38 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
   
 
 <div id="queryHistoryPanel" style="display:none; margin-top:0.5rem; padding:0.5rem 0.6rem; border:1px solid var(--border); border-radius:8px;"></div>
+
+<div id="activityPanel" class="card" style="display:none; margin-top:0.6rem;">
+  <div class="card-head"><b>实测活性</b>
+    <span id="activityHint" class="hint" style="margin-left:auto;">assay 数据与来源(命令日志 L1)</span>
+  </div>
+  <div class="card-body">
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-bottom:0.5rem;">
+      <button class="action-btn" style="width:auto; padding:0.3rem 0.7rem;" onclick="activityImportUI()" title="CSV 导入(两步预览:molId/精确键/母体键/块1/名称阶梯匹配,等级入档)">导入 CSV</button>
+      <select id="activityAssaySel" onchange="renderActivityPanel()" aria-label="选择展示的 assay" style="max-width:220px;"></select>
+      <button class="action-btn" style="width:auto; padding:0.3rem 0.7rem;" onclick="activityExportCsv()" title="导出当前 assay(带 molId 列,重导时优先匹配)">导出 CSV</button>
+      <button class="action-btn danger" style="width:auto; padding:0.3rem 0.7rem;" onclick="activityRemoveSelected()" title="删除当前 assay(可撤销——逆命令恢复全部记录)">删除</button>
+    </div>
+    <div id="activityMeta"></div>
+    <div id="activityOrphans" class="hint" style="margin-top:0.4rem;"></div>
+  </div>
+</div>
+
+<div id="identityAuditPanel" class="card" style="display:none; margin-top:0.6rem;">
+  <div class="card-head"><b>身份审计</b>
+    <label class="hint" style="margin-left:auto; cursor:pointer;">分组
+      <select id="auditGroupBy" onchange="renderIdentityAudit()" aria-label="重复家族分组键">
+        <option value="full">完整键(仅同物)</option>
+        <option value="parent">母体键(含盐/立体/质子化家族)</option>
+      </select>
+    </label>
+  </div>
+  <div class="card-body">
+    <div id="auditFlags" class="hint"></div>
+    <div id="auditFamilies" style="margin-top:0.4rem;"></div>
+    <div class="hint" style="margin-top:0.4rem;">InChI 骨架仅规范化杂原子 1,3-氢迁移类互变(酰胺/至酚酮);酮-烯醇、环-链互变不覆盖。旗标为 provenance 记录,绝不改写结构。</div>
+  </div>
+</div>
      <div id="workSetPanel" style="display:none; margin-top:0.5rem; padding:0.5rem; border:1px solid var(--border); border-radius:8px;">
        <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
          <strong style="font-size:0.82rem;">工作集</strong>
@@ -1914,6 +1946,7 @@ function rdkitAvailable() {
 <script src="platform/project.js"></script>
 <script src="platform/registry.js"></script>
 <script src="platform/format.js"></script>
+<script src="platform/m5.js"></script>
 <script src="platform/compat.js"></script>
 <script>initRDKit();</script>
 
@@ -3741,6 +3774,7 @@ function rdkitAvailable() {
   function renderQueryHistory() {
     const host = document.getElementById('queryHistoryPanel');
     if (!host) return;
+    try { renderM5Panels(); } catch (e) { /* M5 panels are advisory */ }
     const c = triageStore();
     if (!c || !searchLibrary) { host.style.display = 'none'; return; }
     const rounds = c.projectApi().state.rounds;
@@ -3945,6 +3979,7 @@ function rdkitAvailable() {
       tr.innerHTML = `<td>${i + 1}</td><td class="cell-name">${molThumb(e.smiles)}<span class="nm">${escHtml(e.name)}</span>${flexBadge}${painsBadge}</td>` +
         `<td class="value" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${escHtml(e.smiles)}">${escHtml(e.smiles)}</td>` +
         `<td class="value">${e.MW}</td>` +
+        activityCellFor(molId) +
         (mode === 'sub'
           ? `<td><span class="result-badge pass">Match</span></td>` + consCell
           : shapeMode
@@ -5829,7 +5864,7 @@ function csvField(v) {
   }
 
   // M3: Escape closes the topmost modal; backdrop click closes; focus returns
-  const MODALS = ['jsmeModal', 'historyModal', 'sourceModal'];
+  const MODALS = ['jsmeModal', 'historyModal', 'sourceModal', 'activityImportModal'];
   const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
   let modalOpener = null;   // element focused before a modal opened
   const openModal = id => {
@@ -5850,6 +5885,7 @@ function csvField(v) {
   const topModal = () => MODALS.map(id => document.getElementById(id)).find(m => m && m.style.display === 'block');
   for (const id of MODALS) {
     const m = document.getElementById(id);
+    if (!m) continue;   // lazily-injected modals (activityImportModal) attach on creation
     m.addEventListener('mousedown', e => { if (e.target === m) closeModal(id); });
   }
   document.addEventListener('keydown', e => {
@@ -6290,6 +6326,276 @@ function csvField(v) {
       showHistory();
     }
   }
+  // ===================== M5: 实测活性 + 身份审计 (docs/assay-foundation.md) =====================
+  (function initM5() {
+    const M5 = window.Platform && window.Platform.M5, I = window.Platform && window.Platform.Identity;
+    if (M5 && I) M5.setDupeFn(I.dupeTier);
+  })();
+  function projStateM5() {
+    const c = triageStore(); const p = c && c.projectApi(); return p ? p.state : null;
+  }
+
+  // ---- L2 QC cache (smiles → {stereoSpecified, salt, parentKey, parentUncertain});
+  //      per-session cache — rdkit version is constant within a page lifetime ----
+  const M5_COUNTERIONS = new Set(['Cl', 'Br', 'F', 'I', '[Cl-]', '[Br-]', '[I-]', '[F-]', '[Na+]', '[K+]', '[Li+]', 'O', '[O-]', 'S',
+    'CC(=O)[O-]', 'CC(=O)O', 'O=C([O-])O', 'O=C([O-])/C=C/C(=O)[O-]', 'O=C([O-])/C=C\\C(=O)[O-]', 'CS(=O)(=O)[O-]', 'OC(=O)C(F)(F)F', 'OC(=O)C(F)(F)F']);
+  const m5QcCache = new Map();
+  function m5KeyFor(smi) {
+    try {
+      const k = window.Platform.Identity.structureKey(smi);
+      return (k && window.Platform.Identity.isInchiKey(k)) ? k : ('SMI:' + smi);
+    } catch (e) { return 'SMI:' + smi; }
+  }
+  function m5QcFor(smiles) {
+    if (m5QcCache.has(smiles)) return m5QcCache.get(smiles);
+    const r = { stereoSpecified: null, salt: false, parentKey: null, parentUncertain: false };
+    try {
+      if (typeof rdkitModule !== 'undefined' && rdkitModule) {
+        const m = rdkitModule.get_mol(smiles);
+        if (m && m.is_valid()) {
+          const canon = m.get_smiles();
+          m.delete();
+          if (canon != null) {
+            r.stereoSpecified = canon.indexOf('@') >= 0 || canon.indexOf('/') >= 0 || canon.indexOf('\\') >= 0;
+            if (canon.includes('.')) {
+              r.salt = true;
+              const frags = canon.split('.');
+              let parent = null, parentN = -1, uncertain = false;
+              for (const f of frags) {
+                if (M5_COUNTERIONS.has(f)) continue;
+                const n = (f.match(/[A-Z][a-z]?/g) || []).length;
+                if (n > parentN) { parentN = n; parent = f; } else if (n === parentN) uncertain = true;
+              }
+              if (!parent && frags.length) { parent = frags[0]; uncertain = true; }
+              r.parentUncertain = uncertain;
+              r.parentKey = parent ? m5KeyFor(parent) : null;
+            }
+          }
+        } else if (m) m.delete();
+      }
+    } catch (e) {}
+    m5QcCache.set(smiles, r);
+    return r;
+  }
+  function m5LibEntries() {
+    const st = projStateM5(); if (!st) return [];
+    const out = [];
+    for (const lib of Object.values(st.libraries)) {
+      for (const [molId, e] of lib.entries) {
+        const qc = m5QcFor(e.raw.smiles);
+        out.push({ molId, smiles: e.raw.smiles, name: e.raw.name || '', structureKey: e.structureKey || m5KeyFor(e.raw.smiles),
+          salt: qc.salt, stereoSpecified: qc.stereoSpecified, parentKey: qc.parentKey, parentUncertain: qc.parentUncertain });
+      }
+    }
+    return out;
+  }
+
+  // ---- audit panel ----
+  function renderIdentityAudit() {
+    const panel = document.getElementById('identityAuditPanel');
+    if (!panel) return;
+    const st = projStateM5();
+    const hasLib = st && Object.keys(st.libraries).length > 0;
+    panel.style.display = hasLib ? '' : 'none';
+    if (!hasLib) return;
+    const M5 = window.Platform.M5, I = window.Platform.Identity;
+    const groupBy = (document.getElementById('auditGroupBy') || {}).value || 'full';
+    const entries = m5LibEntries().slice(0, 500);   // sync budget; larger libs show a note
+    let audit;
+    try { audit = M5.identityAudit(entries, groupBy); } catch (e) { return; }
+    const fl = audit.flags;
+    document.getElementById('auditFlags').textContent =
+      `${entries.length} 行 · 盐/多组分 ${fl.salt.length} · 立体未指定 ${fl.stereoUnspecified.length} · 非 InChI 键 ${fl.nonInchiKey.length} · 母体判定不确定 ${fl.parentUncertain.length}` +
+      (m5LibEntries().length > 500 ? ' · (库超过 500 行,审计仅前 500)' : '');
+    const host = document.getElementById('auditFamilies');
+    const byMol = new Map(entries.map(e => [e.molId, e]));
+    let html = '';
+    for (const fam of audit.families.slice(0, 50)) {
+      const pairsTxt = fam.pairs.map(p => {
+        const an = (byMol.get(p.a) || {}).name || p.a, bn = (byMol.get(p.b) || {}).name || p.b;
+        return `<span title="${escHtml(an)} ⇄ ${escHtml(bn)}">${p.note}</span>`;
+      }).join(' · ');
+      html += `<div style="padding:0.25rem 0; border-bottom:1px solid var(--border);">
+        <div style="font-size:0.78rem;">${fam.members.length} 成员 · ${pairsTxt}</div>
+        <div style="font-size:0.72rem; color:var(--muted);">${fam.members.map(m => escHtml(m.name || m.smiles)).join(' · ')}</div></div>`;
+    }
+    if (!html) html = '<div class="hint">无重复家族</div>';
+    host.innerHTML = html;
+  }
+  window.renderIdentityAudit = renderIdentityAudit;
+
+  // ---- activity panel + result column ----
+  let m5SelectedAssay = null;
+  function renderActivityPanel() {
+    const panel = document.getElementById('activityPanel'); if (!panel) return;
+    const st = projStateM5();
+    const acts = st ? st.activities : {};
+    panel.style.display = 'block';
+    const sel = document.getElementById('activityAssaySel');
+    const ids = Object.keys(acts);
+    if (!ids.includes(m5SelectedAssay)) m5SelectedAssay = ids[ids.length - 1] || null;   // default: most recent
+    if (m5SelectedAssay && !ids.includes(m5SelectedAssay)) m5SelectedAssay = null;
+    sel.innerHTML = ids.map(a => `<option value="${escHtml(a)}" ${a === m5SelectedAssay ? 'selected' : ''}>${escHtml(acts[a].meta.name)}${acts[a].meta.unit ? ' (' + escHtml(acts[a].meta.unit) + ')' : ''}</option>`).join('') || '<option value="">尚无 assay</option>';
+    const meta = document.getElementById('activityMeta');
+    if (m5SelectedAssay && acts[m5SelectedAssay]) {
+      const a = acts[m5SelectedAssay];
+      const libIds = new Set(m5LibEntries().map(e => e.molId));
+      const orphans = [...a.records.keys()].filter(id => !libIds.has(id));
+      meta.innerHTML = `<div class="hint">${escHtml(a.meta.name)} · endpoint ${escHtml(a.meta.endpoint || '—')} · 单位 ${escHtml(a.meta.unit || '—')} · 来源 ${escHtml(a.meta.source || '—')} · ${a.records.size} 分子</div>`;
+      document.getElementById('activityOrphans').textContent =
+        orphans.length ? `孤儿记录 ${orphans.length} 条(分子库已移除但活性保留;重导后按结构重连)` : '';
+    } else { meta.textContent = ''; document.getElementById('activityOrphans').textContent = ''; }
+    const actCol = document.getElementById('actCol');
+    if (actCol) actCol.style.display = m5SelectedAssay ? '' : 'none';
+  }
+  function activityCellFor(molId) {
+    if (!m5SelectedAssay || !molId) return '';
+    const st = projStateM5(); const a = st && st.activities[m5SelectedAssay];
+    const recs = a && a.records.get(molId);
+    if (!recs || !recs.length) return '<td class="value">—</td>';
+    const shown = recs.map(r => r.qualifier !== '=' && r.qualifier !== 'ND' ? r.qualifier + (r.value != null ? r.value : '') : (r.value != null ? r.value : 'ND')).join(' / ');
+    const tip = recs.map(r => `${r.valueRaw || ''}${r.matchTier ? ' [match:' + r.matchTier + ']' : ''}${r.note ? ' (' + r.note + ')' : ''}`).join(' · ');
+    return `<td class="value" title="${escHtml(tip)}">${escHtml(recs.length > 1 ? shown + ' (n=' + recs.length + ')' : shown)}</td>`;
+  }
+  var __m5GlueReady = false;   // var-hoisted: startup renders before the glue consts initialize
+  function renderM5Panels() { if (!__m5GlueReady) return; renderActivityPanel(); renderIdentityAudit(); }
+
+  // ---- import (two-step preview) ----
+  function activityImportUI() {
+    if (!document.getElementById('activityImportModal')) {
+      document.body.insertAdjacentHTML('beforeend', `
+<div id="activityImportModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="actImpTitle">
+  <div class="modal-content">
+    <div class="modal-header"><h2 id="actImpTitle">导入实测活性 CSV</h2><button class="btn-danger" onclick="closeModal('activityImportModal')">关闭</button></div>
+    <div class="modal-body">
+      <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:0.4rem; margin-bottom:0.5rem;">
+        <label>assay 名称<input id="actImpName" style="width:100%;" placeholder="IC50"></label>
+        <label>单位<input id="actImpUnit" style="width:100%;" placeholder="µM"></label>
+        <label>endpoint<input id="actImpEndpoint" style="width:100%;" placeholder="抑制率"></label>
+        <label>来源<input id="actImpSource" style="width:100%;" placeholder="内部数据 2026-03"></label>
+      </div>
+      <label>CSV(molId,smiles,name,value,note 列至少识别其一;值列支持 > ≥ ≤ ~ ND µM 1,2 1.2e-6)</label>
+      <textarea id="actImpCsv" rows="8" style="width:100%; font-family:monospace; font-size:0.78rem;" placeholder="smiles,value,note\nCCO,8.2,\nCCC,&gt;10,batch2"></textarea>
+      <div id="actImpReport" style="margin-top:0.5rem; font-size:0.78rem;"></div>
+      <div style="margin-top:0.5rem; display:flex; gap:0.5rem;">
+        <button class="btn-accent" onclick="activityImportPreview()">解析预览</button>
+        <button class="btn-accent" id="actImpCommit" style="display:none;" onclick="activityImportCommit()">确认导入(写入命令日志)</button>
+      </div>
+    </div>
+  </div>
+</div>`);
+    }
+    document.getElementById('actImpReport').textContent = '';
+    document.getElementById('actImpCommit').style.display = 'none';
+    const mm = document.getElementById('activityImportModal');
+    if (mm && !mm.dataset.bound) { mm.dataset.bound = '1'; mm.addEventListener('mousedown', e => { if (e.target === mm) closeModal('activityImportModal'); }); }
+    openModal('activityImportModal');
+  }
+  window.activityImportUI = activityImportUI;
+  let m5PendingImport = null;
+  function m5BuildIndex() {
+    const idx = { byMolId: new Map(), byKey: new Map(), byParentKey: new Map(), byBlock1: new Map(), byName: new Map() };
+    for (const e of m5LibEntries()) {
+      idx.byMolId.set(e.molId, true);
+      const push = (m, k) => { if (!k) return; if (!m.has(k)) m.set(k, []); m.get(k).push(e.molId); };
+      push(idx.byKey, e.structureKey);
+      if (e.parentKey) push(idx.byParentKey, e.parentKey);
+      if (window.Platform.Identity.isInchiKey(e.structureKey)) push(idx.byBlock1, e.structureKey.slice(0, 14));
+      const nm = window.Platform.M5.normalizeName(e.name); if (nm) push(idx.byName, nm);
+    }
+    return idx;
+  }
+  function activityImportPreview() {
+    const M5 = window.Platform.M5;
+    const name = document.getElementById('actImpName').value.trim();
+    if (!name) { document.getElementById('actImpReport').textContent = '× 需要 assay 名称'; return; }
+    const rows = M5.parseCsv(document.getElementById('actImpCsv').value);
+    if (!rows.length) { document.getElementById('actImpReport').textContent = '× 空 CSV'; return; }
+    const head = rows[0].map(h => h.trim().toLowerCase());
+    const ci = k => head.indexOf(k);
+    const iMol = ci('molid'), iSmi = ci('smiles'), iName = ci('name'), iVal = ci('value') >= 0 ? ci('value') : head.length, iNote = ci('note');
+    const dataRows = rows.slice(1).length ? rows.slice(1) : rows;   // tolerate headerless
+    const csvRows = [];
+    for (const r of dataRows) {
+      const cell = M5.parseActivityCell(r[iVal]);
+      const row = { molId: iMol >= 0 ? r[iMol] : null, name: iName >= 0 ? r[iName] : null, smiles: iSmi >= 0 ? r[iSmi] : null,
+        note: iNote >= 0 ? r[iNote] : '', parsed: cell };
+      if (row.smiles) {
+        row.key = m5KeyFor(row.smiles);
+        const qc = m5QcFor(row.smiles);
+        if (qc.salt && qc.parentKey) row.parentKey = qc.parentKey;
+        if (window.Platform.Identity.isInchiKey(row.key)) row.block1 = row.key.slice(0, 14);
+      }
+      csvRows.push(row);
+    }
+    const res = M5.matchLadder(csvRows.filter(r => r.parsed), m5BuildIndex());
+    const unParsed = csvRows.filter(r => !r.parsed).length;
+    m5PendingImport = { name, unit: document.getElementById('actImpUnit').value.trim(),
+      endpoint: document.getElementById('actImpEndpoint').value.trim(), source: document.getElementById('actImpSource').value.trim(), res };
+    const warn = [];
+    const st = projStateM5();
+    const dupName = st && Object.values(st.activities).find(a => a.meta.name === name);
+    if (dupName) warn.push(`同名 assay 已存在(${dupName.records.size} 分子)——提交将全量替换(可撤销)`);
+    const loose = res.resolved.filter(r => r.tier === 'parent' || r.tier === 'block1' || r.tier === 'name').length;
+    if (loose) warn.push(`${loose} 行为松匹配(母体键/块1/名称)——等级已入档,悬浮可查`);
+    document.getElementById('actImpReport').innerHTML =
+      `<div>解析 ${csvRows.length} 行:匹配 ${res.resolved.length}(其中松匹配 ${loose}) · 歧义 ${res.ambiguous.length} · 未解析 ${res.unresolved.length}${unParsed ? ' · 数值无法识别 ' + unParsed : ''}</div>` +
+      (res.ambiguous.length ? `<div class="hint">歧义行(不静默取第一个):${res.ambiguous.slice(0, 5).map(a => escHtml(a.row.name || a.row.smiles || a.row.molId)).join('、')}${res.ambiguous.length > 5 ? '…' : ''}</div>` : '') +
+      (res.unresolved.length ? `<div class="hint">未解析行:${res.unresolved.slice(0, 5).map(u => escHtml(u.name || u.smiles || '?')).join('、')}${res.unresolved.length > 5 ? '…' : ''}(不入库)</div>` : '') +
+      warn.map(w => `<div class="hint">⚠ ${escHtml(w)}</div>`).join('');
+    document.getElementById('actImpCommit').style.display = res.resolved.length ? '' : 'none';
+  }
+  window.activityImportPreview = activityImportPreview;
+  async function activityImportCommit() {
+    const c = triageStore(); if (!c || !m5PendingImport) return;
+    const p = m5PendingImport;
+    const byMol = new Map();
+    for (const r of p.res.resolved) {
+      if (!byMol.has(r.molId)) byMol.set(r.molId, []);
+      byMol.get(r.molId).push({ value: r.row.parsed.value, qualifier: r.row.parsed.qualifier,
+        valueRaw: r.row.parsed.valueRaw, note: r.row.note || null, matchTier: r.tier });
+    }
+    const assayId = 'as-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    const st = projStateM5();
+    const dup = st && Object.entries(st.activities).find(([, a]) => a.meta.name === p.name);
+    const useId = dup ? dup[0] : assayId;   // same-name re-import replaces (idempotent, undoable)
+    try {
+      await c.projectApi().apply({ type: 'SetActivityData', assayId: useId,
+        meta: { name: p.name, unit: p.unit || null, endpoint: p.endpoint || null, source: p.source || null, importedAt: Date.now() },
+        records: [...byMol.entries()] });
+      closeModal('activityImportModal');
+      searchStatus(`活性已导入:${p.name} · ${byMol.size} 分子${dup ? '(替换同名 assay)' : ''}`);
+      renderM5Panels(); renderSearchResultsCurrent();
+    } catch (err) { document.getElementById('actImpReport').textContent = '× ' + (err.message || err); }
+  }
+  window.activityImportCommit = activityImportCommit;
+  async function activityRemoveSelected() {
+    const c = triageStore(); if (!c || !m5SelectedAssay) return;
+    if (!confirm('删除该 assay?可撤销(撤销恢复全部记录)。')) return;
+    try { await c.projectApi().apply({ type: 'RemoveActivityData', assayId: m5SelectedAssay }); }
+    catch (err) { searchStatus('删除失败: ' + (err.message || err)); return; }
+    m5SelectedAssay = null; renderM5Panels(); renderSearchResultsCurrent();
+  }
+  window.activityRemoveSelected = activityRemoveSelected;
+  function activityExportCsv() {
+    const st = projStateM5(); const a = st && st.activities[m5SelectedAssay]; if (!a) return;
+    const byMol = new Map(m5LibEntries().map(e => [e.molId, e]));
+    const lines = ['molId,name,smiles,assay,qualifier,value,valueRaw,matchTier,note'];
+    for (const [molId, recs] of a.records) {
+      const e = byMol.get(molId) || {};
+      for (const r of recs) lines.push([molId, csvField(e.name || ''), csvField(e.smiles || ''), csvField(a.meta.name),
+        r.qualifier, r.value == null ? '' : r.value, csvField(r.valueRaw || ''), r.matchTier || '', csvField(r.note || '')].join(','));
+    }
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const aEl = document.createElement('a');
+    aEl.href = URL.createObjectURL(blob);
+    aEl.download = 'activity-' + (a.meta.name || 'assay') + '.csv';
+    document.body.appendChild(aEl); aEl.click(); aEl.remove();
+    setTimeout(() => URL.revokeObjectURL(aEl.href), 4000);
+  }
+  window.activityExportCsv = activityExportCsv;
+  __m5GlueReady = true;
+
 </script>
 
 
@@ -7979,6 +8285,7 @@ function exportEnsembleSDF() {
     enable3dActions();
     set3dStatus('Engine ready — Embed 3D to begin');
   });
+
 </script>
 </div>
 </div>
