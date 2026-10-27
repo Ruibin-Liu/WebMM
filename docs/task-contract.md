@@ -100,7 +100,7 @@ deriveSeed({roundSeed, kind, stage, molId, confIdx})
 | analogScan | §9.1 | **冻结** |
 | optimize | §9.2 | **冻结** |
 | shapeSearch | §9.3 | **冻结**(设计稿临时名 shapeAlign:平台内单对叠合只存在于系综搜索内部,kind 即搜索运行;改名发生在首条记录存在之前) |
-| conformers | 随迁移冻结 | 排队中 |
+| conformers | §9.4 | **冻结** |
 
 ### 9.2 optimize input(v1)
 
@@ -165,3 +165,21 @@ inputRevision = { query: qsdfHash, library: libraryFingerprint }
 - `window.__analogPool` 门面保留,stats() 字段超集不变(m6 契约)。
 - CreateAnalogRun 命令与 facts['analog:<runId>'] 结构不变;runId = taskId。
 - 引擎(WASM/Rust)零改动;worker 协议零改动。
+
+### 9.4 conformers input(v1)
+
+```
+{
+  molblock: string          // 重原子 molblock(构象系综所属结构;内容即身份)
+  n: int 1..500             // 构象数
+  rmsdCut: number > 0       // 簇合并阈值(默认 0.5)
+  engine: 'mmff' | 'gfnff'
+  maxIter: int 1..20000     // 首轮弛豫(默认 100,排序足够;幸存者后续全收敛)
+  workers: int 1..12        // farm 规模快照(跨机不可复现的根源,入档供审计)
+  seedBases: [int]          // 每 worker 种子基(42 + w*500);快照即真相
+}
+inputRevision = { structure: fnv1a(molblock) }
+```
+- 工作台薄壳(设计 D1):任务层 app/tasks/ 共享,侧表存独立 IDB(webmm-workbench-tasks,单 tasks store——工作台不触碰 webmm-platform,两页 DB 所有权契约保持)。
+- farm 令牌按存活期整体持有,以调度器总量封顶(§9.3 同款死锁教训)。
+- 无 facts(系综是工作台结构);仅旁表。取消=terminate farm→cancelled;重载→abandoned(无 fact 可幽灵完成)。

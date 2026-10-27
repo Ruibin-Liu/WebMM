@@ -12,7 +12,7 @@
   // shapeSearch (not the design-doc's provisional 'shapeAlign'): shape
   // alignment exists in the platform only INSIDE the ensemble search — the
   // kind is the search run; the rename happened before any record existed.
-  const KIND_INPUT_FROZEN = { analogScan: 1, optimize: 1, shapeSearch: 1 };
+  const KIND_INPUT_FROZEN = { analogScan: 1, optimize: 1, shapeSearch: 1, conformers: 1 };
 
   // state machine (§2) — every transition not listed is a contract error
   const TRANSITIONS = {
@@ -149,7 +149,19 @@
         audit: { evaluated: i.audit && i.audit.evaluated || 0, filtered: i.audit && i.audit.filtered || 0 },
       };
     }
-    return input;   // conformers: queue-only, no expansion until frozen
+    if (kind === 'conformers') {
+      const i = input || {};
+      return {
+        molblock: typeof i.molblock === 'string' ? i.molblock : '',
+        n: Number.isInteger(i.n) && i.n >= 1 ? Math.min(i.n, 500) : 50,
+        rmsdCut: isFinite(+i.rmsdCut) && +i.rmsdCut > 0 ? +i.rmsdCut : 0.5,
+        engine: i.engine === 'gfnff' ? 'gfnff' : 'mmff',
+        maxIter: Number.isInteger(i.maxIter) && i.maxIter >= 1 ? Math.min(i.maxIter, 20000) : 100,
+        workers: Number.isInteger(i.workers) && i.workers >= 1 ? Math.min(i.workers, 12) : 1,
+        seedBases: Array.isArray(i.seedBases) ? i.seedBases.filter(s => Number.isInteger(s)) : [],
+      };
+    }
+    return input;
   }
 
   function policyRev(stages) { return 'p' + fnv1a(canon(stages)).toString(16); }
@@ -194,6 +206,10 @@
     if (kind === 'shapeSearch') {
       // world = the query 3D + the library contents
       return { query: effInput.qsdfHash, library: effInput.libraryFingerprint };
+    }
+    if (kind === 'conformers') {
+      // the conformer ensemble belongs to the structure it was embedded from
+      return { structure: 'h' + fnv1a(canon(effInput.molblock || '')).toString(16) };
     }
     return null;
   }

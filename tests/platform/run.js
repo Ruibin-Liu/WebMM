@@ -676,12 +676,19 @@ console.log('project (mem storage):');
       typeof Cn.policyRev(spec.input.stages) === 'string' &&
       Cn.fingerprint(spec.kind, spec.inputVersion, spec.input, spec.seed) ===
       Cn.fingerprint(spec.kind, spec.inputVersion, Cn.effectiveInput('analogScan', spec.input), spec.seed));
-    try { Cn.makeSpec({ taskId: 't2', kind: 'conformers', input: {} }); check('unfrozen kinds rejected at makeSpec', false); }
-    catch (e) { check('unfrozen kinds rejected at makeSpec', /not frozen/.test(e.message)); }
+    try { Cn.makeSpec({ taskId: 't2', kind: 'bogus', input: {} }); check('unknown kinds rejected at makeSpec', false); }
+    catch (e) { check('unknown kinds rejected at makeSpec', /unknown kind/.test(e.message)); }
     try { Cn.validateStages([{ id: 'X', op: 'score', nConfs: 99, seedOffset: 1, cap: 1 }]); check('validateStages: nConfs bounds', false); }
     catch (e) { check('validateStages: nConfs bounds', /nConfs/.test(e.message)); }
     check('inputRevisionFor analogScan: parent hash + policy',
       Cn.inputRevisionFor('analogScan', spec.input).policy === Cn.policyRev(spec.input.stages));
+
+    // ---- stage-4 kind: conformers ----
+    const confSpec = Cn.makeSpec({ taskId: 'c1', kind: 'conformers', seed: null,
+      input: { molblock: 'MBC', n: 999, rmsdCut: 0.8, engine: 'gfnff', maxIter: 100, workers: 4, seedBases: [42, 542, 1042, 1542] }, provenance: {} });
+    check('conformers spec: n clamped to 500, seedBases kept, engine normalized',
+      confSpec.input.n === 500 && confSpec.input.seedBases.length === 4 && confSpec.input.engine === 'gfnff');
+    check('conformers inputRevision: structure hash', Cn.inputRevisionFor('conformers', confSpec.input).structure.startsWith('h'));
 
     // ---- stage-3 kinds: optimize + shapeSearch ----
     const optSpec = Cn.makeSpec({ taskId: 'o1', kind: 'optimize', seed: null,
