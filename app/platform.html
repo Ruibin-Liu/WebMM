@@ -3294,6 +3294,60 @@ function rdkitAvailable() {
   // 0.5 keeps the historical 1.0; 1.0 -> 0 (pure shape); 0 -> capped 20
   function comboColorScale() { const w = comboW(); return w === 0.5 ? null : Math.min(20, (1 - w) / Math.max(w, 1e-9)); }
 
+  // ---- Top-5 (docs/task-contract.md §9.3): shapeSearch task begin/finish ----
+  async function shapeTaskBegin(q, qsdf, thr, nConfs) {
+    const Cn = window.Tasks.Contract;
+    const taskId = 's' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    const pharmMin = parseFloat(document.getElementById('pharmFilter').value) || 0;
+    const libFp = 'h' + Cn.hash(Cn.canon(searchLibrary.map(e => (e.molId || '') + '|' + e.smiles + '|' + (e.name || '')))).toString(16);
+    try {
+      const spec = Cn.makeSpec({ taskId, kind: 'shapeSearch', seed: null,
+        input: { query: q, qsdfHash: 'h' + Cn.hash(Cn.canon(qsdf)).toString(16), threshold: thr, nConfs,
+          colorScale: comboColorScale(), pharmMin, libraryFingerprint: libFp,
+          audit: { evaluated: searchLibrary.length, filtered: 0 } },
+        provenance: { projectId: (window.__activeProject && window.__activeProject.id) || null, buildId: await ensureBuildId() } });
+      const tstore = await ensureTaskStore();
+      if (tstore) { try { await tstore.submit(spec); } catch (e) { return null; } }
+      const th = taskScheduler.startTask(taskId, 'interactive');
+      if (tstore) { try { await tstore.transition(taskId, 'running', { startedAt: Date.now(), generation: th.generation }); } catch (e) {} }
+      taskTrayAdd({ taskId, kind: 'shapeSearch', label: q.slice(0, 14), stage: 'run', startedAt: performance.now() });
+      const t0 = performance.now();
+      return {
+        taskId, th, tstore,
+        finish(state, patch) {
+          taskScheduler.drop(taskId);
+          taskTrayFinish(taskId, state);
+          if (this.tstore) this.tstore.transition(taskId, state, { durationMs: Math.round(performance.now() - t0), ...(patch || {}) }).catch(() => {});
+        },
+      };
+    } catch (e) { console.warn('[shapeSearch] task layer degraded:', e); return null; }
+  }
+
+  // rerun reads the SNAPSHOT spec from the side table — never current defaults
+  window.rerunTask = async function (taskId) {
+    const tstore = await ensureTaskStore();
+    if (!tstore) return;
+    const rec = await tstore.get(taskId);
+    if (!rec || !rec.spec) { alert('任务记录不存在'); return; }
+    const spec = rec.spec;
+    if (spec.kind === 'shapeSearch') {
+      switchMode('search');
+      document.getElementById('searchMode').value = 'shape';
+      document.getElementById('searchQuery').value = spec.input.query;
+      const thrEl = document.getElementById('searchThreshold');
+      if (thrEl) thrEl.value = spec.input.threshold;
+      document.getElementById('shapeConfs').value = spec.input.nConfs;
+      if (spec.input.pharmMin > 0) document.getElementById('pharmFilter').value = spec.input.pharmMin;
+      runSearch();
+    } else if (spec.kind === 'optimize') {
+      const Cn = window.Tasks.Contract;
+      const rev = Cn.inputRevisionFor('optimize', spec.input);
+      const cur = 'h' + Cn.hash(Cn.canon(sdf3d || '')).toString(16);
+      if (cur === rev.structure) optimize3D();
+      else alert('当前结构已变化(哈希 ' + cur.slice(0, 8) + ' ≠ ' + rev.structure.slice(0, 8) + ')——切回原结构后再点优化即等价重算;任务记录含完整 molblock 快照可核对。');
+    } else alert('该 kind 的 rerun 尚未支持:' + spec.kind);
+  };
+
   async function runShapeSearch(q) {
     if (!window.webmm) { searchStatus('WebMM engine not loaded — shape search unavailable'); return; }
     const thr = parseFloat(document.getElementById('searchThreshold').value);
@@ -3303,6 +3357,8 @@ function rdkitAvailable() {
     try { qsdf = ensureQuery3D(q); }
     catch (e) { searchStatus('Query 3D prep failed: ' + e.message); return; }
     if (nConfs >= 2) return runShapeSearchEnsemble(q, qsdf, thr, nConfs);
+    shapeRunToken++; window.__shapeActiveToken = shapeRunToken;   // uniform supersede detection for the task record
+    const __shapeTask = await shapeTaskBegin(q, qsdf, thr, nConfs);
     searchStatus('Preparing 3D and aligning…');
     // query color sites (perceived once on the query 3D molblock)
     let qSites = null;
@@ -3406,6 +3462,7 @@ function rdkitAvailable() {
       `${shownRows.length}/${candidates.length} at shape T ≥ ${thr.toFixed(2)} · sorted by combo${phases}${flexMsg}` +
       (pharmMin > 0 && shownRows.length !== before ? ` · pharm filter ${before} → ${shownRows.length}` : '') +
       ` · ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    if (__shapeTask) __shapeTask.finish(shapeRunToken === window.__shapeActiveToken ? 'complete' : 'cancelled');
   }
 
   /// Multi-conformer shape search: entry score = BEST over its N conformers.
@@ -3462,9 +3519,18 @@ function rdkitAvailable() {
     // ---- worker farm: phase 1 (generate + screen) ----
     const t1 = performance.now();
     const token = ++shapeRunToken;
+    window.__shapeActiveToken = token;   // the supersede check reads this
+    const __shapeTask = await shapeTaskBegin(q, qsdf, thr, nConfs);
     // key the farm off the LIBRARY size: fully-cached reruns (todo empty)
     // still parallelize phase 2
     const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 8, searchLibrary.length));
+    // Top-5 §9.3: the per-run farm holds global tokens while its workers
+    // live — capped at the scheduler TOTAL (W can exceed it on many-core
+    // machines; waiting for more than exists would deadlock the farm)
+    const __farmReleases = [];
+    const __nTok = Math.min(W, taskScheduler.stats().total);
+    for (let i = 0; i < __nTok; i++) __farmReleases.push(await taskScheduler.acquire('interactive'));
+    const releaseFarm = () => { while (__farmReleases.length) { try { __farmReleases.pop()(); } catch (e) {} } };
     const workers = [];
     const fullWaiters = [];   // {idx, ci, resolve} — 'fulled' messages route by both
     let nextJob = 0;
@@ -3500,7 +3566,7 @@ function rdkitAvailable() {
         // the phase-2 'full' jobs would land on uninitialized workers
         wk.postMessage({ type: 'initq', wasmUrl: window.__webmmUrl, qsdf, qSitesJson });
         wk.onmessage = ev => {
-          if (token !== shapeRunToken) { for (const w of workers) { try { w.terminate(); } catch (e) {} } return; }
+          if (token !== shapeRunToken) { for (const w of workers) { try { w.terminate(); } catch (e) {} } releaseFarm(); if (__shapeTask) __shapeTask.finish('cancelled'); return; }
           const msg = ev.data;
           if (msg.type === 'prepped') {
             const job = todo.find(x => x.e.idx === msg.idx);
@@ -3542,7 +3608,7 @@ function rdkitAvailable() {
       if (todo.length === 0) resolve();
     });
     await done;
-    if (token !== shapeRunToken) { for (const w of workers) w.terminate(); return; }
+    if (token !== shapeRunToken) { for (const w of workers) w.terminate(); releaseFarm(); if (__shapeTask) __shapeTask.finish('cancelled'); return; }
     const screenMs = performance.now() - t1;
     const valid = screened.filter(Boolean);
     valid.sort((a, b) => b.sur - a.sur);
@@ -3581,7 +3647,7 @@ function rdkitAvailable() {
         tSitesJson: job.tSitesJson, useColor: job.useColor,
         colorOpts: JSON.stringify({ random_starts: 8, ...(comboColorScale() != null ? { color_scale: comboColorScale() } : {}) }) });
     })));
-    if (token !== shapeRunToken) { for (const w of workers) w.terminate(); return; }
+    if (token !== shapeRunToken) { for (const w of workers) w.terminate(); releaseFarm(); if (__shapeTask) __shapeTask.finish('cancelled'); return; }
     // pick the winner per entry (max combo)
     const byEntry = new Map();
     for (let i = 0; i < jobs.length; i++) {
@@ -3613,6 +3679,7 @@ function rdkitAvailable() {
       }
     }
     for (const w of workers) w.terminate();
+    releaseFarm();   // workers dead — the flex/record tail is main-thread
     rows.sort((a, b) => comboFor(b) - comboFor(a));   // slider-aware; missing color = shape-only, not -1
     const pharmMin = parseFloat(document.getElementById('pharmFilter').value) || 0;
     const before = rows.length;
@@ -3638,6 +3705,7 @@ function rdkitAvailable() {
       ` · two-phase (screen ${searchLibrary.length}×${nConfs} → full ${candidates.length}×${TOP_CONF}, screen ${(screenMs / 1000).toFixed(1)} s)` +
       (pharmMin > 0 && shownRows.length !== before ? ` · pharm filter ${before} → ${shownRows.length}` : '') +
       ` · ${((performance.now() - t0) / 1000 + screenMs / 1000).toFixed(1)} s`);
+    if (__shapeTask) __shapeTask.finish(shapeRunToken === window.__shapeActiveToken ? 'complete' : 'cancelled');
   }
 
   async function runSearch() {
@@ -8083,7 +8151,7 @@ function getOptWorker() {
     if (e.key === 'Escape' && pickMode && !document.querySelector('.modal[style*="block"]')) { pickClear(); }
   });
 
-function optimize3D() {
+async function optimize3D() {
   clearError();
   try {
     if (!sdf3d) { embed3D(); return; }   // auto-embed first
@@ -8092,24 +8160,64 @@ function optimize3D() {
     // more than a flat 500 (remdesivir, 77 atoms, converges at ~2300).
     const naCur = parseInt(sdfLines(sdf3d)[3].substring(0, 3)) || 50;
     const maxIter = Math.min(6000, Math.max(500, naCur * 40));
+    // ---- Top-5 (docs/task-contract.md §9.2): optimize is a typed task ----
+    const Cn = window.Tasks.Contract;
+    const taskId = 'o' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    const restraintsSnapshot = userRestraints.length ? restraintJson() : { freeze: [], distance: [], angle: [], dihedral: [] };
+    let spec;
+    try {
+      spec = Cn.makeSpec({ taskId, kind: 'optimize', seed: null,
+        input: { molblock: sdf3d, engine: engine === 'gfnff' ? 'gfnff' : 'mmff', maxIter, restraints: restraintsSnapshot },
+        provenance: { projectId: (window.__activeProject && window.__activeProject.id) || null, buildId: await ensureBuildId() } });
+    } catch (e) { showError('任务 spec 被拒:' + e.message); return; }
+    const rev = Cn.inputRevisionFor('optimize', spec.input);
+    const tstore = await ensureTaskStore();
+    if (tstore) { try { await tstore.submit(spec); } catch (e) { /* record exists from a retry: continue */ } }
+    const th = taskScheduler.startTask(taskId, 'interactive');   // user-initiated: reserved slot
+    if (tstore) { try { await tstore.transition(taskId, 'running', { startedAt: Date.now(), generation: th.generation }); } catch (e) {} }
+    taskTrayAdd({ taskId, kind: 'optimize', label: engine, stage: 'opt', startedAt: performance.now() });
+    const release = await taskScheduler.acquire('interactive');   // one token for the worker job
+
     set3dStatus(`Optimizing with ${engine} (L-BFGS, up to ${maxIter} iterations)…`);
     const t0 = performance.now();
     const epoch = molEpoch;
+    const finish = (state, patch) => {
+      release();
+      taskScheduler.drop(taskId);
+      taskTrayFinish(taskId, state);
+      if (tstore) { tstore.transition(taskId, state, patch).catch(() => {}); }
+    };
     const worker = getOptWorker();
     worker.onmessage = (e) => {
       const m = e.data;
-      if (epoch !== molEpoch) return;     // molecule changed mid-optimize: drop
       if (m.type === 'optimized') {
         const dt = ((performance.now() - t0) / 1000).toFixed(2);
+        // application guard (§7): the result may only land on the structure
+        // (and restraint set) it was computed from. molEpoch is kept as a
+        // second line of defense; the hash is the contract check.
+        const structOk = Cn.hash(Cn.canon(sdf3d || '')) === Cn.hash(Cn.canon(spec.input.molblock));
+        if (epoch !== molEpoch || !structOk) {
+          // state machine: running -> complete -> stale (stale is an
+          // application-guard failure on a COMPLETED task, §2)
+          release();
+          taskScheduler.drop(taskId);
+          taskTrayFinish(taskId, 'stale');
+          if (tstore) tstore.transition(taskId, 'complete').then(() => tstore.transition(taskId, 'stale', { failure: 'structure changed mid-optimize' })).catch(() => {});
+          showError('优化完成但结构已变化 — 结果未套用(记为 stale,绝不静默套到新结构)。切回原结构后再次点「优化」即等价重算。');
+          set3dStatus('Optimization stale (structure changed)');
+          return;
+        }
         showSdfIn3D(buildSdfFromCoords(m.coords, sdf3d));
         lastCharges = m.charges;
         lastOptInfo = { engine: m.engine, E: m.E, converged: m.converged, iterations: m.iterations };
         document.getElementById('chargeColor').disabled = false;
         renderEnergyPanelData(m, dt);
         if (chargeColorOn) applyStyle();
+        finish('complete', { durationMs: Math.round(performance.now() - t0), E: m.E, converged: m.converged, iterations: m.iterations });
       } else if (m.type === 'error') {
         showError('Optimization: ' + m.message);
         set3dStatus('Optimization failed');
+        finish('failed', { failure: String(m.message).slice(0, 120) });
       }
     };
     worker.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
