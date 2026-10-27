@@ -683,6 +683,24 @@ console.log('project (mem storage):');
     check('inputRevisionFor analogScan: parent hash + policy',
       Cn.inputRevisionFor('analogScan', spec.input).policy === Cn.policyRev(spec.input.stages));
 
+    // ---- stage-3 kinds: optimize + shapeSearch ----
+    const optSpec = Cn.makeSpec({ taskId: 'o1', kind: 'optimize', seed: null,
+      input: { molblock: 'MB1', engine: 'gfnff', maxIter: 999999, restraints: [{ freeze: [0, 1] }] }, provenance: {} });
+    check('optimize spec: engine normalized, maxIter clamped, restraints kept',
+      optSpec.input.engine === 'gfnff' && optSpec.input.maxIter === 20000 && optSpec.input.restraints.length === 1);
+    check('optimize inputRevision: structure + restraints hashes',
+      Cn.inputRevisionFor('optimize', optSpec.input).structure.startsWith('h') &&
+      Cn.inputRevisionFor('optimize', optSpec.input).restraints !== Cn.inputRevisionFor('optimize', { ...optSpec.input, restraints: [] }).restraints);
+    const ssSpec = Cn.makeSpec({ taskId: 's1', kind: 'shapeSearch', seed: null,
+      input: { query: 'CCO', qsdfHash: 'h1', threshold: NaN, nConfs: 99, colorScale: 'x', pharmMin: null, libraryFingerprint: 'h2' }, provenance: {} });
+    check('shapeSearch spec: threshold/nConfs/colorScale/pharmMin normalized',
+      ssSpec.input.threshold === 0.5 && ssSpec.input.nConfs === 10 && ssSpec.input.colorScale === null && ssSpec.input.pharmMin === 0);
+    check('shapeSearch inputRevision: query+library world identity',
+      Cn.inputRevisionFor('shapeSearch', ssSpec.input).query === 'h1' && Cn.inputRevisionFor('shapeSearch', ssSpec.input).library === 'h2');
+    check('fingerprint discriminates restraint sets (rerun-equivalence basis)',
+      Cn.fingerprint('optimize', 1, Cn.effectiveInput('optimize', { molblock: 'M', engine: 'mmff', maxIter: 500, restraints: [] }), null) !==
+      Cn.fingerprint('optimize', 1, Cn.effectiveInput('optimize', { molblock: 'M', engine: 'mmff', maxIter: 500, restraints: [{ freeze: [1] }] }), null));
+
     // ---- scheduler: global tokens, reserved interactive slot, generation ----
     const Sch = require(path.join(__dirname, '../../app/tasks/scheduler.js'));
     const sch = Sch.createScheduler({ cores: 8 });   // total 4, background max 3

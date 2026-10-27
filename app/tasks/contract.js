@@ -8,8 +8,11 @@
 
   const ENVELOPE_VERSION = 1;
 
-  const KINDS = ['analogScan', 'conformers', 'optimize', 'shapeAlign'];
-  const KIND_INPUT_FROZEN = { analogScan: 1 };   // others queue-only until frozen
+  const KINDS = ['analogScan', 'conformers', 'optimize', 'shapeSearch'];
+  // shapeSearch (not the design-doc's provisional 'shapeAlign'): shape
+  // alignment exists in the platform only INSIDE the ensemble search — the
+  // kind is the search run; the rename happened before any record existed.
+  const KIND_INPUT_FROZEN = { analogScan: 1, optimize: 1, shapeSearch: 1 };
 
   // state machine (§2) — every transition not listed is a contract error
   const TRANSITIONS = {
@@ -124,7 +127,29 @@
       validateStages(stages);
       return { ...input, stages };
     }
-    return input;   // other kinds: queue-only, no expansion until frozen
+    if (kind === 'optimize') {
+      const i = input || {};
+      return {
+        molblock: typeof i.molblock === 'string' ? i.molblock : '',
+        engine: i.engine === 'gfnff' ? 'gfnff' : 'mmff',
+        maxIter: Number.isInteger(i.maxIter) && i.maxIter >= 1 ? Math.min(i.maxIter, 20000) : 500,
+        restraints: Array.isArray(i.restraints) ? i.restraints : [],
+      };
+    }
+    if (kind === 'shapeSearch') {
+      const i = input || {};
+      return {
+        query: typeof i.query === 'string' ? i.query : '',
+        qsdfHash: typeof i.qsdfHash === 'string' ? i.qsdfHash : '',
+        threshold: typeof i.threshold === 'number' && isFinite(i.threshold) ? i.threshold : 0.5,
+        nConfs: Number.isInteger(i.nConfs) && i.nConfs >= 1 && i.nConfs <= 50 ? i.nConfs : 10,
+        colorScale: i.colorScale == null ? null : (isFinite(+i.colorScale) ? +i.colorScale : null),
+        pharmMin: i.pharmMin == null ? 0 : (isFinite(+i.pharmMin) ? +i.pharmMin : 0),
+        libraryFingerprint: typeof i.libraryFingerprint === 'string' ? i.libraryFingerprint : '',
+        audit: { evaluated: i.audit && i.audit.evaluated || 0, filtered: i.audit && i.audit.filtered || 0 },
+      };
+    }
+    return input;   // conformers: queue-only, no expansion until frozen
   }
 
   function policyRev(stages) { return 'p' + fnv1a(canon(stages)).toString(16); }
@@ -158,6 +183,17 @@
         fragmentSet: (effInput.inputRevision && effInput.inputRevision.fragmentSet) || 'builtin-v1',
         policy: policyRev(effInput.stages),
       };
+    }
+    if (kind === 'optimize') {
+      // what the result may be applied to: the structure AND the restraint set
+      return {
+        structure: 'h' + fnv1a(canon(effInput.molblock || '')).toString(16),
+        restraints: 'h' + fnv1a(canon(effInput.restraints || [])).toString(16),
+      };
+    }
+    if (kind === 'shapeSearch') {
+      // world = the query 3D + the library contents
+      return { query: effInput.qsdfHash, library: effInput.libraryFingerprint };
     }
     return null;
   }

@@ -97,10 +97,43 @@ deriveSeed({roundSeed, kind, stage, molId, confIdx})
 
 | kind | input schema | 状态 |
 |---|---|---|
-| analogScan | §9.1 | **冻结**(本轮迁移) |
+| analogScan | §9.1 | **冻结** |
+| optimize | §9.2 | **冻结** |
+| shapeSearch | §9.3 | **冻结**(设计稿临时名 shapeAlign:平台内单对叠合只存在于系综搜索内部,kind 即搜索运行;改名发生在首条记录存在之前) |
 | conformers | 随迁移冻结 | 排队中 |
-| optimize | 随迁移冻结 | 排队中 |
-| shapeAlign | 随迁移冻结 | 排队中 |
+
+### 9.2 optimize input(v1)
+
+```
+{
+  molblock: string          // 被优化的结构(内容即身份;快照可 rerun-on-old)
+  engine: 'mmff' | 'gfnff'
+  maxIter: int 1..20000     // effectiveInput 钳制
+  restraints: [ ... ]       // Top-3 点选约束数组(空=无)
+}
+inputRevision = { structure: fnv1a(molblock), restraints: fnv1a(restraints) }
+```
+- interactive 优先级;单个 worker 任务持 1 令牌。
+- 应用守卫:结果套用前校验当前结构哈希 == inputRevision.structure( molEpoch 检查保留为冗余防线);不匹配 → `stale`,提供「对旧结构重算(恢复快照)/丢弃」。
+- 无 facts(产物是工作台结构,非项目事实);仅旁表记录(state/耗时/E/converged)。
+
+### 9.3 shapeSearch input(v1)
+
+```
+{
+  query: string             // 查询 SMILES
+  qsdfHash: string          // 查询 3D 内容哈希(fnv1a)
+  threshold: number         // shape T 阈值
+  nConfs: int 1..50
+  colorScale: number|null   // Top-2 联合优化权重(null=纯 shape)
+  pharmMin: number          // 药效团过滤(0=关)
+  libraryFingerprint: string // fnv1a(库条目 smiles+ordinal 序列)
+  audit: { evaluated, filtered }
+}
+inputRevision = { query: qsdfHash, library: libraryFingerprint }
+```
+- 编排壳迁移:farm(每 run 专属 shape.worker,含查询态)按其并发数持有全局令牌直至结束/取消;内部 phase 结构与缓存不动。
+- 结果持久化仍走 CreateRound/轮次 facts(既有模型);任务层补旁表记录+令牌+托盘。
 
 ### 9.1 analogScan input(v1)
 
