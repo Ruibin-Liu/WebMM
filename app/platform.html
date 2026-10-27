@@ -1997,6 +1997,11 @@ function rdkitAvailable() {
 <script src="platform/format.js"></script>
 <script src="platform/m5.js"></script>
 <script src="platform/sar.js"></script>
+<script src="tasks/contract.js"></script>
+<script src="tasks/scheduler.js"></script>
+<script src="tasks/pools.js"></script>
+<script src="tasks/funnel.js"></script>
+<script src="tasks/store.js"></script>
 <script src="platform/compat.js"></script>
 <script>initRDKit();</script>
 
@@ -4268,6 +4273,7 @@ function rdkitAvailable() {
 
   function analogCancelRun() {
     analogRunToken++;
+    if (activeAnalogTask) taskScheduler.cancel(activeAnalogTask.taskId);   // funnel checkpoints pick this up
     analogThumbsOn = true;   // settle whatever rows are on screen
     renderAnalogRows(analogLastResults(), analogRunToken);
   }
@@ -4297,22 +4303,23 @@ function rdkitAvailable() {
     const pHeavy = pDesc.NumHeavyAtoms || 0;
     parentMol.delete();
     const cands = [];
-    let nEnum = 0;
+    let nEnum = 0, nFilteredA = 0;
     for (const [body, fcat] of frags) {
       if (cands.length >= 400) break;
       if (++nEnum % 20 === 0) await new Promise(r => setTimeout(r, 0));
+      { const _keep = () => nFilteredA++;
       // plain replace, NO added parens: the core SMILES already carries the
       // grouping it needs ('c1ccc(*)cc1' -> 'c1ccc(C)cc1'; tail '*' chains
       // on: 'CC(=O)*' + 'OC' -> 'CC(=O)OC'). Invalid combinations are
       // skipped honestly by the sanitize filter below.
       const smi = coreSmiles.replace('*', body);
       let m = null;
-      try { m = rdkitModule.get_mol(smi); } catch (e) { continue; }
-      if (!m || !m.is_valid()) { if (m) m.delete(); continue; }
+      try { m = rdkitModule.get_mol(smi); } catch (e) { _keep(); continue; }
+      if (!m || !m.is_valid()) { if (m) m.delete(); _keep(); continue; }
       const d = JSON.parse(m.get_descriptors());
       const rotb = d.NumRotatableBonds ?? 0;
       const heavy = d.NumHeavyAtoms || 0;
-      if (rotb > 10 || heavy > pHeavy + 9 || heavy < Math.max(1, pHeavy - 6)) { m.delete(); continue; }
+      if (rotb > 10 || heavy > pHeavy + 9 || heavy < Math.max(1, pHeavy - 6)) { m.delete(); _keep(); continue; }
       let canon = m.get_smiles();
       m.delete();
       // the surgical core carries explicit [H] literals (sdf3d heritage);
@@ -4322,7 +4329,7 @@ function rdkitAvailable() {
       const canonClean = canon.replace(/\[H\]/g, '').replace(/\(\)/g, '');
       let m2 = null;
       try { m2 = rdkitModule.get_mol(canonClean); } catch (e) {}
-      if (!m2 || !m2.is_valid()) { if (m2) m2.delete(); continue; }
+      if (!m2 || !m2.is_valid()) { if (m2) m2.delete(); _keep(); continue; }
       canon = m2.get_smiles();
       const mb = m2.get_molblock();
       m2.delete();
@@ -4332,260 +4339,226 @@ function rdkitAvailable() {
       }
       cands.push({ smiles: canon, molblock: mb, mw: +d.amw.toFixed(2), rotb, sa });
     }
+    }
+    window.__analogAudit = { filtered: nFilteredA, notEvaluated: Math.max(0, frags.length - nEnum) };
     if (!cands.length) { analogStatus('No candidates passed the sanity filters'); return; }
     runAnalogFromCands(cands, token);
   }
   window.runAnalogExplorer = runAnalogExplorer;
 
   // shared funnel (B -> C -> D) over an enumerated candidate list
-  // ---- persistent analog worker pool (M3 spec: recycling is first-class) ----
-  // Workers survive across runs: cancel/finish stop CONSUMING, they never tear
-  // the pool down (spawn-per-run threw away every WASM heap on cancel).
-  // Poison (JS exception / wasm trap) recycles the worker and re-dispatches
-  // the job once; wasm heap growth past 256MB recycles idle workers.
-  const analogPool = (() => {
-    const recs = [];            // {w, ready, busy, job, heap, dead}
-    const queue = [];           // {id, payload, resolve, tries}
-    const inflight = new Map(); // id -> entry
-    let seq = 0, generation = 0, poisons = 0, heapRecycles = 0, initFails = 0;
-    let initFailed = false, readyPromise = null, doneSinceProbe = 0;
-    const HEAP_LIMIT = 256 * 1024 * 1024;
+  // ===================== Top-5: unified task layer runtime (docs/task-contract.md) =====================
+  const taskScheduler = window.Tasks.Scheduler.createScheduler();
+  const taskPools = window.Tasks.Pools.createPools(taskScheduler);
+  let taskStore = null, taskClaimCh = null, activeAnalogTask = null;
+  const taskTrayItems = [];   // {taskId, kind, label, stage, startedAt, state}
 
-    function poolSize() {
-      const cores = navigator.hardwareConcurrency || 4;
-      let n = Math.max(1, Math.min(cores - 1, 4));   // spec: min(cores-1, 4)
-      const dm = navigator.deviceMemory;             // GB (Device Memory API)
-      if (dm && dm <= 2) n = Math.max(1, n >> 1);    // low-memory devices halve
-      return n;
-    }
+  let __buildIdPromise = null;
+  function ensureBuildId() {   // provenance.buildId = SHA-256(wasm bytes), once per boot
+    if (!__buildIdPromise) __buildIdPromise = (async () => {
+      try {
+        const rsp = await fetch(window.__webmmUrl);
+        const buf = await rsp.arrayBuffer();
+        const dig = await crypto.subtle.digest('SHA-256', buf);
+        return 'b' + [...new Uint8Array(dig)].slice(0, 8).map(x => x.toString(16).padStart(2, '0')).join('');
+      } catch (e) { return 'b-unknown'; }
+    })();
+    return __buildIdPromise;
+  }
 
-    function drain() {
-      for (const rec of recs) {
-        if (rec.dead || !rec.ready || rec.busy) continue;
-        const job = queue.shift();
-        if (!job) return;
-        rec.busy = true; rec.job = job.id;
-        inflight.set(job.id, job);
-        rec.w.postMessage({ ...job.payload, __job: job.id });
+  async function ensureTaskStore() {
+    if (taskStore) return taskStore;
+    const c = await initPlatformStore();
+    if (!c || !c.getStorage || !c.getStorage()) return null;
+    taskStore = window.Tasks.Store.createStore(c.getStorage());
+    if (!taskClaimCh) taskClaimCh = taskStore.attachClaimResponder(() => taskTrayItems.filter(t => t.state === 'running' || t.state === 'queued').map(t => t.taskId));
+    return taskStore;
+  }
+
+  function taskTrayRender() {
+    const el = document.getElementById('taskTray');
+    if (!el) return;
+    const active = taskTrayItems.filter(t => t.state === 'running' || t.state === 'queued');
+    const recent = taskTrayItems.filter(t => t.state !== 'running' && t.state !== 'queued').slice(-3).reverse();
+    el.style.display = (active.length || recent.length) ? '' : 'none';
+    document.getElementById('taskTrayCount').textContent = active.length;
+    document.getElementById('taskTrayList').innerHTML =
+      active.map(t => '<div style="display:flex; gap:6px; align-items:center; padding:2px 0;">' +
+        '<b>' + escHtml(t.kind) + '</b> <span class="hint">#' + escHtml(t.taskId.slice(0, 6)) + '</span>' +
+        '<span>' + escHtml(t.stage || '') + '</span>' +
+        '<span class="hint">' + ((performance.now() - t.startedAt) / 1000).toFixed(0) + 's</span>' +
+        '<button style="margin-left:auto; border:1px solid #cbd5e1; background:#fff; border-radius:6px; cursor:pointer; font-size:0.72rem; padding:1px 6px;" onclick="taskTrayCancel(\'' + escHtml(t.taskId) + '\')">取消</button></div>').join('') +
+      recent.map(t => '<div class="hint" style="padding:2px 0;">' + escHtml(t.kind) + ' #' + escHtml(t.taskId.slice(0, 6)) + ' — ' + escHtml(t.state) + '</div>').join('');
+  }
+  function taskTrayAdd(t) { taskTrayItems.push({ state: 'running', ...t }); taskTrayRender(); }
+  function taskTrayStage(taskId, stage) { const t = taskTrayItems.find(x => x.taskId === taskId); if (t) { t.stage = stage; taskTrayRender(); } }
+  function taskTrayFinish(taskId, state) { const t = taskTrayItems.find(x => x.taskId === taskId); if (t) { t.state = state; t.stage = ''; taskTrayRender(); } }
+  function taskTrayRemove(taskId) { const i = taskTrayItems.findIndex(x => x.taskId === taskId); if (i >= 0) taskTrayItems.splice(i, 1); taskTrayRender(); }
+  window.taskTrayCancel = function (taskId) { taskScheduler.cancel(taskId); if (taskId === (activeAnalogTask && activeAnalogTask.taskId)) analogCancelRun(); };
+  document.addEventListener('DOMContentLoaded', () => {
+    const tg = document.getElementById('taskTrayToggle');
+    if (tg) tg.onclick = () => { const l = document.getElementById('taskTrayList'); const open = l.style.display !== 'none'; l.style.display = open ? 'none' : ''; tg.textContent = open ? '▾' : '▴'; };
+  });
+
+  // Top-5 (docs/task-contract.md §6): boot reconcile runs UNCONDITIONALLY —
+  // queued/running tasks with their Done fact are ghost-completes; the rest
+  // are abandoned unless a live session claims them (BroadcastChannel, 400ms).
+  // This is what makes a reload mid-run an honest 'abandoned' instead of a
+  // silently lost task. initPlatformStore is idempotent and lazily cached.
+  (async () => {
+    try {
+      const st = await ensureTaskStore();   // triggers initPlatformStore
+      if (!st) return;
+      const r = await st.reconcile({ factKeyFor: s => s.kind === 'analogScan' ? 'analog:' + s.taskId : null, claimWindowMs: 400 });
+      if (r && (r.complete.length || r.abandoned.length)) {
+        console.info('[tasks] reconcile:', JSON.stringify(r));
+        if (typeof analogRenderHistory === 'function') analogRenderHistory();
       }
-    }
+    } catch (e) { console.warn('[tasks] reconcile failed:', e); }
+  })();
 
-    function spawn() {
-      generation++;
-      const w = new Worker('analog.worker.js', { type: 'module' });
-      const rec = { w, ready: false, busy: false, job: null, heap: 0, dead: false };
-      w.onmessage = ev => {
-        const m = ev.data;
-        if (m.type === 'ready') { rec.ready = true; rec.heap = m.wasmHeap || 0; drain(); return; }
-        if (m.type === 'heap') {
-          rec.heap = m.bytes || 0;
-          if (rec.heap > HEAP_LIMIT && !rec.busy && !rec.dead) { heapRecycles++; recycle(rec); }
-          return;
-        }
-        if (m.type === 'poison') {
-          poisons++;
-          if (!rec.ready) initFails++;
-          if (initFails >= 3) initFailed = true;      // engine-fetch storm: stop respawning
-          const jid = m.__job != null ? m.__job : rec.job;
-          recycle(rec);
-          if (jid != null) redispatch(jid);
-          return;
-        }
-        // 'done' reply — route by job id
-        const job = inflight.get(m.__job);
-        if (job) {
-          inflight.delete(m.__job);
-          rec.busy = false; rec.job = null;
-          if (++doneSinceProbe >= 25) { doneSinceProbe = 0; probeHeap(); }
-          job.resolve(m);
-          drain();
-        }
-      };
-      w.onerror = () => {
-        poisons++;
-        const jid = rec.job;
-        recycle(rec);
-        if (jid != null) redispatch(jid);
-      };
-      w.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
-      recs.push(rec);
-      return rec;
-    }
-
-    function recycle(rec) {
-      if (rec.dead) return;
-      rec.dead = true;
-      // NOTE: do NOT touch inflight here — the poison/onerror callers
-      // redispatch (or fail) the in-flight job themselves; deleting it here
-      // would orphan the submit() promise forever.
-      try { rec.w.terminate(); } catch (e) {}
-      const i = recs.indexOf(rec);
-      if (i >= 0) recs.splice(i, 1);
-      if (!initFailed) spawn();   // keep the pool at size — unless init is storming
-      drain();
-    }
-
-    function redispatch(jobId) {
-      const job = inflight.get(jobId);
-      if (!job) return;
-      inflight.delete(jobId);
-      if (job.tries < 1) { job.tries++; queue.push(job); drain(); }
-      else job.resolve({ failed: 'poisoned twice' });
-    }
-
-    function probeHeap() {
-      for (const rec of recs) if (rec.ready && !rec.busy && !rec.dead) { try { rec.w.postMessage({ type: 'heap' }); } catch (e) {} }
-    }
-
-    function ready() {
-      if (!readyPromise) readyPromise = new Promise((res, rej) => {
-        initFailed = false; initFails = 0;
-        const n = poolSize();
-        while (recs.length < n) spawn();
-        const t0 = performance.now();
-        const iv = setInterval(() => {
-          if (initFailed) {
-            clearInterval(iv); readyPromise = null;
-            for (const r of [...recs]) { r.dead = true; try { r.w.terminate(); } catch (e) {} }
-            recs.length = 0;
-            rej(new Error('init')); return;
-          }
-          if (recs.filter(r => r.ready).length >= n) { clearInterval(iv); res(n); return; }
-          if (performance.now() - t0 > 30000) {
-            clearInterval(iv); readyPromise = null; initFailed = true;
-            for (const r of [...recs]) { r.dead = true; try { r.w.terminate(); } catch (e) {} }
-            recs.length = 0;
-            rej(new Error('timeout')); return;
-          }
-        }, 50);
-      });
-      return readyPromise;
-    }
-
-    function submit(payload) {
-      return new Promise(resolve => { queue.push({ id: ++seq, payload, resolve, tries: 0 }); drain(); });
-    }
-
-    function stats() {
-      return {
-        size: recs.length, ready: recs.filter(r => r.ready).length, queued: queue.length,
-        generation, poisons, heapRecycles, heaps: recs.map(r => r.heap),
-      };
-    }
-    return { ready, submit, stats };
+  // ---- persistent analog worker pool (M3 spec) — now a Tasks.Pools instance
+  // under the GLOBAL scheduler token budget (background jobs take tokens;
+  // worker recycling + one warm spare are first-class). The facade below
+  // preserves the historical __analogPool contract (m6 probes stats/submit).
+  const analogPool = (() => {
+    const ZERO = { size: 0, ready: 0, queued: 0, generation: 0, poisons: 0, heapRecycles: 0, heaps: [] };
+    const inst = () => taskPools.get('analog', { url: 'analog.worker.js', initPayload: { type: 'init', wasmUrl: window.__webmmUrl }, size: window.__analogPoolSize || undefined });   // test hook: deterministic size-1 runs (m12)
+    return {
+      ready: () => inst().ready(),
+      submit: (payload, priority) => inst().submit(payload, priority || 'background'),
+      stats: () => (taskPools.has('analog') ? taskPools.get('analog').stats() : { ...ZERO }),
+    };
   })();
   window.__analogPool = analogPool;   // pool health is observable (tests + console)
 
-  async function runAnalogFromCands(cands, token) {
-    // --- stage B: persistent pool (warm after the first run) ---
-    let NW;
+  // shared funnel (B -> C -> D) over an enumerated candidate list — Top-5:
+  // now a typed analogScan task (scheduler tokens + barriered funnel + task
+  // side table; cancel before Done still writes nothing to facts)
+  async function runAnalogFromCands(candsRaw, token) {
+    const Cn = window.Tasks.Contract, Fn = window.Tasks.Funnel;
+    // candidates arrive from the exempt main-thread enumeration; array
+    // position IS the identity for seeds and the deterministic tie-break
+    const cands = candsRaw.map((c, i) => ({ ...c, idx: c.idx != null ? c.idx : i }));
+    let NW = 0;
     try { NW = await analogPool.ready(); }
     catch (e) {
       analogStatus('Worker init failed (engine fetch) — try again');
       document.getElementById('analogCancel').style.display = 'none';
       return;
     }
-    if (token !== analogRunToken) return;   // superseded during warmup — pool stays warm for the next run
-    const est = Math.round(cands.length * 10 * 0.05 / NW * 10);   // ~50ms/conf rough
-    analogStatus(cands.length + ' candidates · ' + NW + ' workers (warm pool) · est ~' + Math.min(90, Math.max(5, est)) + 's — streaming…');
+    if (token !== analogRunToken) return;   // superseded during warmup
+
+    const audit = window.__analogAudit || { filtered: 0, notEvaluated: 0 };
+    const taskId = 'a' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    let spec;
+    try {
+      spec = Cn.makeSpec({ taskId, kind: 'analogScan', seed: 7, input: {
+        parentSmiles: (window.__analogRunCtx && window.__analogRunCtx.parentSmiles) || null,
+        parentSdf: analogParentSdf || '',
+        candidates: cands.map(c => ({ idx: c.idx, smiles: c.smiles, molblock: c.molblock, mw: c.mw != null ? c.mw : null, rotb: c.rotb != null ? c.rotb : null, sa: c.sa != null ? c.sa : null })),
+        audit,
+        inputRevision: { fragmentSet: 'builtin-v1' },
+      }, provenance: { projectId: (window.__activeProject && window.__activeProject.id) || null, buildId: await ensureBuildId() } });
+    } catch (e) { analogStatus('任务 spec 被拒:' + e.message); return; }
+    const tstore = await ensureTaskStore();
+    if (!tstore) { analogStatus('项目存储不可用 — 无法入档'); return; }
+    try { await tstore.submit(spec); } catch (e) { analogStatus('任务提交失败:' + e.message); return; }
+
+    const th = taskScheduler.startTask(taskId, 'background');
+    activeAnalogTask = th;
+    try { await tstore.transition(taskId, 'running', { startedAt: Date.now(), generation: th.generation }); } catch (e) {}
+    taskTrayAdd({ taskId, kind: 'analogScan', label: (window.__analogRunCtx && window.__analogRunCtx.mode) || 'scan', stage: 'B', startedAt: performance.now() });
+
+    const est = Math.round(cands.length * 10 * 0.05 / NW * 10);
+    analogStatus(cands.length + ' candidates · ' + NW + ' workers (global tokens) · est ~' + Math.min(90, Math.max(5, est)) + 's — streaming…');
     document.getElementById('analogCancel').style.display = '';
     document.getElementById('analogResultsWrap').style.display = '';
-    const tb = document.getElementById('analogRows');
-    tb.innerHTML = '';
-    let nextJob = 0, doneCount = 0;
+    document.getElementById('analogRows').innerHTML = '';
     const t0 = performance.now();
-    const results = [];
-    let INFLIGHT = 0;
-    const pump = () => {
-      while (INFLIGHT < NW * 2 && nextJob < cands.length) {
-        const i = nextJob++;
-        INFLIGHT++;
-        analogPool.submit({ type: 'score', idx: i, molblock: cands[i].molblock, nConfs: 10, seed: 4200 + i, parentSdf: analogParentSdf })
-          .then(msg => {
-          INFLIGHT--;
-          doneCount++;
-          if (token !== analogRunToken) return;   // stop consuming; the pool keeps the heaps
-          if (msg.tanimoto != null) {
-            results.push({ ...cands[msg.idx], tanimoto: msg.tanimoto, idx: msg.idx });
-            results.sort((a, b) => b.tanimoto - a.tanimoto);
-            renderAnalogRows(results, token);
-          }
-          if (doneCount % 10 === 0 || doneCount === cands.length) {
-            analogStatus(doneCount + '/' + cands.length + ' scored · top: ' +
-              (results[0] ? (results[0].tanimoto * 100).toFixed(1) + '%' : '—') +
-              ' · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's');
-          }
-          pump();
-          if (doneCount === cands.length) {
-            // ---- stage C: refine the top-30 with a 30-conformer ensemble ----
-            analogStatus('B done (' + results.length + ' scored) — C: refining top-30 with 30 conformers…');
-            const top30 = results.slice(0, 30);
-            let cDone = 0;
-            Promise.all(top30.map(cand => analogPool.submit({ type: 'score', idx: cand.idx, molblock: cand.molblock, nConfs: 30,
-              seed: 4200 + 10000 + cand.idx, parentSdf: analogParentSdf, returnBest: true }))).then(msgs => {
-              if (token !== analogRunToken) return;
-              for (const msg of msgs) {
-                if (msg.tanimoto == null) continue;
-                const r = results.find(x => x.idx === msg.idx);
-                if (r && msg.tanimoto > r.tanimoto) r.tanimoto = msg.tanimoto;   // max over both ensembles
-                if (msg.bestSdf) { const r2 = results.find(x => x.idx === msg.idx); if (r2) r2.bestSdf = msg.bestSdf; }
-              }
-              results.sort((a, b) => b.tanimoto - a.tanimoto);
-              renderAnalogRows(results, token);
-              // ---- stage D: flexible refinement of the top-10 ----
-              analogStatus('C done — D: flexible refinement of the top-10…');
-              return (async () => {
-                let dDone = 0;
-                for (const r of results.slice(0, 10)) {
-                  if (token !== analogRunToken) return;
-                  if (!r.bestSdf || r.tanimoto >= 0.9995) continue;   // exact self-superposition: nothing to gain
-                  // flexAnalogCandidate is one synchronous WASM burst
-                  // (align+MCS+optimize); yield a REAL macrotask first so
-                  // the progress line paints and input drains between bursts
-                  analogStatus('D: flex-refining ' + (++dDone) + '/10…');
-                  await new Promise(res => setTimeout(res, 0));
-                  try { r.flexT = await flexAnalogCandidate(r.bestSdf); } catch (e) { /* keep rigid */ }
-                  renderAnalogRows(results, token);
-                }
-                document.getElementById('analogCancel').style.display = 'none';
-                const nFlex = results.filter(r => r.flexT != null).length;
-                analogStatus('Done: ' + results.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop (' + (window.__azaCounts ? window.__azaCounts.single + ' single + ' + window.__azaCounts.double + ' double' + (window.__azaCounts.deazaSingle != null ? ' · deaza ' + window.__azaCounts.deazaSingle + ' + ' + window.__azaCounts.deazaDouble : '') : '') + ')' : ''));
-                analogThumbsOn = true;
-                renderAnalogRows(results, token);   // settled: thumbnails land on the sorted table
-                window.__azaRun = false;
-                // M4 P2 (docs §4): persist the run — command + L3 facts land
-                // in ONE storage transaction; cancel earlier wrote nothing.
-                try {
-                  const c2 = window.__platformCompat;
-                  if (c2 && c2.applyWithFacts) {
-                    const runId = 'a' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
-                    const ctx = window.__analogRunCtx || {};
-                    const versions = {
-                      webmm: window.__webmmVersion || (typeof WEBMM_VERSION !== 'undefined' ? WEBMM_VERSION : ''),
-                      rdkit: document.getElementById('rdkitVersion').textContent,
-                      fragmentSet: 'builtin-v1',
-                    };
-                    const top = results.slice(0, 100).map(r => ({
-                      smiles: r.smiles, tanimoto: r.tanimoto,
-                      flexT: r.flexT != null ? r.flexT : null, sa: r.sa != null ? r.sa : null,
-                      mw: r.mw != null ? r.mw : null, rotb: r.rotb != null ? r.rotb : null, idx: r.idx,
-                    }));
-                    await c2.applyWithFacts(
-                      { type: 'CreateAnalogRun', runId, parentSmiles: ctx.parentSmiles || null,
-                        mode: ctx.mode || 'swap', site: ctx.site || null, fragCat: ctx.fragCat || null,
-                        deaza: !!ctx.deaza, versions },
-                      [{ key: 'analog:' + runId, value: { layer: 'stochastic', versions, results: top, truncated: results.length > top.length } }]);
-                    analogStatus(document.getElementById('analogStatus').textContent + ' · 已保存 ' + runId.slice(0, 6));
-                    analogRenderHistory();
-                  }
-                } catch (e2) { console.warn('[analog] run not persisted:', e2); }
-              })();
-            });
-          }
-        });
-      }
+    const rowsOf = entries => entries.map(e => ({ smiles: e.smiles, molblock: e.molblock, mw: e.mw, rotb: e.rotb, sa: e.sa, idx: e.idx, tanimoto: e.score, flexT: e.flexScore != null ? e.flexScore : null, bestSdf: e.bestSdf || null }));
+
+    // streaming render feeds the UI ONLY — funnel selection is barriered
+    const bScores = new Map();
+    let lastPaint = 0;
+    const paint = (force) => {
+      const now = performance.now();
+      if (!force && now - lastPaint < 100) return;
+      lastPaint = now;
+      const rows = cands.filter(c => bScores.has(c.idx))
+        .map(c => ({ ...c, tanimoto: bScores.get(c.idx) }))
+        .sort((a, b) => b.tanimoto - a.tanimoto || (a.smiles < b.smiles ? -1 : a.smiles > b.smiles ? 1 : 0) || a.idx - b.idx);
+      renderAnalogRows(rows, token);
     };
-    pump();
+
+    try {
+      const result = await Fn.runAnalogFunnel(spec, th, {
+        concurrency: () => Math.max(1, NW),
+        submit: (e, stage) => analogPool.submit({ type: 'score', idx: e.idx, molblock: e.molblock, nConfs: stage.nConfs, seed: stage.seedOffset + e.idx, parentSdf: analogParentSdf, returnBest: stage.id === 'C' }, 'background')
+          .then(m => ({ score: m && m.tanimoto != null ? m.tanimoto : null, bestSdf: m && m.bestSdf })),
+        onPartial: (stageId, msgs) => {
+          if (token !== analogRunToken) return;
+          for (const [idx, m] of msgs) {
+            if (stageId === 'B') { if (m.score != null) bScores.set(idx, m.score); }
+            else { const prev = bScores.get(idx); if (m.score != null && (prev == null || m.score > prev)) bScores.set(idx, m.score); }
+          }
+          paint(false);
+        },
+        onProgress: p => {
+          if (token !== analogRunToken) return;
+          taskTrayStage(taskId, p.stage);
+          const topT = bScores.size ? Math.max(...bScores.values()) : null;
+          analogStatus(p.stage + ': ' + p.done + '/' + p.total + ' scored · top: ' + (topT != null ? (topT * 100).toFixed(1) + '%' : '—') + ' · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's');
+        },
+        onSettled: (stageId, ranked) => { if (token === analogRunToken) { paint(true); analogStatus(stageId + ' done (barrier) — ranked ' + ranked.length); } },
+        flex: async e => {
+          if (token !== analogRunToken) return null;
+          await new Promise(r => setTimeout(r, 0));   // real macrotask: paint + input drain
+          const v = await flexAnalogCandidate(e.bestSdf);
+          return v == null ? null : v;
+        },
+      });
+      if (token !== analogRunToken) {   // superseded mid-flight — cancel cleanly
+        taskScheduler.cancel(taskId);
+        try { await tstore.transition(taskId, 'cancelled', { failure: 'superseded' }); } catch (e) {}
+        taskScheduler.drop(taskId); activeAnalogTask = null; taskTrayRemove(taskId);
+        return;
+      }
+      const finalRows = rowsOf(result.entries);
+      document.getElementById('analogCancel').style.display = 'none';
+      const nFlex = result.entries.filter(e => e.flexScore != null).length;
+      analogStatus('Done: ' + result.entries.length + ' scored · top-10 flex-refined (' + nFlex + ') · ' + ((performance.now() - t0) / 1000).toFixed(0) + 's total' + (window.__azaRun ? ' · aza-hop (' + (window.__azaCounts ? window.__azaCounts.single + ' single + ' + window.__azaCounts.double + ' double' + (window.__azaCounts.deazaSingle != null ? ' · deaza ' + window.__azaCounts.deazaSingle + ' + ' + window.__azaCounts.deazaDouble : '') : '') + ')' : ''));
+      analogThumbsOn = true;
+      renderAnalogRows(finalRows, token);
+      window.__azaRun = false;
+      const c2 = window.__platformCompat;
+      if (c2 && c2.applyWithFacts) {
+        try {
+          const ctx = window.__analogRunCtx || {};
+          const versions = { webmm: window.__webmmVersion || (typeof WEBMM_VERSION !== 'undefined' ? WEBMM_VERSION : ''), rdkit: document.getElementById('rdkitVersion').textContent, fragmentSet: 'builtin-v1', buildId: spec.provenance.buildId };
+          const top = result.entries.slice(0, 100).map(e => ({ smiles: e.smiles, tanimoto: e.score, flexT: e.flexScore != null ? e.flexScore : null, sa: e.sa != null ? e.sa : null, mw: e.mw != null ? e.mw : null, rotb: e.rotb != null ? e.rotb : null, idx: e.idx }));
+          await tstore.commitDone({ taskId, generation: th.generation,
+            cmd: { type: 'CreateAnalogRun', runId: taskId, parentSmiles: ctx.parentSmiles || null, mode: ctx.mode || 'swap', site: ctx.site || null, fragCat: ctx.fragCat || null, deaza: !!ctx.deaza, versions },
+            factPuts: [{ key: 'analog:' + taskId, value: { layer: 'stochastic', versions, results: top, truncated: result.entries.length > top.length, stages: spec.input.stages, accounts: result.accounts } }],
+            applyWithFacts: c2.applyWithFacts });
+          analogStatus(document.getElementById('analogStatus').textContent + ' · 已保存 ' + taskId.slice(0, 6));
+          analogRenderHistory();
+        } catch (e2) { console.warn('[analog] run not persisted:', e2); }
+      }
+      taskScheduler.drop(taskId); activeAnalogTask = null;
+      taskTrayFinish(taskId, 'complete');
+    } catch (err) {
+      if (err && (err.code === 'TASK_CANCELLED' || err.code === 'TASK_INTERRUPTED')) {
+        document.getElementById('analogCancel').style.display = 'none';
+        // user cancel (ctx cancelled) vs interrupted (time/memory) — the funnel
+        // surfaces both as TASK_INTERRUPTED after lane shutdown; the truth is
+        // in the task handle, not the error code
+        try { await tstore.transition(taskId, th.cancelled() ? 'cancelled' : 'interrupted', { failure: String(err.message || err).slice(0, 120) }); } catch (e) {}
+        taskScheduler.drop(taskId); activeAnalogTask = null;
+        taskTrayFinish(taskId, 'cancelled');
+        analogStatus('已取消/中断 — 无部分结果入档(interrupted 语义:绝不冒充完整排名)');
+      } else { throw err; }
+    }
   }
   window.runAnalogFromCands = runAnalogFromCands;
 
@@ -4715,6 +4688,7 @@ function rdkitAvailable() {
     analogStatus(cands.length + ' aza-isomers (' + nSingle + ' single + ' + nDouble + ' double positions'
       + (ringN.length ? ' · deaza ' + dSingle + ' + ' + dDouble : '') + ') — funnel…');
     window.__azaRun = true;   // the funnel's final status appends the marker
+    window.__analogAudit = { filtered: 0, notEvaluated: 0 };   // aza path: dedupe/swap attempts are not deterministic filters — audit stays empty for v1
     runAnalogFromCands(cands, token);
   }
   window.runAzaScan = runAzaScan;
@@ -8708,6 +8682,13 @@ function exportEnsembleSDF() {
 
 </script>
 </div>
+</div>
+<div id="taskTray" style="position:fixed; right:14px; bottom:14px; z-index:900; display:none; max-width:360px; background:#fff; border:1px solid #cbd5e1; border-radius:10px; box-shadow:0 6px 24px rgba(15,23,42,.14); font-size:0.8rem; padding:0.5rem 0.75rem;">
+  <div style="display:flex; align-items:center; gap:6px; font-weight:600;">
+    <span id="taskTrayCount">0</span> 个任务运行中
+    <button id="taskTrayToggle" style="margin-left:auto; border:none; background:none; cursor:pointer; color:#475569;" aria-label="展开任务列表">▾</button>
+  </div>
+  <div id="taskTrayList" style="display:none; margin-top:0.4rem; max-height:240px; overflow:auto;"></div>
 </div>
 </body>
 </html>
