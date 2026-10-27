@@ -1,28 +1,23 @@
-# Plan: Top-5 统一任务执行器 + 计算漏斗(设计已冻结,待用户批准实施)
+# Plan: Top-5 统一任务执行器 + 计算漏斗(进行中)
 
-设计文档:**docs/task-executor-design.md**(Fable-5.1 设计评审 + GPT-6-Astra 红队,收敛稿已冻结)。
+设计:**docs/task-executor-design.md**(冻结);契约:**docs/task-contract.md**(信封冻结)。
 
-## 实施计划(批准后执行)
+## 已完成(本轮,阶段 1+2)
+- [x] docs/task-contract.md:信封/状态机(含 interrupted/stale)/seed 域分离/指纹规范化/canonical 序列化(IEEE754 位串,-0≠0)/4-way 记账/落账语义/analogScan input v1
+- [x] app/tasks/ 五模块:contract(纯)/scheduler(全局令牌+预留交互槽+取消注册,acquire 即 release 闭包)/pools(模块分池+令牌+任务数回收+预热备用+迟到丢弃;__analogPool 门面契约保持)/funnel(barrier+确定性平手+预算截断+TASK_INTERRUPTED)/store(旁表 upsert+Done 跨 store 单事务+对账+session 心跳)
+- [x] db.js v3(tasks store)+project.applyWithFacts extraOps+compat.getStorage/extraOps 转发
+- [x] analogScan 迁移:A 阶段审计(filtered/notEvaluated 入档)→typed spec(提交即入旁表)→调度器+漏斗(B/C/D)→Done 单事务(facts 含 stages+accounts+buildId)→取消=cancelled/interrupted 无部分入档
+- [x] 任务托盘最小版(计数+展开:kind/阶段/耗时/取消+终态最近 3)
+- [x] boot 无条件对账(abandoned/ghost-complete)
+- [x] Node +21(146);m12_tasks 14/14;run.sh 25 套件全绿
+- [x] **红线验收:同 spec 池 1 vs 池 4 逐位相等(m12)**
+- 修复记录:①scheduler pump 授予不计数→死锁;②pools drain acquire/shift 竞争→令牌泄漏(毒物混战测试抓出);③acquire resolve 数字被当 release;④取消映射以 th.cancelled() 为准非错误码;⑤reconcile 触发点从惰性 initPlatformStore 体内移到无条件 boot
 
-### 阶段 1:契约 + 骨架
-1. `docs/task-contract.md`:冻结信封(TaskSpec 字段/状态机含 interrupted/seed 域分离规则/参数指纹规范化算法/buildId=SHA-256(wasm)/四分类记账)。
-2. `app/tasks/` 五模块骨架:contract.js(类型化构造+指纹)/ scheduler.js(两级优先级+全局令牌+预留槽+取消队列层)/ pools.js(模块分池+N 任务回收+预热备用+taskId+generation 迟到丢弃)/ funnel.js(barrier+确定性预算截断+检查点)/ store.js(IDB tasks 旁表 upsert+同库跨 store Done 事务+对账+sessionId 心跳)。
-3. Node 测试:指纹规范化(-0/默认/数组序)、状态机迁移、对账(幽灵 complete/无主 abandoned)、幂等(重复 Done)。
+## 待做(阶段 3,后续单元)
+- [ ] optimize3D → kind optimize:inputRevision=parentSdf 哈希+restraints 指纹;stale 路径(UI:对旧结构重算/丢弃);m9 回归
+- [ ] shape/combo → kind shapeAlign:query+target 姿态哈希+color_scale 入 revision;m8 回归
+- [ ] 两 kind input schema 冻结进 task-contract.md §9
+- [ ] rerun(读旁表 spec 快照,可读参数 diff;绝不用当前默认)
 
-### 阶段 2:analogScan 迁移(验收里程碑)
-4. A/B/C/D 胶水 → typed pipeline 数据 + funnel.js runner;有效 stages 快照入 spec;四分类计数;同步 A 阶段输入上限+阻塞实测。
-5. **并发等价测试:同 spec 并发 1 vs 4 逐位相等**(CDP);干净/用过/重建 worker 一致性(Node)。
-6. 任务托盘最小版:全局活动入口(计数→任务/阶段/取消/结果去向),页面状态行保留。
-7. CDP m12_tasks;CreateAnalogRun 走任务层(CreateAnalogRun 契约不变,facts 结构不变)。
-
-### 阶段 3:optimize3D + shapeAlign
-8. optimize3D:inputRevision=molblock 哈希+restraints 指纹;stale 路径(结构变更→"对旧结构重算/丢弃")。
-9. shapeAlign:query+target 姿态哈希+color_scale 入 revision。
-10. 各自 kind input schema 冻结进 task-contract.md。
-
-### 不做(设计 §11):DSL/断点续跑/worker 内抢占/阶段让路/水位降载/每阶段 fact/桌面托盘/主线程同步任务/工作台批量迁移。
-
-## 验收
-- Node + 新增任务层套件全绿;CDP m12 + 既有 24 套件零回归;analogScan 并发等价逐位相等;
-- CreateAnalogRun/facts 既有契约零破坏(m6_analog_history 全绿即证);
-- clippy/fmt/cargo test 不受影响(纯 JS 层,引擎零改动)。
+## 明确不做(设计 §11)
+DSL/断点续跑/worker 内抢占/阶段让路/水位降载/每阶段 fact/桌面托盘/主线程同步任务/工作台批量迁移。
