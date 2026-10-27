@@ -6107,9 +6107,26 @@ function csvField(v) {
     const st = document.getElementById('ketcherStatus');
     if (st) st.style.display = 'none';
     if (jsmeModalOpen && moleculeToLoad) {
-      WebMMKetcher.setMolecule(moleculeToLoad).catch(() => {});
+      WebMMKetcher.setMolecule(moleculeToLoad).catch(() => {})
+        .then(() => ketcherHighlightPicked());
     }
   }
+  // Top-3/Top-5 bridge back: atoms picked in the 3D viewer (the atom ledger,
+  // molfile order) light up in the Ketcher canvas — the two views share one
+  // numbering. Defensive: the API exists in this build (probed in m11) but
+  // missing it must never break the modal.
+  function ketcherHighlightPicked() {
+    try {
+      if (!picked || !picked.length) return;   // lexical global (the third time this mine has fired)
+      const a = WebMMKetcher.api && WebMMKetcher.api();
+      const ed = a && a.editor;
+      if (!ed || typeof ed.highlightAtomById !== 'function') return;
+      for (const id of picked) { try { ed.highlightAtomById(id, true); } catch (e) {} }
+      const st = document.getElementById('ketcherStatus');
+      if (st) { st.style.display = ''; st.textContent = '已高亮 3D 拾取原子 #' + picked.join(' #') + '(molfile 序,与原子账本一致)'; }
+    } catch (e) { /* never break the modal */ }
+  }
+  window.ketcherHighlightPicked = ketcherHighlightPicked;
 
    function openJSME() {
      openModal("jsmeModal");

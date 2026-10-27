@@ -85,6 +85,29 @@ function check(name, cond, detail) {
   check('ledger math: serials 1-3 resolve to real SDF symbols after embed',
     !bridged.skip && bridged.syms.every(s => s && s !== ''), JSON.stringify(bridged));
 
+  // ---- 5. picked atoms highlight in the canvas (the reverse bridge) ----
+  await page.evaluate(() => {
+    // deterministic selection without mouse geometry: stub getSelection
+    WebMMKetcher.getSelection = async () => ({ atoms: [1, 2, 3], bonds: [] });
+    // spy on the editor highlight API before the next open
+    const a = WebMMKetcher.api();
+    window.__hl = [];
+    if (a && a.editor && a.editor.highlightAtomById) {
+      const orig = a.editor.highlightAtomById.bind(a.editor);
+      a.editor.highlightAtomById = (id, on) => { window.__hl.push([id, on]); try { orig(id, on); } catch (e) {} };
+    }
+  });
+  await page.evaluate(() => openJSME());
+  await page.waitForFunction(() => window.WebMMKetcher && typeof WebMMKetcher.getSelection === 'function', null, { timeout: 60000 });
+  await page.evaluate(() => ketcherSelectionTo3D());   // picked = [1,2,3] via the ledger path
+  await page.waitForTimeout(500);
+  await page.evaluate(() => openJSME());   // reopen: setMolecule -> highlightPicked
+  await page.waitForTimeout(2500);
+  const hl = await page.evaluate(() => ({ calls: window.__hl || [], status: document.getElementById('ketcherStatus').textContent }));
+  check('reopened canvas highlights the picked atoms (molfile order)',
+    hl.calls.length >= 3 && [1, 2, 3].every(id => hl.calls.some(c => c[0] === id && c[1] === true)) && /已高亮/.test(hl.status),
+    JSON.stringify(hl).slice(0, 120));
+
   check('zero page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
