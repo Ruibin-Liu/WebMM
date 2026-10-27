@@ -1434,6 +1434,11 @@ function rdkitAvailable() {
 <script src="platform/db.js"></script>
 <script src="platform/project.js"></script>
 <script src="platform/compat.js"></script>
+<script src="tasks/contract.js"></script>
+<script src="tasks/scheduler.js"></script>
+<script src="tasks/pools.js"></script>
+<script src="tasks/funnel.js"></script>
+<script src="tasks/store.js"></script>
 <script>initRDKit();</script>
 
 <script>
@@ -5272,7 +5277,7 @@ function clear3DViewer() {
 // energy panel, conformer ensemble, charges, and button availability.
 function reset3DState() {
   molEpoch++;
-  if (confRun) cancelConformers();
+  if (confRun) cancelConformers('molecule changed');   // Top-5: the record says WHY
   confEnsemble = null;
   selConf = -1;
   sdf3d = null;
@@ -6111,7 +6116,84 @@ function heavyFlat(coords, sdf) {
   return out;
 }
 
-function runConformers() {
+// ---- Top-5 workbench thin shell (design D1; contract §9.4) ----
+// The task layer is shared (app/tasks/); this shell binds it to the workbench
+// WITHOUT touching the platform DB (page DB ownership): the side table lives
+// in its own webmm-workbench-tasks database, single-purpose.
+const taskScheduler = window.Tasks.Scheduler.createScheduler();
+const wbTaskStore = (() => {
+  let readyP = null;
+  function ensure() {
+    if (!readyP) readyP = (async () => {
+      try {
+        const st = window.Platform.DB.createIdbStorage('webmm-workbench-tasks');
+        if (st.open) await st.open();
+        return window.Tasks.Store.createStore(st);
+      } catch (e) { return null; }
+    })();
+    return readyP;
+  }
+  return { ensure };
+})();
+let __wbBuildIdPromise = null;
+function ensureWbBuildId() {
+  if (!__wbBuildIdPromise) __wbBuildIdPromise = (async () => {
+    try {
+      const rsp = await fetch(window.__webmmUrl);
+      const buf = await rsp.arrayBuffer();
+      const dig = await crypto.subtle.digest('SHA-256', buf);
+      return 'b' + [...new Uint8Array(dig)].slice(0, 8).map(x => x.toString(16).padStart(2, '0')).join('');
+    } catch (e) { return 'b-unknown'; }
+  })();
+  return __wbBuildIdPromise;
+}
+// boot reconcile: workbench tasks write no facts — a queued/running record
+// with no live session to claim it is honestly abandoned
+(async () => {
+  try {
+    const ts = await wbTaskStore.ensure();
+    if (!ts) return;
+    const r = await ts.reconcile({ factKeyFor: () => null, claimWindowMs: 400 });
+    if (r && r.abandoned.length) console.info('[wb-tasks] reconciled:', JSON.stringify(r));
+  } catch (e) { /* advisory */ }
+})();
+const taskTrayItems = [];
+function taskTrayRender() {
+  const el = document.getElementById('taskTray');
+  if (!el) return;
+  const active = taskTrayItems.filter(t => t.state === 'running' || t.state === 'queued');
+  const recent = taskTrayItems.filter(t => t.state !== 'running' && t.state !== 'queued').slice(-3).reverse();
+  el.style.display = (active.length || recent.length) ? '' : 'none';
+  document.getElementById('taskTrayCount').textContent = active.length;
+  document.getElementById('taskTrayList').innerHTML =
+    active.map(t => '<div style="display:flex; gap:6px; align-items:center; padding:2px 0;">' +
+      '<b>' + escHtml(t.kind) + '</b> <span style="color:#64748b;">#' + escHtml(t.taskId.slice(0, 6)) + '</span>' +
+      '<span>' + escHtml(t.stage || '') + '</span>' +
+      '<span style="color:#64748b;">' + ((performance.now() - t.startedAt) / 1000).toFixed(0) + 's</span>' +
+      '<button style="margin-left:auto; border:1px solid #cbd5e1; background:#fff; border-radius:6px; cursor:pointer; font-size:0.72rem; padding:1px 6px;" onclick="taskTrayCancel(\'' + escHtml(t.taskId) + '\')">取消</button></div>').join('') +
+    recent.map(t => '<div style="color:#64748b; padding:2px 0;">' + escHtml(t.kind) + ' #' + escHtml(t.taskId.slice(0, 6)) + ' — ' + escHtml(t.state) + '</div>').join('');
+}
+function taskTrayAdd(t) { taskTrayItems.push({ state: 'running', ...t }); taskTrayRender(); }
+function taskTrayFinish(taskId, state) { const t = taskTrayItems.find(x => x.taskId === taskId); if (t) { t.state = state; t.stage = ''; taskTrayRender(); } }
+window.taskTrayCancel = function (taskId) { taskScheduler.cancel(taskId); if (confTask && confTask.taskId === taskId) cancelConformers(); };
+document.addEventListener('DOMContentLoaded', () => {
+  const tg = document.getElementById('taskTrayToggle');
+  if (tg) tg.onclick = () => { const l = document.getElementById('taskTrayList'); const open = l.style.display !== 'none'; l.style.display = open ? 'none' : ''; tg.textContent = open ? '▾' : '▴'; };
+});
+let confTask = null;   // {taskId, tstore, releases, epoch, t0}
+function confTaskEnd(state, patch) {
+  if (!confTask) return;
+  for (const r of confTask.releases) { try { r(); } catch (e) {} }
+  taskScheduler.drop(confTask.taskId);
+  taskTrayFinish(confTask.taskId, state);
+  const ts = confTask.tstore, id = confTask.taskId, t0 = confTask.t0;
+  confTask = null;
+  if (!ts) return;
+  if (state === 'stale') ts.transition(id, 'complete').then(() => ts.transition(id, 'stale', patch)).catch(() => {});
+  else ts.transition(id, state, { durationMs: Math.round(performance.now() - t0), ...(patch || {}) }).catch(() => {});
+}
+
+async function runConformers() {
   clearError();
   if (confRun) { cancelConformers(); return; }
   try {
@@ -6132,11 +6214,38 @@ function runConformers() {
     document.getElementById('btnConf').textContent = 'Cancel';
     set3dStatus(`Embedding + optimizing ${n} conformers on ${W} worker${W > 1 ? 's' : ''}…`);
 
+    // ---- Top-5 (contract §9.4): conformers run as a typed task. The farm
+    // holds min(W, scheduler-total) interactive tokens for its lifetime
+    // (the §9.3 cap lesson: acquiring more than exists deadlocks).
+    const Cn = window.Tasks.Contract;
+    const taskId = 'c' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    const seedBases = [];
     const MAX_PER_CALL = 500;   // Rust generate_conformers_wasm: n must be 1..=500
     for (let w = 0; w < W; w++) {
       const count = Math.min(per, n - w * per, MAX_PER_CALL);
       if (count <= 0) break;
-      const seedBase = 42 + w * MAX_PER_CALL;
+      seedBases.push(42 + w * MAX_PER_CALL);
+    }
+    let tstore = null, spec = null;
+    try {
+      spec = Cn.makeSpec({ taskId, kind: 'conformers', seed: null,
+        input: { molblock: mb, n, rmsdCut, engine: engine === 'gfnff' ? 'gfnff' : 'mmff', maxIter, workers: seedBases.length, seedBases },
+        provenance: { projectId: null, buildId: await ensureWbBuildId() } });
+      tstore = await wbTaskStore.ensure();
+      if (tstore) { try { await tstore.submit(spec); } catch (e) { /* rerun of a terminal id: proceed */ } }
+    } catch (e) { console.warn('[wb-tasks] spec rejected:', e); }
+    const releases = [];
+    const nTok = Math.min(seedBases.length, taskScheduler.stats().total);
+    for (let i = 0; i < nTok; i++) releases.push(await taskScheduler.acquire('interactive'));
+    const th = taskScheduler.startTask(taskId, 'interactive');
+    if (tstore) { try { await tstore.transition(taskId, 'running', { startedAt: Date.now(), generation: th.generation }); } catch (e) {} }
+    confTask = { taskId, tstore, releases, epoch: molEpoch, t0: performance.now() };
+    taskTrayAdd({ taskId, kind: 'conformers', label: engine, stage: 'embed', startedAt: performance.now() });
+
+    for (let w = 0; w < seedBases.length; w++) {
+      const count = Math.min(per, n - w * per, MAX_PER_CALL);
+      if (count <= 0) break;
+      const seedBase = seedBases[w];
       const worker = new Worker('conf.worker.js', { type: 'module' });
       confRun.workers.push(worker);
       confRun.active++;
@@ -6149,7 +6258,18 @@ function runConformers() {
           set3dStatus(`Optimizing conformers — ${confRun.confs.length}/${n} (${pct}%)… ${((performance.now() - confRun.t0) / 1000).toFixed(1)}s`);
         } else if (m.type === 'done') {
           confRun.active--;
-          if (confRun.active === 0 && !confRun.cancelled) finishConformers(engine, rmsdCut, W);
+          if (confRun.active === 0 && !confRun.cancelled) {
+            // application guard (§7): the ensemble belongs to the structure
+            // it was embedded from — a mid-run molecule swap discards it
+            if (confTask && confTask.epoch !== molEpoch) {
+              confTaskEnd('stale', { failure: 'molecule changed mid-run' });
+              set3dStatus('Conformers stale (molecule changed) — ensemble discarded; re-run on the current structure');
+              document.getElementById('btnConf').textContent = 'Conformers';
+              confRun = null;
+              return;
+            }
+            finishConformers(engine, rmsdCut, W);
+          }
         } else if (m.type === 'error') {
           showError('Worker: ' + m.message);
           cancelConformers();
@@ -6168,13 +6288,14 @@ function runConformers() {
   }
 }
 
-function cancelConformers() {
+function cancelConformers(reason) {
   if (!confRun) return;
   confRun.cancelled = true;
   for (const w of confRun.workers) w.terminate();
   confRun = null;
   document.getElementById('btnConf').textContent = 'Conformers';
   set3dStatus('Cancelled');
+  confTaskEnd('cancelled', { failure: reason || 'user cancel' });   // honest record: who cancelled and why
 }
 
 // ---- post-ensemble re-optimization (ΔE window, full convergence) -------
@@ -6331,6 +6452,7 @@ function finishConformers(engine, rmsdCut, W) {
   if (isFinite(win) && win > 0) {
     startReopt(win, engine, `Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ${kept.length} kept after RMSD ≥ ${rmsdCut} Å${pathological ? ` · ${pathological} pathological dropped` : ''}`);
   }
+  confTaskEnd('complete', { nConfs: (typeof confEnsemble !== 'undefined' && confEnsemble) ? confEnsemble.length : confs.length, kept });
 }
 
 // Single-point energy + term decomposition for the shown conformer, rendered
@@ -6461,5 +6583,12 @@ function exportEnsembleSDF() {
     set3dStatus('Engine ready — Embed 3D to begin');
   });
 </script>
+<div id="taskTray" style="position:fixed; right:14px; bottom:14px; z-index:900; display:none; max-width:360px; background:#fff; border:1px solid #cbd5e1; border-radius:10px; box-shadow:0 6px 24px rgba(15,23,42,.14); font-size:0.8rem; padding:0.5rem 0.75rem;">
+  <div style="display:flex; align-items:center; gap:6px; font-weight:600;">
+    <span id="taskTrayCount">0</span> 个任务运行中
+    <button id="taskTrayToggle" style="margin-left:auto; border:none; background:none; cursor:pointer; color:#475569;" aria-label="展开任务列表">▾</button>
+  </div>
+  <div id="taskTrayList" style="display:none; margin-top:0.4rem; max-height:240px; overflow:auto;"></div>
+</div>
 </body>
 </html>
