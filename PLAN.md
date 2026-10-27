@@ -1,4 +1,4 @@
-# Plan: Top-5 统一任务执行器 + 计算漏斗(进行中)
+# Plan: Top-5 统一任务执行器 + 计算漏斗(已完成)
 
 设计:**docs/task-executor-design.md**(冻结);契约:**docs/task-contract.md**(信封冻结)。
 
@@ -13,11 +13,11 @@
 - [x] **红线验收:同 spec 池 1 vs 池 4 逐位相等(m12)**
 - 修复记录:①scheduler pump 授予不计数→死锁;②pools drain acquire/shift 竞争→令牌泄漏(毒物混战测试抓出);③acquire resolve 数字被当 release;④取消映射以 th.cancelled() 为准非错误码;⑤reconcile 触发点从惰性 initPlatformStore 体内移到无条件 boot
 
-## 待做(阶段 3,后续单元)
-- [ ] optimize3D → kind optimize:inputRevision=parentSdf 哈希+restraints 指纹;stale 路径(UI:对旧结构重算/丢弃);m9 回归
-- [ ] shape/combo → kind shapeAlign:query+target 姿态哈希+color_scale 入 revision;m8 回归
-- [ ] 两 kind input schema 冻结进 task-contract.md §9
-- [ ] rerun(读旁表 spec 快照,可读参数 diff;绝不用当前默认)
+## 阶段 3(已完成,本轮)
+- [x] optimize3D → kind optimize(§9.2 冻结):inputRevision 双哈希守卫,stale=complete→stale 两步,rerun 哈希守卫
+- [x] shape 搜索 → kind shapeSearch(§9.3 冻结,设计稿 shapeAlign 改名注明):编排壳迁移,farm 令牌按调度器总量封顶
+- [x] rerunTask 快照重跑(shapeSearch 回填重跑/optimize 哈希不符即拒)
+- [x] Node 151;m13_tasks2 8/8;run.sh 26 套件全绿
 
 ## 明确不做(设计 §11)
 DSL/断点续跑/worker 内抢占/阶段让路/水位降载/每阶段 fact/桌面托盘/主线程同步任务/工作台批量迁移。
