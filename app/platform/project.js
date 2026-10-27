@@ -97,7 +97,7 @@
       // M4 P2 (docs §4): apply a command and land its L3 facts in ONE
       // storage transaction inside one lock — the analog-run commit path.
       // Cancel semantics: this either fully lands or throws; nothing partial.
-      async applyWithFacts(cmd, factPuts) {
+      async applyWithFacts(cmd, factPuts, extraOps) {
         if (p._dead) throw new Error('project replaced; reload required');
         let res;
         const id = await p.withLock('project', async () => {
@@ -112,6 +112,7 @@
             { store: 'meta', key: 'cmdSeq', value: seq },
           ];
           for (const f of (factPuts || [])) ops.push({ store: 'facts', key: f.key, value: f.value });
+          for (const o of (extraOps || [])) ops.push({ store: o.store, key: o.key, value: o.value });   // Top-5: task side table rides the same transaction
           if (p.storage.putBatch) await p.storage.putBatch(ops);
           else { for (const o of ops) await p.storage.put(o.store, o.key, o.value); }
           if (!p._hadData) { p._hadData = true; try { await p.storage.put('meta', 'hadData', true); } catch (e) {} }

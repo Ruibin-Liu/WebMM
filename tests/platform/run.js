@@ -648,6 +648,132 @@ console.log('project (mem storage):');
       d(8, { dir: 'high', lo: 7, softLo: 5 }) === 1 && d(6, { dir: 'high', lo: 7, softLo: 5 }) === 0.5);
   }
 
+
+  // ===================== Top-5 task layer (docs/task-contract.md) =====================
+  {
+    const Cn = require(path.join(__dirname, '../../app/tasks/contract.js'));
+    check('canon: -0 differs from 0 (IEEE754 bits)', Cn.canon(-0) !== Cn.canon(0) && Cn.canon(0) === Cn.canon(0));
+    check('canon: NaN/±Inf literal, key order insensitive, undefined dropped, array order significant',
+      Cn.canon({ a: 1, b: undefined }) === Cn.canon({ b: undefined, a: 1 }) &&
+      Cn.canon([1, 2]) !== Cn.canon([2, 1]) &&
+      Cn.canon(NaN) === '#nan' && Cn.canon(Infinity) === '#+inf');
+    try { Cn.canon(() => {}); check('canon: functions rejected (contract error)', false); }
+    catch (e) { check('canon: functions rejected (contract error)', true); }
+    check('deriveSeed: domain separation — stage/kind change the seed, missing keys explicit',
+      Cn.deriveSeed({ roundSeed: 7, kind: 'analogScan', stage: 'B', molId: 'm1' }) !==
+      Cn.deriveSeed({ roundSeed: 7, kind: 'analogScan', stage: 'C', molId: 'm1' }) &&
+      Cn.deriveSeed({ roundSeed: 7, kind: 'analogScan' }) !== Cn.deriveSeed({ roundSeed: 7, kind: 'optimize' }) &&
+      Cn.deriveSeed({ roundSeed: 7 }) !== Cn.deriveSeed({ roundSeed: 7, molId: 'x' }));
+    check('state machine: legal + illegal transitions',
+      Cn.canTransition('running', 'complete') && Cn.canTransition('complete', 'stale') &&
+      !Cn.canTransition('failed', 'running') && !Cn.canTransition('stale', 'running') &&
+      !Cn.canTransition('queued', 'complete'));
+    const spec = Cn.makeSpec({ taskId: 't1', kind: 'analogScan', seed: 7,
+      input: { parentSmiles: 'Cc1ccccc1', parentSdf: 'SDF', candidates: [], audit: { filtered: 3 } },
+      provenance: { buildId: 'b' } });
+    check('makeSpec analogScan: stages expanded with defaults + policyRev + fingerprint stable',
+      spec.input.stages.length === 4 && spec.input.stages[1].nConfs === 10 && spec.input.stages[2].seedOffset === 14200 &&
+      typeof Cn.policyRev(spec.input.stages) === 'string' &&
+      Cn.fingerprint(spec.kind, spec.inputVersion, spec.input, spec.seed) ===
+      Cn.fingerprint(spec.kind, spec.inputVersion, Cn.effectiveInput('analogScan', spec.input), spec.seed));
+    try { Cn.makeSpec({ taskId: 't2', kind: 'conformers', input: {} }); check('unfrozen kinds rejected at makeSpec', false); }
+    catch (e) { check('unfrozen kinds rejected at makeSpec', /not frozen/.test(e.message)); }
+    try { Cn.validateStages([{ id: 'X', op: 'score', nConfs: 99, seedOffset: 1, cap: 1 }]); check('validateStages: nConfs bounds', false); }
+    catch (e) { check('validateStages: nConfs bounds', /nConfs/.test(e.message)); }
+    check('inputRevisionFor analogScan: parent hash + policy',
+      Cn.inputRevisionFor('analogScan', spec.input).policy === Cn.policyRev(spec.input.stages));
+
+    // ---- scheduler: global tokens, reserved interactive slot, generation ----
+    const Sch = require(path.join(__dirname, '../../app/tasks/scheduler.js'));
+    const sch = Sch.createScheduler({ cores: 8 });   // total 4, background max 3
+    let held = { bg: 0, inter: 0 };
+    const rel = [];
+    for (let i = 0; i < 3; i++) { sch.acquire('background').then(r => rel.push(r)); }
+    await new Promise(r => setTimeout(r, 20));
+    let interGot = false;
+    sch.acquire('interactive').then(() => { interGot = true; });
+    let bgBlocked = true;
+    sch.acquire('background').then(() => { bgBlocked = false; });
+    await new Promise(r => setTimeout(r, 20));
+    const st1 = sch.stats();
+    check('scheduler: 3 bg tokens held, 4th bg blocks, interactive takes reserved slot',
+      st1.backgroundHeld === 3 && st1.waiting === 1 && interGot === true && bgBlocked === true);
+    const h = sch.startTask('taskA', 'background');
+    check('scheduler: checkpoint passes while live, cancel bumps generation',
+      h.checkpoint('B') === true && sch.cancel('taskA') === 'cancel-requested' && sch.gen('taskA') === h.generation + 1);
+    try { h.checkpoint('C'); check('checkpoint throws after cancel', false); }
+    catch (e) { check('checkpoint throws after cancel', e.code === 'TASK_CANCELLED'); }
+
+    // ---- store: submit/transition/commitDone idempotency + reconciliation ----
+    const Store = require(path.join(__dirname, '../../app/tasks/store.js'));
+    const mem = DB.createMemStorage();
+    const ts = Store.createStore(mem);
+    const spec2 = Cn.makeSpec({ taskId: 'run1', kind: 'analogScan', seed: 1,
+      input: { parentSmiles: 'C', parentSdf: 'S', candidates: [{ idx: 0, smiles: 'CC', molblock: 'M' }] },
+      provenance: { buildId: 'b' } });
+    await ts.submit(spec2);
+    await ts.transition('run1', 'running', { startedAt: 1 });
+    const appliedOps = [];
+    const commit1 = await ts.commitDone({ taskId: 'run1', cmd: { type: 'CreateAnalogRun' }, factPuts: [{ key: 'analog:run1', value: { results: [] } }],
+      applyWithFacts: async (cmd, facts, extra) => { for (const o of [cmd && { store: 'commands' }, ...facts.map(f => ({ store: 'facts', key: f.key, value: f.value })), ...extra]) { appliedOps.push(o); if (o.store === 'tasks') await mem.put(o.store, o.key, o.value); } return 1; } });
+    const recDone = await ts.get('run1');
+    check('store: commitDone lands command+fact+task-complete atomically (extraOps)',
+      commit1 === 'committed' && recDone.state === 'complete' && appliedOps.some(o => o && o.store === 'tasks' && o.key === 'run1'));
+    const commit2 = await ts.commitDone({ taskId: 'run1', cmd: { type: 'CreateAnalogRun' }, factPuts: [], applyWithFacts: async () => 1 });
+    check('store: repeat Done is idempotent (already)', commit2 === 'already' && appliedOps.length === 3);
+    try { await ts.transition('run1', 'failed'); check('store: complete→failed forbidden', false); }
+    catch (e) { check('store: complete→failed forbidden', /forbidden/.test(e.message)); }
+    // reconciliation: ghost complete vs abandoned
+    const ts2 = Store.createStore(mem);
+    await ts2.submit(Cn.makeSpec({ taskId: 'ghost', kind: 'analogScan', input: { parentSmiles: 'C', parentSdf: 'S', candidates: [] }, provenance: {} }));
+    await ts2.transition('ghost', 'running');
+    await mem.put('facts', 'analog:ghost', { results: [1] });
+    await ts2.submit(Cn.makeSpec({ taskId: 'lost', kind: 'analogScan', input: { parentSmiles: 'C', parentSdf: 'S', candidates: [] }, provenance: {} }));
+    await ts2.transition('lost', 'running');
+    const recon = await ts2.reconcile({ factKeyFor: s => 'analog:' + s.taskId, claimWindowMs: 0 });
+    check('store: reconcile — fact present = ghost complete, absent = abandoned',
+      recon.complete.includes('ghost') && recon.abandoned.includes('lost') &&
+      (await ts2.get('ghost')).state === 'complete' && (await ts2.get('lost')).state === 'abandoned');
+
+    // ---- funnel: concurrency 1 vs N bitwise equivalence + 4-way accounting ----
+    const Fn = require(path.join(__dirname, '../../app/tasks/funnel.js'));
+    function mockSpec(nCands, over) {
+      return Cn.makeSpec({ taskId: 'f', kind: 'analogScan', seed: 5, input: {
+        parentSmiles: 'C', parentSdf: 'S',
+        candidates: Array.from({ length: nCands }, (_, i) => ({ idx: i, smiles: 'C' + 'C'.repeat(i % 7) + 'N'.repeat(i % 3), molblock: 'M' + i })),
+        ...(over || {}) } });
+    }
+    // deterministic score irrespective of arrival order; ties engineered via %5
+    const mockSubmit = async (e, stage) => ({ score: ((e.idx * 7 + stage.seedOffset) % 5) / 5 });
+    const ctxOf = () => ({ cancelled: () => false, checkpoint: () => true });
+    const capSpec = mockSpec(12, { stages: Cn.ANALOG_STAGES_V1.map(s => s.id === 'B' ? { ...s, cap: 6 } : s) });
+    const run1 = await Fn.runAnalogFunnel(capSpec, ctxOf(), { submit: mockSubmit, flex: async e => e.score / 2, concurrency: () => 1 });
+    const run4 = await Fn.runAnalogFunnel(Cn.makeSpec({ taskId: 'f', kind: 'analogScan', seed: 5, input: capSpec.input }), ctxOf(), { submit: mockSubmit, flex: async e => e.score / 2, concurrency: () => 4 });
+    const strip = r => r.entries.map(e => ({ idx: e.idx, score: e.score, flexScore: e.flexScore }));
+    check('funnel: concurrency 1 vs 4 — identical ranked output (determinism red line)',
+      JSON.stringify(strip(run1)) === JSON.stringify(strip(run4)) &&
+      run1.entries[0].score >= run1.entries[1].score);
+    check('funnel: tie-break by smiles then idx (not arrival order)',
+      run1.entries.slice(1, 6).every((e, i) => { const p = run1.entries[i]; return p.score > e.score || (p.score === e.score && (p.smiles < e.smiles || (p.smiles === e.smiles && p.idx < e.idx))); }));
+    check('funnel: 4-way accounting — B cap 6 over 12 cands ⇒ notEvaluated 6',
+      run1.accounts.B.evaluated === 6 && run1.accounts.B.notEvaluated === 6 && run1.accounts.A.evaluated === 12);
+    // failed counted separately (submit returns null for idx 0)
+    const runF = await Fn.runAnalogFunnel(mockSpec(4, { stages: Cn.ANALOG_STAGES_V1.map(s => s.id === 'B' ? { ...s, cap: 4 } : s) }),
+      ctxOf(), { submit: async (e, st) => e.idx === 0 ? { score: null } : { score: 0.5 }, flex: async () => 1, concurrency: () => 2 });
+    check('funnel: failed candidate counted failed, excluded from ranking domain',
+      runF.accounts.B.failed === 1 && runF.accounts.B.evaluated === 3 && runF.entries.every(e => e.idx !== 0));
+    // cancel mid-funnel → interrupted, never a fake complete ranking
+    let calls = 0;
+    const ctxC = { cancelled: () => calls > 3, checkpoint: () => { if (calls > 3) { const e = new Error('x'); e.code = 'TASK_CANCELLED'; throw e; } } };
+    try {
+      await Fn.runAnalogFunnel(mockSpec(10), ctxC, { submit: async (e, s) => { calls++; await new Promise(r => setTimeout(r, 5)); return { score: 0.5 }; }, flex: async () => 1, concurrency: () => 2 });
+      check('funnel: cancelled run throws interrupted (no fake ranking)', false);
+    } catch (e) { check('funnel: cancelled run throws interrupted (no fake ranking)', e.code === 'TASK_INTERRUPTED'); }
+    // C combine max: strict > keeps B on tie
+    const cm = Fn.combineMax;
+    check('funnel: combineMax deterministic tie rule', cm(0.5, 0.5) === 0.5 && cm(0.5, 0.7) === 0.7 && cm(0.7, 0.5) === 0.7);
+  }
+
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR', e); process.exit(1); });

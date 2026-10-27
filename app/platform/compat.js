@@ -65,6 +65,9 @@
       const channel = DB ? DB.createStoreChannel(dbName) : null;
       activeProjectId = projectId;
       activeStorage = storage; activeLock = withLock; projectModule = deps.Project;
+      // Top-5 (docs/task-contract.md §6): the task side table rides the same
+      // per-project storage as commands/facts — Done stays one transaction.
+      activeStorage = storage;
       // M2b: read-only tabs re-init their projection when another tab writes
       if (channel) channel.onmessage = () => { needsReinit = true; };
       project = await deps.Project.init(storage, { withLock, channel, writableGuard });
@@ -102,9 +105,9 @@
       provenanceAnalogRun: lineage && lineage.analogRun || null });
   }
 
-  async function applyWithFacts(cmd, factPuts) {
+  async function applyWithFacts(cmd, factPuts, extraOps) {
     if (!project || !project.applyWithFacts) throw new Error('compat: applyWithFacts unavailable');
-    return project.applyWithFacts(cmd, factPuts);
+    return project.applyWithFacts(cmd, factPuts, extraOps);   // Top-5: extraOps (task side table) ride the same transaction
   }
   async function getFact(key) {
     if (!project || !project.storageGet) return null;
@@ -207,7 +210,7 @@
   }
 
   return { init, saveLibraryInputs, restoreInputs, clearLibrary, LEGACY_KEY, LIB_ID,
-    pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi, applyWithFacts, getFact,
+    pin, unpin, exclude, include, undo, getPins, getExcludes, ready, projectApi, applyWithFacts, getFact, getStorage: () => activeStorage,
     saveRoundScores, getRoundScores, cachedRoundScores, exportProjectData, listFacts,
     importProject, stale };
 });

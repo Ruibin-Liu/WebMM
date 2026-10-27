@@ -8,8 +8,11 @@
   'use strict';
 
   const DB_NAME = 'webmm-platform';
-  const DB_VERSION = 2;
-  const STORES = ['meta', 'commands', 'snapshots', 'facts'];  // facts: L3 results (round scores), keyed 'scores:<roundId>'
+  const DB_VERSION = 3;
+  const STORES = ['meta', 'commands', 'snapshots', 'facts', 'tasks'];  // facts: L3 results (round scores), keyed 'scores:<roundId>'
+  //                                                       ^^^^^ Top-5: task side table (docs/task-contract.md §6) —
+  // spec at submit (the only pre-Done write) + state transitions + timings; upsert by taskId, never appended
+
 
   // MIGRATIONS: Map<fromVersion, (txHelpers) => Promise> — the registered
   // hook pattern (M0 spec §5). v1 has none; the registry exists from the
