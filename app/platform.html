@@ -6107,23 +6107,69 @@ function csvField(v) {
     const st = document.getElementById('ketcherStatus');
     if (st) st.style.display = 'none';
     if (jsmeModalOpen && moleculeToLoad) {
+      window.__ketcherLoadedStr = moleculeToLoad;   // the EXACT string the canvas holds (numbering source)
       WebMMKetcher.setMolecule(moleculeToLoad).catch(() => {})
-        .then(() => ketcherHighlightPicked());
+        .then(() => ketcherHighlightPicked())
+        // the canvas commit can clear a selection set right after the load
+        // promise resolves — re-assert once, idempotently
+        .then(() => new Promise(r2 => setTimeout(r2, 900)))
+        .then(() => { if (jsmeModalOpen) ketcherHighlightPicked(); });
     }
   }
   // Top-3/Top-5 bridge back: atoms picked in the 3D viewer (the atom ledger,
-  // molfile order) light up in the Ketcher canvas — the two views share one
-  // numbering. Defensive: the API exists in this build (probed in m11) but
-  // missing it must never break the modal.
+  // 1-based SDF serials) appear SELECTED in the Ketcher canvas.
+  //
+  // Empirically pinned semantics of this build (m11 probes):
+  //   - editor.selection(selection?) is getter AND setter, takes MULTI-atom
+  //     {atoms: [...]} and paints them (the visible green/cyan state)
+  //   - canvas atom ids are 0-based, in the TOKEN ORDER of the loaded string
+  //   - highlightAtomById(id, on) is 0-based but SINGLE-atom REPLACE — useless
+  //     for a 2-4 atom pick, so selection() is the primary channel
+  // The canvas holds mol.get_smiles() (canonical — atom order ≠ SDF order!),
+  // so serials are mapped through a unique RDKit substructure match between
+  // the loaded string and sdf3d. Unmappable → honest message, never a wrong
+  // atom highlighted (the Top-3 red line: pointing at the WRONG atom is
+  // worse than pointing at none).
+  let __kSerialMap = null, __kSerialMapKey = '';
+  function ketcherSerialMap() {
+    const key = (window.__ketcherLoadedStr || '') + '\u0001' + (sdf3d ? sdf3d.length + ':' + sdf3d.slice(0, 400) : '');
+    if (__kSerialMap && __kSerialMapKey === key) return __kSerialMap;
+    __kSerialMap = null; __kSerialMapKey = key;
+    try {
+      const q = rdkitModule.get_mol(window.__ketcherLoadedStr);
+      const t = rdkitModule.get_mol(sdf3d);
+      if (q && q.is_valid() && t && t.is_valid()) {
+        const arr = JSON.parse(t.get_substruct_matches(q));
+        if (Array.isArray(arr) && arr.length && Array.isArray(arr[0].atoms)) {
+          const m = new Map();   // SDF serial (1-based) -> canvas id (0-based)
+          arr[0].atoms.forEach((tIdx, qi) => m.set(tIdx + 1, qi));
+          __kSerialMap = m;
+        }
+      }
+      if (q) q.delete();
+      if (t) t.delete();
+    } catch (e) { /* fall through: no map, no highlight */ }
+    return __kSerialMap;
+  }
   function ketcherHighlightPicked() {
     try {
-      if (!picked || !picked.length) return;   // lexical global (the third time this mine has fired)
+      if (!picked || !picked.length) return;
       const a = WebMMKetcher.api && WebMMKetcher.api();
       const ed = a && a.editor;
-      if (!ed || typeof ed.highlightAtomById !== 'function') return;
-      for (const id of picked) { try { ed.highlightAtomById(id, true); } catch (e) {} }
+      if (!ed || typeof ed.selection !== 'function') return;
+      const map = ketcherSerialMap();
       const st = document.getElementById('ketcherStatus');
-      if (st) { st.style.display = ''; st.textContent = '已高亮 3D 拾取原子 #' + picked.join(' #') + '(molfile 序,与原子账本一致)'; }
+      if (!map) {
+        if (st) { st.style.display = ''; st.textContent = '无法把 3D 拾取原子映射到画布编号(结构不匹配)——未高亮,以免指错原子'; }
+        return;
+      }
+      const pairs = picked.map(s => [s, map.get(s)]).filter(([, id]) => id != null);
+      if (!pairs.length) {
+        if (st) { st.style.display = ''; st.textContent = '3D 拾取原子不在当前画布结构中——未高亮(不猜)'; }
+        return;
+      }
+      ed.selection({ atoms: pairs.map(([, id]) => id) });
+      if (st) { st.style.display = ''; st.textContent = '已选 3D 拾取原子:SDF 序 #' + pairs.map(([s]) => s).join(' #') + ' → 画布原子 #' + pairs.map(([, id]) => id + 1).join(' #') + '(molfile 序经账本核对,映射经 RDKit 唯一匹配)'; }
     } catch (e) { /* never break the modal */ }
   }
   window.ketcherHighlightPicked = ketcherHighlightPicked;

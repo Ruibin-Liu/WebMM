@@ -85,28 +85,45 @@ function check(name, cond, detail) {
   check('ledger math: serials 1-3 resolve to real SDF symbols after embed',
     !bridged.skip && bridged.syms.every(s => s && s !== ''), JSON.stringify(bridged));
 
-  // ---- 5. picked atoms highlight in the canvas (the reverse bridge) ----
+  // ---- 5. picked atoms SELECTED in the canvas (the reverse bridge) ----
+  // Empirically pinned semantics (probed): selection(selection?) is a
+  // getter+setter taking multi-atom {atoms}, ids 0-based in loaded-string
+  // token order; highlightAtomById is single-atom REPLACE (rejected for
+  // multi-pick). Serials map through a unique RDKit match vs sdf3d.
   await page.evaluate(() => {
-    // deterministic selection without mouse geometry: stub getSelection
-    WebMMKetcher.getSelection = async () => ({ atoms: [1, 2, 3], bonds: [] });
-    // spy on the editor highlight API before the next open
+    // deterministic pick of serials 1-3 (aspirin embed order: CH3, C=O, =O)
+    if (!pickMode) togglePickMode();
+    picked = [1, 2, 3];
+    pickUpdateUi();
+  });
+  await page.evaluate(() => {
+    // spy on the selection setter
     const a = WebMMKetcher.api();
-    window.__hl = [];
-    if (a && a.editor && a.editor.highlightAtomById) {
-      const orig = a.editor.highlightAtomById.bind(a.editor);
-      a.editor.highlightAtomById = (id, on) => { window.__hl.push([id, on]); try { orig(id, on); } catch (e) {} };
+    window.__selSpy = [];
+    if (a && a.editor) {
+      const orig = a.editor.selection.bind(a.editor);
+      a.editor.selection = function (sel) {
+        if (sel && sel.atoms) window.__selSpy.push(sel.atoms.slice());
+        return orig(sel);
+      };
     }
   });
   await page.evaluate(() => openJSME());
-  await page.waitForFunction(() => window.WebMMKetcher && typeof WebMMKetcher.getSelection === 'function', null, { timeout: 60000 });
-  await page.evaluate(() => ketcherSelectionTo3D());   // picked = [1,2,3] via the ledger path
-  await page.waitForTimeout(500);
-  await page.evaluate(() => openJSME());   // reopen: setMolecule -> highlightPicked
   await page.waitForTimeout(2500);
-  const hl = await page.evaluate(() => ({ calls: window.__hl || [], status: document.getElementById('ketcherStatus').textContent }));
-  check('reopened canvas highlights the picked atoms (molfile order)',
-    hl.calls.length >= 3 && [1, 2, 3].every(id => hl.calls.some(c => c[0] === id && c[1] === true)) && /已高亮/.test(hl.status),
-    JSON.stringify(hl).slice(0, 120));
+  await page.waitForFunction(() => { try { const s = WebMMKetcher.api().editor.selection(); return s && s.atoms && s.atoms.length === 3; } catch (e) { return false; } }, null, { timeout: 6000 }).catch(() => {});
+  const sel = await page.evaluate(() => ({
+    spy: window.__selSpy || [],
+    now: WebMMKetcher.api().editor.selection(),
+    status: document.getElementById('ketcherStatus').textContent,
+    map: (() => { const m = ketcherSerialMap(); return m ? [1, 2, 3, 4].map(s => m.get(s)) : null; })(),
+  }));
+  check('picked serials 1-3 → canvas ids [0,1,2] via the RDKit map (multi-atom selection)',
+    sel.map && JSON.stringify(sel.map.slice(0, 4)) === '[0,1,2,3]' &&
+    (JSON.stringify(sel.spy[0] || []) === '[0,1,2]' || (sel.now && sel.now.atoms && JSON.stringify(sel.now.atoms) === '[0,1,2]')) &&
+    (!sel.now || !sel.now.atoms || JSON.stringify(sel.now.atoms) === '[0,1,2]'),
+    JSON.stringify(sel).slice(0, 140));
+  check('status names both numberings (SDF serials -> canvas ids)',
+    /已选 3D 拾取原子/.test(sel.status) && /SDF 序/.test(sel.status) && /画布原子/.test(sel.status), sel.status.slice(0, 90));
 
   check('zero page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();
