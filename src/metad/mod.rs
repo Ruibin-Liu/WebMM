@@ -13,6 +13,8 @@
 use crate::forces::ForceField;
 use std::cell::RefCell;
 
+pub mod imtd;
+
 // ── helpers ──
 
 fn sub(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {

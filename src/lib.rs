@@ -1609,6 +1609,300 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
     }
 }
 
+// ===== iMTD-GC conformational search (WASM) =====
+
+/// Options for an iMTD-GC conformational search (iterative short metadynamics
+/// + genetic crossing around the well-tempered engine; MMFF, gas phase).
+#[wasm_bindgen]
+pub struct ImtdOptions {
+    mmff_variant: String,
+    max_rounds: usize,
+    runs_per_round: usize,
+    steps_per_run: usize,
+    quench_interval: usize,
+    dt_fs: f64,
+    temperature_k: f64,
+    friction_per_ps: f64,
+    seed: u32,
+    hill_height: f64,
+    hill_width: f64,
+    hill_width_distance: f64,
+    deposit_interval: usize,
+    bias_factor: f64,
+    quench_max_iterations: usize,
+    energy_window: f64,
+    rmsd_tol: f64,
+    max_conformers: usize,
+    crossing_pairs: usize,
+    convergence_new_minima: usize,
+}
+
+#[wasm_bindgen]
+impl ImtdOptions {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        let d = crate::metad::imtd::ImtdConfig::default();
+        Self {
+            mmff_variant: "MMFF94s".to_string(),
+            max_rounds: d.max_rounds,
+            runs_per_round: d.runs_per_round,
+            steps_per_run: d.steps_per_run,
+            quench_interval: d.quench_interval,
+            dt_fs: d.dt_fs,
+            temperature_k: d.temperature_k,
+            friction_per_ps: d.friction_per_ps,
+            seed: d.seed as u32,
+            hill_height: d.hill_height,
+            hill_width: d.hill_width,
+            hill_width_distance: d.hill_width_distance,
+            deposit_interval: d.deposit_interval,
+            bias_factor: d.bias_factor,
+            quench_max_iterations: d.quench_max_iterations,
+            energy_window: d.energy_window,
+            rmsd_tol: d.rmsd_tol,
+            max_conformers: d.max_conformers,
+            crossing_pairs: d.crossing_pairs,
+            convergence_new_minima: d.convergence_new_minima,
+        }
+    }
+    #[wasm_bindgen]
+    pub fn set_mmff_variant(&mut self, v: String) {
+        self.mmff_variant = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_max_rounds(&mut self, v: usize) {
+        self.max_rounds = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_runs_per_round(&mut self, v: usize) {
+        self.runs_per_round = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_steps_per_run(&mut self, v: usize) {
+        self.steps_per_run = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_quench_interval(&mut self, v: usize) {
+        self.quench_interval = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_dt_fs(&mut self, v: f64) {
+        self.dt_fs = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_temperature_k(&mut self, v: f64) {
+        self.temperature_k = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_friction_per_ps(&mut self, v: f64) {
+        self.friction_per_ps = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_seed(&mut self, v: u32) {
+        self.seed = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_hill_height(&mut self, v: f64) {
+        self.hill_height = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_hill_width(&mut self, v: f64) {
+        self.hill_width = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_hill_width_distance(&mut self, v: f64) {
+        self.hill_width_distance = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_deposit_interval(&mut self, v: usize) {
+        self.deposit_interval = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_bias_factor(&mut self, v: f64) {
+        self.bias_factor = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_quench_max_iterations(&mut self, v: usize) {
+        self.quench_max_iterations = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_energy_window(&mut self, v: f64) {
+        self.energy_window = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_rmsd_tol(&mut self, v: f64) {
+        self.rmsd_tol = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_max_conformers(&mut self, v: usize) {
+        self.max_conformers = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_crossing_pairs(&mut self, v: usize) {
+        self.crossing_pairs = v;
+    }
+    #[wasm_bindgen]
+    pub fn set_convergence_new_minima(&mut self, v: usize) {
+        self.convergence_new_minima = v;
+    }
+}
+impl Default for ImtdOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Result of an iMTD-GC search: the unique-minimum ensemble (conformer-major
+/// flat arrays, same layout as `OptimizedConformers`) plus iteration stats.
+#[wasm_bindgen]
+pub struct ImtdSearchResult {
+    n_atoms: usize,
+    n_confs: usize,
+    coordinates: Vec<f64>,
+    energies: Vec<f64>,
+    /// 0 = the quenched input; r ≥ 1 = found in round r.
+    round_found: Vec<u32>,
+    new_minima_per_round: Vec<u32>,
+    rounds_executed: u32,
+    converged: bool,
+    pool_size: u32,
+    n_rotatable: u32,
+    success: bool,
+    error: String,
+}
+
+#[wasm_bindgen]
+impl ImtdSearchResult {
+    #[wasm_bindgen]
+    pub fn n_atoms(&self) -> usize {
+        self.n_atoms
+    }
+    #[wasm_bindgen]
+    pub fn n_confs(&self) -> usize {
+        self.n_confs
+    }
+    #[wasm_bindgen]
+    pub fn coordinates(&self) -> Vec<f64> {
+        self.coordinates.clone()
+    }
+    #[wasm_bindgen]
+    pub fn energies(&self) -> Vec<f64> {
+        self.energies.clone()
+    }
+    #[wasm_bindgen]
+    pub fn round_found(&self) -> Vec<u32> {
+        self.round_found.clone()
+    }
+    #[wasm_bindgen]
+    pub fn new_minima_per_round(&self) -> Vec<u32> {
+        self.new_minima_per_round.clone()
+    }
+    #[wasm_bindgen]
+    pub fn rounds_executed(&self) -> u32 {
+        self.rounds_executed
+    }
+    #[wasm_bindgen]
+    pub fn converged(&self) -> bool {
+        self.converged
+    }
+    #[wasm_bindgen]
+    pub fn pool_size(&self) -> u32 {
+        self.pool_size
+    }
+    #[wasm_bindgen]
+    pub fn n_rotatable(&self) -> u32 {
+        self.n_rotatable
+    }
+    #[wasm_bindgen]
+    pub fn success(&self) -> bool {
+        self.success
+    }
+    #[wasm_bindgen]
+    pub fn error(&self) -> String {
+        self.error.clone()
+    }
+}
+
+/// Run an iMTD-GC conformational search (CREST-lineage iterative short
+/// metadynamics with rotating bias strengths/CVs + genetic crossing; see
+/// `metad::imtd`) on an SDF molecule and return the conformer ensemble.
+#[wasm_bindgen]
+pub fn run_imtd_conformer_search(sdf_content: &str, options: ImtdOptions) -> ImtdSearchResult {
+    console_error_panic_hook::set_once();
+    let err = |msg: String| ImtdSearchResult {
+        n_atoms: 0,
+        n_confs: 0,
+        coordinates: vec![],
+        energies: vec![],
+        round_found: vec![],
+        new_minima_per_round: vec![],
+        rounds_executed: 0,
+        converged: false,
+        pool_size: 0,
+        n_rotatable: 0,
+        success: false,
+        error: msg,
+    };
+    let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
+        Ok(m) => m,
+        Err(e) => return err(format!("Parse error: {e}")),
+    };
+    if mol.atoms.is_empty() {
+        return err("Empty molecule".into());
+    }
+    let variant = match options.mmff_variant.as_str() {
+        "MMFF94" => MMFFVariant::MMFF94,
+        _ => MMFFVariant::MMFF94s,
+    };
+    let config = crate::metad::imtd::ImtdConfig {
+        max_rounds: options.max_rounds,
+        runs_per_round: options.runs_per_round,
+        steps_per_run: options.steps_per_run,
+        quench_interval: options.quench_interval,
+        dt_fs: options.dt_fs,
+        temperature_k: options.temperature_k,
+        friction_per_ps: options.friction_per_ps,
+        seed: options.seed as u64,
+        hill_height: options.hill_height,
+        hill_width: options.hill_width,
+        hill_width_distance: options.hill_width_distance,
+        deposit_interval: options.deposit_interval,
+        bias_factor: options.bias_factor,
+        quench_max_iterations: options.quench_max_iterations,
+        energy_window: options.energy_window,
+        rmsd_tol: options.rmsd_tol,
+        max_conformers: options.max_conformers,
+        crossing_pairs: options.crossing_pairs,
+        convergence_new_minima: options.convergence_new_minima,
+    };
+    let res = crate::metad::imtd::imtd_conformer_search(&mol, variant, &config);
+    let n_atoms = mol.atoms.len();
+    let mut coordinates = Vec::with_capacity(res.conformers.len() * n_atoms * 3);
+    for c in &res.conformers {
+        for p in &c.coords {
+            coordinates.extend_from_slice(p);
+        }
+    }
+    ImtdSearchResult {
+        n_atoms,
+        n_confs: res.conformers.len(),
+        coordinates,
+        energies: res.conformers.iter().map(|c| c.energy).collect(),
+        round_found: res
+            .conformers
+            .iter()
+            .map(|c| c.round_found as u32)
+            .collect(),
+        new_minima_per_round: res.new_minima_per_round.iter().map(|&n| n as u32).collect(),
+        rounds_executed: res.rounds_executed as u32,
+        converged: res.converged,
+        pool_size: res.pool_size as u32,
+        n_rotatable: res.n_rotatable as u32,
+        success: true,
+        error: String::new(),
+    }
+}
+
 /// Live MD handle: holds a running simulation so JS can advance it in small
 /// chunks (one per animation frame) and render the trajectory as it evolves.
 #[wasm_bindgen]
@@ -2410,6 +2704,62 @@ mod tests {
         assert!(f.iter().all(|x| x.is_finite()));
         assert!(live.coords().len() == 27);
         assert!(live.potential_energy().is_finite());
+    }
+
+    /// iMTD-GC search: array contract, sorted finite energies, determinism.
+    #[test]
+    fn imtd_search_wasm_smoke_deterministic() {
+        let sdf = std::fs::read_to_string("scripts/val_set/ethanol.sdf").unwrap();
+        let make_opts = || {
+            let mut o = crate::ImtdOptions::new();
+            o.set_max_rounds(2);
+            o.set_runs_per_round(2);
+            o.set_steps_per_run(800);
+            o.set_quench_interval(200);
+            o.set_quench_max_iterations(200);
+            o.set_crossing_pairs(2);
+            o.set_seed(42);
+            o
+        };
+        let res = crate::run_imtd_conformer_search(&sdf, make_opts());
+        assert!(res.success(), "error: {}", res.error());
+        assert_eq!(res.n_atoms(), 9, "ethanol with explicit H");
+        let n = res.n_confs();
+        assert!(n >= 1, "at least the quenched input conformer");
+        assert_eq!(res.coordinates().len(), n * 9 * 3);
+        assert_eq!(res.energies().len(), n);
+        assert_eq!(res.round_found().len(), n);
+        let e = res.energies();
+        assert!(e.iter().all(|x| x.is_finite()));
+        for w in e.windows(2) {
+            assert!(w[0] <= w[1], "ensemble sorted ascending: {e:?}");
+        }
+        assert_eq!(
+            res.round_found()[0],
+            0,
+            "global minimum is round-0 eligible"
+        );
+        assert!(res.pool_size() >= 2, "ethanol has 2 rotatable torsions");
+        assert_eq!(
+            res.rounds_executed() as usize,
+            res.new_minima_per_round().len()
+        );
+        // determinism: identical repeat run
+        let res2 = crate::run_imtd_conformer_search(&sdf, make_opts());
+        assert!(res2.success());
+        assert_eq!(res2.n_confs(), n);
+        assert_eq!(res2.energies(), e, "bit-identical energies on repeat");
+    }
+
+    /// iMTD-GC search: parse failures surface through the error channel.
+    #[test]
+    fn imtd_search_wasm_error_path() {
+        let opts = crate::ImtdOptions::new();
+        let res = crate::run_imtd_conformer_search("not an sdf at all", opts);
+        assert!(!res.success());
+        assert!(!res.error().is_empty());
+        assert_eq!(res.n_confs(), 0);
+        assert!(res.coordinates().is_empty());
     }
 
     #[test]
