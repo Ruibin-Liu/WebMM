@@ -8,11 +8,11 @@
 
   const ENVELOPE_VERSION = 1;
 
-  const KINDS = ['analogScan', 'conformers', 'optimize', 'shapeSearch'];
+  const KINDS = ['analogScan', 'conformers', 'imtd', 'optimize', 'shapeSearch'];
   // shapeSearch (not the design-doc's provisional 'shapeAlign'): shape
   // alignment exists in the platform only INSIDE the ensemble search — the
   // kind is the search run; the rename happened before any record existed.
-  const KIND_INPUT_FROZEN = { analogScan: 1, optimize: 1, shapeSearch: 1, conformers: 1 };
+  const KIND_INPUT_FROZEN = { analogScan: 1, optimize: 1, shapeSearch: 1, conformers: 1, imtd: 1 };
 
   // state machine (§2) — every transition not listed is a contract error
   const TRANSITIONS = {
@@ -149,6 +149,24 @@
         audit: { evaluated: i.audit && i.audit.evaluated || 0, filtered: i.audit && i.audit.filtered || 0 },
       };
     }
+    if (kind === 'imtd') {
+      const i = input || {};
+      const int = (v, lo, hi, d) => Number.isInteger(v) && v >= lo ? Math.min(v, hi) : d;
+      return {
+        molblock: typeof i.molblock === 'string' ? i.molblock : '',
+        engine: i.engine === 'gfnff' ? 'gfnff' : 'mmff',
+        rounds: int(i.rounds, 1, 50, 4),
+        runsPerRound: int(i.runsPerRound, 1, 12, 3),
+        stepsPerRun: int(i.stepsPerRun, 100, 200000, 2000),
+        quenchInterval: int(i.quenchInterval, 10, 5000, 250),
+        quenchMaxIter: int(i.quenchMaxIter, 1, 20000, 300),
+        crossingPairs: int(i.crossingPairs, 0, 50, 4),
+        seed: Number.isInteger(i.seed) ? i.seed : 42,
+        energyWindow: isFinite(+i.energyWindow) && +i.energyWindow > 0 ? +i.energyWindow : 6,
+        rmsdTol: isFinite(+i.rmsdTol) && +i.rmsdTol > 0 ? +i.rmsdTol : 0.25,
+        workers: int(i.workers, 1, 4, 1),
+      };
+    }
     if (kind === 'conformers') {
       const i = input || {};
       return {
@@ -206,6 +224,10 @@
     if (kind === 'shapeSearch') {
       // world = the query 3D + the library contents
       return { query: effInput.qsdfHash, library: effInput.libraryFingerprint };
+    }
+    if (kind === 'imtd') {
+      // the ensemble belongs to the 3D structure the search ran on
+      return { structure: 'h' + fnv1a(canon(effInput.molblock || '')).toString(16) };
     }
     if (kind === 'conformers') {
       // the conformer ensemble belongs to the structure it was embedded from

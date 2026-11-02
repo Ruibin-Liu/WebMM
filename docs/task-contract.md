@@ -101,6 +101,7 @@ deriveSeed({roundSeed, kind, stage, molId, confIdx})
 | optimize | §9.2 | **冻结** |
 | shapeSearch | §9.3 | **冻结**(设计稿临时名 shapeAlign:平台内单对叠合只存在于系综搜索内部,kind 即搜索运行;改名发生在首条记录存在之前) |
 | conformers | §9.4 | **冻结** |
+| imtd | §9.5 | **冻结** |
 
 ### 9.2 optimize input(v1)
 
@@ -183,3 +184,27 @@ inputRevision = { structure: fnv1a(molblock) }
 - 工作台薄壳(设计 D1):任务层 app/tasks/ 共享,侧表存独立 IDB(webmm-workbench-tasks,单 tasks store——工作台不触碰 webmm-platform,两页 DB 所有权契约保持)。
 - farm 令牌按存活期整体持有,以调度器总量封顶(§9.3 同款死锁教训)。
 - 无 facts(系综是工作台结构);仅旁表。取消=terminate farm→cancelled;重载→abandoned(无 fact 可幽灵完成)。
+
+### 9.5 imtd input(v1)
+
+```
+{
+  molblock: string          // 全 H 3D molblock(sdf3d;内容即身份——搜索围绕当前 3D 结构)
+  engine: 'mmff' | 'gfnff'
+  rounds: int 1..50         // iMTD-GC 迭代上限(默认 4)
+  runsPerRound: int 1..12   // 每轮短程 metad 条数(默认 3)
+  stepsPerRun: int 100..200000
+  quenchInterval: int 10..5000
+  quenchMaxIter: int 1..20000
+  crossingPairs: int 0..50  // 每轮遗传交叉对数(默认 4)
+  seed: int                 // 派生每 run 种子(seed + r*1000 + m)
+  energyWindow: number > 0  // kcal/mol(默认 6)
+  rmsdTol: number > 0       // Å(默认 0.25)
+  workers: int 1..4         // 散射池规模快照(跨机不可复现根源,入档供审计)
+}
+inputRevision = { structure: fnv1a(molblock) }
+```
+- 与 §9.4 同款工作台薄壳(独立 IDB、boot 对账、无 facts 仅旁表:state/耗时/nConfs/roundsExecuted/converged)。
+- farm 令牌 min(workers, 调度器总量)按存活期整体持有;散射-收集折叠与到达序无关,worker 池与顺序路径逐位一致。
+- 取消=cancel()→terminate 池→cancelled(原因入档:molecule changed / user cancel);系综为最后完整轮快照,诚实部分结果。
+- IMTD 极小已全淬灭收敛:无 conformers kind 的 ΔE 再优化阶段。

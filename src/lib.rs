@@ -1612,9 +1612,10 @@ pub fn run_metadynamics_from_sdf(sdf_content: &str, options: MetaDOptions) -> Me
 // ===== iMTD-GC conformational search (WASM) =====
 
 /// Options for an iMTD-GC conformational search (iterative short metadynamics
-/// + genetic crossing around the well-tempered engine; MMFF, gas phase).
+/// + genetic crossing around the well-tempered engine; gas phase).
 #[wasm_bindgen]
 pub struct ImtdOptions {
+    /// Engine selector: "MMFF94s" (default), "MMFF94", or "GFNFF".
     mmff_variant: String,
     max_rounds: usize,
     runs_per_round: usize,
@@ -1903,12 +1904,9 @@ pub fn run_imtd_conformer_search(sdf_content: &str, options: ImtdOptions) -> Imt
     if mol.atoms.is_empty() {
         return err("Empty molecule".into());
     }
-    let variant = match options.mmff_variant.as_str() {
-        "MMFF94" => MMFFVariant::MMFF94,
-        _ => MMFFVariant::MMFF94s,
-    };
+    let engine = crate::metad::imtd::SearchEngine::from_label(&options.mmff_variant);
     let config = imtd_config_from(&options);
-    let res = crate::metad::imtd::imtd_conformer_search(&mol, variant, &config);
+    let res = crate::metad::imtd::imtd_conformer_search(&mol, engine, &config);
     imtd_result_to_wasm(mol.atoms.len(), &res)
 }
 
@@ -1928,14 +1926,11 @@ pub fn run_imtd_metad_run_json(
     if mol.atoms.is_empty() {
         return Err("Empty molecule".into());
     }
-    let variant = match options.mmff_variant.as_str() {
-        "MMFF94" => MMFFVariant::MMFF94,
-        _ => MMFFVariant::MMFF94s,
-    };
+    let engine = crate::metad::imtd::SearchEngine::from_label(&options.mmff_variant);
     let spec = crate::metad::imtd::run_spec_from_json(spec_json)?;
     let config = imtd_config_from(&options);
-    let ff = crate::mmff::MMFFForceField::new(&mol, variant);
-    let minima = crate::metad::imtd::execute_run(&mol, variant, &ff, &config, &spec);
+    let quencher = crate::metad::imtd::Quencher::new(&mol, engine);
+    let minima = crate::metad::imtd::execute_run(&mol, engine, &quencher, &config, &spec);
     Ok(crate::metad::imtd::minima_to_json(&minima))
 }
 
@@ -1973,12 +1968,9 @@ impl ImtdSearch {
                 error: "Empty molecule".into(),
             };
         }
-        let variant = match options.mmff_variant.as_str() {
-            "MMFF94" => MMFFVariant::MMFF94,
-            _ => MMFFVariant::MMFF94s,
-        };
+        let engine = crate::metad::imtd::SearchEngine::from_label(&options.mmff_variant);
         let n_atoms = mol.atoms.len();
-        let core = crate::metad::imtd::ImtdSearch::new(&mol, variant, &imtd_config_from(&options));
+        let core = crate::metad::imtd::ImtdSearch::new(&mol, engine, &imtd_config_from(&options));
         ImtdSearch {
             core: Some(core),
             n_atoms,

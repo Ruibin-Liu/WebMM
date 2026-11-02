@@ -1094,6 +1094,18 @@ details {
          <label class="mini-field" title="Re-optimize conformers within this window of the minimum to full convergence (kcal/mol; 0 disables)">ΔE
            <input id="confWin" aria-label="Re-optimization energy window in kcal per mol" type="number" min="0" max="50" step="0.5" value="5">
          </label>
+         <button id="btnImtd" class="action-btn spatial" onclick="runImtd()" disabled title="iMTD-GC: iterative short metadynamics + genetic crossing (parallel, multi-round; minima are fully quenched)">
+           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+             <path d="M3 17c3-6 6 4 9-2s6 4 9-4"/>
+           </svg>
+           iMTD
+         </button>
+         <label class="mini-field" title="iMTD-GC iteration cap (rounds of short metad + genetic crossing)">轮
+           <input id="imtdRounds" aria-label="iMTD iteration rounds" type="number" min="1" max="50" value="4">
+         </label>
+         <label class="mini-field" title="MD steps per short metadynamics run">步
+           <input id="imtdSteps" aria-label="MD steps per metadynamics run" type="number" min="100" max="200000" step="100" value="2000">
+         </label>
        </div>
        <span class="bar-divider" aria-hidden="true"></span>
        <div class="ctl-group" title="Export">
@@ -5279,6 +5291,7 @@ function clear3DViewer() {
 function reset3DState() {
   molEpoch++;
   if (confRun) cancelConformers('molecule changed');   // Top-5: the record says WHY
+  if (imtdRun) cancelImtd('molecule changed');          // §9.5: same honest cancellation
   confEnsemble = null;
   selConf = -1;
   sdf3d = null;
@@ -5290,7 +5303,7 @@ function reset3DState() {
   document.getElementById('energyPanel').style.display = 'none';
   document.getElementById('confPanel').style.display = 'none';
   clear3DViewer();
-  for (const id of ['btnEmbed', 'btnOpt', 'btnConf', 'btnSdf', 'btnXyz', 'btnPng']) {
+  for (const id of ['btnEmbed', 'btnOpt', 'btnConf', 'btnImtd', 'btnSdf', 'btnXyz', 'btnPng']) {
     document.getElementById(id).disabled = true;
   }
   document.getElementById('chargeColor').disabled = true;
@@ -5344,7 +5357,7 @@ function showSdfIn3D(sdf) {
   if (fsEl && fsEl.checked) addFeatureSpheres();
   v.zoomTo();
   v.render();
-  for (const id of ['btnOpt', 'btnSdf', 'btnXyz', 'btnPng'])
+  for (const id of ['btnOpt', 'btnImtd', 'btnSdf', 'btnXyz', 'btnPng'])
     document.getElementById(id).disabled = false;
 }
 
@@ -6176,7 +6189,7 @@ function taskTrayRender() {
 }
 function taskTrayAdd(t) { taskTrayItems.push({ state: 'running', ...t }); taskTrayRender(); }
 function taskTrayFinish(taskId, state) { const t = taskTrayItems.find(x => x.taskId === taskId); if (t) { t.state = state; t.stage = ''; taskTrayRender(); } }
-window.taskTrayCancel = function (taskId) { taskScheduler.cancel(taskId); if (confTask && confTask.taskId === taskId) cancelConformers(); };
+window.taskTrayCancel = function (taskId) { taskScheduler.cancel(taskId); if (confTask && confTask.taskId === taskId) cancelConformers(); if (imtdTask && imtdTask.taskId === taskId) cancelImtd(); };
 document.addEventListener('DOMContentLoaded', () => {
   const tg = document.getElementById('taskTrayToggle');
   if (tg) tg.onclick = () => { const l = document.getElementById('taskTrayList'); const open = l.style.display !== 'none'; l.style.display = open ? 'none' : ''; tg.textContent = open ? '▾' : '▴'; };
@@ -6298,6 +6311,111 @@ function cancelConformers(reason) {
   set3dStatus('Cancelled');
   confTaskEnd('cancelled', { failure: reason || 'user cancel' });   // honest record: who cancelled and why
 }
+
+// ---- iMTD-GC conformational search (contract §9.5): parallel scatter- ----
+// ---- gather through window.IMTD; ensemble feeds the SAME conformer UI ----
+let imtdRun = null;        // { handle } while a search is live
+let imtdTask = null;       // { taskId, tstore, releases, epoch, t0 }
+
+function imtdTaskEnd(state, patch) {
+  if (!imtdTask) return;
+  for (const r of imtdTask.releases) { try { r(); } catch (e) {} }
+  taskScheduler.drop(imtdTask.taskId);
+  taskTrayFinish(imtdTask.taskId, state);
+  const ts = imtdTask.tstore, id = imtdTask.taskId, t0 = imtdTask.t0;
+  imtdTask = null;
+  if (!ts) return;
+  ts.transition(id, state, { durationMs: Math.round(performance.now() - t0), ...(patch || {}) }).catch(() => {});
+}
+
+function cancelImtd(reason) {
+  if (!imtdRun) return;
+  imtdRun.handle.cancel(reason);   // driver resolves the promise with cancelled:true
+}
+
+async function runImtd() {
+  clearError();
+  if (imtdRun) { cancelImtd(); return; }   // button doubles as Cancel
+  try {
+    if (!sdf3d) { set3dStatus('Embed 3D first — iMTD searches around the current 3D structure'); return; }
+    const rounds = Math.max(1, Math.min(50, parseInt(document.getElementById('imtdRounds').value) || 4));
+    const steps = Math.max(100, Math.min(200000, parseInt(document.getElementById('imtdSteps').value) || 2000));
+    const engineSel = document.getElementById('engineSel').value;   // MMFF94s | MMFF94 | GFNFF
+    const mb = sdf3d;
+    const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 2, 4));
+
+    // §9.5 typed task: spec snapshot + side table + tokens + tray
+    const Cn = window.Tasks.Contract;
+    const taskId = 'i' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    let tstore = null, spec = null;
+    try {
+      spec = Cn.makeSpec({ taskId, kind: 'imtd', seed: null,
+        input: { molblock: mb, engine: engineSel === 'GFNFF' ? 'gfnff' : 'mmff',
+                 rounds, runsPerRound: 3, stepsPerRun: steps,
+                 quenchInterval: Math.max(10, Math.round(steps / 8)), quenchMaxIter: 300,
+                 crossingPairs: 4, seed: 42, energyWindow: 6, rmsdTol: 0.25, workers: W },
+        provenance: { projectId: null, buildId: await ensureWbBuildId() } });
+      tstore = await wbTaskStore.ensure();
+      if (tstore) { try { await tstore.submit(spec); } catch (e) { /* rerun of a terminal id: proceed */ } }
+    } catch (e) { console.warn('[wb-tasks] spec rejected:', e); }
+    const releases = [];
+    const nTok = Math.min(W, taskScheduler.stats().total);
+    for (let i = 0; i < nTok; i++) releases.push(await taskScheduler.acquire('interactive'));
+    const th = taskScheduler.startTask(taskId, 'interactive');
+    if (tstore) { try { await tstore.transition(taskId, 'running', { startedAt: Date.now(), generation: th.generation }); } catch (e) {} }
+    imtdTask = { taskId, tstore, releases, epoch: molEpoch, t0: performance.now() };
+    taskTrayAdd({ taskId, kind: 'imtd', label: engineSel, stage: 'metad', startedAt: performance.now() });
+
+    document.getElementById('btnImtd').textContent = 'Cancel';
+    set3dStatus(`iMTD-GC: ${rounds} rounds × 3 metad runs on ${W} worker${W > 1 ? 's' : ''}…`);
+    const handle = window.IMTD.start(mb, {
+      mmff_variant: engineSel, max_rounds: rounds, steps_per_run: steps,
+      quench_interval: Math.max(10, Math.round(steps / 8)), workers: W, seed: 42,
+    }, r => {
+      set3dStatus(`iMTD-GC round ${r.round}/${rounds} folded (${r.runs} runs)…`);
+      const tray = taskTrayItems.find(x => x.taskId === taskId);
+      if (tray) { tray.stage = 'round ' + r.round; taskTrayRender(); }
+    });
+    imtdRun = { handle, taskId };
+    const res = await handle.promise;
+
+    document.getElementById('btnImtd').textContent = 'iMTD';
+    if (res.cancelled) {
+      imtdTaskEnd('cancelled', { failure: res.cancelReason || 'user cancel' });
+      set3dStatus(`iMTD cancelled (${res.cancelReason || 'user cancel'}) — ensemble discarded`);
+      imtdRun = null;
+      return;
+    }
+    imtdRun = null;
+    if (!res.nConfs || !res.energies.length) { set3dStatus('iMTD found no minima'); imtdTaskEnd('failed', { failure: 'no minima' }); return; }
+
+    // feed the shared conformer UI (per-conformer SDF from the all-H template)
+    const na = parseInt(sdfLines(mb)[3].substring(0, 3));
+    const confs = [];
+    for (let k = 0; k < res.nConfs; k++) {
+      if (!isFinite(res.energies[k])) continue;
+      const coords = res.coordinates.slice(k * na * 3, (k + 1) * na * 3);
+      confs.push({ E: res.energies[k], coords, sdf: buildSdfFromCoords(coords, mb), round: res.roundFound[k] });
+    }
+    confs.sort((a, b) => a.E - b.E);
+    const Emin = confs[0].E;
+    confs.forEach(k => k.dE = k.E - Emin);
+    confEnsemble = confs;
+    selConf = 0;
+    showSdfIn3D(confs[0].sdf);
+    document.getElementById('confPanel').style.display = 'block';
+    drawConformerChart();
+    syncConformerEnergy(0);
+    set3dStatus(`<b>iMTD-GC: ${res.nConfs} unique minima, ${res.roundsExecuted} round${res.roundsExecuted > 1 ? 's' : ''}${res.converged ? ' (converged)' : ' (budget cap)'} on ${res.workers} worker${res.workers > 1 ? 's' : ''} in ${(res.ms / 1000).toFixed(1)}s</b> — minima fully quenched (no ΔE re-opt needed) · lowest E(${engineSel}) = ${Emin.toFixed(2)} kcal/mol`);
+    imtdTaskEnd('complete', { nConfs: res.nConfs, roundsExecuted: res.roundsExecuted, converged: res.converged });
+  } catch (e) {
+    showError(e);
+    document.getElementById('btnImtd').textContent = 'iMTD';
+    imtdRun = null;
+    imtdTaskEnd('failed', { failure: String(e && e.message ? e.message : e) });
+  }
+}
+window.runImtd = runImtd;
 
 // ---- post-ensemble re-optimization (ΔE window, full convergence) -------
 let reoptState = null;     // { queue, done, total, window, epoch, worker }

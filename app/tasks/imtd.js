@@ -4,8 +4,10 @@
 // arrival-order-independent, so this produces the same bit-identical ensemble
 // as the sequential wasm.run_imtd_conformer_search call.
 //
-// No task-layer kind / UI yet (deferred workbench wiring) — this module is the
-// programmatic surface (used by tests and future UI/hooks).
+// Cancellation: IMTD.start() returns { promise, cancel(reason) }. cancel()
+// terminates the pool immediately; the promise RESOLVES (not rejects) with
+// cancelled: true + cancelReason and the last fully-folded round's ensemble —
+// an honest partial result.
 (function () {
   'use strict';
 
@@ -54,83 +56,113 @@
     return o;
   }
 
-  // Run the search in parallel over conf workers. Resolves with the ensemble
-  // plus parallel-execution stats. Rejects on any worker failure.
-  async function runParallel(sdf, opts, onRound) {
-    const wasm = window.webmm;
-    if (!wasm) return Promise.reject(new Error('wasm not ready'));
-    const search = new wasm.ImtdSearch(sdf, optsToWasm(opts));
-    if (!search.success()) throw new Error(search.error() || 'ImtdSearch failed');
+  // Start the search; returns { promise, cancel(reason) }.
+  function start(sdf, opts, onRound) {
+    let cancelFlag = null;   // becomes the cancel reason string on cancel()
+    const cancelLatch = [];  // resolvers fired on cancel() (unblocks in-flight rounds)
+    const promise = (async () => {
+      const wasm = window.webmm;
+      if (!wasm) throw new Error('wasm not ready');
+      const search = new wasm.ImtdSearch(sdf, optsToWasm(opts));
+      if (!search.success()) throw new Error(search.error() || 'ImtdSearch failed');
 
-    // small dedicated pool (farm discipline: hardware-bound, ≤4)
-    const NW = Math.max(1, Math.min((opts && opts.workers) || 4, navigator.hardwareConcurrency || 4, 4));
-    const wasmUrl = window.__webmmUrl;
-    const workers = [];
-    const waiters = Object.create(null);   // id → resolve
-    const used = new Set();                // worker indices that executed a run
-    let nextId = 0;
+      // small dedicated pool (farm discipline: hardware-bound, ≤4)
+      const NW = Math.max(1, Math.min((opts && opts.workers) || 4, navigator.hardwareConcurrency || 4, 4));
+      const wasmUrl = window.__webmmUrl;
+      const workers = [];
+      const waiters = Object.create(null);   // id → resolve
+      const used = new Set();                // worker indices that executed a run
+      let nextId = 0;
 
-    const ensure = (w) => new Promise((res) => {
-      const iv = setInterval(() => { if (w.__ready) { clearInterval(iv); res(); } }, 20);
-    });
-    for (let i = 0; i < NW; i++) {
-      const w = new Worker('conf.worker.js', { type: 'module' });
-      w.__ready = false;
-      w.onmessage = (ev) => {
-        const m = ev.data;
-        if (m.type === 'ready') { w.__ready = true; return; }
-        if (m.type === 'imtdMinima' || m.type === 'imtdError') {
-          const res = waiters[m.id];
-          if (res) { delete waiters[m.id]; res(m); }
-        }
-      };
-      w.postMessage({ type: 'init', wasmUrl });
-      workers.push(w);
-    }
-    await Promise.all(workers.map(ensure));
-
-    const runOne = (spec, specJson, i) => new Promise((res, rej) => {
-      const id = nextId++;
-      const wIdx = i % NW;
-      used.add(wIdx);
-      waiters[id] = (m) => (m.type === 'imtdMinima' ? res(m) : rej(new Error(m.error)));
-      workers[wIdx].postMessage({ type: 'imtdRun', id, runIndex: spec.run_index, sdf, specJson, optSets: optSets(opts) });
-    });
-
-    const t0 = performance.now();
-    try {
-      while (!search.done()) {
-        const plan = JSON.parse(search.plan_json());
-        if (!plan.runs.length) break;
-        // scatter the whole round, then gather (arrival order is irrelevant)
-        const outs = await Promise.all(plan.runs.map((spec, i) => runOne(spec, JSON.stringify(spec), i)));
-        for (const m of outs) {
-          if (!search.gather(m.runIndex, m.minimaJson)) {
-            throw new Error('gather rejected worker minima: ' + search.error());
+      const ensure = (w) => new Promise((res) => {
+        const iv = setInterval(() => { if (w.__ready) { clearInterval(iv); res(); } }, 20);
+      });
+      for (let i = 0; i < NW; i++) {
+        const w = new Worker('conf.worker.js', { type: 'module' });
+        w.__ready = false;
+        w.onmessage = (ev) => {
+          const m = ev.data;
+          if (m.type === 'ready') { w.__ready = true; return; }
+          if (m.type === 'imtdMinima' || m.type === 'imtdError') {
+            const res = waiters[m.id];
+            if (res) { delete waiters[m.id]; res(m); }
           }
-        }
-        if (onRound) onRound({ round: plan.round, runs: plan.runs.length });
+        };
+        w.postMessage({ type: 'init', wasmUrl });
+        workers.push(w);
       }
-    } finally {
-      for (const w of workers) w.terminate();
-    }
+      const terminateAll = () => { for (const w of workers) w.terminate(); };
+      if (cancelFlag !== null) terminateAll();
+      else await Promise.all(workers.map(ensure));
 
-    const res = search.result();
+      const runOne = (spec, specJson, i) => new Promise((res, rej) => {
+        const id = nextId++;
+        const wIdx = i % NW;
+        used.add(wIdx);
+        waiters[id] = (m) => (m.type === 'imtdMinima' ? res(m) : rej(new Error(m.error)));
+        workers[wIdx].postMessage({ type: 'imtdRun', id, runIndex: spec.run_index, sdf, specJson, optSets: optSets(opts) });
+      });
+
+      const t0 = performance.now();
+      let cancelled = false, cancelReason = null;
+      try {
+        while (cancelFlag === null && !search.done()) {
+          const plan = JSON.parse(search.plan_json());
+          if (!plan.runs.length) break;
+          // scatter the whole round, then gather (arrival order is
+          // irrelevant); a cancel() mid-round unblocks the await — the
+          // incomplete round's runs are discarded, the ensemble is the last
+          // fully-folded round
+          const cancelledSignal = new Promise(res => cancelLatch.push(res));
+          const outs = await Promise.race([
+            Promise.all(plan.runs.map((spec, i) => runOne(spec, JSON.stringify(spec), i))),
+            cancelledSignal.then(() => null),
+          ]);
+          if (outs === null) break;
+          for (const m of outs) {
+            if (!search.gather(m.runIndex, m.minimaJson)) {
+              throw new Error('gather rejected worker minima: ' + search.error());
+            }
+          }
+          if (onRound) onRound({ round: plan.round, runs: plan.runs.length });
+        }
+        cancelled = cancelFlag !== null;
+        cancelReason = cancelFlag;
+      } finally {
+        terminateAll();
+      }
+
+      const res = search.result();
+      return {
+        nConfs: res.n_confs(),
+        energies: res.energies(),
+        coordinates: res.coordinates(),
+        roundFound: res.round_found(),
+        converged: res.converged(),
+        roundsExecuted: res.rounds_executed(),
+        newMinimaPerRound: res.new_minima_per_round(),
+        poolSize: res.pool_size(),
+        nRotatable: res.n_rotatable(),
+        workers: workers.length,
+        usedWorkers: used.size,
+        ms: performance.now() - t0,
+        cancelled, cancelReason,
+      };
+    })();
     return {
-      nConfs: res.n_confs(),
-      energies: res.energies(),
-      coordinates: res.coordinates(),
-      roundFound: res.round_found(),
-      converged: res.converged(),
-      roundsExecuted: res.rounds_executed(),
-      newMinimaPerRound: res.new_minima_per_round(),
-      poolSize: res.pool_size(),
-      nRotatable: res.n_rotatable(),
-      workers: workers.length,
-      usedWorkers: used.size,
-      ms: performance.now() - t0,
+      promise,
+      cancel(reason) {
+        if (cancelFlag !== null) return;
+        cancelFlag = reason === undefined ? 'user cancel' : String(reason);
+        for (const res of cancelLatch.splice(0)) res();
+      },
     };
   }
 
-  window.IMTD = { runParallel, optsToWasm, DEFAULTS };
+  // Cancellation-less sugar over start().
+  async function runParallel(sdf, opts, onRound) {
+    return start(sdf, opts, onRound).promise;
+  }
+
+  window.IMTD = { start, runParallel, optsToWasm, DEFAULTS };
 })();

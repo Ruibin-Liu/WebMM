@@ -14,7 +14,17 @@
 //! this module is the outer iterative-crossing scheduler around it. Everything
 //! is deterministic: all randomness derives from `ImtdConfig::seed`, so the
 //! same input + config reproduces the same ensemble bit-for-bit.
+//!
+//! # Conformer-equivalence semantics (v1)
+//! Two quenched minima are the SAME conformer iff their heavy-atom scaffolds
+//! superpose (aligned RMSD below `rmsd_tol`) AND (their all-atom geometries
+//! superpose OR their energies are equal to 1e-3 kcal/mol — methyl-H label
+//! permutations quench to the identical minimum). Heavy-atom MIRROR pairs
+//! (e.g. butane gauche±) cannot superpose under a proper rotation and are
+//! kept as distinct conformers; equal-energy H-arrangement images sharing
+//! one heavy scaffold collapse to one entry.
 
+use crate::forces::ForceField;
 use crate::md::{MDConfig, MDRunner};
 use crate::metad::{CollectiveVariable, DihedralCV, DistanceCV, MetaDConfig, MetaDynamics};
 use crate::mmff::MMFFForceField;
@@ -24,6 +34,75 @@ use crate::optimizer::{self};
 use crate::ConvergenceOptions;
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
+
+/// The energy engine a search runs on. GFN-FF is rebuilt per geometry (its
+/// bond perception reads coordinates — same discipline as the analog
+/// pipeline); MMFF is built once per molecule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchEngine {
+    MMFF94,
+    MMFF94s,
+    GFNFF,
+}
+
+impl SearchEngine {
+    /// Parse the engine label accepted across the WASM surface
+    /// (`ImtdOptions.mmff_variant` doubles as the engine selector).
+    pub fn from_label(v: &str) -> Self {
+        match v {
+            "MMFF94" => SearchEngine::MMFF94,
+            "GFNFF" | "GFN-FF" => SearchEngine::GFNFF,
+            _ => SearchEngine::MMFF94s,
+        }
+    }
+}
+
+/// Quench backend: L-BFGS relaxation of a snapshot to its local minimum.
+pub enum Quencher {
+    /// MMFF: one shared instance (coordinate-independent topology).
+    Mmff(Box<MMFFForceField>),
+    /// GFN-FF: atomic numbers + total charge; the force field is rebuilt for
+    /// every quench (bond detection reads the geometry).
+    Gfnff { at: Vec<usize>, charge: f64 },
+}
+
+impl Quencher {
+    /// Build the backend for a molecule + engine.
+    pub fn new(mol: &Molecule, engine: SearchEngine) -> Self {
+        match engine {
+            SearchEngine::GFNFF => Quencher::Gfnff {
+                at: mol.atoms.iter().map(|a| a.atomic_number as usize).collect(),
+                charge: mol.atoms.iter().map(|a| a.charge).sum(),
+            },
+            SearchEngine::MMFF94 => Quencher::Mmff(Box::new(MMFFForceField::new(
+                mol,
+                crate::MMFFVariant::MMFF94,
+            ))),
+            SearchEngine::MMFF94s => Quencher::Mmff(Box::new(MMFFForceField::new(
+                mol,
+                crate::MMFFVariant::MMFF94s,
+            ))),
+        }
+    }
+
+    fn quench(&self, coords: &[[f64; 3]], max_iter: usize) -> crate::optimizer::OptimizationResult {
+        let conv = |max_force: f64, rms_force: f64| ConvergenceOptions {
+            max_iterations: max_iter.max(1),
+            max_force,
+            rms_force,
+            energy_change: Default::default(),
+        };
+        match self {
+            Quencher::Mmff(ff) => optimizer::optimize(ff.as_ref(), coords, &conv(0.01, 0.001)),
+            Quencher::Gfnff { at, charge } => {
+                // GFN-FF numeric kernel: same relaxed force floors the analog
+                // pipeline applies (line-search stalls on large systems)
+                let ff = crate::gfnff::GfnffForceField::new(at, coords, *charge);
+                optimizer::optimize(&ff, coords, &conv(0.05, 0.005))
+            }
+        }
+    }
+}
 
 /// Deterministic ladder of bias-strength factors cycled across metad runs
 /// (CREST rotates bias potential magnitudes across its metad copies).
@@ -585,20 +664,13 @@ impl Ensemble {
     /// Quench `coords` to its local minimum, then [`Self::try_add_quenched`].
     fn try_add(
         &mut self,
-        ff: &MMFFForceField,
+        quencher: &Quencher,
         coords: &[[f64; 3]],
         round: usize,
         origin: Origin,
         quench_max_iter: usize,
     ) -> Option<Vec<[f64; 3]>> {
-        let r = optimizer::optimize(
-            ff,
-            coords,
-            &ConvergenceOptions {
-                max_iterations: quench_max_iter.max(1),
-                ..Default::default()
-            },
-        );
+        let r = quencher.quench(coords, quench_max_iter);
         self.try_add_quenched(r.optimized_coords, r.final_energy, round, origin)
     }
 }
@@ -610,8 +682,8 @@ impl Ensemble {
 /// minimum list — this is the unit of work a parallel worker executes.
 pub fn execute_run(
     mol: &Molecule,
-    variant: crate::MMFFVariant,
-    quench_ff: &MMFFForceField,
+    engine: SearchEngine,
+    quencher: &Quencher,
     config: &ImtdConfig,
     spec: &RunSpec,
 ) -> Vec<Minimum> {
@@ -623,9 +695,26 @@ pub fn execute_run(
         CvSpec::Dihedral(..) => config.hill_width,
         CvSpec::Distance(..) => config.hill_width_distance,
     };
-    let ff = MMFFForceField::new(&mol_start, variant);
+    let metad_ff: Box<dyn ForceField> = match engine {
+        SearchEngine::GFNFF => {
+            let at: Vec<usize> = mol_start
+                .atoms
+                .iter()
+                .map(|a| a.atomic_number as usize)
+                .collect();
+            let charge: f64 = mol_start.atoms.iter().map(|a| a.charge).sum();
+            let xyz: Vec<[f64; 3]> = mol_start.atoms.iter().map(|a| a.position).collect();
+            Box::new(crate::gfnff::GfnffForceField::new(&at, &xyz, charge))
+        }
+        SearchEngine::MMFF94 => {
+            Box::new(MMFFForceField::new(&mol_start, crate::MMFFVariant::MMFF94))
+        }
+        SearchEngine::MMFF94s => {
+            Box::new(MMFFForceField::new(&mol_start, crate::MMFFVariant::MMFF94s))
+        }
+    };
     let metad = Rc::new(MetaDynamics::new(
-        Box::new(ff),
+        metad_ff,
         spec.cv.build(),
         MetaDConfig {
             hill_height: spec.hill_height,
@@ -645,13 +734,9 @@ pub fn execute_run(
             seed: spec.seed,
         },
     );
-    let conv = ConvergenceOptions {
-        max_iterations: config.quench_max_iterations.max(1),
-        ..Default::default()
-    };
     let mut minima = Vec::new();
     let mut snapshot = |coords: &[[f64; 3]]| {
-        let r = optimizer::optimize(quench_ff, coords, &conv);
+        let r = quencher.quench(coords, config.quench_max_iterations);
         if r.final_energy.is_finite() {
             minima.push(Minimum {
                 coords: r.optimized_coords,
@@ -679,8 +764,8 @@ pub fn execute_run(
 /// produce bit-identical ensembles.
 pub struct ImtdSearch {
     config: ImtdConfig,
-    /// Shared MMFF instance for coordinator-side quenches (input + crossings).
-    ff: MMFFForceField,
+    /// Coordinator-side quench backend (input + crossing children).
+    quencher: Quencher,
     ensemble: Ensemble,
     rot: Vec<(usize, usize)>,
     pool: Vec<CvSpec>,
@@ -700,12 +785,12 @@ impl ImtdSearch {
     /// Build the coordinator: quenches the input structure (round 0), derives
     /// the CV pool and crossing fragments. `done()` is immediately true for
     /// rigid molecules (empty pool) or zero budgets.
-    pub fn new(mol: &Molecule, variant: crate::MMFFVariant, config: &ImtdConfig) -> Self {
-        let ff = MMFFForceField::new(mol, variant);
+    pub fn new(mol: &Molecule, engine: SearchEngine, config: &ImtdConfig) -> Self {
+        let quencher = Quencher::new(mol, engine);
         let mut ensemble = Ensemble::new(mol, config);
         let input_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
         ensemble.try_add(
-            &ff,
+            &quencher,
             &input_coords,
             0,
             Origin::Input,
@@ -720,7 +805,7 @@ impl ImtdSearch {
         let finished = pool.is_empty() || config.max_rounds == 0 || config.steps_per_run == 0;
         ImtdSearch {
             config: *config,
-            ff,
+            quencher,
             ensemble,
             rot,
             pool,
@@ -841,7 +926,7 @@ impl ImtdSearch {
                     *k,
                 );
                 if let Some(seed_coords) = self.ensemble.try_add(
-                    &self.ff,
+                    &self.quencher,
                     &child,
                     self.round,
                     Origin::Crossing,
@@ -882,7 +967,7 @@ impl ImtdSearch {
 /// ⇒ bit-identical result.
 pub fn imtd_conformer_search(
     mol: &Molecule,
-    variant: crate::MMFFVariant,
+    engine: SearchEngine,
     config: &ImtdConfig,
 ) -> ImtdResult {
     if mol.atoms.is_empty() {
@@ -895,14 +980,15 @@ pub fn imtd_conformer_search(
             n_rotatable: 0,
         };
     }
-    let mut search = ImtdSearch::new(mol, variant, config);
+    let quencher = Quencher::new(mol, engine);
+    let mut search = ImtdSearch::new(mol, engine, config);
     while !search.done() {
         let specs = search.plan().to_vec();
         if specs.is_empty() {
             break;
         }
         for spec in &specs {
-            let minima = execute_run(mol, variant, &search.ff, config, spec);
+            let minima = execute_run(mol, engine, &quencher, config, spec);
             search.gather(spec.run_index, minima);
         }
     }
@@ -1328,7 +1414,7 @@ mod tests {
             seed: 42,
             ..Default::default()
         };
-        let res = imtd_conformer_search(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let res = imtd_conformer_search(&mol, SearchEngine::MMFF94s, &cfg);
         assert!(
             res.conformers.len() >= 2,
             "butane has anti + gauche minima (window {}), got {} conformers: {:?}",
@@ -1346,7 +1432,7 @@ mod tests {
         }
         assert_eq!(res.rounds_executed, res.new_minima_per_round.len());
         // determinism: bit-identical repeat
-        let res2 = imtd_conformer_search(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let res2 = imtd_conformer_search(&mol, SearchEngine::MMFF94s, &cfg);
         assert_eq!(res.conformers.len(), res2.conformers.len());
         for (x, y) in res.conformers.iter().zip(res2.conformers.iter()) {
             assert_eq!(x.energy, y.energy, "energies must be bit-identical");
@@ -1357,7 +1443,7 @@ mod tests {
     #[test]
     fn imtd_rigid_methane_single_conformer() {
         let mol = crate::molecule::parser::parse_sdf(METHANE_SDF).expect("parse");
-        let res = imtd_conformer_search(&mol, crate::MMFFVariant::MMFF94s, &ImtdConfig::default());
+        let res = imtd_conformer_search(&mol, SearchEngine::MMFF94s, &ImtdConfig::default());
         assert_eq!(res.pool_size, 0, "methane has no biasable CV");
         assert_eq!(res.conformers.len(), 1);
         assert!(res.converged);
@@ -1382,12 +1468,12 @@ mod tests {
     fn execute_run_is_pure_and_json_roundtrips_bit_exact() {
         let mol = ethanol();
         let cfg = small_cfg();
-        let mut search = ImtdSearch::new(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let mut search = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
         let specs = search.plan().to_vec();
         assert_eq!(specs.len(), 3);
-        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
-        let a = execute_run(&mol, crate::MMFFVariant::MMFF94s, &ff, &cfg, &specs[0]);
-        let b = execute_run(&mol, crate::MMFFVariant::MMFF94s, &ff, &cfg, &specs[0]);
+        let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+        let a = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &specs[0]);
+        let b = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &specs[0]);
         assert!(!a.is_empty(), "run produces quenched minima");
         assert_eq!(a, b, "same spec ⇒ bit-identical minima (purity)");
         // JSON round-trip (worker boundary) is bit-exact: floats travel as
@@ -1404,7 +1490,7 @@ mod tests {
     fn plan_is_idempotent_within_a_round() {
         let mol = ethanol();
         let cfg = small_cfg();
-        let mut search = ImtdSearch::new(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let mut search = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
         let p1 = search.plan().to_vec();
         let p2 = search.plan().to_vec();
         assert_eq!(p1, p2, "repeated plan must not consume crossed seeds twice");
@@ -1416,19 +1502,19 @@ mod tests {
     fn scatter_gather_matches_sequential_regardless_of_arrival_order() {
         let mol = ethanol();
         let cfg = small_cfg();
-        let seq = imtd_conformer_search(&mol, crate::MMFFVariant::MMFF94s, &cfg);
-        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        let seq = imtd_conformer_search(&mol, SearchEngine::MMFF94s, &cfg);
+        let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
         // in-order composition
-        let mut s1 = ImtdSearch::new(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let mut s1 = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
         while !s1.done() {
             for spec in s1.plan().to_vec() {
-                let m = execute_run(&mol, crate::MMFFVariant::MMFF94s, &ff, &cfg, &spec);
+                let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &spec);
                 s1.gather(spec.run_index, m);
             }
         }
         let r1 = s1.result();
         // JSON boundary + reverse arrival order per round
-        let mut s2 = ImtdSearch::new(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let mut s2 = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
         while !s2.done() {
             let specs = s2.plan().to_vec();
             let jsons: Vec<String> = specs
@@ -1436,8 +1522,8 @@ mod tests {
                 .map(|sp| {
                     minima_to_json(&execute_run(
                         &mol,
-                        crate::MMFFVariant::MMFF94s,
-                        &ff,
+                        SearchEngine::MMFF94s,
+                        &quencher,
                         &cfg,
                         sp,
                     ))
@@ -1478,7 +1564,7 @@ mod tests {
             seed: 42,
             ..Default::default()
         };
-        let res = imtd_conformer_search(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let res = imtd_conformer_search(&mol, SearchEngine::MMFF94s, &cfg);
         assert!(
             res.conformers.len() >= 2,
             "H rotamers must survive dedup, got {} conformers",
@@ -1499,6 +1585,76 @@ mod tests {
     }
 
     #[test]
+    fn imtd_gfnff_engine_runs_deterministically() {
+        let mol = ethanol();
+        let cfg = ImtdConfig {
+            max_rounds: 2,
+            runs_per_round: 2,
+            steps_per_run: 500,
+            quench_interval: 250,
+            quench_max_iterations: 200,
+            crossing_pairs: 1,
+            seed: 7,
+            ..Default::default()
+        };
+        let a = imtd_conformer_search(&mol, SearchEngine::GFNFF, &cfg);
+        assert!(!a.conformers.is_empty(), "GFN-FF finds the input minimum");
+        for c in &a.conformers {
+            assert!(c.energy.is_finite(), "GFN-FF energy finite: {}", c.energy);
+        }
+        // GFN-FF is a different surface: the ensemble must not equal MMFF's
+        let b = imtd_conformer_search(&mol, SearchEngine::MMFF94s, &cfg);
+        assert_ne!(
+            a.conformers[0].energy, b.conformers[0].energy,
+            "engines are distinct surfaces"
+        );
+        let a2 = imtd_conformer_search(&mol, SearchEngine::GFNFF, &cfg);
+        assert_eq!(
+            a.conformers[0].energy, a2.conformers[0].energy,
+            "deterministic"
+        );
+    }
+
+    #[test]
+    fn butane_keeps_enantiomeric_gauche_pair() {
+        // v1 mirror semantics: heavy-atom mirror pairs (butane gauche± —
+        // Kabsch proper rotation cannot superpose them) both survive; only
+        // same-heavy-scaffold + equal-energy structures (methyl-H
+        // permutations / H-arrangement mirrors) collapse.
+        let mol = butane_all_h();
+        let cfg = ImtdConfig {
+            max_rounds: 3,
+            runs_per_round: 3,
+            steps_per_run: 2500,
+            quench_interval: 125,
+            quench_max_iterations: 250,
+            crossing_pairs: 2,
+            seed: 42,
+            ..Default::default()
+        };
+        let res = imtd_conformer_search(&mol, SearchEngine::MMFF94s, &cfg);
+        let n = res.conformers.len();
+        assert!(
+            n >= 3,
+            "anti + gauche± (enantiomeric pair) expected, got {n}: {:?}",
+            res.conformers.iter().map(|c| c.energy).collect::<Vec<_>>()
+        );
+        // the two gauche enantiomers share an energy to high precision
+        let mut equal_energy_pairs = 0;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if (res.conformers[i].energy - res.conformers[j].energy).abs() < 1e-6 {
+                    equal_energy_pairs += 1;
+                }
+            }
+        }
+        assert!(
+            equal_energy_pairs >= 1,
+            "the gauche enantiomeric pair (equal energies) must both be present"
+        );
+    }
+
+    #[test]
     fn imtd_convergence_criterion_stops_at_threshold() {
         let mol = ethanol();
         let cfg = ImtdConfig {
@@ -1512,7 +1668,7 @@ mod tests {
             convergence_new_minima: usize::MAX,
             ..Default::default()
         };
-        let res = imtd_conformer_search(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let res = imtd_conformer_search(&mol, SearchEngine::MMFF94s, &cfg);
         assert_eq!(res.rounds_executed, 1, "criterion must fire in round 1");
         assert!(res.converged);
         assert_eq!(res.new_minima_per_round.len(), 1);

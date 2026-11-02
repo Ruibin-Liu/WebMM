@@ -112,7 +112,7 @@ async function collect(page, smiles) {
   check('2D control buttons', ui.btn2D);
   const expSet = new Set(ui.export3d);
   const hasExports = ['Export SDF', 'XYZ', 'PNG', 'Export CSV'].every(t => expSet.has(t));
-  check('3D buttons present + Embed/Conformers enabled on parse', ui.spatial.length === 3 && hasExports && ui.ready3d,
+  check('3D buttons present + Embed/Conformers enabled on parse', ui.spatial.length === 4 && hasExports && ui.ready3d,
         [...ui.spatial, ...ui.export3d].join(','));
 
   // URL state + error parity
