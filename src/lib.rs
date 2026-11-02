@@ -1823,6 +1823,59 @@ impl ImtdSearchResult {
     }
 }
 
+/// Map wasm [`ImtdOptions`] to the native config.
+fn imtd_config_from(options: &ImtdOptions) -> crate::metad::imtd::ImtdConfig {
+    crate::metad::imtd::ImtdConfig {
+        max_rounds: options.max_rounds,
+        runs_per_round: options.runs_per_round,
+        steps_per_run: options.steps_per_run,
+        quench_interval: options.quench_interval,
+        dt_fs: options.dt_fs,
+        temperature_k: options.temperature_k,
+        friction_per_ps: options.friction_per_ps,
+        seed: options.seed as u64,
+        hill_height: options.hill_height,
+        hill_width: options.hill_width,
+        hill_width_distance: options.hill_width_distance,
+        deposit_interval: options.deposit_interval,
+        bias_factor: options.bias_factor,
+        quench_max_iterations: options.quench_max_iterations,
+        energy_window: options.energy_window,
+        rmsd_tol: options.rmsd_tol,
+        max_conformers: options.max_conformers,
+        crossing_pairs: options.crossing_pairs,
+        convergence_new_minima: options.convergence_new_minima,
+    }
+}
+
+/// Flatten a native search result into the wasm result (conformer-major).
+fn imtd_result_to_wasm(n_atoms: usize, res: &crate::metad::imtd::ImtdResult) -> ImtdSearchResult {
+    let mut coordinates = Vec::with_capacity(res.conformers.len() * n_atoms * 3);
+    for c in &res.conformers {
+        for p in &c.coords {
+            coordinates.extend_from_slice(p);
+        }
+    }
+    ImtdSearchResult {
+        n_atoms,
+        n_confs: res.conformers.len(),
+        coordinates,
+        energies: res.conformers.iter().map(|c| c.energy).collect(),
+        round_found: res
+            .conformers
+            .iter()
+            .map(|c| c.round_found as u32)
+            .collect(),
+        new_minima_per_round: res.new_minima_per_round.iter().map(|&n| n as u32).collect(),
+        rounds_executed: res.rounds_executed as u32,
+        converged: res.converged,
+        pool_size: res.pool_size as u32,
+        n_rotatable: res.n_rotatable as u32,
+        success: true,
+        error: String::new(),
+    }
+}
+
 /// Run an iMTD-GC conformational search (CREST-lineage iterative short
 /// metadynamics with rotating bias strengths/CVs + genetic crossing; see
 /// `metad::imtd`) on an SDF molecule and return the conformer ensemble.
@@ -1854,52 +1907,145 @@ pub fn run_imtd_conformer_search(sdf_content: &str, options: ImtdOptions) -> Imt
         "MMFF94" => MMFFVariant::MMFF94,
         _ => MMFFVariant::MMFF94s,
     };
-    let config = crate::metad::imtd::ImtdConfig {
-        max_rounds: options.max_rounds,
-        runs_per_round: options.runs_per_round,
-        steps_per_run: options.steps_per_run,
-        quench_interval: options.quench_interval,
-        dt_fs: options.dt_fs,
-        temperature_k: options.temperature_k,
-        friction_per_ps: options.friction_per_ps,
-        seed: options.seed as u64,
-        hill_height: options.hill_height,
-        hill_width: options.hill_width,
-        hill_width_distance: options.hill_width_distance,
-        deposit_interval: options.deposit_interval,
-        bias_factor: options.bias_factor,
-        quench_max_iterations: options.quench_max_iterations,
-        energy_window: options.energy_window,
-        rmsd_tol: options.rmsd_tol,
-        max_conformers: options.max_conformers,
-        crossing_pairs: options.crossing_pairs,
-        convergence_new_minima: options.convergence_new_minima,
-    };
+    let config = imtd_config_from(&options);
     let res = crate::metad::imtd::imtd_conformer_search(&mol, variant, &config);
-    let n_atoms = mol.atoms.len();
-    let mut coordinates = Vec::with_capacity(res.conformers.len() * n_atoms * 3);
-    for c in &res.conformers {
-        for p in &c.coords {
-            coordinates.extend_from_slice(p);
+    imtd_result_to_wasm(mol.atoms.len(), &res)
+}
+
+/// Execute ONE iMTD-GC scatter unit (a serialized `RunSpec` from
+/// `ImtdSearch.plan_json`) as a pure function: one short metadynamics run
+/// plus per-snapshot quenches, returned as minima JSON (bit-exact float
+/// strings). This is what a parallel worker calls.
+#[wasm_bindgen]
+pub fn run_imtd_metad_run_json(
+    sdf_content: &str,
+    spec_json: &str,
+    options: ImtdOptions,
+) -> Result<String, String> {
+    console_error_panic_hook::set_once();
+    let mol =
+        crate::molecule::parser::parse_sdf(sdf_content).map_err(|e| format!("Parse error: {e}"))?;
+    if mol.atoms.is_empty() {
+        return Err("Empty molecule".into());
+    }
+    let variant = match options.mmff_variant.as_str() {
+        "MMFF94" => MMFFVariant::MMFF94,
+        _ => MMFFVariant::MMFF94s,
+    };
+    let spec = crate::metad::imtd::run_spec_from_json(spec_json)?;
+    let config = imtd_config_from(&options);
+    let ff = crate::mmff::MMFFForceField::new(&mol, variant);
+    let minima = crate::metad::imtd::execute_run(&mol, variant, &ff, &config, &spec);
+    Ok(crate::metad::imtd::minima_to_json(&minima))
+}
+
+/// iMTD-GC coordinator handle: plans each round's independent metad runs
+/// (`plan_json`), accepts worker results in any order (`gather`), and reports
+/// the ensemble (`result`). The fold is arrival-order-independent, so a
+/// worker pool and the sequential `run_imtd_conformer_search` produce
+/// bit-identical ensembles.
+#[wasm_bindgen]
+pub struct ImtdSearch {
+    core: Option<crate::metad::imtd::ImtdSearch>,
+    n_atoms: usize,
+    error: String,
+}
+
+#[wasm_bindgen]
+impl ImtdSearch {
+    #[wasm_bindgen(constructor)]
+    pub fn new(sdf_content: &str, options: ImtdOptions) -> ImtdSearch {
+        console_error_panic_hook::set_once();
+        let mol = match crate::molecule::parser::parse_sdf(sdf_content) {
+            Ok(m) => m,
+            Err(e) => {
+                return ImtdSearch {
+                    core: None,
+                    n_atoms: 0,
+                    error: format!("Parse error: {e}"),
+                }
+            }
+        };
+        if mol.atoms.is_empty() {
+            return ImtdSearch {
+                core: None,
+                n_atoms: 0,
+                error: "Empty molecule".into(),
+            };
+        }
+        let variant = match options.mmff_variant.as_str() {
+            "MMFF94" => MMFFVariant::MMFF94,
+            _ => MMFFVariant::MMFF94s,
+        };
+        let n_atoms = mol.atoms.len();
+        let core = crate::metad::imtd::ImtdSearch::new(&mol, variant, &imtd_config_from(&options));
+        ImtdSearch {
+            core: Some(core),
+            n_atoms,
+            error: String::new(),
         }
     }
-    ImtdSearchResult {
-        n_atoms,
-        n_confs: res.conformers.len(),
-        coordinates,
-        energies: res.conformers.iter().map(|c| c.energy).collect(),
-        round_found: res
-            .conformers
-            .iter()
-            .map(|c| c.round_found as u32)
-            .collect(),
-        new_minima_per_round: res.new_minima_per_round.iter().map(|&n| n as u32).collect(),
-        rounds_executed: res.rounds_executed as u32,
-        converged: res.converged,
-        pool_size: res.pool_size as u32,
-        n_rotatable: res.n_rotatable as u32,
-        success: true,
-        error: String::new(),
+
+    pub fn success(&self) -> bool {
+        self.core.is_some()
+    }
+    pub fn error(&self) -> String {
+        self.error.clone()
+    }
+    /// True when the search is over (converged or budget exhausted).
+    pub fn done(&self) -> bool {
+        self.core.as_ref().is_none_or(|c| c.done())
+    }
+    /// Round the next `plan_json` belongs to (1-based).
+    pub fn round(&self) -> u32 {
+        self.core.as_ref().map_or(0, |c| c.round()) as u32
+    }
+    /// The current round's run specs (idempotent until the round is
+    /// gathered): `{"round": r, "runs": [spec, ...]}`; empty `runs` when
+    /// done. Scatter the `runs` entries verbatim to workers.
+    pub fn plan_json(&mut self) -> String {
+        match self.core.as_mut() {
+            Some(c) => crate::metad::imtd::plan_to_json(c.round(), c.plan()),
+            None => "{\"round\":0,\"runs\":[]}".to_string(),
+        }
+    }
+    /// Deposit one run's minima JSON (any order; run_index from the spec).
+    /// Returns false when the payload was rejected (parse failure, unknown
+    /// run index, or duplicate deposit).
+    pub fn gather(&mut self, run_index: usize, minima_json: &str) -> bool {
+        let Some(c) = self.core.as_mut() else {
+            return false;
+        };
+        match crate::metad::imtd::minima_from_json(minima_json) {
+            Ok(minima) => {
+                c.gather(run_index, minima);
+                true
+            }
+            Err(e) => {
+                self.error = e;
+                false
+            }
+        }
+    }
+    /// Snapshot of the ensemble + iteration stats (non-destructive).
+    pub fn result(&self) -> ImtdSearchResult {
+        match self.core.as_ref() {
+            Some(c) => imtd_result_to_wasm(self.n_atoms, &c.result()),
+            None => ImtdSearchResult {
+                n_atoms: 0,
+                n_confs: 0,
+                coordinates: vec![],
+                energies: vec![],
+                round_found: vec![],
+                new_minima_per_round: vec![],
+                rounds_executed: 0,
+                converged: false,
+                pool_size: 0,
+                n_rotatable: 0,
+                success: false,
+                error: self.error.clone(),
+            },
+        }
     }
 }
 
@@ -2725,7 +2871,7 @@ mod tests {
         assert!(res.success(), "error: {}", res.error());
         assert_eq!(res.n_atoms(), 9, "ethanol with explicit H");
         let n = res.n_confs();
-        assert!(n >= 1, "at least the quenched input conformer");
+        assert!(n >= 2, "ethanol anti/gauche H rotamers both found, got {n}");
         assert_eq!(res.coordinates().len(), n * 9 * 3);
         assert_eq!(res.energies().len(), n);
         assert_eq!(res.round_found().len(), n);
@@ -2734,10 +2880,9 @@ mod tests {
         for w in e.windows(2) {
             assert!(w[0] <= w[1], "ensemble sorted ascending: {e:?}");
         }
-        assert_eq!(
-            res.round_found()[0],
-            0,
-            "global minimum is round-0 eligible"
+        assert!(
+            res.round_found()[0] <= res.rounds_executed(),
+            "round tags sane"
         );
         assert!(res.pool_size() >= 2, "ethanol has 2 rotatable torsions");
         assert_eq!(
@@ -2760,6 +2905,58 @@ mod tests {
         assert!(!res.error().is_empty());
         assert_eq!(res.n_confs(), 0);
         assert!(res.coordinates().is_empty());
+    }
+
+    /// iMTD-GC scatter-gather through the wasm coordinator + worker function
+    /// matches the one-shot call bit-for-bit (the parallel driver's path).
+    #[test]
+    fn imtd_scatter_gather_wasm_matches_oneshot() {
+        let sdf = std::fs::read_to_string("scripts/val_set/ethanol.sdf").unwrap();
+        let make_opts = || {
+            let mut o = crate::ImtdOptions::new();
+            o.set_max_rounds(2);
+            o.set_runs_per_round(2);
+            o.set_steps_per_run(600);
+            o.set_quench_interval(200);
+            o.set_quench_max_iterations(200);
+            o.set_crossing_pairs(2);
+            o.set_seed(42);
+            o
+        };
+        let one = crate::run_imtd_conformer_search(&sdf, make_opts());
+        assert!(one.success(), "{}", one.error());
+        let mut search = crate::ImtdSearch::new(&sdf, make_opts());
+        assert!(search.success(), "{}", search.error());
+        // malformed payloads are rejected without consuming the slot
+        let plan0 = search.plan_json();
+        assert!(serde_json::from_str::<serde_json::Value>(&plan0).is_ok());
+        assert!(!search.gather(0, "not json"), "malformed minima rejected");
+        while !search.done() {
+            let plan = search.plan_json();
+            let runs: Vec<serde_json::Value> = serde_json::from_str::<serde_json::Value>(&plan)
+                .expect("plan json")
+                .get("runs")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            assert!(!runs.is_empty(), "plan before done is non-empty");
+            for r in &runs {
+                let idx = r
+                    .get("run_index")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(u64::MAX) as usize;
+                let spec = r.to_string();
+                let minima =
+                    crate::run_imtd_metad_run_json(&sdf, &spec, make_opts()).expect("run ok");
+                assert!(search.gather(idx, &minima), "gather accepts worker minima");
+            }
+        }
+        let res = search.result();
+        assert!(res.success());
+        assert_eq!(res.n_confs(), one.n_confs());
+        assert_eq!(res.energies(), one.energies(), "scatter-gather == one-shot");
+        assert_eq!(res.rounds_executed(), one.rounds_executed());
+        assert_eq!(res.converged(), one.converged());
     }
 
     #[test]

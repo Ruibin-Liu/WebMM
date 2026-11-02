@@ -1,29 +1,29 @@
-# Plan: Metad 构象搜索 iMTD-GC 迭代-交叉调度(引擎 + WASM)(已完成)
+# Plan: 并行多 metad——iMTD-GC 散射-收集并行化(引擎原语 + worker 通道 + 并行驱动)(已完成)
 
-用户指令「先1」:按已记录的设计基线实施——CREST iMTD-GC 迭代路线:多轮短程 metad(轮换偏置强度与 CV 组合)收集构象,低能构象遗传交叉产新种子,迭代至系综收敛;不做单次长程 metad;现有 well-tempered metad 引擎原样保留,迭代-交叉调度加在外层。
+用户指令「并行多metad」。WASM 单线程、不引新依赖(无 rayon/threads),按既定架构「worker farm 归前端层」:把 iMTD-GC 调度器分解为**散射-收集原语**,轮内 k 条短程 metad 散射到浏览器 worker 池真并行,主线程协调器折叠去重/交叉/收敛判定。
 
 ## 交付
-1. **原生调度器 `src/metad/imtd.rs`(新文件;`src/metad/mod.rs` 仅加 `pub mod imtd;`——well-tempered 引擎零语义改动)**
-   - **CV 池(确定性)**:可旋转二面体 CV——无环重原子键 j–k(两端各存在邻居),i/l 取端点邻居(优先重原子、最小下标);池不足(<2)时补距离 CV(图距 ≥4 的重原子对,确定性排序截断);池空(刚性分子)→ 仅淬灭输入为唯一构象,结果如实记录(rounds=0/1 构象)。
-   - **轮次调度**:每轮 `runs_per_round` 条短程 metad 顺序执行;CV 按全局 run 计数轮换池,偏置强度沿确定性梯 [1.0, 0.5, 0.25]×base 轮换;MD 种子 = base_seed + r·1000 + m;起点结构:round 0 = 输入(优化后),后续轮 = 交叉新种子优先 + 既有低能极小轮换。
-   - **收集**:每条 run 每 `quench_interval` 步淬灭快照(共享 MMFF + L-BFGS `optimize`,迭代封顶)得局部极小;能量窗(默认 6 kcal/mol,相对系综当前最小)+ **对齐 RMSD 去重**(重原子;Horn 四元数 Kabsch,复用 `sym_jacobi`,坐标级私有实现,只允许真旋转)入系综。
-   - **遗传交叉**:每轮末对低能极小配对,沿可旋转键 (j,k) 切片(图连通分片,H 随母重原子):B 按 F1 重原子对齐到 A,child = A 的 F1 坐标 + B 的 F2 坐标,淬灭后按同规则去重入系综;新极小即下轮种子。
-   - **收敛**:某轮新增唯一极小 ≤ `convergence_new_minima`(默认 0)→ 收敛停止;硬上限 `max_rounds`;系综容量 `max_conformers`(保最低能)。全程确定性:同 seed 同输入逐位可复现,无墙钟。
-   - API:`ImtdConfig`(Default 电池参数)+ `imtd_conformer_search(mol, mmff_variant, config) -> ImtdResult`(coords/energies/round_found/每轮新增计数/rounds_executed/converged/pool 大小)。
-2. **WASM 导出(加法,不破坏既有契约)**:`ImtdOptions`(setter 风格镜像 MetaDOptions)+ `run_imtd_conformer_search(sdf, options) -> ImtdResult`(扁平数组 conformer-major,镜像 OptimizedConformers 形状,success/error 通道同款)。构建后核对 pkg/webmm.d.ts 仅新增符号。
-3. **测试**:imtd.rs 单元测试(CV 池:ethanol 两条可旋转二面体;对齐 RMSD 旋转恢复/镜像拒绝;交叉子代有效性;端到端 n-butane/ethanol 小预算找到 ≥2 极小;methane 刚性 1 极小;确定性逐位复现;max_rounds 封顶)+ lib.rs WASM 测试(数组一致性/确定性/坏输入 error 通道)。
-4. **不做(记录,后续轮次)**:前端 workbench/任务层接线(把 IMTD 接进 conformers kind 或独立 kind)、GFN-FF 支持(v1 仅 MMFF,镜像现有 metad WASM 面)、并行多 metad(顺序执行;worker farm 归前端层)。
-
-## 验收
-cargo fmt clean;cargo clippy --all-targets 双目标(native + wasm32)0 警告;cargo test 全绿(含新测试);wasm 重编且 webmm.d.ts 仅增量;run.sh 既有套件零回归(无新前端套件)。
-
-## 排雷存档(本轮)
-- **Kabsch 方向约定**:lib.rs `kabsch_align` 的 Horn 实现是 R·p+t≈q(p=动、 q=参考);照抄数学时把残差方向对调(p↔q 互换)会静默给出错旋转——测试用已知旋转+平移抓出(rmsd 2.59 而非 ~0)。坐标级实现必须同约定。
-- **fragment_split 点标记陷阱**:用 seen[k]=true 封堵制会把割边端点 k 排除在两侧之外(丁烷 13≠14)——必须按边封堵(只断 j→k 遍历,k 归 F2)。
-- **可旋转键规则**:若要求两端各≥2 个重邻居会丢掉羟基因子(H-O-C-C);放宽为“任一邻居”后丁烷得 3 条(端基 C-C 的 H 扭转也是合法 CV),交叉测试须显式取中央键 (1,2)。
-- **断言阈值**:120° 片段旋转下 4 重原子对齐 RMSD 仅 ~0.36(对齐会抵消单端位移),去重/差异断言阈值取 0.2 而非 0.5。
-- **收敛阈值语义**:convergence_new_minima=usize::MAX 会让第 1 轮即判收敛(每轮新增≤MAX 恒真)——“预算耗尽”路径无法用阈值构造,测试改验“达阈即停”(rounds=1、converged)。
-- **环境项(非本轮四引起)**:m1_3d_pipeline 的 xtb 交叉核对依赖 `~/.local/xtb-gxtb/bin/xtb`,本机缺失即 exec 127(与 wasm 内容无关);m5 amine_smarts 全量跑偶发 flake(单跑 49/49 过,与 m12 引擎加载偶发同族)。
+1. **引擎散射-收集原语(src/metad/imtd.rs;well-tempered 引擎仍零改动)**
+   - `CvSpec` 公开;`RunSpec{round, run_index, start, cv, hill_height, seed}`(每 run 自包含、纯函数可执行);`Minimum{coords, energy}`(已淬灭极小)。
+   - `execute_run(mol, variant, quench_ff, config, spec) -> Vec<Minimum>`:一条短程 metad + 周期淬灭(淬灭移入执行端)。
+   - 协调器 `ImtdSearch`:`new`(淬灭输入/建池/fragments)→ `plan()`(轮首一次性定全部起点:交叉种子优先+低能池轮换;缓存幂等;**轮内起点只依赖上一轮末态 ⇒ 所有 run 相互独立**)→ `gather(idx, minima)` 缓冲,收齐按 idx 序折叠 + 遗传交叉 + 达阈判定(**折叠序=顺序路径序 ⇒ 与到达序无关,逐位确定**)→ `done()/result()`(非破坏快照)。
+   - `imtd_conformer_search` 重写为同一原语的顺序组合(单代码路径,并行与顺序天然逐位一致)。
+   - JSON 编解码(worker 边界):f64 全部走 `"{:.17e}"` 字符串(见排雷 1)。
+   - **两级去重**(本轮语义修正):同重原子构架 AND(全原子对齐 RMSD < tol OR |ΔE| < 1e-3)——保留氢转动异构体(乙醇 anti/gauche),防甲基 H 置换假新构象;镜像同能对折叠为 v1 语义(记录)。
+2. **WASM 加法导出(lib.rs)**:`run_imtd_metad_run_json(sdf, spec_json, ImtdOptions) -> Result<String,String>`(worker 端纯函数)+ `ImtdSearch` 类(new/success/error/plan_json/gather→bool/done/round/result);`imtd_config_from`/`imtd_result_to_wasm` 提取复用。d.ts 增量恰两符号。
+3. **conf.worker 通道**:`imtdRun` 消息(sdf+specJson+[setter,value] optSets)→ `run_imtd_metad_run_json` → `imtdMinima`/`imtdError` 回帖(worker schema 无关)。
+4. **并行驱动 app/tasks/imtd.js**(index.html 挂载;无 UI/不接任务层):`window.IMTD.runParallel(sdf, opts, onRound)`——W≤4 conf.worker 池(ready 门+轮内 Promise 散射),plan→散射→gather(任意到达序)→轮回直至 done;返回系综+并行统计(usedWorkers 等);暴露 `optsToWasm`/`DEFAULTS`。
+5. **测试**:原生 +4(execute_run 纯性+JSON 逐位往返;plan 幂等;散射-收集(顺序+乱序到达)==顺序路径逐位;氢转动异构体保留且置换不膨胀);WASM +1(协调器类+worker 函数 == 一次性调用逐位,含坏 JSON gather 拒收);CDP 新套件 **m15_imtd_parallel** 13 断言(并行==顺序 energies 逐位、3 worker 全落位、onRound 轮报、坏 SDF 拒绝、零 page error);run.sh 挂 m15。
+6. **不做(记录)**:任务层 kind 化、UI 按钮、GFN-FF、取消语义(驱动 terminate 池)、镜像构象区分。
 
 ## 验收(实测)
-cargo fmt clean;clippy native(--all-targets)与 wasm32(--lib)均 0 警告;cargo test 338(lib,+9 新)+ 7(sascore_golden)全绿;wasm 重编后 webmm.d.ts 增量纯净(仅 ImtdOptions/ImtdSearchResult/run_imtd_conformer_search 三符号);run.sh 26/27 CDP 套件全绿(m1 为上述 xtb 环境缺失,exec 127 不达页面)+ Node platform 153/153。
+cargo fmt/clippy 双目标(native --all-targets + wasm32 --lib)0 警告;cargo test 343(lib)+ 7(sascore_golden)全绿;wasm 重编 d.ts 仅 ImtdSearch/run_imtd_metad_run_json 两符号增量;run.sh 27/28 CDP 全绿(m1 为 xtb 外部二进制缺失,exec 127 环境项)+ m15 13/13 + Node 153/153;乙醇小负载实测并行加速 1.37×(启动开销占主导,重负载趋近 min(runs, W)×)。
+
+## 排雷存档(本轮)
+- **serde_json 浮点解析 1 ULP 丢位**:发射端 ryu 最短表示正确,但解析器非正确舍入——实证 `0.10966905921216365` 往返后 bits 末位-1(原生测试逐位断言当场抓住)。worker 边界所有 f64 走 `"{:.17e}"` 字符串:Rust `str::parse` 正确舍入、17 位有效数字必往返,JS 侧只透传不解释。
+- **重原子去重吞掉氢转动异构体**:乙醇 anti/gauche(ΔE=0.18)的重原子 C-C-O 三角形可被 Kabsch 完美叠合 → 全并成 1 个构象(m15 预检 n=1 引出)。两级判据:重原子构架相同 AND(全原子 RMSD 近 OR 能量差<1e-3);后者防甲基 H 置换假新构象(置换标签淬灭到同一能量)。副作用:镜像同能对(gauche±)也被能量判据折叠——v1 语义,区分需二面角符号,留后续。
+- **round_found[0]==0 断言过强**:全局极小由 metad 第 1 轮发现是常态(输入恰在高能井),改 `round ≤ rounds_executed` 合法性断言。
+- **wasm 对象不可跨 worker**(结构化克隆不含 wasm-bindgen 包装):spec/minima 以 JSON 字符串为载体;ImtdOptions 在 worker 内重建,驱动发 [setter, value] 对让 worker 保持 schema 无关。
+- **起点选择语义细化**:原顺序实现轮内 run m 的起点在 run m-1 折叠后选取(与系综增长交织);并行要求轮首一次性定全部起点——顺序路径同此定义,故与上一轮顺序实现可有数值差异(无黄金数值契约,PLAN 已声明)。
+- **JS DEFAULTS 表镜像 Rust 默认**是唯一漂移风险点:驱动总是发完整 optSets(两测侧同源),漂移只影响默认行为不改一致性;排雷记录,未锁测试。
+- 环境项同前:m1 xtb 二进制缺失(exec 127);临时探针 example 诊断后即删(仓库 0 警告纪律)。

@@ -84,6 +84,22 @@ self.onmessage = async (e) => {
     }
     return;
   }
+  // iMTD-GC scatter unit (parallel metad, v1.12): one short metadynamics run
+  // from a serialized RunSpec → quenched minima JSON (a pure function; the
+  // main-thread ImtdSearch coordinator folds results deterministically).
+  // optSets = [setter, value] pairs so the worker stays schema-agnostic.
+  if (msg.type === 'imtdRun') {
+    try {
+      await initPromise;
+      const o = new wasm.ImtdOptions();
+      for (const [setter, v] of msg.optSets) o[setter](v);
+      const minimaJson = wasm.run_imtd_metad_run_json(msg.sdf, msg.specJson, o);
+      self.postMessage({ type: 'imtdMinima', id: msg.id, runIndex: msg.runIndex, minimaJson });
+    } catch (err) {
+      self.postMessage({ type: 'imtdError', id: msg.id, runIndex: msg.runIndex, error: String(err && err.message ? err.message : err) });
+    }
+    return;
+  }
   if (msg.type !== 'run') return;
   try {
     await initPromise;   // 'run' waits for init (async handlers don't queue)

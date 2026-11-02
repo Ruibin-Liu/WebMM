@@ -145,6 +145,32 @@ pub struct ImtdResult {
     pub n_rotatable: usize,
 }
 
+/// One runnable short-metad unit of work (the scatter-gather boundary).
+/// Self-contained: a worker with the molecule + config executes it as a pure
+/// function and returns its quenched [`Minimum`] list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunSpec {
+    /// Round this spec belongs to (1-based; reporting only).
+    pub round: usize,
+    /// Index within the round (0-based; also the gather fold order).
+    pub run_index: usize,
+    /// Start coordinates (n_atoms rows).
+    pub start: Vec<[f64; 3]>,
+    pub cv: CvSpec,
+    /// Hill height for this run (bias-strength ladder already applied).
+    pub hill_height: f64,
+    /// RNG seed for this run.
+    pub seed: u64,
+}
+
+/// A trajectory snapshot already quenched to its local minimum.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Minimum {
+    pub coords: Vec<[f64; 3]>,
+    /// MMFF energy of the quenched minimum (kcal/mol).
+    pub energy: f64,
+}
+
 // ── geometry helpers ──
 
 /// Proper rotation + translation (Horn quaternion Kabsch) mapping the mobile
@@ -359,8 +385,8 @@ fn distance_cvs(mol: &Molecule, cap: usize) -> Vec<(usize, usize)> {
 }
 
 /// One bias collective variable of the rotation pool.
-#[derive(Debug, Clone, Copy)]
-enum CvSpec {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CvSpec {
     Dihedral(usize, usize, usize, usize),
     Distance(usize, usize),
 }
@@ -450,9 +476,14 @@ fn genetic_crossing(a: &[[f64; 3]], b: &[[f64; 3]], f1: &[usize], k: usize) -> V
 
 struct Ensemble {
     members: Vec<Conformer>,
-    /// Atom indices used for dedup alignment (heavy atoms; all if none).
-    dedup_idx: Vec<usize>,
+    /// All-atom indices (H-rotamer resolution) for dedup alignment.
+    dedup_all: Vec<usize>,
+    /// Heavy-atom indices (scaffold identity) for dedup alignment.
+    dedup_heavy: Vec<usize>,
     rmsd_tol: f64,
+    /// Max |ΔE| for the hydrogen-permutation equivalence (identical minimum,
+    /// permuted methyl-H labels ⇒ identical energy).
+    energy_dup_tol: f64,
     energy_window: f64,
     max_conformers: usize,
     emin: f64,
@@ -460,14 +491,17 @@ struct Ensemble {
 
 impl Ensemble {
     fn new(mol: &Molecule, config: &ImtdConfig) -> Self {
-        let mut dedup_idx = heavy_indices(mol);
-        if dedup_idx.is_empty() {
-            dedup_idx = (0..mol.atoms.len()).collect();
+        let n = mol.atoms.len();
+        let mut heavy = heavy_indices(mol);
+        if heavy.is_empty() {
+            heavy = (0..n).collect();
         }
         Ensemble {
             members: Vec::new(),
-            dedup_idx,
+            dedup_all: (0..n).collect(),
+            dedup_heavy: heavy,
             rmsd_tol: config.rmsd_tol,
+            energy_dup_tol: 1e-3,
             energy_window: config.energy_window,
             max_conformers: config.max_conformers.max(1),
             emin: f64::INFINITY,
@@ -482,23 +516,16 @@ impl Ensemble {
         order
     }
 
-    /// Quench `coords` to its local minimum and try to add it. Returns the
-    /// accepted conformer's coordinates (`None` if duplicate, out of energy
-    /// window, cap-rejected, or the quench produced a non-finite energy).
-    fn try_add(
+    /// Add an ALREADY-QUENCHED minimum: energy window, capacity, aligned-RMSD
+    /// dedup. Returns the accepted conformer's coordinates, `None` if
+    /// duplicate / out of window / cap-rejected.
+    fn try_add_quenched(
         &mut self,
-        ff: &MMFFForceField,
-        coords: &[[f64; 3]],
+        coords: Vec<[f64; 3]>,
+        energy: f64,
         round: usize,
         origin: Origin,
-        quench_max_iter: usize,
     ) -> Option<Vec<[f64; 3]>> {
-        let conv = ConvergenceOptions {
-            max_iterations: quench_max_iter.max(1),
-            ..Default::default()
-        };
-        let r = optimizer::optimize(ff, coords, &conv);
-        let energy = r.final_energy;
         if !energy.is_finite() {
             return None;
         }
@@ -517,10 +544,19 @@ impl Ensemble {
         if !self.members.is_empty() && energy > self.emin + self.energy_window {
             return None;
         }
-        // duplicate minimum? (aligned heavy-atom RMSD below tolerance)
-        let opt = r.optimized_coords;
+        // duplicate minimum? Two-tier equivalence (CREST keeps H rotamers as
+        // distinct conformers, but methyl-H permutations must not inflate the
+        // ensemble): same heavy scaffold AND (same all-atom geometry OR the
+        // same energy — permuted labels quench to the identical minimum).
         for m in &self.members {
-            if aligned_rmsd_over(&opt, &m.coords, &self.dedup_idx) < self.rmsd_tol {
+            let heavy_same =
+                aligned_rmsd_over(&coords, &m.coords, &self.dedup_heavy) < self.rmsd_tol;
+            if !heavy_same {
+                continue;
+            }
+            let all_same = aligned_rmsd_over(&coords, &m.coords, &self.dedup_all) < self.rmsd_tol;
+            let same_energy = (energy - m.energy).abs() < self.energy_dup_tol;
+            if all_same || same_energy {
                 return None;
             }
         }
@@ -528,14 +564,13 @@ impl Ensemble {
             self.emin = energy;
         }
         self.members.push(Conformer {
-            coords: opt,
+            coords,
             energy,
             round_found: round,
             origin,
         });
         if self.members.len() > self.max_conformers {
-            // evict the previous maximum (never the just-added member: it
-            // passed the strictly-below-max check above)
+            // evict the previous maximum (never the just-added member)
             let mut i_max = 0;
             for (i, m) in self.members.iter().enumerate() {
                 if m.energy > self.members[i_max].energy {
@@ -546,75 +581,305 @@ impl Ensemble {
         }
         self.members.last().map(|m| m.coords.clone())
     }
-}
 
-// ── short metad run ──
-
-/// Bundles the immutable per-search context for one short metad run.
-struct MetadRun<'a> {
-    mol: &'a Molecule,
-    variant: crate::MMFFVariant,
-    config: &'a ImtdConfig,
-}
-
-impl MetadRun<'_> {
-    /// Run one short metadynamics trajectory from `start`, calling
-    /// `on_snapshot` with the coordinates every `quench_interval` steps and
-    /// at the final frame.
-    fn run(
-        &self,
-        start: &[[f64; 3]],
-        cv: CvSpec,
-        hill_height: f64,
-        seed: u64,
-        mut on_snapshot: impl FnMut(&[[f64; 3]]),
-    ) {
-        let config = self.config;
-        let mut mol_start = self.mol.clone();
-        for (atom, c) in mol_start.atoms.iter_mut().zip(start.iter()) {
-            atom.position = *c;
-        }
-        let width = match cv {
-            CvSpec::Dihedral(..) => config.hill_width,
-            CvSpec::Distance(..) => config.hill_width_distance,
-        };
-        let ff = MMFFForceField::new(&mol_start, self.variant);
-        let metad = Rc::new(MetaDynamics::new(
-            Box::new(ff),
-            cv.build(),
-            MetaDConfig {
-                hill_height,
-                hill_width: width,
-                deposit_interval: config.deposit_interval.max(1),
-                bias_factor: config.bias_factor,
-                temperature_k: config.temperature_k,
-            },
-        ));
-        let mut runner = MDRunner::from_molecule(
-            metad,
-            &mol_start,
-            MDConfig {
-                dt_fs: config.dt_fs,
-                temperature_k: config.temperature_k,
-                friction_per_ps: config.friction_per_ps,
-                seed,
+    /// Quench `coords` to its local minimum, then [`Self::try_add_quenched`].
+    fn try_add(
+        &mut self,
+        ff: &MMFFForceField,
+        coords: &[[f64; 3]],
+        round: usize,
+        origin: Origin,
+        quench_max_iter: usize,
+    ) -> Option<Vec<[f64; 3]>> {
+        let r = optimizer::optimize(
+            ff,
+            coords,
+            &ConvergenceOptions {
+                max_iterations: quench_max_iter.max(1),
+                ..Default::default()
             },
         );
-        let interval = config.quench_interval.max(1);
-        for i in 1..=config.steps_per_run {
-            runner.step();
-            if i.is_multiple_of(interval) {
-                on_snapshot(runner.coords());
-            }
-        }
-        on_snapshot(runner.coords()); // final frame
+        self.try_add_quenched(r.optimized_coords, r.final_energy, round, origin)
     }
 }
 
-// ── the iMTD-GC scheduler ──
+// ── one runnable metad unit (scatter-gather boundary) ──
 
-/// iMTD-GC conformational search (see the module docs). Deterministic: same
-/// molecule + variant + config ⇒ bit-identical result.
+/// Execute one short metadynamics run and quench its snapshots to local
+/// minima. Pure: the same `spec` (+ molecule/config) yields the identical
+/// minimum list — this is the unit of work a parallel worker executes.
+pub fn execute_run(
+    mol: &Molecule,
+    variant: crate::MMFFVariant,
+    quench_ff: &MMFFForceField,
+    config: &ImtdConfig,
+    spec: &RunSpec,
+) -> Vec<Minimum> {
+    let mut mol_start = mol.clone();
+    for (atom, c) in mol_start.atoms.iter_mut().zip(spec.start.iter()) {
+        atom.position = *c;
+    }
+    let width = match spec.cv {
+        CvSpec::Dihedral(..) => config.hill_width,
+        CvSpec::Distance(..) => config.hill_width_distance,
+    };
+    let ff = MMFFForceField::new(&mol_start, variant);
+    let metad = Rc::new(MetaDynamics::new(
+        Box::new(ff),
+        spec.cv.build(),
+        MetaDConfig {
+            hill_height: spec.hill_height,
+            hill_width: width,
+            deposit_interval: config.deposit_interval.max(1),
+            bias_factor: config.bias_factor,
+            temperature_k: config.temperature_k,
+        },
+    ));
+    let mut runner = MDRunner::from_molecule(
+        metad,
+        &mol_start,
+        MDConfig {
+            dt_fs: config.dt_fs,
+            temperature_k: config.temperature_k,
+            friction_per_ps: config.friction_per_ps,
+            seed: spec.seed,
+        },
+    );
+    let conv = ConvergenceOptions {
+        max_iterations: config.quench_max_iterations.max(1),
+        ..Default::default()
+    };
+    let mut minima = Vec::new();
+    let mut snapshot = |coords: &[[f64; 3]]| {
+        let r = optimizer::optimize(quench_ff, coords, &conv);
+        if r.final_energy.is_finite() {
+            minima.push(Minimum {
+                coords: r.optimized_coords,
+                energy: r.final_energy,
+            });
+        }
+    };
+    let interval = config.quench_interval.max(1);
+    for i in 1..=config.steps_per_run {
+        runner.step();
+        if i.is_multiple_of(interval) {
+            snapshot(runner.coords());
+        }
+    }
+    snapshot(runner.coords()); // final frame
+    minima
+}
+
+// ── the iMTD-GC coordinator (scatter-gather) ──
+
+/// Round-scheduling coordinator: plans each round's independent short-metad
+/// runs ([`RunSpec`]), accepts their gathered minima in ANY arrival order,
+/// and folds them deterministically in run-index order (window/dedup/cap →
+/// genetic crossing → convergence), so parallel and sequential execution
+/// produce bit-identical ensembles.
+pub struct ImtdSearch {
+    config: ImtdConfig,
+    /// Shared MMFF instance for coordinator-side quenches (input + crossings).
+    ff: MMFFForceField,
+    ensemble: Ensemble,
+    rot: Vec<(usize, usize)>,
+    pool: Vec<CvSpec>,
+    fragments: Vec<(Vec<usize>, usize)>,
+    /// Next round to plan (1-based).
+    round: usize,
+    plan_cache: Option<Vec<RunSpec>>,
+    pending: Vec<Option<Vec<Minimum>>>,
+    rounds_executed: usize,
+    new_minima_per_round: Vec<usize>,
+    crossed_seeds: Vec<Vec<[f64; 3]>>,
+    converged: bool,
+    finished: bool,
+}
+
+impl ImtdSearch {
+    /// Build the coordinator: quenches the input structure (round 0), derives
+    /// the CV pool and crossing fragments. `done()` is immediately true for
+    /// rigid molecules (empty pool) or zero budgets.
+    pub fn new(mol: &Molecule, variant: crate::MMFFVariant, config: &ImtdConfig) -> Self {
+        let ff = MMFFForceField::new(mol, variant);
+        let mut ensemble = Ensemble::new(mol, config);
+        let input_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        ensemble.try_add(
+            &ff,
+            &input_coords,
+            0,
+            Origin::Input,
+            config.quench_max_iterations,
+        );
+        let rot = rotatable_bonds(mol);
+        let pool = cv_pool(mol, &rot);
+        let fragments: Vec<(Vec<usize>, usize)> = rot
+            .iter()
+            .map(|&(j, k)| (fragment_split(mol, j, k).0, k))
+            .collect();
+        let finished = pool.is_empty() || config.max_rounds == 0 || config.steps_per_run == 0;
+        ImtdSearch {
+            config: *config,
+            ff,
+            ensemble,
+            rot,
+            pool,
+            fragments,
+            round: 1,
+            plan_cache: None,
+            pending: Vec::new(),
+            rounds_executed: 0,
+            new_minima_per_round: Vec::new(),
+            crossed_seeds: Vec::new(),
+            converged: finished,
+            finished,
+        }
+    }
+
+    pub fn done(&self) -> bool {
+        self.finished
+    }
+
+    /// Round number the next plan belongs to (1-based).
+    pub fn round(&self) -> usize {
+        self.round
+    }
+
+    /// This round's run specs (computed once and cached — idempotent until
+    /// the round is gathered). Empty when done. All starts are fixed from the
+    /// END of the previous round (crossed seeds first, then the low-energy
+    /// ensemble rotation), so the runs are mutually independent.
+    pub fn plan(&mut self) -> &[RunSpec] {
+        if self.finished {
+            return &[];
+        }
+        if self.plan_cache.is_none() {
+            let specs = self.build_round_plan();
+            self.pending = vec![None; specs.len()];
+            self.plan_cache = Some(specs);
+        }
+        self.plan_cache.as_deref().unwrap_or(&[])
+    }
+
+    fn build_round_plan(&mut self) -> Vec<RunSpec> {
+        let mut specs = Vec::with_capacity(self.config.runs_per_round);
+        for m in 0..self.config.runs_per_round {
+            let g = (self.round - 1) * self.config.runs_per_round + m; // global run counter
+            let start: Vec<[f64; 3]> =
+                if let Some(seed_coords) = self.crossed_seeds.first().cloned() {
+                    self.crossed_seeds.remove(0);
+                    seed_coords
+                } else {
+                    let top = self.ensemble.lowest_energy_indices();
+                    self.ensemble.members[top[g % top.len()]].coords.clone()
+                };
+            specs.push(RunSpec {
+                round: self.round,
+                run_index: m,
+                start,
+                cv: self.pool[g % self.pool.len()],
+                hill_height: self.config.hill_height * HEIGHT_LADDER[g % HEIGHT_LADDER.len()],
+                seed: self.config.seed + (self.round as u64 - 1) * 1000 + m as u64,
+            });
+        }
+        specs
+    }
+
+    /// Deposit one run's minima (any order). When every spec of the round has
+    /// arrived, folds the round: metad minima in run-index order, then genetic
+    /// crossing, then the convergence criterion. Out-of-range or duplicate
+    /// deposits are ignored.
+    pub fn gather(&mut self, run_index: usize, minima: Vec<Minimum>) {
+        if self.finished || self.plan_cache.is_none() {
+            return;
+        }
+        if run_index >= self.pending.len() || self.pending[run_index].is_some() {
+            return;
+        }
+        self.pending[run_index] = Some(minima);
+        if self.pending.iter().all(|p| p.is_some()) {
+            self.fold_round();
+        }
+    }
+
+    fn fold_round(&mut self) {
+        let specs = self.plan_cache.take().expect("plan present when folding");
+        let pending = std::mem::take(&mut self.pending);
+        let _ = specs; // (round identity lives in the specs; fold order is the index)
+        let mut new_this_round = 0usize;
+        // fold metad minima in run-index order (== sequential execution order)
+        for minima in pending.iter().flatten() {
+            for m in minima {
+                if self
+                    .ensemble
+                    .try_add_quenched(m.coords.clone(), m.energy, self.round, Origin::Metad)
+                    .is_some()
+                {
+                    new_this_round += 1;
+                }
+            }
+        }
+        // genetic crossing: recombine low-energy parents at rotatable cuts
+        if self.config.crossing_pairs > 0
+            && self.ensemble.members.len() >= 2
+            && !self.fragments.is_empty()
+        {
+            let top = self.ensemble.lowest_energy_indices();
+            let n = top.len();
+            let pair_budget = self.config.crossing_pairs.min(n * (n - 1) / 2);
+            for p in 0..pair_budget {
+                let a = p % n;
+                let b = (a + 1 + p / n) % n;
+                if a == b {
+                    continue;
+                }
+                let (f1, k) = &self.fragments[p % self.fragments.len()];
+                let child = genetic_crossing(
+                    &self.ensemble.members[top[a]].coords,
+                    &self.ensemble.members[top[b]].coords,
+                    f1,
+                    *k,
+                );
+                if let Some(seed_coords) = self.ensemble.try_add(
+                    &self.ff,
+                    &child,
+                    self.round,
+                    Origin::Crossing,
+                    self.config.quench_max_iterations,
+                ) {
+                    new_this_round += 1;
+                    self.crossed_seeds.push(seed_coords);
+                }
+            }
+        }
+        self.new_minima_per_round.push(new_this_round);
+        self.rounds_executed = self.round;
+        self.round += 1;
+        if new_this_round <= self.config.convergence_new_minima {
+            self.converged = true;
+            self.finished = true;
+        } else if self.round > self.config.max_rounds {
+            self.finished = true;
+        }
+    }
+
+    /// Snapshot result (non-destructive; may be called at any time).
+    pub fn result(&self) -> ImtdResult {
+        finalize(
+            &self.ensemble,
+            self.rounds_executed,
+            self.converged,
+            self.new_minima_per_round.clone(),
+            self.pool.len(),
+            self.rot.len(),
+        )
+    }
+}
+
+/// iMTD-GC conformational search (see the module docs) — sequential
+/// composition of the same scatter-gather primitives a parallel driver uses,
+/// hence bit-identical to it. Deterministic: same molecule + variant + config
+/// ⇒ bit-identical result.
 pub fn imtd_conformer_search(
     mol: &Molecule,
     variant: crate::MMFFVariant,
@@ -630,152 +895,242 @@ pub fn imtd_conformer_search(
             n_rotatable: 0,
         };
     }
-    let ff = MMFFForceField::new(mol, variant);
-    let mut ensemble = Ensemble::new(mol, config);
-
-    // round 0 seed: the quenched input structure
-    let input_coords: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
-    ensemble.try_add(
-        &ff,
-        &input_coords,
-        0,
-        Origin::Input,
-        config.quench_max_iterations,
-    );
-
-    let rot = rotatable_bonds(mol);
-    let pool = cv_pool(mol, &rot);
-    let n_rotatable = rot.len();
-    if pool.is_empty() || config.max_rounds == 0 || config.steps_per_run == 0 {
-        return finish(ensemble, 0, true, Vec::new(), pool.len(), n_rotatable);
-    }
-
-    let fragments: Vec<(Vec<usize>, usize)> = rot
-        .iter()
-        .map(|&(j, k)| (fragment_split(mol, j, k).0, k))
-        .collect();
-
-    let mut new_minima_per_round = Vec::new();
-    let mut crossed_seeds: Vec<Vec<[f64; 3]>> = Vec::new();
-    let mut rounds_executed = 0;
-    let mut converged = false;
-
-    for r in 0..config.max_rounds {
-        rounds_executed = r + 1;
-        let mut new_this_round = 0usize;
-
-        // — collect: short metad runs, rotating CV and bias strength —
-        for m in 0..config.runs_per_round {
-            let g = r * config.runs_per_round + m; // global run counter
-            let cv = pool[g % pool.len()];
-            let hill = config.hill_height * HEIGHT_LADDER[g % HEIGHT_LADDER.len()];
-            // start structure: fresh crossed seeds first, then rotate
-            // through the low-energy ensemble
-            let start: Vec<[f64; 3]> = if let Some(seed_coords) = crossed_seeds.first().cloned() {
-                crossed_seeds.remove(0);
-                seed_coords
-            } else {
-                let top = ensemble.lowest_energy_indices();
-                ensemble.members[top[g % top.len()]].coords.clone()
-            };
-            let seed = config.seed + (r as u64) * 1000 + m as u64;
-            MetadRun {
-                mol,
-                variant,
-                config,
-            }
-            .run(&start, cv, hill, seed, |coords| {
-                if ensemble
-                    .try_add(
-                        &ff,
-                        coords,
-                        r + 1,
-                        Origin::Metad,
-                        config.quench_max_iterations,
-                    )
-                    .is_some()
-                {
-                    new_this_round += 1;
-                }
-            });
-        }
-
-        // — genetic crossing: recombine low-energy parents at rotatable cuts —
-        if config.crossing_pairs > 0 && ensemble.members.len() >= 2 && !fragments.is_empty() {
-            let top = ensemble.lowest_energy_indices();
-            let n = top.len();
-            let pair_budget = config.crossing_pairs.min(n * (n - 1) / 2);
-            for p in 0..pair_budget {
-                let a = p % n;
-                let b = (a + 1 + p / n) % n;
-                if a == b {
-                    continue;
-                }
-                let (f1, k) = &fragments[p % fragments.len()];
-                let child = genetic_crossing(
-                    &ensemble.members[top[a]].coords,
-                    &ensemble.members[top[b]].coords,
-                    f1,
-                    *k,
-                );
-                if let Some(seed_coords) = ensemble.try_add(
-                    &ff,
-                    &child,
-                    r + 1,
-                    Origin::Crossing,
-                    config.quench_max_iterations,
-                ) {
-                    new_this_round += 1;
-                    crossed_seeds.push(seed_coords);
-                }
-            }
-        }
-
-        new_minima_per_round.push(new_this_round);
-        if new_this_round <= config.convergence_new_minima {
-            converged = true;
+    let mut search = ImtdSearch::new(mol, variant, config);
+    while !search.done() {
+        let specs = search.plan().to_vec();
+        if specs.is_empty() {
             break;
         }
+        for spec in &specs {
+            let minima = execute_run(mol, variant, &search.ff, config, spec);
+            search.gather(spec.run_index, minima);
+        }
     }
-
-    finish(
-        ensemble,
-        rounds_executed,
-        converged,
-        new_minima_per_round,
-        pool.len(),
-        n_rotatable,
-    )
+    search.result()
 }
 
 /// Sort by energy, re-apply the window against the FINAL minimum (the minimum
 /// may have dropped during the search), cap the ensemble size.
-fn finish(
-    mut ensemble: Ensemble,
+fn finalize(
+    ensemble: &Ensemble,
     rounds_executed: usize,
     converged: bool,
     new_minima_per_round: Vec<usize>,
     pool_size: usize,
     n_rotatable: usize,
 ) -> ImtdResult {
-    let window = ensemble.energy_window;
-    let cap = ensemble.max_conformers;
-    ensemble
-        .members
-        .sort_by(|x, y| x.energy.total_cmp(&y.energy));
-    if let Some(first) = ensemble.members.first() {
+    let mut members = ensemble.members.clone();
+    members.sort_by(|x, y| x.energy.total_cmp(&y.energy));
+    if let Some(first) = members.first() {
         let emin = first.energy;
-        ensemble.members.retain(|m| m.energy <= emin + window);
+        members.retain(|m| m.energy <= emin + ensemble.energy_window);
     }
-    ensemble.members.truncate(cap);
+    members.truncate(ensemble.max_conformers);
     ImtdResult {
-        conformers: ensemble.members,
+        conformers: members,
         rounds_executed,
         converged,
         new_minima_per_round,
         pool_size,
         n_rotatable,
     }
+}
+
+// ── JSON codecs (worker boundary) ──
+// wasm objects cannot cross a worker postMessage; specs and minima travel as
+// JSON. serde_json's float PARSING is 1-ULP lossy on boundary values (its
+// ryu emitter is exact but the parser is not correctly rounded), so every
+// f64 is carried as a "{:.17e}" STRING — Rust's str::parse is correctly
+// rounded, 17 significant digits always round-trip, and the JS side ferries
+// the strings untouched (it never interprets coordinates).
+
+/// Bit-exact JSON rendering of one f64 (18 significant digits, exponent form).
+fn f64_to_json(v: f64) -> String {
+    format!("{:.17e}", v)
+}
+
+/// Bit-exact JSON parsing of one f64.
+///
+/// # Errors
+/// `Err` when the field is not a string or not a finite float.
+fn f64_from_json(v: &serde_json::Value, ctx: &str) -> Result<f64, String> {
+    let s = v
+        .as_str()
+        .ok_or_else(|| format!("{ctx}: expected a float string, got {v}"))?;
+    let x: f64 = s
+        .parse()
+        .map_err(|e| format!("{ctx}: bad float {s:?}: {e}"))?;
+    if x.is_finite() {
+        Ok(x)
+    } else {
+        Err(format!("{ctx}: non-finite float {s:?}"))
+    }
+}
+
+fn point_to_json(p: &[f64; 3]) -> serde_json::Value {
+    serde_json::json!([f64_to_json(p[0]), f64_to_json(p[1]), f64_to_json(p[2])])
+}
+
+fn point_from_json(v: &serde_json::Value, ctx: &str) -> Result<[f64; 3], String> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| format!("{ctx}: expected [x, y, z], got {v}"))?;
+    if arr.len() != 3 {
+        return Err(format!("{ctx}: expected 3 components, got {}", arr.len()));
+    }
+    Ok([
+        f64_from_json(&arr[0], ctx)?,
+        f64_from_json(&arr[1], ctx)?,
+        f64_from_json(&arr[2], ctx)?,
+    ])
+}
+
+fn cv_to_json(cv: CvSpec) -> serde_json::Value {
+    match cv {
+        CvSpec::Dihedral(i, j, k, l) => {
+            serde_json::json!({ "type": "dihedral", "atoms": [i, j, k, l] })
+        }
+        CvSpec::Distance(i, j) => serde_json::json!({ "type": "distance", "atoms": [i, j] }),
+    }
+}
+
+fn cv_from_json(v: &serde_json::Value) -> Result<CvSpec, String> {
+    let t = v
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("cv: missing type, got {v}"))?;
+    let atoms: Vec<usize> = v
+        .get("atoms")
+        .and_then(serde_json::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(serde_json::Value::as_u64)
+                .map(|x| x as usize)
+                .collect()
+        })
+        .ok_or_else(|| format!("cv: missing atoms, got {v}"))?;
+    match (t, atoms.as_slice()) {
+        ("dihedral", [i, j, k, l]) => Ok(CvSpec::Dihedral(*i, *j, *k, *l)),
+        ("distance", [i, j]) => Ok(CvSpec::Distance(*i, *j)),
+        _ => Err(format!("cv: bad type/atoms combination: {t} {atoms:?}")),
+    }
+}
+
+fn spec_to_value(spec: &RunSpec) -> serde_json::Value {
+    serde_json::json!({
+        "round": spec.round,
+        "run_index": spec.run_index,
+        "start": spec.start.iter().map(point_to_json).collect::<Vec<_>>(),
+        "cv": cv_to_json(spec.cv),
+        "hill_height": f64_to_json(spec.hill_height),
+        "seed": spec.seed,
+    })
+}
+
+fn spec_from_value(v: serde_json::Value) -> Result<RunSpec, String> {
+    let round = v
+        .get("round")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("spec: missing round")? as usize;
+    let run_index = v
+        .get("run_index")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("spec: missing run_index")? as usize;
+    let start_v = v
+        .get("start")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("spec: missing start")?;
+    let mut start = Vec::with_capacity(start_v.len());
+    for (i, p) in start_v.iter().enumerate() {
+        start.push(point_from_json(p, &format!("spec.start[{i}]"))?);
+    }
+    let cv = cv_from_json(v.get("cv").ok_or_else(|| "spec: missing cv".to_string())?)?;
+    let hill_height = f64_from_json(
+        v.get("hill_height")
+            .ok_or_else(|| "spec: missing hill_height".to_string())?,
+        "spec.hill_height",
+    )?;
+    let seed = v
+        .get("seed")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or("spec: missing seed")?;
+    Ok(RunSpec {
+        round,
+        run_index,
+        start,
+        cv,
+        hill_height,
+        seed,
+    })
+}
+
+fn minima_to_value(minima: &[Minimum]) -> serde_json::Value {
+    serde_json::json!({
+        "minima": minima
+            .iter()
+            .map(|m| serde_json::json!({
+                "e": f64_to_json(m.energy),
+                "xyz": m.coords.iter().map(point_to_json).collect::<Vec<_>>(),
+            }))
+            .collect::<Vec<_>>()
+    })
+}
+
+fn minima_from_value(v: serde_json::Value) -> Result<Vec<Minimum>, String> {
+    let arr = v
+        .get("minima")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("minima: missing minima array")?;
+    let mut out = Vec::with_capacity(arr.len());
+    for (i, m) in arr.iter().enumerate() {
+        let energy = f64_from_json(
+            m.get("e")
+                .ok_or_else(|| format!("minima[{i}]: missing e"))?,
+            &format!("minima[{i}].e"),
+        )?;
+        let xyz_v = m
+            .get("xyz")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("minima[{i}]: missing xyz"))?;
+        let mut coords = Vec::with_capacity(xyz_v.len());
+        for (j, p) in xyz_v.iter().enumerate() {
+            coords.push(point_from_json(p, &format!("minima[{i}].xyz[{j}]"))?);
+        }
+        out.push(Minimum { coords, energy });
+    }
+    Ok(out)
+}
+
+/// Serialize a round plan: `{"round": r, "runs": [spec, ...]}`.
+pub fn plan_to_json(round: usize, specs: &[RunSpec]) -> String {
+    serde_json::json!({
+        "round": round,
+        "runs": specs.iter().map(spec_to_value).collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
+/// Serialize one run's minima: `{"minima": [...]}`.
+pub fn minima_to_json(minima: &[Minimum]) -> String {
+    minima_to_value(minima).to_string()
+}
+
+/// Parse a serialized [`RunSpec`] (unknown fields are ignored).
+///
+/// # Errors
+/// `Err` with a context message when the JSON is malformed.
+pub fn run_spec_from_json(s: &str) -> Result<RunSpec, String> {
+    let v: serde_json::Value = serde_json::from_str(s).map_err(|e| format!("spec json: {e}"))?;
+    spec_from_value(v)
+}
+
+/// Parse a serialized minima list.
+///
+/// # Errors
+/// `Err` with a context message when the JSON is malformed.
+pub fn minima_from_json(s: &str) -> Result<Vec<Minimum>, String> {
+    let v: serde_json::Value = serde_json::from_str(s).map_err(|e| format!("minima json: {e}"))?;
+    minima_from_value(v)
 }
 
 #[cfg(test)]
@@ -1008,6 +1363,139 @@ mod tests {
         assert!(res.converged);
         assert_eq!(res.rounds_executed, 0);
         assert_eq!(res.conformers[0].origin, Origin::Input);
+    }
+
+    fn small_cfg() -> ImtdConfig {
+        ImtdConfig {
+            max_rounds: 3,
+            runs_per_round: 3,
+            steps_per_run: 500,
+            quench_interval: 250,
+            quench_max_iterations: 200,
+            crossing_pairs: 2,
+            seed: 42,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn execute_run_is_pure_and_json_roundtrips_bit_exact() {
+        let mol = ethanol();
+        let cfg = small_cfg();
+        let mut search = ImtdSearch::new(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let specs = search.plan().to_vec();
+        assert_eq!(specs.len(), 3);
+        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        let a = execute_run(&mol, crate::MMFFVariant::MMFF94s, &ff, &cfg, &specs[0]);
+        let b = execute_run(&mol, crate::MMFFVariant::MMFF94s, &ff, &cfg, &specs[0]);
+        assert!(!a.is_empty(), "run produces quenched minima");
+        assert_eq!(a, b, "same spec ⇒ bit-identical minima (purity)");
+        // JSON round-trip (worker boundary) is bit-exact: floats travel as
+        // 17-digit exponent strings (serde_json's number parser is 1-ULP
+        // lossy on boundary values — string channel dodges it)
+        let spec_json = spec_to_value(&specs[1]).to_string();
+        let spec_rt = run_spec_from_json(&spec_json).expect("spec round-trips");
+        assert_eq!(spec_rt, specs[1]);
+        let minima_rt = minima_from_json(&minima_to_json(&a)).expect("minima round-trips");
+        assert_eq!(minima_rt, a, "coordinates/energies bit-exact via JSON");
+    }
+
+    #[test]
+    fn plan_is_idempotent_within_a_round() {
+        let mol = ethanol();
+        let cfg = small_cfg();
+        let mut search = ImtdSearch::new(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let p1 = search.plan().to_vec();
+        let p2 = search.plan().to_vec();
+        assert_eq!(p1, p2, "repeated plan must not consume crossed seeds twice");
+        assert_eq!(search.round(), 1);
+        assert!(!search.done());
+    }
+
+    #[test]
+    fn scatter_gather_matches_sequential_regardless_of_arrival_order() {
+        let mol = ethanol();
+        let cfg = small_cfg();
+        let seq = imtd_conformer_search(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        // in-order composition
+        let mut s1 = ImtdSearch::new(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        while !s1.done() {
+            for spec in s1.plan().to_vec() {
+                let m = execute_run(&mol, crate::MMFFVariant::MMFF94s, &ff, &cfg, &spec);
+                s1.gather(spec.run_index, m);
+            }
+        }
+        let r1 = s1.result();
+        // JSON boundary + reverse arrival order per round
+        let mut s2 = ImtdSearch::new(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        while !s2.done() {
+            let specs = s2.plan().to_vec();
+            let jsons: Vec<String> = specs
+                .iter()
+                .map(|sp| {
+                    minima_to_json(&execute_run(
+                        &mol,
+                        crate::MMFFVariant::MMFF94s,
+                        &ff,
+                        &cfg,
+                        sp,
+                    ))
+                })
+                .collect();
+            for (i, j) in jsons.iter().enumerate().rev() {
+                let m = minima_from_json(j).expect("worker minima parse");
+                s2.gather(i, m);
+            }
+        }
+        let r2 = s2.result();
+        for r in [r1, r2] {
+            assert_eq!(r.conformers.len(), seq.conformers.len());
+            assert_eq!(r.rounds_executed, seq.rounds_executed);
+            assert_eq!(r.converged, seq.converged);
+            assert_eq!(r.new_minima_per_round, seq.new_minima_per_round);
+            for (x, y) in r.conformers.iter().zip(seq.conformers.iter()) {
+                assert_eq!(x.energy, y.energy, "scatter-gather must match sequential");
+                assert_eq!(x.coords, y.coords);
+            }
+        }
+    }
+
+    #[test]
+    fn hydrogen_rotamers_distinct_but_permutations_not() {
+        // Ethanol's anti/gauche C–C rotamers differ only in H positions
+        // (the heavy C–C–O triangle superposes) — the two-tier dedup must
+        // keep them (CREST semantics) while methyl-H permutations must not
+        // inflate the ensemble (they quench to the identical energy).
+        let mol = ethanol();
+        let cfg = ImtdConfig {
+            max_rounds: 2,
+            runs_per_round: 3,
+            steps_per_run: 600,
+            quench_interval: 200,
+            quench_max_iterations: 200,
+            crossing_pairs: 2,
+            seed: 42,
+            ..Default::default()
+        };
+        let res = imtd_conformer_search(&mol, crate::MMFFVariant::MMFF94s, &cfg);
+        assert!(
+            res.conformers.len() >= 2,
+            "H rotamers must survive dedup, got {} conformers",
+            res.conformers.len()
+        );
+        let gap = res.conformers[1].energy - res.conformers[0].energy;
+        assert!(
+            (0.05..0.5).contains(&gap),
+            "anti/gauche gap ~0.18, got {gap}"
+        );
+        for w in res.conformers.windows(2) {
+            assert!(
+                (w[1].energy - w[0].energy).abs() > 1e-3,
+                "no equal-energy duplicates (permutation artifacts): {:?}",
+                res.conformers.iter().map(|c| c.energy).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
