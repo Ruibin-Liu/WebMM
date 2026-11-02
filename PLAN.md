@@ -1,19 +1,20 @@
-# Plan: Top-5 阶段 4 —— 剩余三项收口(已完成)
+# Plan: Metad 构象搜索设计基线(iMTD-GC 迭代路线)+ 能量景观探索方向记录
 
-用户指令「先完成剩余的」,承接上一轮列出的三项。
+用户指示记录两项设计决策(本轮纯记录,不改引擎代码)。
 
 ## 交付
-1. **conformers kind(工作台薄壳,设计 D1 / 契约 §9.4 冻结)**
-   - input:molblock(重原子,内容即身份)/n≤500/rmsdCut/engine/maxIter/workers 快照/seedBases 数组(42+w·500,快照即真相——W 硬件派生,跨机不可复现故入档供审计);inputRevision=structure 哈希。
-   - 工作台侧表独立 IDB `webmm-workbench-tasks`(Platform.DB.createIdbStorage 参数化;两页 DB 所有权契约保持);boot 无条件对账(无 facts⇒abandoned)。
-   - runConformers 任务化:提交即入旁表、farm 令牌 min(W,调度器总量)、完成记 nConfs/kept/duration;取消诚实化:process() 换分子→cancelled+原因 'molecule changed'(epoch 守卫留作纵深防御)。
-2. **Ketcher 画布高亮(反向桥)**:模态打开→setMolecule→highlightPicked;3D 拾取原子经 editor.highlightAtomById 防御式点亮;状态行注明 molfile 序。
-3. **CODE_STATUS 归档**:315 条巨段切前 10,其余 305 条+三处历史重复段+Fixed Issues 迁 docs/CODE_STATUS-archive.md;主文件 1212→46 行,Current Focus/In Progress/Upcoming 刷为真实现状。
+1. **Metad 构象搜索设计基线 = CREST iMTD-GC 迭代路线(排期实施时的设计约束)**
+   - 组织方式:多轮**短程** metadynamics——轮换偏置强度与 CV 组合(DihedralCV/DistanceCV 的不同选法),每轮从轨迹收集构象;对低能构象做**遗传交叉**(genetic crossing)产生新种子;再进入下一轮,直至构象系综**收敛**。
+   - 明确不做单次长程 metad 充当构象搜索基线。
+   - 现有 well-tempered metad 引擎**原样保留**(src/metad/mod.rs:MetaDynamics/DihedralCV/DistanceCV,lib.rs MetaDOptions/run_metadynamics_from_sdf/MetaDLive);迭代-交叉调度加在其**外层**(轮次循环 + 构象收集/去重 + 交叉产种 + 收敛判定),不改内层 metad 语义。
+2. **远期潜在应用方向(仅记录,不排期):浏览器端能量景观探索视图**
+   - 基于现有 metad/优化(L-BFGS 局部极小化)/轨迹能力:
+     - 极小值网络(minima network);
+     - 断连图(disconnectivity graph);
+     - 盆地统计:轨迹帧周期性淬灭(quench 到所属局部极小),给出盆地占据分布与盆地间跳转分布。
 
 ## 验收
-Node 153(+2);m14_wb_tasks 10/10(含 Worker 子类扣消息法确定性触发换分子取消);m11 扩高亮段 8/8;m2 零回归;run.sh 27 套件(26 CDP + Node)全绿。
+两项指示原文语义完整落入本文件对应章节;引擎与前端零改动、零行为变化(纯文档轮)。
 
 ## 排雷存档(本轮)
-- aspirin 100 构象 <600ms 完成——睡眠竞态必输,测试须扣 worker 消息;
-- 新 context 空库无需 deleteDatabase(boot 对账已开库,删除即竞态);
-- `picked` 词法全局,window.picked 第三次踩雷。
+- 无(纯记录轮,无代码变更)。

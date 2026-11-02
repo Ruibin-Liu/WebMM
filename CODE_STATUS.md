@@ -4,7 +4,8 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**双模型评审收敛路线图 Top-1~Top-5 全部落地(结构-数据底座→color 深化→原子映射/约束→SAR 工具+Ketcher 桥→统一任务层四 kind)。** 引擎零改动收尾:conformers kind 工作台薄壳、Ketcher 画布高亮反向桥、CODE_STATUS 归档(1212→68 行,历史见 docs/CODE_STATUS-archive.md)。待用户确认推送。
+**纯记录轮(零代码):PLAN.md 落定 metad 构象搜索设计基线 = CREST iMTD-GC 迭代路线**——多轮短程 metad(轮换偏置强度/CV 组合)收集构象 + 低能构象遗传交叉产种,迭代至系综收敛;不做单次长程 metad;well-tempered metad 引擎原样保留,迭代-交叉调度加外层。同时记录远期方向(不排期):浏览器端能量景观探索视图(极小值网络/断连图/盆地统计=轨迹帧周期性淬灭到所属局部极小)。
+前一焦点(双模型评审收敛路线图 Top-1~Top-5 全部落地)已收官:引擎零改动收尾完成,待用户确认推送。
 ## Recently Completed
 (更早的 305 条历史记录与历史段落已归档至 docs/CODE_STATUS-archive.md)
 - **修复:Ketcher 画布高亮不工作(用户实测报告)。** 三连诊断(全部浏览器实证):①highlightAtomById(id,on) 对小分子**能**渲染(青色光环)但语义是 0 基+**单原子替换**——逐个循环调最后只剩一个,不可用于 2-4 原子拾取;②真通道是 **editor.selection(sel?) 取设一体重载**:置 {atoms:[...]} 多原子即视觉选中(截图像素级确认),无独立 select 方法(dispatch 不存在,selectLike 全扫排除);③**原子序错位根因**:openJSME 一直用 mol.get_smiles()(canonical)装载画布,其 token 序≠SDF/molfile 序——直接拿 SDF 序当画布 id 会指错原子(Top-3 红线)。修复:ketcherSerialMap() 以 RDKit 唯一子结构匹配(装载串为 query、sdf3d 为 target)建 SDF 序(1 基)→画布 id(0 基)映射,按 (装载串,sdf3d) 键缓存;不可映射或序不在结构中→诚实拒绝不猜;setMolecule 后 900ms 幂等重设一次(画布提交会清刚设的 selection——竞态实证);状态行双编号(SDF 序→画布序)。视觉终验:aspirin 非平凡序组 2/4/9(两羰基碳+酯氧)三原子全中。m11 重写第 5 段为 selection 间谍断言(映射[1..4]→[0..3]+读回轮询),9/9;m9/m6_platform 零回归。排雷:selection() 读回 null 的竞态(set 后画布 commit 清除)——页面重设+测试 waitForFunction 轮询双防。
