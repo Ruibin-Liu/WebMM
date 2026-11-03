@@ -219,9 +219,70 @@
       return { landscapeJson: search.landscape_json(), cancelled };
     };
 
+    // Saddle refinement batch: one CI-NEB job per observed transition
+    // pair, scattered over a fresh temporary pool; results fold as refined
+    // saddle energies (stable basin ids). Resolves with the refreshed
+    // landscape JSON. MMFF engines only — refused honestly upstream.
+    const refine = async () => {
+      if (cancelFlag !== null) throw new Error('cancelled');
+      if (!search) throw new Error('search not started');
+      const plan = JSON.parse(search.plan_refine_json());
+      if (!plan.jobs || !plan.jobs.length) {
+        throw new Error('no transition pairs to refine (search running?)');
+      }
+      const NWn = Math.max(1, Math.min(plan.jobs.length, navigator.hardwareConcurrency || 4, 4));
+      const nWorkers = [];
+      const nWaiters = Object.create(null);
+      let nNext = 0;
+      const ensureN = (w) => new Promise((res) => {
+        const iv = setInterval(() => { if (w.__ready) { clearInterval(iv); res(); } }, 20);
+      });
+      for (let i = 0; i < NWn; i++) {
+        const w = new Worker('conf.worker.js', { type: 'module' });
+        w.__ready = false;
+        w.onmessage = (ev) => {
+          const m = ev.data;
+          if (m.type === 'ready') { w.__ready = true; return; }
+          if (m.type === 'imtdNebDone' || m.type === 'imtdNebError') {
+            const r = nWaiters[m.id];
+            if (r) { delete nWaiters[m.id]; r(m); }
+          }
+        };
+        w.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
+        nWorkers.push(w);
+      }
+      await Promise.all(nWorkers.map(ensureN));
+      const runOneN = (job, i) => new Promise((res, rej) => {
+        const id = 'n' + (nNext++);
+        nWaiters[id] = (m) => (m.type === 'imtdNebDone' ? res(m) : rej(new Error(m.error)));
+        nWorkers[i % NWn].postMessage({ type: 'imtdNeb', id, index: job.index, sdf, jobJson: JSON.stringify(job), optSets: optSets(opts) });
+      });
+      let cancelled = false;
+      try {
+        const cancelSig = new Promise(res => cancelLatch.push(res));
+        const outs = await Promise.race([
+          Promise.all(plan.jobs.map((job, i) => runOneN(job, i))),
+          cancelSig.then(() => null),
+        ]);
+        if (outs === null) {
+          cancelled = true;
+        } else {
+          for (const m of outs) {
+            if (!search.gather_refine(m.index, m.resultJson)) {
+              throw new Error('gather_refine rejected result: ' + search.error());
+            }
+          }
+        }
+      } finally {
+        for (const w of nWorkers) w.terminate();
+      }
+      return { landscapeJson: search.landscape_json(), cancelled };
+    };
+
     return {
       promise,
       verify,
+      refine,
       cancel(reason) {
         if (cancelFlag !== null) return;
         cancelFlag = reason === undefined ? 'user cancel' : String(reason);

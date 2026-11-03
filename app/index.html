@@ -1150,11 +1150,16 @@ details {
              <button id="lsViewDg" title="断连图(叶=极小,枝=观测势垒上界)" style="border:1px solid var(--border); background:#e2e8f0; border-radius:5px; padding:0.05rem 0.45rem; cursor:pointer; font-size:0.72rem;">断连图</button>
              <button id="lsViewNet" title="力导向网络图(节点大小∝占据,边宽∝转移计数)" style="border:1px solid var(--border); background:#fff; border-radius:5px; padding:0.05rem 0.45rem; cursor:pointer; font-size:0.72rem;">网络图</button>
              <button id="btnMdVerify" title="在当前盆地上跑纯 MD(hill=0)验证批次,给出无偏占据" style="border:1px solid var(--border); background:#fff; border-radius:5px; padding:0.05rem 0.45rem; cursor:pointer; font-size:0.72rem;">MD 占据验证</button>
+             <button id="btnNebRefine" title="对观测转移边跑 CI-NEB 带峰精修(鞍点能上界,随像数收敛;仅 MMFF)" style="border:1px solid var(--border); background:#fff; border-radius:5px; padding:0.05rem 0.45rem; cursor:pointer; font-size:0.72rem;">势垒精修(NEB)</button>
+             <label class="mini-field" title="Boltzmann 重构布居的温度(K)" style="font-size:0.72rem;">T(K)
+               <input id="imtdTemp" aria-label="Boltzmann temperature in kelvin" type="number" min="1" max="10000" step="1" value="298" style="width:3.4rem;">
+             </label>
              <span id="landscapeMeta"></span>
            </span>
          </div>
          <svg id="dgraphSvg" tabindex="0" role="img" aria-label="Disconnectivity graph - arrow keys or click a leaf to view that conformer" style="width:100%; height:230px; margin-top:0.3rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;"></svg>
          <div id="basinTableWrap" style="margin-top:0.35rem; max-height:180px; overflow:auto;"></div>
+         <div id="transTableWrap" style="display:none; margin-top:0.35rem;"></div>
        </div>
        <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">Export ensemble SDF</button>
      </div>
@@ -6423,8 +6428,9 @@ async function runImtd() {
     drawConformerChart();
     syncConformerEnergy(0);
     try { lastLandscape = JSON.parse(res.landscapeJson || 'null'); } catch (e) { lastLandscape = null; }
-    imtdVerifyHandle = handle;   // live coordinator for MD-occupancy batches
+    imtdVerifyHandle = handle;   // live coordinator for MD/NEB batches
     lastImtdSteps = steps;
+    lastImtdEngine = engineSel;
     drawLandscape();
     set3dStatus(`<b>iMTD-GC: ${res.nConfs} unique minima, ${res.roundsExecuted} round${res.roundsExecuted > 1 ? 's' : ''}${res.converged ? ' (converged)' : ' (budget cap)'} on ${res.workers} worker${res.workers > 1 ? 's' : ''} in ${(res.ms / 1000).toFixed(1)}s</b> — minima fully quenched (no ΔE re-opt needed) · lowest E(${engineSel}) = ${Emin.toFixed(2)} kcal/mol`);
     imtdTaskEnd('complete', { nConfs: res.nConfs, roundsExecuted: res.roundsExecuted, converged: res.converged });
@@ -6680,6 +6686,7 @@ function exportEnsembleSDF() {
   let landscapeView = 'dg';      // 'dg' = disconnectivity graph | 'net' = network
   let imtdVerifyHandle = null;   // live coordinator of the last completed iMTD run
   let lastImtdSteps = 2000;
+  let lastImtdEngine = 'MMFF94s';
   let mdVerifyRunning = false;
 
   function hideLandscape() {
@@ -6703,23 +6710,51 @@ function exportEnsembleSDF() {
     meta.textContent = `${L.frames} 帧淬灭 · ${L.pruned} 剔除 · ${(L.transitions || []).length} 观测转移边` +
       (L.md && L.md.frames ? ` · MD ${L.md.frames} 帧无偏占据` : '');
 
-    // basin table (MD occupancy column once verification data folded)
+    // basin table: sampled (metad / MD) occupancies + the Boltzmann
+    // reconstruction (ideal populations over the found minima)
     const hasMd = !!(L.md && L.md.frames);
+    const tK = Math.max(1, parseFloat(document.getElementById('imtdTemp').value) || 298);
+    let boltz = [];
+    try {
+      boltz = JSON.parse(window.webmm.imtd_boltzmann_populations_json(
+        confEnsemble.map(c => c.E), tK)) || [];
+    } catch (e) { boltz = []; }
     const rows = (L.basins || []).map((b, i) => {
       const c = confEnsemble[i];
       if (!c) return '';
       const occ = (100 * b.visits / Math.max(1, L.frames)).toFixed(0);
       const mdOcc = hasMd && L.md.basins[i]
         ? `${(100 * L.md.basins[i].visits / Math.max(1, L.md.frames)).toFixed(0)}%` : '–';
+      const bz = boltz[i] !== undefined ? `${(100 * boltz[i]).toFixed(0)}%` : '–';
       const sel = selConf === i ? ' style="background:#fef3c7"' : '';
       return `<tr${sel} data-basin="${i}" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();">
         <td>#${i + 1}</td><td>${c.E.toFixed(2)}</td><td>${c.dE.toFixed(2)}</td>
-        <td>${occ}%</td><td>${mdOcc}</td><td>${b.residence}</td><td>${b.transitions_in} / ${b.transitions_out}</td></tr>`;
+        <td>${occ}%</td><td>${mdOcc}</td><td>${bz}</td><td>${b.residence}</td><td>${b.transitions_in} / ${b.transitions_out}</td></tr>`;
     }).join('');
     tableWrap.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:0.78rem;">
       <thead><tr style="text-align:left; border-bottom:1px solid var(--border);">
-        <th>盆地</th><th>E</th><th>ΔE</th><th>占据</th>${hasMd ? '<th>MD 占据</th>' : ''}<th>驻留</th><th>转入/转出</th></tr></thead>
+        <th>盆地</th><th>E</th><th>ΔE</th><th>占据</th>${hasMd ? '<th>MD 占据</th>' : ''}<th title="理想布居:忽略简并度(镜像对已折叠)与熵差">Boltzmann ${tK}K</th><th>驻留</th><th>转入/转出</th></tr></thead>
       <tbody>${rows}</tbody></table>`;
+
+    // transition-pair table (observed bounds vs refined NEB saddles)
+    const trans = L.transitions || [];
+    const transWrap = document.getElementById('transTableWrap');
+    const anyRefined = trans.some(t => t.refined !== null && t.refined !== undefined);
+    if (transWrap) {
+      if (trans.length && anyRefined) {
+        transWrap.style.display = '';
+        transWrap.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:0.75rem;">
+          <thead><tr style="text-align:left; border-bottom:1px solid var(--border);">
+            <th>转移边</th><th>计数</th><th>观测上界</th><th title="CI-NEB 带峰:鞍点能上界,随像数收敛">NEB 精修</th></tr></thead>
+          <tbody>${trans.map(t => `<tr>
+            <td>#${t.a + 1} ↔ #${t.b + 1}</td><td>${t.count}</td>
+            <td>${parseFloat(t.barrier).toFixed(2)}</td>
+            <td>${t.refined !== null && t.refined !== undefined ? parseFloat(t.refined).toFixed(2) : '–'}</td></tr>`).join('')}</tbody></table>`;
+      } else {
+        transWrap.style.display = 'none';
+        transWrap.innerHTML = '';
+      }
+    }
     drawLandscapeView();
   }
   window.drawLandscape = drawLandscape;
@@ -6911,6 +6946,41 @@ function exportEnsembleSDF() {
   document.getElementById('lsViewDg').onclick = () => setLandscapeView('dg');
   document.getElementById('lsViewNet').onclick = () => setLandscapeView('net');
   document.getElementById('btnMdVerify').onclick = () => window.runMdVerify();
+  document.getElementById('btnNebRefine').onclick = () => window.runNebRefine();
+  document.getElementById('imtdTemp').onchange = () => { if (lastLandscape) drawLandscape(); };
+
+  // CI-NEB saddle refinement over the observed transition pairs.
+  let nebRunning = false;
+  window.runNebRefine = async function runNebRefine() {
+    if (nebRunning) return;
+    if (!imtdVerifyHandle) { set3dStatus('无可用景观协调器——先运行 iMTD 搜索'); return; }
+    if (lastImtdEngine === 'GFNFF') {
+      set3dStatus('势垒精修仅支持 MMFF 引擎(GFN-FF 键感知随几何变化,逐像重建不可承受)——切换引擎后重新运行 iMTD');
+      return;
+    }
+    nebRunning = true;
+    const btn = document.getElementById('btnNebRefine');
+    btn.textContent = '精修中…';
+    const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 4));
+    const releases = [];
+    const nTok = Math.min(W, taskScheduler.stats().total);
+    for (let i = 0; i < nTok; i++) releases.push(await taskScheduler.acquire('interactive'));
+    try {
+      set3dStatus('势垒精修:对观测转移边并行跑 CI-NEB 带…');
+      const out = await imtdVerifyHandle.refine();
+      try { lastLandscape = JSON.parse(out.landscapeJson || 'null'); } catch (e) { lastLandscape = null; }
+      drawLandscape();
+      const nRef = (lastLandscape && lastLandscape.transitions || []).filter(t => t.refined !== null && t.refined !== undefined).length;
+      set3dStatus(`势垒精修完成 — ${nRef} 条边获得 NEB 鞍点能(转移边表与断连图阈值已更新)`);
+    } catch (e) {
+      showError(e);
+      set3dStatus('势垒精修失败');
+    } finally {
+      for (const r of releases) { try { r(); } catch (e) {} }
+      nebRunning = false;
+      btn.textContent = '势垒精修(NEB)';
+    }
+  };
 
   document.getElementById('confChart').addEventListener('click', (e) => {
     if (!confEnsemble || !confEnsemble.length) return;

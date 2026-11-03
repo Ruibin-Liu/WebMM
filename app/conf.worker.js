@@ -100,6 +100,20 @@ self.onmessage = async (e) => {
     }
     return;
   }
+  // iMTD landscape saddle refinement (NEB): one transition pair's endpoints
+  // → CI-NEB band → saddle JSON. MMFF only (the wasm call refuses GFN-FF).
+  if (msg.type === 'imtdNeb') {
+    try {
+      await initPromise;
+      const o = new wasm.ImtdOptions();
+      for (const [setter, v] of msg.optSets) o[setter](v);
+      const resultJson = wasm.run_imtd_neb_json(msg.sdf, msg.jobJson, o);
+      self.postMessage({ type: 'imtdNebDone', id: msg.id, index: msg.index, resultJson });
+    } catch (err) {
+      self.postMessage({ type: 'imtdNebError', id: msg.id, index: msg.index, error: String(err && err.message ? err.message : err) });
+    }
+    return;
+  }
   if (msg.type !== 'run') return;
   try {
     await initPromise;   // 'run' waits for init (async handlers don't queue)

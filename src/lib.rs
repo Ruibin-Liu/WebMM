@@ -18,6 +18,7 @@ pub mod gfnff;
 
 /// Molecular dynamics engine (velocity-Verlet + Langevin)
 pub mod md;
+pub mod neb;
 
 /// Metadynamics (enhanced sampling via collective variables)
 pub mod metad;
@@ -1934,6 +1935,58 @@ pub fn run_imtd_metad_run_json(
     Ok(crate::metad::imtd::minima_to_json(&minima))
 }
 
+/// Execute ONE CI-NEB saddle-refinement job (a serialized `RefineJob` from
+/// `ImtdSearch.plan_refine_json`) as a pure worker function. MMFF engines
+/// only — GFN-FF bond perception is geometry-dependent and per-image
+/// rebuilding is prohibitive; the call refuses honestly.
+#[wasm_bindgen]
+pub fn run_imtd_neb_json(
+    sdf_content: &str,
+    job_json: &str,
+    options: ImtdOptions,
+) -> Result<String, String> {
+    console_error_panic_hook::set_once();
+    if matches!(
+        crate::metad::imtd::SearchEngine::from_label(&options.mmff_variant),
+        crate::metad::imtd::SearchEngine::GFNFF
+    ) {
+        return Err(
+            "NEB refinement supports MMFF engines only (GFN-FF bond perception is geometry-dependent)"
+                .into(),
+        );
+    }
+    let mol =
+        crate::molecule::parser::parse_sdf(sdf_content).map_err(|e| format!("Parse error: {e}"))?;
+    let (xyz_a, xyz_b) = crate::metad::imtd::refine_job_from_json(job_json)?;
+    let engine = crate::metad::imtd::SearchEngine::from_label(&options.mmff_variant);
+    let quencher = crate::metad::imtd::Quencher::new(&mol, engine);
+    let ff = match &quencher {
+        crate::metad::imtd::Quencher::Mmff(ff) => ff.as_ref(),
+        // unreachable: the GFNFF engine is refused above
+        _ => return Err("unsupported engine for NEB".into()),
+    };
+    let cfg = crate::neb::NebConfig::default();
+    let res = crate::neb::neb(ff, &xyz_a, &xyz_b, &cfg);
+    let saddle = if res.converged {
+        Some(res.saddle_energy)
+    } else {
+        None
+    };
+    Ok(crate::metad::imtd::refine_result_to_json(
+        saddle,
+        res.barrier,
+    ))
+}
+
+/// Boltzmann reconstruction of basin populations from minimum energies:
+/// returns a JSON array of fractions summing to 1 (ideal populations over
+/// the found minima — degeneracies and entropy corrections not included).
+#[wasm_bindgen]
+pub fn imtd_boltzmann_populations_json(energies: &[f64], temperature_k: f64) -> String {
+    let pops = crate::metad::imtd::boltzmann_populations(energies, temperature_k);
+    serde_json::json!(pops).to_string()
+}
+
 /// iMTD-GC coordinator handle: plans each round's independent metad runs
 /// (`plan_json`), accepts worker results in any order (`gather`), and reports
 /// the ensemble (`result`). The fold is arrival-order-independent, so a
@@ -2010,6 +2063,35 @@ impl ImtdSearch {
         match self.core.as_mut() {
             Some(c) => crate::metad::imtd::plan_to_json(0, &c.plan_verify(n)),
             None => "{\"round\":0,\"runs\":[]}".to_string(),
+        }
+    }
+
+    /// Plan one CI-NEB saddle-refinement job per observed transition pair:
+    /// `{"jobs": [...]}` (empty = refused — search running or a batch in
+    /// flight). Workers execute jobs via `run_imtd_neb_json`; fold the
+    /// results with `gather_refine`.
+    pub fn plan_refine_json(&mut self) -> String {
+        match self.core.as_mut() {
+            Some(c) => crate::metad::imtd::refine_jobs_to_json(&c.plan_refine()),
+            None => "{\"jobs\":[]}".to_string(),
+        }
+    }
+
+    /// Deposit one refinement result (the `run_imtd_neb_json` payload).
+    /// Returns false when the payload was rejected.
+    pub fn gather_refine(&mut self, index: usize, result_json: &str) -> bool {
+        let Some(c) = self.core.as_mut() else {
+            return false;
+        };
+        match crate::metad::imtd::refine_result_from_json(result_json) {
+            Ok(saddle) => {
+                c.gather_refine(index, saddle);
+                true
+            }
+            Err(e) => {
+                self.error = e;
+                false
+            }
         }
     }
 

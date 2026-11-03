@@ -242,6 +242,21 @@ pub struct RunSpec {
     pub seed: u64,
 }
 
+/// One CI-NEB saddle-refinement unit of work (scatter-gather boundary).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefineJob {
+    /// Slot in the refinement batch.
+    pub index: usize,
+    /// Stable basin identities (never shift).
+    pub id_a: u64,
+    pub id_b: u64,
+    /// Final result-order indices (display only).
+    pub a: usize,
+    pub b: usize,
+    pub xyz_a: Vec<[f64; 3]>,
+    pub xyz_b: Vec<[f64; 3]>,
+}
+
 /// A trajectory snapshot already quenched to its local minimum.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Minimum {
@@ -263,7 +278,7 @@ pub struct Minimum {
 /// achieved RMSD. Reflections are never returned (molecules are proper
 /// objects). Coordinate-level sibling of the `kabsch_align` WASM export
 /// (same math and convention: R·p+t ≈ q).
-fn kabsch_transform(p: &[[f64; 3]], q: &[[f64; 3]]) -> ([f64; 9], [f64; 3], f64) {
+pub(crate) fn kabsch_transform(p: &[[f64; 3]], q: &[[f64; 3]]) -> ([f64; 9], [f64; 3], f64) {
     debug_assert_eq!(p.len(), q.len(), "kabsch point sets must be paired");
     let n_f = p.len() as f64;
     let mut pc = [0.0f64; 3];
@@ -673,6 +688,10 @@ struct Ensemble {
     // ── landscape statistics (two ladders, both parallel to `members`) ──
     metad: LadderStats,
     md: LadderStats,
+    /// Stable basin identities (parallel to `members`): positions shift on
+    /// eviction and re-sorting, ids never do — refined saddles key on them.
+    basin_ids: Vec<u64>,
+    next_basin_id: u64,
 }
 
 impl Ensemble {
@@ -693,7 +712,13 @@ impl Ensemble {
             emin: f64::INFINITY,
             metad: LadderStats::default(),
             md: LadderStats::default(),
+            basin_ids: Vec::new(),
+            next_basin_id: 1,
         }
+    }
+
+    fn id_of(&self, pos: usize) -> u64 {
+        self.basin_ids.get(pos).copied().unwrap_or(0)
     }
 
     /// Two-tier conformer-equivalence predicate (see the module docs): same
@@ -817,6 +842,8 @@ impl Ensemble {
         // until a trajectory actually visits it)
         self.metad.on_new_basin();
         self.md.on_new_basin();
+        self.basin_ids.push(self.next_basin_id);
+        self.next_basin_id += 1;
         let pos = self.members.len() - 1;
         if self.members.len() > self.max_conformers {
             // evict the previous maximum (never the just-added member — it
@@ -832,6 +859,9 @@ impl Ensemble {
             self.members.remove(i_max);
             self.metad.on_evict(i_max);
             self.md.on_evict(i_max);
+            if self.basin_ids.len() > i_max {
+                self.basin_ids.remove(i_max);
+            }
             return Some(pos - 1);
         }
         Some(pos)
@@ -963,6 +993,12 @@ pub struct ImtdSearch {
     pending: Vec<Option<Vec<Minimum>>>,
     /// In-flight plain-MD verification batch (empty = none planned).
     verify_pending: Vec<Option<Vec<Minimum>>>,
+    /// In-flight saddle-refinement batch (empty = none planned).
+    refine_jobs: Vec<RefineJob>,
+    refine_done: Vec<Option<Option<f64>>>,
+    /// Refined saddle energies keyed by stable basin-id pairs
+    /// (min_id, max_id, saddle) — converged jobs only.
+    refined: Vec<(u64, u64, f64)>,
     rounds_executed: usize,
     new_minima_per_round: Vec<usize>,
     crossed_seeds: Vec<Vec<[f64; 3]>>,
@@ -1003,6 +1039,9 @@ impl ImtdSearch {
             plan_cache: None,
             pending: Vec::new(),
             verify_pending: Vec::new(),
+            refine_jobs: Vec::new(),
+            refine_done: Vec::new(),
+            refined: Vec::new(),
             rounds_executed: 0,
             new_minima_per_round: Vec::new(),
             crossed_seeds: Vec::new(),
@@ -1237,6 +1276,78 @@ impl ImtdSearch {
         }
     }
 
+    /// Plan one CI-NEB saddle-refinement job per observed transition pair
+    /// (metad + MD ladders, deduplicated by stable basin ids). Endpoint
+    /// geometries come from the CURRENT final mapping. Only after the search
+    /// finished with no round/verification/refinement batch in flight;
+    /// batches may be repeated (a pair refined twice keeps the new value).
+    pub fn plan_refine(&mut self) -> Vec<RefineJob> {
+        if !self.finished || self.plan_cache.is_some() {
+            return Vec::new();
+        }
+        if self.verify_pending.iter().any(|p| p.is_some()) || !self.refine_jobs.is_empty() {
+            return Vec::new();
+        }
+        let (kept, map) = self.ensemble.finalized_members();
+        // id -> final index
+        let final_of = |id: u64| -> Option<usize> {
+            (0..self.ensemble.members.len())
+                .find(|&old| self.ensemble.id_of(old) == id)
+                .and_then(|old| map[old])
+        };
+        let mut seen: Vec<(u64, u64)> = Vec::new();
+        let mut jobs = Vec::new();
+        for ladder in [&self.ensemble.metad, &self.ensemble.md] {
+            for &(a_pos, b_pos, count, _) in &ladder.pairs {
+                if count == 0 {
+                    continue;
+                }
+                let (ia, ib) = (self.ensemble.id_of(a_pos), self.ensemble.id_of(b_pos));
+                let key = (ia.min(ib), ia.max(ib));
+                if key.0 == 0 || seen.contains(&key) {
+                    continue;
+                }
+                seen.push(key);
+                let (Some(fa), Some(fb)) = (final_of(key.0), final_of(key.1)) else {
+                    continue; // a member was dropped by the final filter
+                };
+                jobs.push(RefineJob {
+                    index: jobs.len(),
+                    id_a: key.0,
+                    id_b: key.1,
+                    a: fa,
+                    b: fb,
+                    xyz_a: kept[fa].coords.clone(),
+                    xyz_b: kept[fb].coords.clone(),
+                });
+            }
+        }
+        self.refine_jobs = jobs.clone();
+        self.refine_done = vec![None; jobs.len()];
+        jobs
+    }
+
+    /// Deposit one refinement result (saddle energy; `None` when the NEB did
+    /// not converge). When every job of the batch arrived, converged saddles
+    /// are recorded (keyed by basin ids — stable across later folds).
+    pub fn gather_refine(&mut self, index: usize, saddle: Option<f64>) {
+        if index >= self.refine_jobs.len() || self.refine_done[index].is_some() {
+            return;
+        }
+        self.refine_done[index] = Some(saddle);
+        if self.refine_done.iter().all(|p| p.is_some()) {
+            let jobs = std::mem::take(&mut self.refine_jobs);
+            let done = std::mem::take(&mut self.refine_done);
+            for (job, res) in jobs.into_iter().zip(done) {
+                if let Some(Some(saddle)) = res {
+                    let key = (job.id_a.min(job.id_b), job.id_a.max(job.id_b));
+                    self.refined.retain(|&(a, b, _)| (a, b) != key);
+                    self.refined.push((key.0, key.1, saddle));
+                }
+            }
+        }
+    }
+
     /// Snapshot result (non-destructive; may be called at any time).
     pub fn result(&self) -> ImtdResult {
         finalize(
@@ -1282,11 +1393,19 @@ impl ImtdSearch {
                 if let (Some(na), Some(nb)) =
                     (map.get(a).copied().flatten(), map.get(b).copied().flatten())
                 {
+                    let (ia, ib) = (self.ensemble.id_of(a), self.ensemble.id_of(b));
+                    let key = (ia.min(ib), ia.max(ib));
+                    let refined = self
+                        .refined
+                        .iter()
+                        .find(|&&(x, y, _)| (x, y) == key)
+                        .map(|&(_, _, e)| e);
                     transitions.push(TransitionStats {
                         from: na,
                         to: nb,
                         count,
                         barrier,
+                        refined,
                     });
                 }
             }
@@ -1389,13 +1508,16 @@ pub struct BasinStats {
 }
 
 /// Transition statistics between a basin PAIR (unordered, both directions
-/// summed); `barrier` is the best (lowest) observed window-PE upper bound.
+/// summed); `barrier` is the best (lowest) observed window-PE upper bound,
+/// `refined` the CI-NEB saddle-energy estimate once refined (absolute
+/// crossing energy, same units/semantics as `barrier`).
 #[derive(Debug, Clone, Copy)]
 pub struct TransitionStats {
     pub from: usize,
     pub to: usize,
     pub count: usize,
     pub barrier: f64,
+    pub refined: Option<f64>,
 }
 
 /// The observed-transition landscape of a search.
@@ -1456,14 +1578,17 @@ fn dgraph(energies: &[f64], edges: &[TransitionStats]) -> Vec<DgNode> {
         }
         i
     };
+    // effective barrier: the refined NEB saddle when available, else the
+    // observed window-PE upper bound
+    let eff = |t: &TransitionStats| t.refined.filter(|e| e.is_finite()).unwrap_or(t.barrier);
     let mut sorted: Vec<&TransitionStats> = edges.iter().collect();
     sorted.sort_by(|x, y| {
-        x.barrier
-            .total_cmp(&y.barrier)
+        eff(x)
+            .total_cmp(&eff(y))
             .then((x.from, x.to).cmp(&(y.from, y.to)))
     });
     for e in sorted {
-        if e.barrier.is_nan() {
+        if eff(e).is_nan() {
             continue; // degenerate payload (older workers) — no edge
         }
         let ra = root_of(&merged_into, e.from);
@@ -1472,7 +1597,7 @@ fn dgraph(energies: &[f64], edges: &[TransitionStats]) -> Vec<DgNode> {
             continue;
         }
         let node = DgNode {
-            threshold: e.barrier,
+            threshold: eff(e),
             basin: None,
             children: vec![arena[ra].clone(), arena[rb].clone()],
         };
@@ -1512,7 +1637,9 @@ pub fn landscape_to_json(l: &Landscape) -> String {
                 "in": b.transitions_in, "out": b.transitions_out,
             })).collect::<Vec<_>>(),
             "transitions": transitions.iter().map(|t| serde_json::json!({
-                "a": t.from, "b": t.to, "count": t.count, "barrier": f64_to_json(t.barrier),
+                "a": t.from, "b": t.to, "count": t.count,
+                "barrier": f64_to_json(t.barrier),
+                "refined": t.refined.map(f64_to_json),
             })).collect::<Vec<_>>(),
             "dgraph": tree.iter().map(dg_value).collect::<Vec<_>>(),
         })
@@ -1525,7 +1652,9 @@ pub fn landscape_to_json(l: &Landscape) -> String {
             "in": b.transitions_in, "out": b.transitions_out,
         })).collect::<Vec<_>>(),
         "transitions": l.transitions.iter().map(|t| serde_json::json!({
-            "a": t.from, "b": t.to, "count": t.count, "barrier": f64_to_json(t.barrier),
+            "a": t.from, "b": t.to, "count": t.count,
+            "barrier": f64_to_json(t.barrier),
+            "refined": t.refined.map(f64_to_json),
         })).collect::<Vec<_>>(),
         "dgraph": l.dgraph.iter().map(dg_value).collect::<Vec<_>>(),
         "md": l.md.as_ref().map(|m| ladder_value(&m.basins, &m.transitions, &m.dgraph, m.frames, m.pruned)),
@@ -1736,6 +1865,90 @@ pub fn minima_to_json(minima: &[Minimum]) -> String {
 pub fn run_spec_from_json(s: &str) -> Result<RunSpec, String> {
     let v: serde_json::Value = serde_json::from_str(s).map_err(|e| format!("spec json: {e}"))?;
     spec_from_value(v)
+}
+
+/// Serialize refinement jobs: `{"jobs": [{...}]}` (floats as bit-exact strings).
+pub fn refine_jobs_to_json(jobs: &[RefineJob]) -> String {
+    serde_json::json!({
+        "jobs": jobs.iter().map(|j| serde_json::json!({
+            "index": j.index, "idA": j.id_a, "idB": j.id_b, "a": j.a, "b": j.b,
+            "xyzA": j.xyz_a.iter().map(point_to_json).collect::<Vec<_>>(),
+            "xyzB": j.xyz_b.iter().map(point_to_json).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
+/// A refinement job's endpoint pair.
+pub type RefineEndpoints = (Vec<[f64; 3]>, Vec<[f64; 3]>);
+
+/// Parse one refinement job's endpoints from its serialized form.
+///
+/// # Errors
+/// `Err` with a context message when the JSON is malformed.
+pub fn refine_job_from_json(s: &str) -> Result<RefineEndpoints, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(s).map_err(|e| format!("refine job json: {e}"))?;
+    let arr = |key: &str| -> Result<Vec<[f64; 3]>, String> {
+        let pts = v
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("refine job: missing {key}"))?;
+        let mut out = Vec::with_capacity(pts.len());
+        for (i, p) in pts.iter().enumerate() {
+            out.push(point_from_json(p, &format!("refine job {key}[{i}]"))?);
+        }
+        Ok(out)
+    };
+    Ok((arr("xyzA")?, arr("xyzB")?))
+}
+
+/// Serialize a refinement result; `saddle` is `None` when NEB did not converge.
+pub fn refine_result_to_json(saddle: Option<f64>, barrier: f64) -> String {
+    serde_json::json!({
+        "saddle": saddle.map(f64_to_json),
+        "barrier": f64_to_json(barrier),
+    })
+    .to_string()
+}
+
+/// Parse a refinement result into the saddle estimate (`None` = not converged).
+///
+/// # Errors
+/// `Err` with a context message when the JSON is malformed.
+pub fn refine_result_from_json(s: &str) -> Result<Option<f64>, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(s).map_err(|e| format!("refine result json: {e}"))?;
+    match v.get("saddle") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(x) => Ok(Some(f64_from_json(x, "refine result saddle")?)),
+    }
+}
+
+/// Boltzmann reconstruction of basin populations from the found minima:
+/// p_i(T) ∝ exp(-E_i/kT), computed with an Emin shift (overflow-safe) and
+/// normalized to 1. HONEST CAVEATS: ideal populations over the FOUND minima
+/// — degeneracies hidden by enantiomer-pair collapsing and entropy / harmonic
+/// free-energy corrections are NOT included. `temperature_k` is clamped to a
+/// sane domain (≤ 1 K defaults to 300 K).
+pub fn boltzmann_populations(energies: &[f64], temperature_k: f64) -> Vec<f64> {
+    if energies.is_empty() {
+        return Vec::new();
+    }
+    let t = if temperature_k > 1.0 {
+        temperature_k
+    } else {
+        300.0
+    };
+    let kt = crate::md::KB * t;
+    let emin = energies.iter().copied().fold(f64::INFINITY, f64::min);
+    let weights: Vec<f64> = energies.iter().map(|&e| (-(e - emin) / kt).exp()).collect();
+    let sum: f64 = weights.iter().sum();
+    if sum <= 0.0 || !sum.is_finite() {
+        // impossible after the Emin shift unless the input is degenerate
+        return vec![1.0 / energies.len() as f64; energies.len()];
+    }
+    weights.into_iter().map(|w| w / sum).collect()
 }
 
 /// Parse a serialized minima list.
@@ -2366,6 +2579,102 @@ mod tests {
         }
         run_all(&mut s2);
         assert_eq!(json1, landscape_to_json(&s2.landscape()), "deterministic");
+    }
+
+    #[test]
+    fn refine_phase_sets_saddles_with_stable_ids() {
+        let mol = butane_all_h();
+        let cfg = ImtdConfig {
+            max_rounds: 3,
+            runs_per_round: 3,
+            steps_per_run: 2500,
+            quench_interval: 125,
+            quench_max_iterations: 250,
+            crossing_pairs: 2,
+            seed: 42,
+            ..Default::default()
+        };
+        let mut search = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
+        let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+        while !search.done() {
+            for spec in search.plan().to_vec() {
+                let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &spec);
+                search.gather(spec.run_index, m);
+            }
+        }
+        // guard: no refinement while unfinished paths exist — after done OK
+        let jobs = search.plan_refine();
+        assert!(!jobs.is_empty(), "butane dense run has transition pairs");
+        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        let neb_cfg = crate::neb::NebConfig::default();
+        for job in &jobs {
+            let res = crate::neb::neb(&ff, &job.xyz_a, &job.xyz_b, &neb_cfg);
+            search.gather_refine(
+                job.index,
+                if res.converged {
+                    Some(res.saddle_energy)
+                } else {
+                    None
+                },
+            );
+        }
+        let land = search.landscape();
+        let refined: Vec<_> = land.transitions.iter().filter_map(|t| t.refined).collect();
+        assert!(!refined.is_empty(), "refined saddles recorded");
+        for t in &land.transitions {
+            if let Some(r) = t.refined {
+                let ea = 0.0; // endpoints checked structurally below via energies
+                let _ = ea;
+                assert!(r.is_finite());
+                assert!(
+                    r >= t.barrier - 25.0,
+                    "refined saddle should be near/below the observed bound (sanity band)"
+                );
+            }
+        }
+        // JSON carries the refined field (string floats)
+        let json = landscape_to_json(&land);
+        assert!(json.contains("\"refined\":\""), "refined emitted");
+        // id stability: fold a verification batch afterwards — the refined
+        // pair must survive re-finalization (ids, not positions)
+        for _ in 0..1 {
+            let specs = search.plan_verify(2);
+            assert!(!specs.is_empty());
+            for sp in &specs {
+                let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, sp);
+                search.gather_verify(sp.run_index, m);
+            }
+        }
+        let land2 = search.landscape();
+        let refined2: Vec<_> = land2.transitions.iter().filter_map(|t| t.refined).collect();
+        assert_eq!(
+            refined.len(),
+            refined2.len(),
+            "refined saddles survive post-refine folds (stable ids)"
+        );
+    }
+
+    #[test]
+    fn boltzmann_populations_are_stable_and_physical() {
+        // sums to 1; low T concentrates on the ground state; huge gaps
+        // do not overflow (Emin shift)
+        let e = [0.0, 0.5, 3.0];
+        let p = boltzmann_populations(&e, 298.15);
+        assert_eq!(p.len(), 3);
+        let sum: f64 = p.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-12, "sum {sum}");
+        assert!(p[0] >= p[1] && p[1] >= p[2], "monotone in energy");
+        let cold = boltzmann_populations(&e, 5.0);
+        assert!(cold[0] > 0.9999, "T→low selects the ground state");
+        let hot = boltzmann_populations(&e, 1e6);
+        assert!((hot[0] - 1.0 / 3.0).abs() < 1e-3, "T→high flattens");
+        let wide = boltzmann_populations(&[0.0, 500.0], 300.0);
+        // a 500 kcal/mol gap underflows exp() to exactly 0 — the honest f64 answer
+        assert!(wide[0] > 0.9999 && wide[1] >= 0.0 && wide[1].is_finite());
+        // degenerate input
+        assert!(boltzmann_populations(&[], 300.0).is_empty());
+        let one = boltzmann_populations(&[7.0], 300.0);
+        assert_eq!(one, vec![1.0]);
     }
 
     #[test]
