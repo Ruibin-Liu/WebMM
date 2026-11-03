@@ -5321,7 +5321,12 @@ function reset3DState() {
   document.getElementById('energyPanel').style.display = 'none';
   document.getElementById('confPanel').style.display = 'none';
   hideLandscape();
-  imtdVerifyHandle = null;   // the landscape's coordinator died with the structure
+  if (imtdVerifyHandle) {
+    // fire the cancel latch so any in-flight verify/refine batch unblocks
+    // (same honest-cancellation contract as the main run)
+    try { imtdVerifyHandle.cancel('molecule changed'); } catch (e) {}
+    imtdVerifyHandle = null;   // the landscape's coordinator died with the structure
+  }
   clear3DViewer();
   for (const id of ['btnEmbed', 'btnOpt', 'btnConf', 'btnImtd', 'btnSdf', 'btnXyz', 'btnPng']) {
     document.getElementById(id).disabled = true;
@@ -7029,6 +7034,17 @@ function exportEnsembleSDF() {
       taskTrayAdd({ taskId, kind: 'imtd·verify', label: lastImtdEngine, stage: 'MD', startedAt: performance.now() });
       set3dStatus('MD 占据验证:纯 MD(hill=0)批次采样当前盆地…');
       const out = await imtdVerifyHandle.verify(W, steps);
+      if (out.cancelled) {
+        if (vTask) {
+          for (const r of vTask.releases) { try { r(); } catch (e2) {} }
+          taskScheduler.drop(vTask.taskId);
+          taskTrayFinish(vTask.taskId, 'cancelled');
+          if (vTask.tstore) vTask.tstore.transition(vTask.taskId, 'cancelled',
+            { durationMs: Math.round(performance.now() - vTask.t0), failure: out.cancelReason || 'user cancel' }).catch(() => {});
+        }
+        set3dStatus(`MD 占据验证取消(${out.cancelReason || 'user cancel'})`);
+        return;
+      }
       try { lastLandscape = JSON.parse(out.landscapeJson || 'null'); } catch (e) { lastLandscape = null; }
       drawLandscape();
       const md = lastLandscape && lastLandscape.md;

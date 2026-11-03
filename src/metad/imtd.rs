@@ -3207,6 +3207,150 @@ mod tests {
     }
 
     #[test]
+    fn ensemble_capacity_eviction_keeps_stats_consistent() {
+        // force eviction with max_conformers=3: statistics vectors, basin
+        // ids, variants and pair keys must all shrink/remap in lockstep and
+        // the landscape must stay aligned with the final order
+        let mol = butane_all_h();
+        let cfg = ImtdConfig {
+            max_rounds: 2,
+            runs_per_round: 2,
+            steps_per_run: 1200,
+            quench_interval: 150,
+            quench_max_iterations: 250,
+            crossing_pairs: 2,
+            max_conformers: 3, // << forces evictions as the ensemble grows
+            seed: 42,
+            ..Default::default()
+        };
+        let mut search = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
+        let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+        while !search.done() {
+            for spec in search.plan().to_vec() {
+                let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &spec);
+                search.gather(spec.run_index, m);
+            }
+        }
+        let res = search.result();
+        assert!(
+            res.conformers.len() <= 3,
+            "capacity respected, got {}",
+            res.conformers.len()
+        );
+        let land = search.landscape();
+        assert_eq!(land.basins.len(), res.conformers.len(), "landscape aligned");
+        // visits/pruned conservation holds after eviction (dropped members'
+        // visits vanish — the inequality form)
+        let visits: usize = land.basins.iter().map(|b| b.visits).sum();
+        assert!(
+            visits + land.pruned <= land.frames,
+            "post-eviction conservation"
+        );
+        // degeneracy valid on every surviving basin
+        assert!(land.basins.iter().all(|b| b.degeneracy >= 1));
+        // refined saddles keyed by ids survive a later fold (no eviction
+        // between refine and landscape here, but the mapping path runs)
+        let jobs = search.plan_refine();
+        assert!(jobs.len() <= 3 * 2 / 2, "at most one pair per 3 basins");
+        for job in &jobs {
+            search.gather_refine(job.index, Some(0.0));
+        }
+        let land2 = search.landscape();
+        for t in &land2.transitions {
+            if let Some(r) = t.refined {
+                assert!((r - 0.0).abs() < 1e-12, "refined survives mapping");
+            }
+        }
+    }
+
+    #[test]
+    fn gfnff_thermo_cache_is_bit_exact() {
+        // same coords → the exact-coords cache must return bit-identical
+        // frequencies; different T re-runs reuse the cached force field
+        let mol = ethanol();
+        let cfg = ImtdConfig {
+            max_rounds: 1,
+            runs_per_round: 1,
+            steps_per_run: 100,
+            quench_interval: 100,
+            quench_max_iterations: 300,
+            crossing_pairs: 0,
+            convergence_new_minima: usize::MAX,
+            ..Default::default()
+        };
+        let mut search = ImtdSearch::new(&mol, SearchEngine::GFNFF, &cfg);
+        let quencher = Quencher::new(&mol, SearchEngine::GFNFF);
+        while !search.done() {
+            for spec in search.plan().to_vec() {
+                let m = execute_run(&mol, SearchEngine::GFNFF, &quencher, &cfg, &spec);
+                search.gather(spec.run_index, m);
+            }
+        }
+        let a = search.thermo(298.15);
+        let b = search.thermo(298.15);
+        let c = search.thermo(500.0);
+        assert!(!a.is_empty());
+        // (G depends on T; the cached FF is keyed on coords, so energies must
+        // match bit-for-bit across calls)
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(
+                x.energy.to_bits(),
+                y.energy.to_bits(),
+                "E bit-exact via cache"
+            );
+            assert_eq!(x.zpe.to_bits(), y.zpe.to_bits(), "ZPE bit-exact via cache");
+        }
+        assert!(
+            c.iter().any(|x| (x.g_free - x.energy).abs() > 0.0),
+            "T enters G"
+        );
+        for e in &a {
+            assert!(
+                e.nu_max > 500.0,
+                "GFN-FF frequencies physical scale: {}",
+                e.nu_max
+            );
+        }
+    }
+
+    #[test]
+    fn boltzmann_handles_short_degeneracy_vector() {
+        let e = [0.0, 1.0, 2.0];
+        // degeneracies shorter than energies: missing entries default to 1
+        let p = boltzmann_populations_deg(&e, &[3.0], 298.15);
+        let sum: f64 = p.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-12);
+        let kt = crate::md::KB * 298.15;
+        let expect0 = 3.0 / (3.0 + (-1.0 / kt).exp() + (-2.0 / kt).exp());
+        assert!((p[0] - expect0).abs() < 1e-12, "g applied to first only");
+        assert!(p[0] > p[1] && p[1] > p[2]);
+    }
+
+    #[test]
+    fn codecs_reject_malformed_payloads_honestly() {
+        // bad float strings / wrong shapes / missing fields never panic
+        assert!(run_spec_from_json("not json").is_err());
+        assert!(run_spec_from_json("{}").is_err(), "missing fields");
+        assert!(run_spec_from_json(
+            r#"{"round":1,"run_index":0,"start":[[1,2,3]],"cv":{"type":"distance","atoms":[0]},"hill_height":"NaN","seed":1}"#
+        )
+        .is_err(), "NaN float rejected");
+        assert!(run_spec_from_json(
+            r#"{"round":1,"run_index":0,"start":[[1,2]],"cv":{"type":"distance","atoms":[0,1]},"hill_height":"1e0","seed":1}"#
+        )
+        .is_err(), "malformed point rejected");
+        assert!(minima_from_json("[]").is_err(), "missing minima array");
+        assert!(minima_from_json(r#"{"minima":[{"e":"x","xyz":[]}]}"#).is_err());
+        assert!(refine_job_from_json("{}").is_err());
+        // the JSON literal null = "no saddle" (honest accept, not an error)
+        assert_eq!(refine_result_from_json("null"), Ok(None));
+        assert!(refine_result_from_json("{").is_err());
+        assert!(refine_result_from_json(r#"{"saddle":"abc"}"#).is_err());
+        // float-string round-trip channel rejects plain JSON numbers
+        assert!(minima_from_json(r#"{"minima":[{"e":-1.5,"xyz":[[1e0,1e0,1e0]]}]}"#).is_err());
+    }
+
+    #[test]
     fn imtd_convergence_criterion_stops_at_threshold() {
         let mol = ethanol();
         let cfg = ImtdConfig {
