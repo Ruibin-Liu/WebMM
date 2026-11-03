@@ -47,3 +47,8 @@ site/vendor/
 
 # stray local server log (root-owned)
 nohup.out
+
+# local npm artifacts (wasm-pack devDependency is range-pinned in package.json;
+# the lockfile/node_modules are intentionally untracked, matching repo history)
+node_modules/
+package-lock.json
