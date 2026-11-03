@@ -283,6 +283,9 @@
       promise,
       verify,
       refine,
+      // pass-through to the live coordinator (thermo is a view derivative,
+      // not a batch)
+      thermoJson: (t) => search.thermo_json(t),
       cancel(reason) {
         if (cancelFlag !== null) return;
         cancelFlag = reason === undefined ? 'user cancel' : String(reason);

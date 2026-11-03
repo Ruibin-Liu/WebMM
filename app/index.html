@@ -6691,6 +6691,7 @@ function exportEnsembleSDF() {
 
   function hideLandscape() {
     lastLandscape = null;
+    lastThermo = null;
     const wrap = document.getElementById('landscapeWrap');
     if (wrap) wrap.style.display = 'none';
   }
@@ -6714,11 +6715,23 @@ function exportEnsembleSDF() {
     // reconstruction (ideal populations over the found minima)
     const hasMd = !!(L.md && L.md.frames);
     const tK = Math.max(1, parseFloat(document.getElementById('imtdTemp').value) || 298);
+    // Boltzmann(E) with degeneracy factors (mirror twins g=2)
+    const gs = (L.basins || []).map(b => b.g || 1);
     let boltz = [];
     try {
-      boltz = JSON.parse(window.webmm.imtd_boltzmann_populations_json(
-        confEnsemble.map(c => c.E), tK)) || [];
+      boltz = JSON.parse(window.webmm.imtd_boltzmann_populations_g_json(
+        confEnsemble.map(c => c.E), gs, tK)) || [];
     } catch (e) { boltz = []; }
+    // harmonic tier (cached per ensemble + T): G, Boltzmann(G), imag flags
+    if (!lastThermo || lastThermo.T !== tK || lastThermo.n !== confEnsemble.length) refreshThermo(tK);
+    const th = lastThermo ? lastThermo.entries : [];
+    let boltzG = [];
+    if (th.length === confEnsemble.length && th.every(x => isFinite(x.G))) {
+      try {
+        boltzG = JSON.parse(window.webmm.imtd_boltzmann_populations_g_json(
+          th.map(x => x.G), gs, tK)) || [];
+      } catch (e) { boltzG = []; }
+    }
     const rows = (L.basins || []).map((b, i) => {
       const c = confEnsemble[i];
       if (!c) return '';
@@ -6726,14 +6739,19 @@ function exportEnsembleSDF() {
       const mdOcc = hasMd && L.md.basins[i]
         ? `${(100 * L.md.basins[i].visits / Math.max(1, L.md.frames)).toFixed(0)}%` : '–';
       const bz = boltz[i] !== undefined ? `${(100 * boltz[i]).toFixed(0)}%` : '–';
+      const gCol = b.g && b.g > 1 ? `<b>${b.g}</b>` : (b.g || 1);
+      const t = th[i];
+      const gFree = t && isFinite(t.G) ? t.G.toFixed(2) : '…';
+      const imag = t && t.nImag > 0 ? ` <span title="存在虚频——非真极小(淬灭欠收敛?)" style="color:#b91c1c;">⚠${t.nImag}</span>` : '';
+      const bzg = boltzG[i] !== undefined ? `${(100 * boltzG[i]).toFixed(0)}%` : '–';
       const sel = selConf === i ? ' style="background:#fef3c7"' : '';
       return `<tr${sel} data-basin="${i}" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();">
-        <td>#${i + 1}</td><td>${c.E.toFixed(2)}</td><td>${c.dE.toFixed(2)}</td>
-        <td>${occ}%</td><td>${mdOcc}</td><td>${bz}</td><td>${b.residence}</td><td>${b.transitions_in} / ${b.transitions_out}</td></tr>`;
+        <td>#${i + 1}${imag}</td><td>${c.E.toFixed(2)}</td><td>${gFree}</td><td>${c.dE.toFixed(2)}</td>
+        <td>${occ}%</td><td>${mdOcc}</td><td>${bz}</td><td>${bzg}</td><td>${gCol}</td><td>${b.residence}</td><td>${b.transitions_in} / ${b.transitions_out}</td></tr>`;
     }).join('');
     tableWrap.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:0.78rem;">
       <thead><tr style="text-align:left; border-bottom:1px solid var(--border);">
-        <th>盆地</th><th>E</th><th>ΔE</th><th>占据</th>${hasMd ? '<th>MD 占据</th>' : ''}<th title="理想布居:忽略简并度(镜像对已折叠)与熵差">Boltzmann ${tK}K</th><th>驻留</th><th>转入/转出</th></tr></thead>
+        <th>盆地</th><th>E</th><th title="G = E + 谐振 ZPE + 振动熵项(同分子转动/平动熵相消)">G(${tK}K)</th><th>ΔE</th><th>占据</th><th>MD 占据</th><th title="理想布居(g·e^-ΔE/kT);忽略 C3 置换筒并">Boltz.E</th><th title="自由能布居(g·e^-ΔG/kT)">Boltz.G</th><th title="观测井数:2=镜像对已折叠">g</th><th>驻留</th><th>转入/转出</th></tr></thead>
       <tbody>${rows}</tbody></table>`;
 
     // transition-pair table (observed bounds vs refined NEB saddles)
@@ -6947,7 +6965,25 @@ function exportEnsembleSDF() {
   document.getElementById('lsViewNet').onclick = () => setLandscapeView('net');
   document.getElementById('btnMdVerify').onclick = () => window.runMdVerify();
   document.getElementById('btnNebRefine').onclick = () => window.runNebRefine();
-  document.getElementById('imtdTemp').onchange = () => { if (lastLandscape) drawLandscape(); };
+  document.getElementById('imtdTemp').onchange = () => { lastThermo = null; if (lastLandscape) drawLandscape(); };
+
+  // Harmonic thermo tier cache: recomputed when T changes or a new ensemble
+  // lands (the coordinator lives as long as imtdVerifyHandle).
+  let lastThermo = null;   // { T, n, entries: [{G, gCorr, zpe, nImag}] }
+  function refreshThermo(tK) {
+    if (!imtdVerifyHandle) { lastThermo = null; return; }
+    try {
+      const d = JSON.parse(imtdVerifyHandle.thermoJson(tK));
+      lastThermo = {
+        T: tK,
+        n: confEnsemble.length,
+        entries: (d.basins || []).map(b => ({
+          G: parseFloat(b.G), gCorr: parseFloat(b.gCorr), zpe: parseFloat(b.zpe),
+          nImag: b.nImag,
+        })),
+      };
+    } catch (e) { lastThermo = null; }
+  }
 
   // CI-NEB saddle refinement over the observed transition pairs.
   let nebRunning = false;

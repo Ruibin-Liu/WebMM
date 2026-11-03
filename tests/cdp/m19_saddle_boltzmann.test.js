@@ -40,8 +40,8 @@ function check(name, cond, detail) {
   const bz = await page.evaluate(() => {
     const th = [...document.querySelectorAll('#basinTableWrap th')];
     const vals = [...document.querySelectorAll('#basinTableWrap tbody tr')]
-      .map(r => parseFloat(r.children[5].textContent));
-    return { col: th.some(t => /Boltzmann/.test(t.textContent)), vals, n: confEnsemble.length };
+      .map(r => parseFloat(r.children[6].textContent));
+    return { col: th.some(t => /Boltz\.E/.test(t.textContent)), vals, n: confEnsemble.length };
   });
   const bzSum = bz.vals.reduce((a, b) => a + (isFinite(b) ? b : 0), 0);
   check('Boltzmann column present, populations sum to 100%', bz.col && bz.vals.length === bz.n && Math.abs(bzSum - 100) < 2,
@@ -50,12 +50,12 @@ function check(name, cond, detail) {
   const hot = await page.evaluate(() => {
     document.getElementById('imtdTemp').value = '3000';
     drawLandscape();
-    return parseFloat([...document.querySelectorAll('#basinTableWrap tbody tr')][1].children[5].textContent);
+    return parseFloat([...document.querySelectorAll('#basinTableWrap tbody tr')][1].children[6].textContent);
   });
   const cold = await page.evaluate(() => {
     document.getElementById('imtdTemp').value = '298';
     drawLandscape();
-    return parseFloat([...document.querySelectorAll('#basinTableWrap tbody tr')][1].children[5].textContent);
+    return parseFloat([...document.querySelectorAll('#basinTableWrap tbody tr')][1].children[6].textContent);
   });
   check('higher T flattens populations (basin #2 rises)', hot >= cold, `T=3000: ${hot}% vs T=298: ${cold}%`);
 

@@ -65,10 +65,11 @@ function check(name, cond, detail) {
 
   // ================= 2. MD occupancy verification =================
   const noMdBefore = await page.evaluate(() => {
-    const th = [...document.querySelectorAll('#basinTableWrap th')];
-    return { mdCol: th.some(t => /MD 占据/.test(t.textContent)), md: lastLandscape && lastLandscape.md };
+    // the MD column exists but every cell is '–' before verification
+    const cells = [...document.querySelectorAll('#basinTableWrap tbody tr')].map(r => r.children[5].textContent);
+    return { allDash: cells.length > 0 && cells.every(c => /–/.test(c)), md: lastLandscape && lastLandscape.md };
   });
-  check('no MD column before verification', !noMdBefore.mdCol && !(noMdBefore.md && noMdBefore.md.frames));
+  check('no MD data before verification (cells dashed)', noMdBefore.allDash && !(noMdBefore.md && noMdBefore.md.frames));
   await page.evaluate(() => window.runMdVerify());
   await page.waitForFunction(() => /MD 占据验证完成/.test(document.getElementById('status3d').textContent), null, { timeout: 180000 });
   const after = await page.evaluate(() => {

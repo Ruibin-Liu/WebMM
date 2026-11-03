@@ -391,6 +391,25 @@ fn aligned_rmsd_over(a: &[[f64; 3]], b: &[[f64; 3]], idx: &[usize]) -> f64 {
     }
 }
 
+/// Mirror-twin margin (Å): a frame is the member's mirror twin when the
+/// IMPROPER superposition beats the proper one by more than this — robust
+/// against nearly-free methyl-H label permutations, which inflate proper and
+/// improper RMSD equally.
+const MIRROR_MARGIN: f64 = 0.15;
+
+/// Improper (mirror) superposition RMSD over the given indices: reflect one
+/// structure through a fixed plane (z → −z), then align properly. A pair of
+/// MIRROR-IMAGE conformers superposes (~0) under this transform but not
+/// under a proper rotation.
+fn improper_rmsd_over(a: &[[f64; 3]], b: &[[f64; 3]], idx: &[usize]) -> f64 {
+    if idx.len() < 2 {
+        return 0.0;
+    }
+    let p: Vec<[f64; 3]> = idx.iter().map(|&i| a[i]).collect();
+    let q: Vec<[f64; 3]> = idx.iter().map(|&i| [b[i][0], b[i][1], -b[i][2]]).collect();
+    kabsch_transform(&p, &q).2
+}
+
 // ── molecule topology helpers ──
 
 /// Indices of heavy atoms (z > 1).
@@ -692,6 +711,11 @@ struct Ensemble {
     /// eviction and re-sorting, ids never do — refined saddles key on them.
     basin_ids: Vec<u64>,
     next_basin_id: u64,
+    /// Observed well count per basin (≥1): a MIRROR-twin geometry folded by
+    /// the equal-energy branch increments it — the degeneracy factor for
+    /// Boltzmann populations. Label permutations (methyl H swaps) do not.
+    /// C3-type permuted wells are NOT detected (v1 honest boundary).
+    degeneracy: Vec<u64>,
 }
 
 impl Ensemble {
@@ -714,6 +738,7 @@ impl Ensemble {
             md: LadderStats::default(),
             basin_ids: Vec::new(),
             next_basin_id: 1,
+            degeneracy: Vec::new(),
         }
     }
 
@@ -723,8 +748,11 @@ impl Ensemble {
 
     /// Two-tier conformer-equivalence predicate (see the module docs): same
     /// heavy scaffold AND (same all-atom geometry OR equal energy). Returns
-    /// the matching member position.
-    fn find_conformer(&self, coords: &[[f64; 3]], energy: f64) -> Option<usize> {
+    /// the matching member position and whether the match was a MIRROR twin
+    /// (equal-energy branch + improper superposition): mirror twins fold
+    /// like duplicates but raise the member's degeneracy; label
+    /// permutations fold silently.
+    fn find_conformer(&self, coords: &[[f64; 3]], energy: f64) -> Option<(usize, bool)> {
         for (i, m) in self.members.iter().enumerate() {
             let heavy_same =
                 aligned_rmsd_over(coords, &m.coords, &self.dedup_heavy) < self.rmsd_tol;
@@ -732,9 +760,18 @@ impl Ensemble {
                 continue;
             }
             let all_same = aligned_rmsd_over(coords, &m.coords, &self.dedup_all) < self.rmsd_tol;
+            if all_same {
+                return Some((i, false)); // exact revisit of the same well
+            }
             let same_energy = (energy - m.energy).abs() < self.energy_dup_tol;
-            if all_same || same_energy {
-                return Some(i);
+            if same_energy {
+                // mirror twin ⇔ the reflection superposes markedly better
+                // than any proper rotation (label permutations inflate both
+                // equally and stay on the permutation side)
+                let proper = aligned_rmsd_over(coords, &m.coords, &self.dedup_all);
+                let imp = improper_rmsd_over(coords, &m.coords, &self.dedup_all);
+                let mirror = proper - imp > MIRROR_MARGIN;
+                return Some((i, mirror));
             }
         }
         None
@@ -749,6 +786,15 @@ impl Ensemble {
 
     fn note_visit(&mut self, i: usize, l: Ladder) {
         self.ladder_mut(l).note_visit(i);
+    }
+
+    /// A distinct MIRROR well was observed for basin `i` (capped at 2: the
+    /// twin geometry is identical at every revisit, so further hits are
+    /// re-visits of the same twin well).
+    fn note_mirror(&mut self, i: usize) {
+        if i < self.degeneracy.len() && self.degeneracy[i] < 2 {
+            self.degeneracy[i] += 1;
+        }
     }
 
     fn note_residence(&mut self, i: usize, l: Ladder) {
@@ -844,6 +890,7 @@ impl Ensemble {
         self.md.on_new_basin();
         self.basin_ids.push(self.next_basin_id);
         self.next_basin_id += 1;
+        self.degeneracy.push(1);
         let pos = self.members.len() - 1;
         if self.members.len() > self.max_conformers {
             // evict the previous maximum (never the just-added member — it
@@ -861,6 +908,9 @@ impl Ensemble {
             self.md.on_evict(i_max);
             if self.basin_ids.len() > i_max {
                 self.basin_ids.remove(i_max);
+            }
+            if self.degeneracy.len() > i_max {
+                self.degeneracy.remove(i_max);
             }
             return Some(pos - 1);
         }
@@ -993,6 +1043,8 @@ pub struct ImtdSearch {
     pending: Vec<Option<Vec<Minimum>>>,
     /// In-flight plain-MD verification batch (empty = none planned).
     verify_pending: Vec<Option<Vec<Minimum>>>,
+    /// Atomic masses (amu), parallel to atoms — for the harmonic tier.
+    masses: Vec<f64>,
     /// In-flight saddle-refinement batch (empty = none planned).
     refine_jobs: Vec<RefineJob>,
     refine_done: Vec<Option<Option<f64>>>,
@@ -1039,6 +1091,11 @@ impl ImtdSearch {
             plan_cache: None,
             pending: Vec::new(),
             verify_pending: Vec::new(),
+            masses: mol
+                .atoms
+                .iter()
+                .map(|a| crate::md::atomic_mass(a.atomic_number))
+                .collect(),
             refine_jobs: Vec::new(),
             refine_done: Vec::new(),
             refined: Vec::new(),
@@ -1180,8 +1237,11 @@ impl ImtdSearch {
         let mut prev: Option<usize> = None;
         for m in minima {
             let pos = match self.ensemble.find_conformer(&m.coords, m.energy) {
-                Some(i) => {
+                Some((i, mirror)) => {
                     self.ensemble.note_visit(i, ladder);
+                    if mirror {
+                        self.ensemble.note_mirror(i);
+                    }
                     Some(i)
                 }
                 None => {
@@ -1360,6 +1420,45 @@ impl ImtdSearch {
         )
     }
 
+    /// Harmonic free-energy tier for the final ensemble at temperature `t`
+    /// (K): per basin, frequencies at the FINAL minimum, G = E + G_corr,
+    /// ZPE, imaginary-mode count. Engine follows the search (GFN-FF works —
+    /// the Hessian differences its analytic gradient).
+    pub fn thermo(&self, temperature_k: f64) -> Vec<ThermoEntry> {
+        let (kept, _) = self.ensemble.finalized_members();
+        kept.iter()
+            .map(|c| {
+                let freqs = match &self.quencher {
+                    Quencher::Mmff(ff) => {
+                        crate::vib::frequencies(ff.as_ref(), &c.coords, &self.masses)
+                    }
+                    Quencher::Gfnff { at, charge } => {
+                        // GFN-FF: bond perception is geometry-dependent —
+                        // the Hessian differences a per-geometry rebuild
+                        let g = crate::gfnff::GfnffForceField::new(at, &c.coords, *charge);
+                        crate::vib::frequencies(&g, &c.coords, &self.masses)
+                    }
+                };
+                let (g_corr, zpe, n_imag) = crate::vib::harmonic_correction(&freqs, temperature_k);
+                let nu_min = freqs
+                    .iter()
+                    .copied()
+                    .filter(|f| f.abs() >= crate::vib::TR_ROT_CUTOFF_CM)
+                    .fold(f64::INFINITY, f64::min);
+                let nu_max = freqs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                ThermoEntry {
+                    energy: c.energy,
+                    g_free: c.energy + g_corr,
+                    g_corr,
+                    zpe,
+                    n_imag,
+                    nu_min,
+                    nu_max,
+                }
+            })
+            .collect()
+    }
+
     /// Landscape snapshot (non-destructive): basin statistics and the
     /// disconnectivity trees, both ladders aligned with the FINAL result
     /// order (`result().conformers` indices == basin indices). Statistics of
@@ -1373,6 +1472,7 @@ impl ImtdSearch {
                     residence: 0,
                     transitions_in: 0,
                     transitions_out: 0,
+                    degeneracy: 1,
                 };
                 kept.len()
             ];
@@ -1384,6 +1484,7 @@ impl ImtdSearch {
                             residence: stats.residence[old],
                             transitions_in: stats.trans_in[old],
                             transitions_out: stats.trans_out[old],
+                            degeneracy: self.ensemble.degeneracy.get(old).copied().unwrap_or(1),
                         };
                     }
                 }
@@ -1505,6 +1606,9 @@ pub struct BasinStats {
     pub residence: usize,
     pub transitions_in: usize,
     pub transitions_out: usize,
+    /// Observed well count: 2 when a mirror twin folded into this basin —
+    /// the degeneracy factor for Boltzmann populations.
+    pub degeneracy: u64,
 }
 
 /// Transition statistics between a basin PAIR (unordered, both directions
@@ -1533,6 +1637,37 @@ pub struct Landscape {
     pub pruned: usize,
     /// Plain-MD verification ladder (present once verification runs folded).
     pub md: Option<MdLandscape>,
+}
+
+/// Harmonic free-energy entry for one final basin.
+#[derive(Debug, Clone, Copy)]
+pub struct ThermoEntry {
+    /// The search energy (kcal/mol).
+    pub energy: f64,
+    /// G = E + G_corr at the requested temperature (kcal/mol).
+    pub g_free: f64,
+    /// Harmonic correction (ZPE + vibrational entropy term).
+    pub g_corr: f64,
+    pub zpe: f64,
+    /// Imaginary modes at |ν̃| ≥ 25 cm⁻¹ (true-minimum QC flag).
+    pub n_imag: usize,
+    /// Smallest/largest real-mode wavenumber (cm⁻¹).
+    pub nu_min: f64,
+    pub nu_max: f64,
+}
+
+/// Serialize the thermo tier (bit-exact float strings).
+pub fn thermo_to_json(entries: &[ThermoEntry], temperature_k: f64) -> String {
+    serde_json::json!({
+        "T": temperature_k,
+        "basins": entries.iter().map(|e| serde_json::json!({
+            "E": f64_to_json(e.energy), "G": f64_to_json(e.g_free),
+            "gCorr": f64_to_json(e.g_corr), "zpe": f64_to_json(e.zpe),
+            "nImag": e.n_imag,
+            "nuMin": f64_to_json(e.nu_min), "nuMax": f64_to_json(e.nu_max),
+        })).collect::<Vec<_>>(),
+    })
+    .to_string()
 }
 
 /// The plain-MD verification ladder: thermally meaningful populations for
@@ -1635,6 +1770,7 @@ pub fn landscape_to_json(l: &Landscape) -> String {
             "basins": basins.iter().enumerate().map(|(i, b)| serde_json::json!({
                 "i": i, "visits": b.visits, "residence": b.residence,
                 "in": b.transitions_in, "out": b.transitions_out,
+                "g": b.degeneracy,
             })).collect::<Vec<_>>(),
             "transitions": transitions.iter().map(|t| serde_json::json!({
                 "a": t.from, "b": t.to, "count": t.count,
@@ -1650,6 +1786,7 @@ pub fn landscape_to_json(l: &Landscape) -> String {
         "basins": l.basins.iter().enumerate().map(|(i, b)| serde_json::json!({
             "i": i, "visits": b.visits, "residence": b.residence,
             "in": b.transitions_in, "out": b.transitions_out,
+            "g": b.degeneracy,
         })).collect::<Vec<_>>(),
         "transitions": l.transitions.iter().map(|t| serde_json::json!({
             "a": t.from, "b": t.to, "count": t.count,
@@ -1932,6 +2069,16 @@ pub fn refine_result_from_json(s: &str) -> Result<Option<f64>, String> {
 /// free-energy corrections are NOT included. `temperature_k` is clamped to a
 /// sane domain (≤ 1 K defaults to 300 K).
 pub fn boltzmann_populations(energies: &[f64], temperature_k: f64) -> Vec<f64> {
+    boltzmann_populations_deg(energies, &[], temperature_k)
+}
+
+/// [`boltzmann_populations`] with explicit degeneracy factors
+/// (`weights = g_i·exp(−ΔE_i/kT)`; mirror-twin basins carry g=2).
+pub fn boltzmann_populations_deg(
+    energies: &[f64],
+    degeneracies: &[f64],
+    temperature_k: f64,
+) -> Vec<f64> {
     if energies.is_empty() {
         return Vec::new();
     }
@@ -1942,7 +2089,11 @@ pub fn boltzmann_populations(energies: &[f64], temperature_k: f64) -> Vec<f64> {
     };
     let kt = crate::md::KB * t;
     let emin = energies.iter().copied().fold(f64::INFINITY, f64::min);
-    let weights: Vec<f64> = energies.iter().map(|&e| (-(e - emin) / kt).exp()).collect();
+    let weights: Vec<f64> = energies
+        .iter()
+        .zip(degeneracies.iter().copied().chain(std::iter::repeat(1.0)))
+        .map(|(&e, g)| g.max(1.0) * (-(e - emin) / kt).exp())
+        .collect();
     let sum: f64 = weights.iter().sum();
     if sum <= 0.0 || !sum.is_finite() {
         // impossible after the Emin shift unless the input is degenerate
@@ -2675,6 +2826,192 @@ mod tests {
         assert!(boltzmann_populations(&[], 300.0).is_empty());
         let one = boltzmann_populations(&[7.0], 300.0);
         assert_eq!(one, vec![1.0]);
+    }
+
+    #[test]
+    fn mirror_twins_fold_with_degeneracy_permutations_silently() {
+        // ethanol OH rotamers: rotating ONLY the hydroxyl H about the C–O
+        // bond leaves the heavy scaffold identical; +120°/−120° are mirror
+        // twins (equal energy, improper-superposable, not proper), while a
+        // methyl-H permutation (rotate H3 about C–C into H4's site with the
+        // labels fixed) is neither.
+        let mol = ethanol();
+        let base: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let (c1, o2) = (1usize, 2usize); // C–O bond (H8 = idx 8 on O)
+        let axis = [
+            base[o2][0] - base[c1][0],
+            base[o2][1] - base[c1][1],
+            base[o2][2] - base[c1][2],
+        ];
+        let norm = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+        let u = [axis[0] / norm, axis[1] / norm, axis[2] / norm];
+        let rotate_h = |src: &[[f64; 3]], deg: f64| -> Vec<[f64; 3]> {
+            let th = deg.to_radians();
+            let (sn, cs) = (th.sin(), th.cos());
+            let mut out = src.to_vec();
+            let d = [
+                src[8][0] - src[o2][0],
+                src[8][1] - src[o2][1],
+                src[8][2] - src[o2][2],
+            ];
+            let cr = [
+                u[1] * d[2] - u[2] * d[1],
+                u[2] * d[0] - u[0] * d[2],
+                u[0] * d[1] - u[1] * d[0],
+            ];
+            let dot = u[0] * d[0] + u[1] * d[1] + u[2] * d[2];
+            for x in 0..3 {
+                out[8][x] = src[o2][x] + cs * d[x] + sn * cr[x] + u[x] * dot * (1.0 - cs);
+            }
+            out
+        };
+        let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+        let q = |c: &[[f64; 3]]| -> (Vec<[f64; 3]>, f64) {
+            let r = quencher.quench(c, 500);
+            (r.optimized_coords, r.final_energy)
+        };
+        let (p0, e0) = q(&base);
+        // build the twin by REFLECTING a gauche-OH rotamer through the heavy
+        // plane (C0,C1,O2): the reflection of a minimum is a minimum, the
+        // heavy scaffold is unchanged, and the H arrangement mirrors. (A ±
+        // rotation construction lets the requench drag the C–C torsion.)
+        let (pp, ep) = q(&rotate_h(&p0, 120.0));
+        let n = {
+            let (a, b, c) = (pp[0], pp[1], pp[2]);
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let cr = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let cn = (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
+            [cr[0] / cn, cr[1] / cn, cr[2] / cn]
+        };
+        let pm_src: Vec<[f64; 3]> = pp
+            .iter()
+            .map(|p| {
+                let d = [p[0] - pp[0][0], p[1] - pp[0][1], p[2] - pp[0][2]];
+                let dn = 2.0 * (d[0] * n[0] + d[1] * n[1] + d[2] * n[2]);
+                [p[0] - dn * n[0], p[1] - dn * n[1], p[2] - dn * n[2]]
+            })
+            .collect();
+        let (pm, em) = q(&pm_src);
+        // the two rotations are mirror twins: equal energy, improper ~0,
+        // proper all-atom RMSD large
+        assert!((ep - em).abs() < 1e-3, "twin energies equal: {ep} vs {em}");
+        assert!(improper_rmsd_over(&pp, &pm, &(0..mol.atoms.len()).collect::<Vec<_>>()) < 0.05);
+        assert!(aligned_rmsd_over(&pp, &pm, &(0..mol.atoms.len()).collect::<Vec<_>>()) > 0.2);
+        let _ = e0;
+
+        // fold [base, twin+, twin−] through a fresh coordinator: 2 basins,
+        // the rotamer basin carries degeneracy 2
+        let cfg = ImtdConfig {
+            max_rounds: 1,
+            runs_per_round: 1,
+            steps_per_run: 200,
+            quench_interval: 200,
+            quench_max_iterations: 500,
+            crossing_pairs: 0,
+            convergence_new_minima: usize::MAX,
+            ..Default::default()
+        };
+        let mut search = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
+        let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+        while !search.done() {
+            for spec in search.plan().to_vec() {
+                let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &spec);
+                search.gather(spec.run_index, m);
+            }
+        }
+        let specs = search.plan_verify(1);
+        assert_eq!(specs.len(), 1, "one verification run planned");
+        search.gather_verify(
+            0,
+            vec![
+                Minimum {
+                    coords: pp,
+                    energy: ep,
+                    pe_max_since_prev: 0.0,
+                    snapshot: 0,
+                },
+                Minimum {
+                    coords: pm.clone(),
+                    energy: em,
+                    pe_max_since_prev: 0.0,
+                    snapshot: 1,
+                },
+            ],
+        );
+        let land1 = search.landscape();
+        // twin+ created the basin (g=1), twin− folds with mirror ⇒ g=2
+        let gvals: Vec<u64> = land1.basins.iter().map(|b| b.degeneracy).collect();
+        assert!(
+            gvals.contains(&2),
+            "the rotamer basin must record its mirror twin, got {gvals:?}"
+        );
+        assert!(!land1.basins.is_empty());
+        // a REVISIT of the twin does not raise g past 2
+        search.gather_verify(
+            0,
+            vec![Minimum {
+                coords: pm.clone(),
+                energy: em,
+                pe_max_since_prev: 0.0,
+                snapshot: 0,
+            }],
+        );
+        let land2 = search.landscape();
+        assert_eq!(land2.basins[0].degeneracy, 2, "degeneracy caps at 2");
+    }
+
+    #[test]
+    fn boltzmann_applies_degeneracy() {
+        // butane-like: anti E=0 (g=1) vs collapsed gauche pair g=2, ΔE=0.78
+        let e = [0.0, 0.78];
+        let g = [1.0, 2.0];
+        let p = boltzmann_populations_deg(&e, &g, 298.15);
+        let kt = crate::md::KB * 298.15;
+        let w_gauche = 2.0 * (-0.78 / kt).exp();
+        let expect = w_gauche / (1.0 + w_gauche);
+        assert!((p[1] - expect).abs() < 1e-12, "{} vs {expect}", p[1]);
+        assert!(p[1] > 0.30, "degeneracy lifts the gauche share: {}", p[1]);
+        // without degeneracy it stays ~21%
+        let p1 = boltzmann_populations(&e, 298.15);
+        assert!((p1[1] - 0.21).abs() < 0.02, "{}", p1[1]);
+    }
+
+    #[test]
+    fn thermo_tier_matches_harmonic_correction() {
+        let mol = ethanol();
+        let cfg = ImtdConfig {
+            max_rounds: 1,
+            runs_per_round: 1,
+            steps_per_run: 200,
+            quench_interval: 200,
+            quench_max_iterations: 500,
+            crossing_pairs: 0,
+            convergence_new_minima: usize::MAX,
+            ..Default::default()
+        };
+        let mut search = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
+        while !search.done() {
+            let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+            for spec in search.plan().to_vec() {
+                let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &spec);
+                search.gather(spec.run_index, m);
+            }
+        }
+        let entries = search.thermo(298.15);
+        assert!(!entries.is_empty());
+        for e in &entries {
+            assert_eq!(e.n_imag, 0, "ethanol minima are real");
+            assert!((42.0..=62.0).contains(&e.zpe), "ZPE band: {}", e.zpe);
+            assert!((e.g_free - e.energy - e.g_corr).abs() < 1e-9);
+            assert!(e.g_free < e.energy + e.zpe, "entropy lowers G below E+ZPE");
+        }
+        let json = thermo_to_json(&entries, 298.15);
+        assert!(json.contains("\"G\":\""), "thermo json emits G");
     }
 
     #[test]

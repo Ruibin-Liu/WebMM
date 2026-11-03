@@ -19,6 +19,7 @@ pub mod gfnff;
 /// Molecular dynamics engine (velocity-Verlet + Langevin)
 pub mod md;
 pub mod neb;
+pub mod vib;
 
 /// Metadynamics (enhanced sampling via collective variables)
 pub mod metad;
@@ -1987,6 +1988,18 @@ pub fn imtd_boltzmann_populations_json(energies: &[f64], temperature_k: f64) -> 
     serde_json::json!(pops).to_string()
 }
 
+/// [`imtd_boltzmann_populations_json`] with explicit degeneracy factors
+/// (mirror-twin basins carry g = 2): a JSON array of fractions summing to 1.
+#[wasm_bindgen]
+pub fn imtd_boltzmann_populations_g_json(
+    energies: &[f64],
+    degeneracies: &[f64],
+    temperature_k: f64,
+) -> String {
+    let pops = crate::metad::imtd::boltzmann_populations_deg(energies, degeneracies, temperature_k);
+    serde_json::json!(pops).to_string()
+}
+
 /// iMTD-GC coordinator handle: plans each round's independent metad runs
 /// (`plan_json`), accepts worker results in any order (`gather`), and reports
 /// the ensemble (`result`). The fold is arrival-order-independent, so a
@@ -2131,6 +2144,15 @@ impl ImtdSearch {
             }
         }
     }
+    /// Harmonic free-energy tier at temperature `t`: per final basin,
+    /// frequencies → G = E + G_corr, ZPE, imaginary-mode count.
+    pub fn thermo_json(&self, temperature_k: f64) -> String {
+        match self.core.as_ref() {
+            Some(c) => crate::metad::imtd::thermo_to_json(&c.thermo(temperature_k), temperature_k),
+            None => "{\"T\":0,\"basins\":[]}".to_string(),
+        }
+    }
+
     /// Landscape snapshot as JSON: basin statistics (aligned with the
     /// `result()` conformer order), pair transitions with observed-barrier
     /// upper bounds, and the disconnectivity forest.

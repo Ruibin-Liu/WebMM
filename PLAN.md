@@ -1,34 +1,33 @@
-# Plan: 鞍点精搜(CI-NEB)+ 占据玻尔兹曼重构(已完成)
+# Plan: 简并度恢复 + 谐振自由能校正(占据科学性一轮交付)(已完成)
 
-用户指令:实施剩余两项「鞍点精搜、占据玻尔兹曼重构」。观测势垒上界升级为 NEB 精修鞍点能;占据列旁加 Boltzmann 重构布居(能量→平衡布居,与采样占据三角对照)。
+用户裁决「按流程来」= 设计页建议项 ①+② 连做:恢复被两级去重折叠的镜像简并度(Boltzmann 乘 g_i),并把布居从能量升级为自由能(G = E + 谐振 ZPE + S_vib 项)。
 
 ## 交付
-1. **NEB 引擎(新模块 src/neb.rs,顶层 pub mod,与 md/metad 平级)**
-   - `neb(ff, a, b, config) -> NebResult`:Kabsch 对齐 b→a(复用 imtd 坐标级实现,提为 pub(crate));线性插值初始路径;改进切向(Henkelman 能量加权);垂直核力+切向弹簧;**攀岩像**(最高能内像,F 反转切向分量);FIRE 积分器(确定性,无 RNG);收敛=内像最大力 < tol;端点固定。
-   - 输出:完整路径能量、saddle_energy(最高内像)、barrier(相对低端点)、converged/iterations。语义:TransitionStats.barrier 一直存**绝对穿越能**——观测上界=窗口 PE 峰,NEB 精修=鞍点能,可比。
-   - 测试:丁烷 anti↔gauche(鞍点在合理带 2–6 kcal/mol 且 >双端点、≤线性插值峰);乙醇 OH 扭转(小势垒带);端点不动;同构象平凡路径;逐位确定性。
-2. **协调器精修相位(src/metad/imtd.rs)**
-   - 盆地稳定 ID(u64 单调计数器入 Conformer 旁路向量)——修指标漂移隐患:pair 统计键改盆地 ID(位置可因后续验证折叠变动,ID 不变),Landscape 映射按 ID→最终序。
-   - `plan_refine() -> Vec<RefineJob>`:对每条有计数的转移边出一 job{aId,bId,xyzA,xyzB}(坐标取当前 finalize 映射);`gather_refine(aId,bId,saddleJson)`:TransitionStats 增 `refined: Option<f64>`,断连树在有精修值时用之;仅 finished 且无在途批次;批次可重复。
-   - JSON:job/结果编解码(f64 字符串纪律);transitions 增 "refined"。
-3. **WASM(加法)**:`run_imtd_neb_json(sdf, job_json, ImtdOptions)`(worker 端纯函数;**GFNFF 拒绝并诚实报错**——拓扑逐几何,逐像逐迭代重建不可承受,v1 仅 MMFF);`imtd_boltzmann_populations_json(energies, temperature_k)`;`ImtdSearch.plan_refine_json()/gather_refine(...)`。
-4. **玻尔兹曼重构(pub fn,imtd.rs)**
-   - `boltzmann_populations(energies, temperature_k) -> Vec<f64>`:Emin 平移 + log-sum-exp 稳定归一;T 钳制合理域。**诚实标注**:found-minima 理想布居,忽略简并度(镜像对已折叠)与熵差/谐振 ZPE。
-5. **驱动 + UI**
-   - handle.refine():NEB job 散射(worker 池同 verify 模式,共享取消闩);MMFF 引擎前置守卫。
-   - 景观头增「势垒精修(NEB)」按钮与温度 mini-input(默认 298.15);盆地表增「Boltzmann%」列(随 T 重算);精修后盆地表下附**转移边表**(a–b | 计数 | 观测上界 | NEB 精修),断连图阈值自动切精修值;元行更新;GFNFF 时按钮诚实禁用提示。
-6. **测试**:原生(NEB 物理带/端点/确定性;refine 集成:refined 入档、树用精修、ID 稳定不受后续 verify 折叠影响;boltzmann:和为 1、T→极低归地面态、大能隙无溢出);CDP 新套件 **m19_saddle_boltzmann**(精修按钮:转移表出现且 refined 有限并 ≥双端点能;Boltzmann 列和=100%、升温 flattened(高能盆布居升);换分子清理;零 page error);run.sh 挂 m19。
-7. **不做(记录)**:NEB 的 GFN-FF 支持、dimer 法、简并度恢复、谐振自由能校正、精修的任务层记账。
+1. **简并度恢复(src/metad/imtd.rs)**
+   - 能量判据分支细分:折叠发生时做**镜面叠合检验**(固定反射 z→−z 后再做真旋转 Kabsch=无叠合)——反射叠合 < tol ⇒ 镜像对 → `degeneracy[i] += 1`(折叠保留 + 记 g);否则 ⇒ 甲基置换 → 普通折叠(g 不变)。C3 类置换相关筒并(methanol 甲基转动)不计——v1 诚实边界,记录。
+   - Ensemble 增 `degeneracy: Vec<u64>` 平行向量(默认 1,逐出同步收缩);landscape basins 增 "g";Boltzmann 升级 `boltzmann_populations(energies, degeneracies, t)`(权重 g·exp(−ΔE/kT));旧签名 wasm 导出保留(g=1 包装),新增 `imtd_boltzmann_populations_g_json`。
+   - 语义:镜像帧仍是该折叠盆地的"访问"(占据归入折叠条目);g=该盆地观测到的**不同井数**(≤2)。
+   - 测试:手工构造乙醇 OH 转动异构三元组(H8 绕 C–O 轴 0°/±120° 淬灭)经 gather_verify 折叠 → 2 成员、basins g=[1,2];丁烷镜像对(重原子镜像,不折叠)各自 g=1 且布居求和天然等价 g=2(断言)。
+2. **谐振自由能校正(新模块 src/vib.rs)**
+   - `frequencies(ff, coords, masses) -> Vec<f64>`(**带符号** cm⁻¹):解析梯度中心差分 Hessian(h=0.005 Å,3N×2 次梯度),质量加权,`sym_jacobi` 对角化;单位换算常数从基本常数推出,甲烷/水频带测试锁定(最高频 2800–3300 等)。
+   - `harmonic_correction(freqs, t) -> (g_corr, zpe, n_imag)`:<25 cm⁻¹ 模式剔除(平动/转动残迹);虚频计 n_imag 并按 |ν| 计入(诚实旗标);G_i(T) = E_i + Σ[½k θ + kT ln(1−e^{−θ/T})],θ=1.43877·ν̃ K;同分子转动/平动熵自动相消故不计。
+   - 测试:H 对称;淬灭甲烷 6 个近零模 < 25;频带;T→0 ⇒ G_corr→ZPE;确定性。
+3. **协调器 + WASM(加法)**
+   - `ImtdSearch.thermo_json(t)`(原生+wasm 方法):对最终系综逐盆地算频率与 G(引擎同系综,GFN-FF 亦可——FD 梯度可得);输出 {i, G, gCorr, zpe, nImag, nuMax, nuMin}。
+   - d.ts:ImtdSearch +1 方法 + 新自由函数;既有导出零变化。
+4. **UI(index.html)**
+   - 盆地表:增「简并度 g」「G(T)」「Boltzmann(G)」列;Boltzmann(E) 列改乘 g;虚频盆地 ⚠ 标注;T 输入 onchange 触发 thermo 重算(协调器缓存按 (系综版本,T) 失效)。
+   - 驱动 handle.thermo(t) 或直接协调器方法(结果已含)——走后者,thermo 属视图派生非批次。
+5. **测试**:原生(vib 模块 + 简并度构造 + thermo 乙醇 n_imag=0、ZPE 量带);CDP 新套件 **m20_degeneracy_thermo**(确定性种子钉实测:g 列存在且至少一盆地 g=2;Boltzmann(E) 与手算 g·exp 一致;G 列有限、Boltzmann(G) 和=100%;换 T 更新;零 page error);run.sh 挂 m20。
+6. **不做(记录)**:C3+ 置换筒并、准谐振(QT)低频处理、转动/平动熵显式项(同分子相消)、简并度对 metad/MD 采样占据的分解。
 
 ## 验收(实测)
-cargo fmt/clippy 双目标 0(loop-index/into_iter/type-complexity 四处清理);cargo test 353(lib,+2:refine 集成与 ID 稳定/boltzmann 稳定性;另 neb 模块 3)+ 7 全绿;wasm 重编 d.ts 导出恰增 imtd_boltzmann_populations_json 与 run_imtd_neb_json 两函数;run.sh 31/32 CDP 全绿(m1 xtb 环境项)+ m19 10/10 + 既有零回归 + Node 153/153;丁烷 NEB 实测:anti↔gauche 带峰 -1.75 kcal(观测上界 15.6/19.3,物理带内),7173 步收敛。
+cargo fmt/clippy 双目标 0(redundant_clone/len>1 三处);cargo test 360(lib,+3:镜像孪生折叠构造/简并玻尔兹曼/热力学层;vib 模块另 4)+ 7 全绿;wasm 重编 d.ts 增 imtd_boltzmann_populations_g_json(+此前轮的 neb/ boltzmann 基线)+ ImtdSearch.thermo_json 方法;run.sh 32/33 CDP 全绿(m1 xtb 环境项)+ m20 9/9;m18/m19 因表列变更同步断言(排雷);m6_platform 出现两次 import-pins flake,stash 二分 + 复跑证实非本轮回归(既有脆弱家族)。
 
 ## 排雷存档(本轮)
-- **弹簧单位陷阱**:文献 NEB 弹簧 0.1–0.5 **eV/Å²** = 2.3–11.5 kcal/mol/Å²——首版 0.35 kcal/mol/Å² 弱 ~20 倍,像滑下山脊伪造低鞍点(-4.29≈端点能);spring=5.0 后带子压住山脊。
-- **dist() 语义 bug**:首版弹簧间距用逐原子距离**求和**(≈n_atoms×集合范数),等效弹簧又强 ~14 倍——先弱后强两头错的根因都是它;改集合位移范数。
-- **端点欠淬灭钉死带子**:搜索系综坐标带 250 步淬灭截断的残梯度(实测 ~9 kcal/mol/Å)——固定端点旁的像镜像该应变,力范数永远 ~8.99;neb() 内部先 3000 步紧淬灭两端点(实测 Epath0 不变但残差消除)。
-- **QuickMin 过冲振荡**:刚性键模式平衡偏移 ~0.002 Å,dt 0.05/vmax 0.12 的步长 0.006 Å 过冲一个量级→梯度方向翻转→v 清零→永振;dt 0.015/vmax 0.06 后 7173 步收敛、鞍点 -1.75 落物理带。FIRE 在非保守 NEB 力上黏滞弃用。
-- **攀岩像 v1 关闭**:CI 爬升在本预算(2 万步)内不收敛(爬升速率 ~0.005 Å/步);v1 报**带峰**=鞍点能上界(随像数下降),climbing 字段保留待后续。
-- **JSON 双处发射**:transitions 在顶层与 md 块两处生成,fmt 后文本不同——replace 只中一处,"refined" 字段静默缺失(原生探针抓出);两处都已补。
-- 500 kcal 能隙在 f64 下 exp 下溢为精确 0(诚实的零布居),测试断言 ≥0 而非 >0。
-- 收敛判据用每像力**范数**(分量最大值不现实地严);tol 0.5 kcal/mol/Å(文献 0.05 eV/Å≈1.2 更松)。
+- **镜像判据被标签噪声污染**:固定标签下甲基近自由旋转使 proper/improper RMSD 同涨(实测孪生 vs 成员 0.411/1.178 与 1.178/0.411 互换)——绝对 improper 阈值失效;改**边际判据** proper−improper > 0.15(置换帧两者相等,天然排除),探针实证 g=2。
+- **孪生构造两课**:±120° 旋转起点会被再淬灭把 C–C 扭转拖进另一转子(能量差恰为 anti/gauche 0.18);镜像孪生必须由**重原子平面反射**构造(反射极小=极小)。gather_verify 前忘 plan_verify 会静默丢弃(守卫返回空)。
+- **表头/行单元格错位**:MD 占据列条件渲染表头但行恒发 11 格——m19 列索引读到 '–' 得 NaN;m20 硬编码索引恰逢错位巧合通过。统一恒发(占位列未验证时显示 –),五套件列索引重核。表头文案改名 Boltzmann→Boltz.E 也牵动 m19 正则。
+- **ln(1−e^{−θ/T}) 符号**:exp_m1 少取负 → ln(负数) = NaN(T→0 暴露);直接写 1−exp。振动熵项恒负,G_corr(298) < ZPE(首版断言方向写反)。
+- **平转残迹含小负本征值**:淬灭极小的 FD Hessian 六个近零模正负兼有——"真极小"断言须容 cutoff(谐波求和已 <25 cm⁻¹ 剔除,虚频只在 |ν|≥25 计)。
+- 单位换算常数(108.6 cm⁻¹/√(kcal·mol⁻¹·Å⁻²·amu⁻¹))由甲烷 C–H 顶带 2800–3300 端到端锁定;水/乙醇频带与 ZPE≈48.8 量带交叉验证。
