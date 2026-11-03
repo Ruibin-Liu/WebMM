@@ -60,10 +60,12 @@
   function start(sdf, opts, onRound) {
     let cancelFlag = null;   // becomes the cancel reason string on cancel()
     const cancelLatch = [];  // resolvers fired on cancel() (unblocks in-flight rounds)
+    let search = null;       // the coordinator (assigned by the run below; the
+                             // verify batches below reuse it after completion)
     const promise = (async () => {
       const wasm = window.webmm;
       if (!wasm) throw new Error('wasm not ready');
-      const search = new wasm.ImtdSearch(sdf, optsToWasm(opts));
+      search = new wasm.ImtdSearch(sdf, optsToWasm(opts));
       if (!search.success()) throw new Error(search.error() || 'ImtdSearch failed');
 
       // small dedicated pool (farm discipline: hardware-bound, ≤4)
@@ -134,6 +136,8 @@
 
       const res = search.result();
       const landscapeJson = search.landscape_json();
+      // (verify is attached to the handle below — the coordinator stays
+      // alive after the search so MD-occupancy batches can extend it)
       return {
         landscapeJson,
         nConfs: res.n_confs(),
@@ -151,8 +155,73 @@
         cancelled, cancelReason,
       };
     })();
+    // Plain-MD verification batch (hill_height=0 specs from the finished
+    // coordinator): a fresh temporary pool executes them with the caller's
+    // cadence; frames fold into the MD occupancy ladder. Shares cancelFlag.
+    const verify = async (nRuns, stepsOverride) => {
+      if (cancelFlag !== null) throw new Error('cancelled');
+      if (!search) throw new Error('search not started');
+      const plan = JSON.parse(search.plan_verify_json(nRuns || 4));
+      if (!plan.runs || !plan.runs.length) {
+        throw new Error('no verification runs planned (search still running?)');
+      }
+      const baseSteps = stepsOverride || (opts && opts.steps_per_run) || 2000;
+      const vOpts = Object.assign({}, opts || {}, {
+        steps_per_run: baseSteps,
+        quench_interval: Math.max(10, Math.round(baseSteps / 8)),
+      });
+      const NWv = Math.max(1, Math.min(plan.runs.length, navigator.hardwareConcurrency || 4, 4));
+      const vWorkers = [];
+      const vWaiters = Object.create(null);
+      let vNext = 0;
+      const ensureV = (w) => new Promise((res) => {
+        const iv = setInterval(() => { if (w.__ready) { clearInterval(iv); res(); } }, 20);
+      });
+      for (let i = 0; i < NWv; i++) {
+        const w = new Worker('conf.worker.js', { type: 'module' });
+        w.__ready = false;
+        w.onmessage = (ev) => {
+          const m = ev.data;
+          if (m.type === 'ready') { w.__ready = true; return; }
+          if (m.type === 'imtdMinima' || m.type === 'imtdError') {
+            const r = vWaiters[m.id];
+            if (r) { delete vWaiters[m.id]; r(m); }
+          }
+        };
+        w.postMessage({ type: 'init', wasmUrl: window.__webmmUrl });
+        vWorkers.push(w);
+      }
+      await Promise.all(vWorkers.map(ensureV));
+      const runOneV = (spec, specJson, i) => new Promise((res, rej) => {
+        const id = 'v' + (vNext++);
+        vWaiters[id] = (m) => (m.type === 'imtdMinima' ? res(m) : rej(new Error(m.error)));
+        vWorkers[i % NWv].postMessage({ type: 'imtdRun', id, runIndex: spec.run_index, sdf, specJson, optSets: optSets(vOpts) });
+      });
+      let cancelled = false;
+      try {
+        const cancelSig = new Promise(res => cancelLatch.push(res));
+        const outs = await Promise.race([
+          Promise.all(plan.runs.map((sp, i) => runOneV(sp, JSON.stringify(sp), i))),
+          cancelSig.then(() => null),
+        ]);
+        if (outs === null) {
+          cancelled = true;
+        } else {
+          for (const m of outs) {
+            if (!search.gather_verify(m.runIndex, m.minimaJson)) {
+              throw new Error('gather_verify rejected worker minima: ' + search.error());
+            }
+          }
+        }
+      } finally {
+        for (const w of vWorkers) w.terminate();
+      }
+      return { landscapeJson: search.landscape_json(), cancelled };
+    };
+
     return {
       promise,
+      verify,
       cancel(reason) {
         if (cancelFlag !== null) return;
         cancelFlag = reason === undefined ? 'user cancel' : String(reason);

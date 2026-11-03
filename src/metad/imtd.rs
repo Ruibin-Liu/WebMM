@@ -559,6 +559,104 @@ fn genetic_crossing(a: &[[f64; 3]], b: &[[f64; 3]], f1: &[usize], k: usize) -> V
 
 // ── ensemble ──
 
+/// Which trajectory family feeds the statistics: metad-biased search runs
+/// (fast basin discovery, distorted occupancy) or plain-MD verification runs
+/// (hill_height = 0; thermally meaningful populations).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ladder {
+    Metad,
+    Md,
+}
+
+/// One statistics ladder, parallel to the ensemble members.
+#[derive(Default)]
+struct LadderStats {
+    /// Quenched frames assigned per member.
+    visits: Vec<usize>,
+    /// Consecutive same-basin snapshot pairs per member (residence proxy).
+    residence: Vec<usize>,
+    trans_in: Vec<usize>,
+    trans_out: Vec<usize>,
+    /// Pair transition stats, unordered key, both directions summed;
+    /// `barrier` is the best (lowest) observed upper bound.
+    pairs: Vec<(usize, usize, usize, f64)>,
+    /// Total quenched frames classified into this ladder.
+    frames: usize,
+    /// Frames rejected by window/cap (unassigned; they break chains).
+    pruned: usize,
+}
+
+impl LadderStats {
+    fn on_new_basin(&mut self) {
+        self.visits.push(0);
+        self.residence.push(0);
+        self.trans_in.push(0);
+        self.trans_out.push(0);
+    }
+
+    fn on_evict(&mut self, i: usize) {
+        if self.visits.len() > i {
+            self.visits.remove(i);
+        }
+        if self.residence.len() > i {
+            self.residence.remove(i);
+        }
+        if self.trans_in.len() > i {
+            self.trans_in.remove(i);
+        }
+        if self.trans_out.len() > i {
+            self.trans_out.remove(i);
+        }
+        let shift = |x: &mut usize| {
+            if *x > i {
+                *x -= 1;
+            }
+        };
+        for t in self.pairs.iter_mut() {
+            shift(&mut t.0);
+            shift(&mut t.1);
+        }
+    }
+
+    fn note_visit(&mut self, i: usize) {
+        if i < self.visits.len() {
+            self.visits[i] += 1;
+        }
+        self.frames += 1;
+    }
+
+    fn note_residence(&mut self, i: usize) {
+        if i < self.residence.len() {
+            self.residence[i] += 1;
+        }
+    }
+
+    fn note_pruned(&mut self) {
+        self.pruned += 1;
+        self.frames += 1;
+    }
+
+    fn note_transition(&mut self, q: usize, p: usize, barrier: f64) {
+        if q < self.trans_out.len() {
+            self.trans_out[q] += 1;
+        }
+        if p < self.trans_in.len() {
+            self.trans_in[p] += 1;
+        }
+        let key = (q.min(p), q.max(p));
+        for t in self.pairs.iter_mut() {
+            if t.0 == key.0 && t.1 == key.1 {
+                t.2 += 1;
+                if barrier < t.3 {
+                    t.3 = barrier;
+                }
+                return;
+            }
+        }
+        self.pairs.push((key.0, key.1, 1, barrier));
+    }
+}
+
 struct Ensemble {
     members: Vec<Conformer>,
     /// All-atom indices (H-rotamer resolution) for dedup alignment.
@@ -572,20 +670,9 @@ struct Ensemble {
     energy_window: f64,
     max_conformers: usize,
     emin: f64,
-    // ── landscape statistics (parallel to `members`; eviction shrinks all) ──
-    /// Quenched frames assigned per member (creation counts as one visit).
-    visits: Vec<usize>,
-    /// Consecutive same-basin snapshot pairs per member (residence proxy).
-    residence: Vec<usize>,
-    transitions_in: Vec<usize>,
-    transitions_out: Vec<usize>,
-    /// Pair transition stats, unordered key (from < to), both directions
-    /// summed; `barrier` is the best (lowest) observed upper bound.
-    pair_stats: Vec<(usize, usize, usize, f64)>,
-    /// Total quenched frames seen by the fold.
-    frames: usize,
-    /// Frames rejected by window/cap (unassigned; they break transition chains).
-    pruned: usize,
+    // ── landscape statistics (two ladders, both parallel to `members`) ──
+    metad: LadderStats,
+    md: LadderStats,
 }
 
 impl Ensemble {
@@ -604,13 +691,8 @@ impl Ensemble {
             energy_window: config.energy_window,
             max_conformers: config.max_conformers.max(1),
             emin: f64::INFINITY,
-            visits: Vec::new(),
-            residence: Vec::new(),
-            transitions_in: Vec::new(),
-            transitions_out: Vec::new(),
-            pair_stats: Vec::new(),
-            frames: 0,
-            pruned: 0,
+            metad: LadderStats::default(),
+            md: LadderStats::default(),
         }
     }
 
@@ -633,36 +715,29 @@ impl Ensemble {
         None
     }
 
-    fn note_visit(&mut self, i: usize) {
-        self.visits[i] += 1;
-        self.frames += 1;
+    fn ladder_mut(&mut self, l: Ladder) -> &mut LadderStats {
+        match l {
+            Ladder::Metad => &mut self.metad,
+            Ladder::Md => &mut self.md,
+        }
     }
 
-    fn note_residence(&mut self, i: usize) {
-        self.residence[i] += 1;
+    fn note_visit(&mut self, i: usize, l: Ladder) {
+        self.ladder_mut(l).note_visit(i);
     }
 
-    fn note_pruned(&mut self) {
-        self.pruned += 1;
-        self.frames += 1;
+    fn note_residence(&mut self, i: usize, l: Ladder) {
+        self.ladder_mut(l).note_residence(i);
+    }
+
+    fn note_pruned(&mut self, l: Ladder) {
+        self.ladder_mut(l).note_pruned();
     }
 
     /// Directed transition q → p with the observed window PE peak as an
     /// upper bound of the crossing energy (kept as the best/lowest bound).
-    fn note_transition(&mut self, q: usize, p: usize, barrier: f64) {
-        self.transitions_out[q] += 1;
-        self.transitions_in[p] += 1;
-        let key = (q.min(p), q.max(p));
-        for t in self.pair_stats.iter_mut() {
-            if t.0 == key.0 && t.1 == key.1 {
-                t.2 += 1;
-                if barrier < t.3 {
-                    t.3 = barrier;
-                }
-                return;
-            }
-        }
-        self.pair_stats.push((key.0, key.1, 1, barrier));
+    fn note_transition(&mut self, q: usize, p: usize, barrier: f64, l: Ladder) {
+        self.ladder_mut(l).note_transition(q, p, barrier);
     }
 
     /// Result-order mapping: members sorted by energy, window-filtered
@@ -737,11 +812,11 @@ impl Ensemble {
             round_found: round,
             origin,
         });
-        self.visits.push(1); // the creating frame's visit
-        self.residence.push(0);
-        self.transitions_in.push(0);
-        self.transitions_out.push(0);
-        self.frames += 1;
+        // zeroed on both ladders — the CALLER's ladder notes the creating
+        // frame's visit (a crossing-created basin starts at 0% occupancy
+        // until a trajectory actually visits it)
+        self.metad.on_new_basin();
+        self.md.on_new_basin();
         let pos = self.members.len() - 1;
         if self.members.len() > self.max_conformers {
             // evict the previous maximum (never the just-added member — it
@@ -755,19 +830,8 @@ impl Ensemble {
                 }
             }
             self.members.remove(i_max);
-            self.visits.remove(i_max);
-            self.residence.remove(i_max);
-            self.transitions_in.remove(i_max);
-            self.transitions_out.remove(i_max);
-            let shift = |x: &mut usize| {
-                if *x > i_max {
-                    *x -= 1;
-                }
-            };
-            for t in self.pair_stats.iter_mut() {
-                shift(&mut t.0);
-                shift(&mut t.1);
-            }
+            self.metad.on_evict(i_max);
+            self.md.on_evict(i_max);
             return Some(pos - 1);
         }
         Some(pos)
@@ -897,6 +961,8 @@ pub struct ImtdSearch {
     round: usize,
     plan_cache: Option<Vec<RunSpec>>,
     pending: Vec<Option<Vec<Minimum>>>,
+    /// In-flight plain-MD verification batch (empty = none planned).
+    verify_pending: Vec<Option<Vec<Minimum>>>,
     rounds_executed: usize,
     new_minima_per_round: Vec<usize>,
     crossed_seeds: Vec<Vec<[f64; 3]>>,
@@ -936,6 +1002,7 @@ impl ImtdSearch {
             round: 1,
             plan_cache: None,
             pending: Vec::new(),
+            verify_pending: Vec::new(),
             rounds_executed: 0,
             new_minima_per_round: Vec::new(),
             crossed_seeds: Vec::new(),
@@ -1014,51 +1081,10 @@ impl ImtdSearch {
         let specs = self.plan_cache.take().expect("plan present when folding");
         let pending = std::mem::take(&mut self.pending);
         let _ = specs; // (round identity lives in the specs; fold order is the index)
+                       // fold metad minima in run-index order (== sequential execution order)
         let mut new_this_round = 0usize;
-        // fold metad minima in run-index order (== sequential execution
-        // order); each frame is classified for the landscape: an existing
-        // basin earns a visit, a new minimum creates one, window/cap rejects
-        // are pruned (and break the transition chain)
         for minima in pending.iter().flatten() {
-            let mut prev: Option<usize> = None;
-            for m in minima {
-                let (pos, created) = match self.ensemble.find_conformer(&m.coords, m.energy) {
-                    Some(i) => {
-                        self.ensemble.note_visit(i);
-                        (Some(i), false)
-                    }
-                    None => (
-                        self.ensemble.try_add_quenched(
-                            m.coords.clone(),
-                            m.energy,
-                            self.round,
-                            Origin::Metad,
-                        ),
-                        true,
-                    ),
-                };
-                if created {
-                    new_this_round += 1;
-                }
-                match pos {
-                    Some(p) => {
-                        if let Some(q) = prev {
-                            if q != p {
-                                // transition q→p with the observed window PE
-                                // peak as the barrier upper bound
-                                self.ensemble.note_transition(q, p, m.pe_max_since_prev);
-                            } else {
-                                self.ensemble.note_residence(p);
-                            }
-                        }
-                        prev = Some(p);
-                    }
-                    None => {
-                        self.ensemble.note_pruned();
-                        prev = None; // unassigned frame breaks the chain
-                    }
-                }
-            }
+            new_this_round += self.classify_frames(minima, Ladder::Metad);
         }
         // genetic crossing: recombine low-energy parents at rotatable cuts
         if self.config.crossing_pairs > 0
@@ -1105,6 +1131,112 @@ impl ImtdSearch {
         }
     }
 
+    /// Classify one run's quenched frames into the landscape: an existing
+    /// basin earns a visit (in `ladder`), a genuinely new minimum creates a
+    /// basin (its creating frame noted in the same ladder), window/cap
+    /// rejects are pruned and break the transition chain. Returns how many
+    /// NEW minima were created.
+    fn classify_frames(&mut self, minima: &[Minimum], ladder: Ladder) -> usize {
+        let mut created = 0usize;
+        let mut prev: Option<usize> = None;
+        for m in minima {
+            let pos = match self.ensemble.find_conformer(&m.coords, m.energy) {
+                Some(i) => {
+                    self.ensemble.note_visit(i, ladder);
+                    Some(i)
+                }
+                None => {
+                    let p = self.ensemble.try_add_quenched(
+                        m.coords.clone(),
+                        m.energy,
+                        self.rounds_executed,
+                        Origin::Metad,
+                    );
+                    if p.is_some() {
+                        created += 1;
+                        // the creating frame's visit belongs to this ladder
+                        if let Some(ip) = p {
+                            self.ensemble.note_visit(ip, ladder);
+                        }
+                    }
+                    p
+                }
+            };
+            match pos {
+                Some(p) => {
+                    if let Some(q) = prev {
+                        if q != p {
+                            // transition q→p with the observed window PE
+                            // peak as the barrier upper bound
+                            self.ensemble
+                                .note_transition(q, p, m.pe_max_since_prev, ladder);
+                        } else {
+                            self.ensemble.note_residence(p, ladder);
+                        }
+                    }
+                    prev = Some(p);
+                }
+                None => {
+                    self.ensemble.note_pruned(ladder);
+                    prev = None; // unassigned frame breaks the chain
+                }
+            }
+        }
+        created
+    }
+
+    /// Plan `n` plain-MD verification runs (hill_height = 0 ⇒ no bias — the
+    /// trajectory samples the physical surface, giving thermally meaningful
+    /// basin populations for the found minima). Starts rotate over the
+    /// low-energy basins; seeds live in a disjoint space (base + 1e6).
+    /// Only after the search finished and no round/batch is in flight;
+    /// batches may be repeated. Steps/quench cadence come from the DRIVER's
+    /// options at execution time (the spec itself is cadence-free).
+    pub fn plan_verify(&mut self, n: usize) -> Vec<RunSpec> {
+        if !self.finished || self.plan_cache.is_some() || n == 0 {
+            return Vec::new();
+        }
+        if self.verify_pending.iter().any(|p| p.is_some()) {
+            return Vec::new(); // a verification batch is still in flight
+        }
+        let top = self.ensemble.lowest_energy_indices();
+        if top.is_empty() {
+            return Vec::new();
+        }
+        let cv_default = self.pool.first().copied().unwrap_or(CvSpec::Distance(0, 1));
+        let specs: Vec<RunSpec> = (0..n)
+            .map(|i| RunSpec {
+                round: 0, // verification marker — no round semantics
+                run_index: i,
+                start: self.ensemble.members[top[i % top.len()]].coords.clone(),
+                cv: self
+                    .pool
+                    .get(i % self.pool.len().max(1))
+                    .copied()
+                    .unwrap_or(cv_default),
+                hill_height: 0.0,
+                seed: self.config.seed + 1_000_000 + i as u64,
+            })
+            .collect();
+        self.verify_pending = vec![None; specs.len()];
+        specs
+    }
+
+    /// Deposit one verification run's minima (any order); folds the batch
+    /// into the MD ladder once every planned run arrived.
+    pub fn gather_verify(&mut self, run_index: usize, minima: Vec<Minimum>) {
+        if run_index >= self.verify_pending.len() || self.verify_pending[run_index].is_some() {
+            return;
+        }
+        self.verify_pending[run_index] = Some(minima);
+        if self.verify_pending.iter().all(|p| p.is_some()) {
+            let pending = std::mem::take(&mut self.verify_pending);
+            for minima in pending.iter().flatten() {
+                self.classify_frames(minima, Ladder::Md);
+            }
+        }
+    }
+
     /// Snapshot result (non-destructive; may be called at any time).
     pub fn result(&self) -> ImtdResult {
         finalize(
@@ -1118,53 +1250,73 @@ impl ImtdSearch {
     }
 
     /// Landscape snapshot (non-destructive): basin statistics and the
-    /// disconnectivity tree, both aligned with the FINAL result order
-    /// (`result().conformers` indices == basin indices). Statistics of
+    /// disconnectivity trees, both ladders aligned with the FINAL result
+    /// order (`result().conformers` indices == basin indices). Statistics of
     /// members dropped by the final window/cap filter are discarded.
-    pub fn landscape(&self) -> (Landscape, Vec<DgNode>) {
+    pub fn landscape(&self) -> Landscape {
         let (kept, map) = self.ensemble.finalized_members();
-        let mut basins = vec![
-            BasinStats {
-                visits: 0,
-                residence: 0,
-                transitions_in: 0,
-                transitions_out: 0,
-            };
-            kept.len()
-        ];
-        for (old, new_i) in map.iter().enumerate() {
-            if let Some(&j) = new_i.as_ref() {
-                basins[j] = BasinStats {
-                    visits: self.ensemble.visits[old],
-                    residence: self.ensemble.residence[old],
-                    transitions_in: self.ensemble.transitions_in[old],
-                    transitions_out: self.ensemble.transitions_out[old],
+        let map_ladder = |stats: &LadderStats| -> (Vec<BasinStats>, Vec<TransitionStats>) {
+            let mut basins = vec![
+                BasinStats {
+                    visits: 0,
+                    residence: 0,
+                    transitions_in: 0,
+                    transitions_out: 0,
                 };
+                kept.len()
+            ];
+            for (old, new_i) in map.iter().enumerate() {
+                if let Some(&j) = new_i.as_ref() {
+                    if old < stats.visits.len() {
+                        basins[j] = BasinStats {
+                            visits: stats.visits[old],
+                            residence: stats.residence[old],
+                            transitions_in: stats.trans_in[old],
+                            transitions_out: stats.trans_out[old],
+                        };
+                    }
+                }
             }
-        }
-        let mut transitions = Vec::new();
-        for &(a, b, count, barrier) in &self.ensemble.pair_stats {
-            if let (Some(na), Some(nb)) = (map[a], map[b]) {
-                transitions.push(TransitionStats {
-                    from: na,
-                    to: nb,
-                    count,
-                    barrier,
-                });
+            let mut transitions = Vec::new();
+            for &(a, b, count, barrier) in &stats.pairs {
+                if let (Some(na), Some(nb)) =
+                    (map.get(a).copied().flatten(), map.get(b).copied().flatten())
+                {
+                    transitions.push(TransitionStats {
+                        from: na,
+                        to: nb,
+                        count,
+                        barrier,
+                    });
+                }
             }
-        }
-        transitions.sort_by_key(|t| (t.from, t.to));
+            transitions.sort_by_key(|t| (t.from, t.to));
+            (basins, transitions)
+        };
         let energies: Vec<f64> = kept.iter().map(|c| c.energy).collect();
-        let tree = dgraph(&energies, &transitions);
-        (
-            Landscape {
-                basins,
-                transitions,
-                frames: self.ensemble.frames,
-                pruned: self.ensemble.pruned,
-            },
-            tree,
-        )
+        let (basins, transitions) = map_ladder(&self.ensemble.metad);
+        let dgraph_tree = dgraph(&energies, &transitions);
+        let md = if self.ensemble.md.frames > 0 {
+            let (md_basins, md_transitions) = map_ladder(&self.ensemble.md);
+            let md_tree = dgraph(&energies, &md_transitions);
+            Some(MdLandscape {
+                basins: md_basins,
+                transitions: md_transitions,
+                dgraph: md_tree,
+                frames: self.ensemble.md.frames,
+                pruned: self.ensemble.md.pruned,
+            })
+        } else {
+            None
+        };
+        Landscape {
+            basins,
+            transitions,
+            dgraph: dgraph_tree,
+            frames: self.ensemble.metad.frames,
+            pruned: self.ensemble.metad.pruned,
+            md,
+        }
     }
 }
 
@@ -1251,9 +1403,24 @@ pub struct TransitionStats {
 pub struct Landscape {
     pub basins: Vec<BasinStats>,
     pub transitions: Vec<TransitionStats>,
-    /// Total quenched frames the fold classified.
+    /// Disconnectivity forest over the metad-ladder transition barriers.
+    pub dgraph: Vec<DgNode>,
+    /// Total quenched frames the fold classified (metad ladder).
     pub frames: usize,
     /// Frames rejected by window/cap (unassigned; they break transition chains).
+    pub pruned: usize,
+    /// Plain-MD verification ladder (present once verification runs folded).
+    pub md: Option<MdLandscape>,
+}
+
+/// The plain-MD verification ladder: thermally meaningful populations for
+/// the found basins (finite-sampling caveat applies).
+#[derive(Debug, Clone)]
+pub struct MdLandscape {
+    pub basins: Vec<BasinStats>,
+    pub transitions: Vec<TransitionStats>,
+    pub dgraph: Vec<DgNode>,
+    pub frames: usize,
     pub pruned: usize,
 }
 
@@ -1323,7 +1490,7 @@ fn dgraph(energies: &[f64], edges: &[TransitionStats]) -> Vec<DgNode> {
 
 /// Serialize the landscape for the UI (bit-exact float strings, same channel
 /// discipline as the spec/minima codecs).
-pub fn landscape_to_json(l: &Landscape, tree: &[DgNode]) -> String {
+pub fn landscape_to_json(l: &Landscape) -> String {
     fn dg_value(n: &DgNode) -> serde_json::Value {
         serde_json::json!({
             "t": f64_to_json(n.threshold),
@@ -1331,6 +1498,25 @@ pub fn landscape_to_json(l: &Landscape, tree: &[DgNode]) -> String {
             "children": n.children.iter().map(dg_value).collect::<Vec<_>>(),
         })
     }
+    let ladder_value = |basins: &[BasinStats],
+                        transitions: &[TransitionStats],
+                        tree: &[DgNode],
+                        frames: usize,
+                        pruned: usize|
+     -> serde_json::Value {
+        serde_json::json!({
+            "frames": frames,
+            "pruned": pruned,
+            "basins": basins.iter().enumerate().map(|(i, b)| serde_json::json!({
+                "i": i, "visits": b.visits, "residence": b.residence,
+                "in": b.transitions_in, "out": b.transitions_out,
+            })).collect::<Vec<_>>(),
+            "transitions": transitions.iter().map(|t| serde_json::json!({
+                "a": t.from, "b": t.to, "count": t.count, "barrier": f64_to_json(t.barrier),
+            })).collect::<Vec<_>>(),
+            "dgraph": tree.iter().map(dg_value).collect::<Vec<_>>(),
+        })
+    };
     serde_json::json!({
         "frames": l.frames,
         "pruned": l.pruned,
@@ -1341,7 +1527,8 @@ pub fn landscape_to_json(l: &Landscape, tree: &[DgNode]) -> String {
         "transitions": l.transitions.iter().map(|t| serde_json::json!({
             "a": t.from, "b": t.to, "count": t.count, "barrier": f64_to_json(t.barrier),
         })).collect::<Vec<_>>(),
-        "dgraph": tree.iter().map(dg_value).collect::<Vec<_>>(),
+        "dgraph": l.dgraph.iter().map(dg_value).collect::<Vec<_>>(),
+        "md": l.md.as_ref().map(|m| ladder_value(&m.basins, &m.transitions, &m.dgraph, m.frames, m.pruned)),
     })
     .to_string()
 }
@@ -2017,7 +2204,7 @@ mod tests {
             }
         }
         let res = search.result();
-        let (land, tree) = search.landscape();
+        let land = search.landscape();
         assert!(
             land.frames >= 30,
             "dense budget yields many frames, got {}",
@@ -2054,10 +2241,10 @@ mod tests {
                 n.children.iter().map(count_leaves).sum()
             }
         }
-        let leaves: usize = tree.iter().map(count_leaves).sum();
+        let leaves: usize = land.dgraph.iter().map(count_leaves).sum();
         assert_eq!(leaves, res.conformers.len(), "leaves == final basins");
         // determinism of the whole landscape payload
-        let json1 = landscape_to_json(&land, &tree);
+        let json1 = landscape_to_json(&land);
         let mut search2 = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
         while !search2.done() {
             for spec in search2.plan().to_vec() {
@@ -2065,8 +2252,8 @@ mod tests {
                 search2.gather(spec.run_index, m);
             }
         }
-        let (land2, tree2) = search2.landscape();
-        assert_eq!(json1, landscape_to_json(&land2, &tree2), "deterministic");
+        let land2 = search2.landscape();
+        assert_eq!(json1, landscape_to_json(&land2), "deterministic");
         // the JSON parses back with the exact barrier values
         let v: serde_json::Value = serde_json::from_str(&json1).expect("landscape json parses");
         assert_eq!(v["frames"].as_u64(), Some(land.frames as u64));
@@ -2092,7 +2279,7 @@ mod tests {
                 seq.gather(spec.run_index, m);
             }
         }
-        let (l1, t1) = seq.landscape();
+        let l1 = seq.landscape();
         // out-of-order arrival through the JSON boundary
         let mut par = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
         while !par.done() {
@@ -2113,12 +2300,72 @@ mod tests {
                 par.gather(i, minima_from_json(j).expect("parse"));
             }
         }
-        let (l2, t2) = par.landscape();
+        let l2 = par.landscape();
         assert_eq!(
-            landscape_to_json(&l1, &t1),
-            landscape_to_json(&l2, &t2),
+            landscape_to_json(&l1),
+            landscape_to_json(&l2),
             "landscape must be arrival-order independent"
         );
+    }
+
+    #[test]
+    fn verify_phase_populates_md_ladder_deterministically() {
+        let mol = ethanol();
+        let cfg = small_cfg();
+        let run_all = |s: &mut ImtdSearch| {
+            let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+            while !s.done() {
+                for spec in s.plan().to_vec() {
+                    let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &spec);
+                    s.gather(spec.run_index, m);
+                }
+            }
+            for _ in 0..2 {
+                let specs = s.plan_verify(3);
+                assert!(!specs.is_empty(), "verification batch plannable");
+                for sp in &specs {
+                    let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, sp);
+                    s.gather_verify(sp.run_index, m);
+                }
+            }
+        };
+        let mut s1 = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
+        // guards: no verification before the search finished
+        assert!(s1.plan_verify(2).is_empty());
+        run_all(&mut s1);
+        let land = s1.landscape();
+        let md = land.md.as_ref().expect("md ladder present after verify");
+        assert!(
+            md.frames >= 6,
+            "two batches of plain-MD runs, got {}",
+            md.frames
+        );
+        let vis: usize = md.basins.iter().map(|b| b.visits).sum();
+        assert!(vis + md.pruned <= md.frames, "md conservation");
+        let sin: usize = md.basins.iter().map(|b| b.transitions_in).sum();
+        let sout: usize = md.basins.iter().map(|b| b.transitions_out).sum();
+        assert_eq!(sin, sout, "md ladder in==out");
+        let json1 = landscape_to_json(&land);
+        let v: serde_json::Value = serde_json::from_str(&json1).expect("json");
+        assert!(
+            v["md"]["frames"].as_u64().unwrap_or(0) >= 6,
+            "md block emitted"
+        );
+        // spec sanity: zero bias + disjoint seed space
+        let mut s2 = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
+        while !s2.done() {
+            let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+            for spec in s2.plan().to_vec() {
+                let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &spec);
+                s2.gather(spec.run_index, m);
+            }
+        }
+        for sp in s2.plan_verify(3) {
+            assert_eq!(sp.hill_height, 0.0, "plain MD = zero bias");
+            assert!(sp.seed >= 1_000_000, "disjoint verification seed space");
+        }
+        run_all(&mut s2);
+        assert_eq!(json1, landscape_to_json(&s2.landscape()), "deterministic");
     }
 
     #[test]

@@ -1145,8 +1145,13 @@ details {
        <div class="version" id="confChartAxis" style="margin-bottom:0.4rem;"></div>
        <div id="landscapeWrap" style="display:none; margin-top:0.5rem;">
          <div class="version" style="display:flex; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
-           <span><b>能量景观</b> — 断连图(叶=极小,枝=观测势垒上界)· <i>metad 偏置采样:占据为定性拓扑证据,非平衡布居;势垒随采样下降,非鞍点能</i></span>
-           <span id="landscapeMeta"></span>
+           <span><b>能量景观</b> — <i>metad 偏置采样:占据为定性拓扑证据,非平衡布居;势垒随采样下降,非鞍点能</i></span>
+           <span style="display:flex; align-items:center; gap:0.3rem; flex-wrap:wrap;">
+             <button id="lsViewDg" title="断连图(叶=极小,枝=观测势垒上界)" style="border:1px solid var(--border); background:#e2e8f0; border-radius:5px; padding:0.05rem 0.45rem; cursor:pointer; font-size:0.72rem;">断连图</button>
+             <button id="lsViewNet" title="力导向网络图(节点大小∝占据,边宽∝转移计数)" style="border:1px solid var(--border); background:#fff; border-radius:5px; padding:0.05rem 0.45rem; cursor:pointer; font-size:0.72rem;">网络图</button>
+             <button id="btnMdVerify" title="在当前盆地上跑纯 MD(hill=0)验证批次,给出无偏占据" style="border:1px solid var(--border); background:#fff; border-radius:5px; padding:0.05rem 0.45rem; cursor:pointer; font-size:0.72rem;">MD 占据验证</button>
+             <span id="landscapeMeta"></span>
+           </span>
          </div>
          <svg id="dgraphSvg" tabindex="0" role="img" aria-label="Disconnectivity graph - arrow keys or click a leaf to view that conformer" style="width:100%; height:230px; margin-top:0.3rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;"></svg>
          <div id="basinTableWrap" style="margin-top:0.35rem; max-height:180px; overflow:auto;"></div>
@@ -5311,6 +5316,7 @@ function reset3DState() {
   document.getElementById('energyPanel').style.display = 'none';
   document.getElementById('confPanel').style.display = 'none';
   hideLandscape();
+  imtdVerifyHandle = null;   // the landscape's coordinator died with the structure
   clear3DViewer();
   for (const id of ['btnEmbed', 'btnOpt', 'btnConf', 'btnImtd', 'btnSdf', 'btnXyz', 'btnPng']) {
     document.getElementById(id).disabled = true;
@@ -6390,6 +6396,7 @@ async function runImtd() {
 
     document.getElementById('btnImtd').textContent = 'iMTD';
     if (res.cancelled) {
+      imtdVerifyHandle = null;
       imtdTaskEnd('cancelled', { failure: res.cancelReason || 'user cancel' });
       set3dStatus(`iMTD cancelled (${res.cancelReason || 'user cancel'}) — ensemble discarded`);
       imtdRun = null;
@@ -6416,6 +6423,8 @@ async function runImtd() {
     drawConformerChart();
     syncConformerEnergy(0);
     try { lastLandscape = JSON.parse(res.landscapeJson || 'null'); } catch (e) { lastLandscape = null; }
+    imtdVerifyHandle = handle;   // live coordinator for MD-occupancy batches
+    lastImtdSteps = steps;
     drawLandscape();
     set3dStatus(`<b>iMTD-GC: ${res.nConfs} unique minima, ${res.roundsExecuted} round${res.roundsExecuted > 1 ? 's' : ''}${res.converged ? ' (converged)' : ' (budget cap)'} on ${res.workers} worker${res.workers > 1 ? 's' : ''} in ${(res.ms / 1000).toFixed(1)}s</b> — minima fully quenched (no ΔE re-opt needed) · lowest E(${engineSel}) = ${Emin.toFixed(2)} kcal/mol`);
     imtdTaskEnd('complete', { nConfs: res.nConfs, roundsExecuted: res.roundsExecuted, converged: res.converged });
@@ -6667,7 +6676,11 @@ function exportEnsembleSDF() {
   // ---- energy landscape view (iMTD runs only): disconnectivity graph ----
   // + basin statistics. Leaf click / arrow keys reuse the conformer
   // selection (showEnsembleConf), so 3D + energy panel follow for free.
-  let lastLandscape = null;   // parsed landscape JSON of the last iMTD run
+  let lastLandscape = null;      // parsed landscape JSON of the last iMTD run
+  let landscapeView = 'dg';      // 'dg' = disconnectivity graph | 'net' = network
+  let imtdVerifyHandle = null;   // live coordinator of the last completed iMTD run
+  let lastImtdSteps = 2000;
+  let mdVerifyRunning = false;
 
   function hideLandscape() {
     lastLandscape = null;
@@ -6687,19 +6700,62 @@ function exportEnsembleSDF() {
     }
     const L = lastLandscape;
     wrap.style.display = '';
+    meta.textContent = `${L.frames} 帧淬灭 · ${L.pruned} 剔除 · ${(L.transitions || []).length} 观测转移边` +
+      (L.md && L.md.frames ? ` · MD ${L.md.frames} 帧无偏占据` : '');
+
+    // basin table (MD occupancy column once verification data folded)
+    const hasMd = !!(L.md && L.md.frames);
+    const rows = (L.basins || []).map((b, i) => {
+      const c = confEnsemble[i];
+      if (!c) return '';
+      const occ = (100 * b.visits / Math.max(1, L.frames)).toFixed(0);
+      const mdOcc = hasMd && L.md.basins[i]
+        ? `${(100 * L.md.basins[i].visits / Math.max(1, L.md.frames)).toFixed(0)}%` : '–';
+      const sel = selConf === i ? ' style="background:#fef3c7"' : '';
+      return `<tr${sel} data-basin="${i}" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();">
+        <td>#${i + 1}</td><td>${c.E.toFixed(2)}</td><td>${c.dE.toFixed(2)}</td>
+        <td>${occ}%</td><td>${mdOcc}</td><td>${b.residence}</td><td>${b.transitions_in} / ${b.transitions_out}</td></tr>`;
+    }).join('');
+    tableWrap.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:0.78rem;">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border);">
+        <th>盆地</th><th>E</th><th>ΔE</th><th>占据</th>${hasMd ? '<th>MD 占据</th>' : ''}<th>驻留</th><th>转入/转出</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+    drawLandscapeView();
+  }
+  window.drawLandscape = drawLandscape;
+
+  function setLandscapeView(v) {
+    landscapeView = v;
+    const bd = document.getElementById('lsViewDg'), bn = document.getElementById('lsViewNet');
+    if (bd) bd.style.background = v === 'dg' ? '#e2e8f0' : '#fff';
+    if (bn) bn.style.background = v === 'net' ? '#e2e8f0' : '#fff';
+    drawLandscapeView();
+  }
+  window.setLandscapeView = setLandscapeView;
+
+  function drawLandscapeView() {
+    if (!lastLandscape || !confEnsemble || !confEnsemble.length) return;
+    if (landscapeView === 'net') drawNetwork(); else drawDgraph();
+  }
+
+  // ---- disconnectivity graph (default view) ----
+  function drawDgraph() {
+    const svg = document.getElementById('dgraphSvg');
+    const L = lastLandscape;
+    if (!svg || !L || !confEnsemble || !confEnsemble.length) return;
     const W = svg.clientWidth || 600, H = svg.clientHeight || 230;
     const padX = 46, padTop = 16, padBot = 26;
-
-    // layout: leaf x by basin order (energy-sorted), y by energy;
-    // internal x = mean of children, y = merge threshold
+    // prefer the MD-ladder tree when verification data exists (unbiased
+    // barriers), else the metad-ladder tree
+    const dgraphSrc = (L.md && L.md.frames && L.md.dgraph && L.md.dgraph.length) ? L.md.dgraph : (L.dgraph || []);
     const eMin = confEnsemble[0].E;
     let tMax = confEnsemble[confEnsemble.length - 1].E;
     const scanT = n => { const t = parseFloat(n.t); if (isFinite(t) && t > tMax) tMax = t; (n.children || []).forEach(scanT); };
-    (L.dgraph || []).forEach(scanT);
+    dgraphSrc.forEach(scanT);
     const span = Math.max(tMax - eMin, 0.5);
     const yOf = e => padTop + (1 - (e - eMin) / span) * (H - padTop - padBot);
-    const leafX = [];
     const nLeaves = confEnsemble.length;
+    const leafX = [];
     for (let i = 0; i < nLeaves; i++) leafX.push(padX + (i + 0.5) * (W - 2 * padX) / nLeaves);
 
     const parts = [];
@@ -6719,13 +6775,16 @@ function exportEnsembleSDF() {
       }
       return node;
     };
-    const roots = (L.dgraph || []).map(layout);
+    const roots = dgraphSrc.map(layout);
     const drawLeaf = (node) => {
       if (!node.children || !node.children.length) {
         const i = node.basin;
         if (i == null || !confEnsemble[i]) return;
         const sel = selConf === i;
-        parts.push(`<circle data-basin="${i}" cx="${node.__x.toFixed(1)}" cy="${node.__y.toFixed(1)}" r="${sel ? 6 : 4.5}" fill="${sel ? '#b45309' : '#1e6bb8'}" stroke="#fff" stroke-width="1.2" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();"><title>盆地 ${i + 1} · E = ${confEnsemble[i].E.toFixed(2)} kcal/mol · 占据 ${(100 * (L.basins[i] ? L.basins[i].visits : 0) / Math.max(1, L.frames)).toFixed(0)}%</title></circle>`);
+        const occSrc = (L.md && L.md.frames) ? L.md : L;
+        const b = (occSrc.basins || [])[i];
+        const occ = b && occSrc.frames ? (100 * b.visits / occSrc.frames).toFixed(0) : '0';
+        parts.push(`<circle data-basin="${i}" cx="${node.__x.toFixed(1)}" cy="${node.__y.toFixed(1)}" r="${sel ? 6 : 4.5}" fill="${sel ? '#b45309' : '#1e6bb8'}" stroke="#fff" stroke-width="1.2" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();"><title>盆地 ${i + 1} · E = ${confEnsemble[i].E.toFixed(2)} kcal/mol · 占据 ${occ}%${occSrc === L.md ? ' (MD)' : ''}</title></circle>`);
         parts.push(`<text x="${node.__x.toFixed(1)}" y="${(node.__y + 16).toFixed(1)}" text-anchor="middle" font-size="9" fill="#475569">#${i + 1}</text>`);
         leafCount++;
         return;
@@ -6751,24 +6810,107 @@ function exportEnsembleSDF() {
       showEnsembleConf(next);
       drawLandscape();
     };
-    meta.textContent = `${L.frames} 帧淬灭 · ${L.pruned} 剔除 · ${(L.transitions || []).length} 观测转移边`;
-
-    // basin table
-    const rows = (L.basins || []).map((b, i) => {
-      const c = confEnsemble[i];
-      if (!c) return '';
-      const occ = (100 * b.visits / Math.max(1, L.frames)).toFixed(0);
-      const sel = selConf === i ? ' style="background:#fef3c7"' : '';
-      return `<tr${sel} data-basin="${i}" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();">
-        <td>#${i + 1}</td><td>${c.E.toFixed(2)}</td><td>${c.dE.toFixed(2)}</td>
-        <td>${occ}%</td><td>${b.residence}</td><td>${b.transitions_in} / ${b.transitions_out}</td></tr>`;
-    }).join('');
-    tableWrap.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:0.78rem;">
-      <thead><tr style="text-align:left; border-bottom:1px solid var(--border);">
-        <th>盆地</th><th>E</th><th>ΔE</th><th>占据</th><th>驻留</th><th>转入/转出</th></tr></thead>
-      <tbody>${rows}</tbody></table>`;
   }
-  window.drawLandscape = drawLandscape;
+
+  // ---- force-directed network (deterministic: circular init, no RNG) ----
+  function drawNetwork() {
+    const svg = document.getElementById('dgraphSvg');
+    const L = lastLandscape;
+    if (!svg || !L || !confEnsemble || !confEnsemble.length) return;
+    const n = confEnsemble.length;
+    // edge/occupancy source: prefer the unbiased MD ladder when present
+    const md = L.md && L.md.frames ? L.md : null;
+    const edges = (md ? md.transitions : L.transitions) || [];
+    const occOf = i => {
+      const b = md ? md.basins[i] : (L.basins || [])[i];
+      const fr = md ? md.frames : L.frames;
+      return b && fr ? b.visits / fr : 0;
+    };
+    const W = svg.clientWidth || 600, H = svg.clientHeight || 230;
+    const cx = W * 0.56, cy = H / 2, R = Math.min(W, H) * 0.32;
+    const px = [], py = [];
+    for (let i = 0; i < n; i++) {
+      const a = 2 * Math.PI * i / n;
+      px.push(cx + R * Math.cos(a)); py.push(cy + R * Math.sin(a));
+    }
+    const ITER = 220, K = 52, L0 = 74;
+    for (let it = 0; it < ITER; it++) {
+      const fx = new Array(n).fill(0), fy = new Array(n).fill(0);
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        let dx = px[i] - px[j], dy = py[i] - py[j];
+        let d2 = dx * dx + dy * dy; if (d2 < 1) { d2 = 1; dx = 1; }
+        const f = K * K / d2, d = Math.sqrt(d2);
+        const ux = dx / d, uy = dy / d;
+        fx[i] += ux * f; fy[i] += uy * f; fx[j] -= ux * f; fy[j] -= uy * f;
+      }
+      for (const e of edges) {
+        const a = e.a, b = e.b; if (a >= n || b >= n) continue;
+        const dx = px[b] - px[a], dy = py[b] - py[a];
+        const d = Math.max(1, Math.hypot(dx, dy));
+        const f = (d - L0) * 0.06, ux = dx / d, uy = dy / d;
+        fx[a] += ux * f; fy[a] += uy * f; fx[b] -= ux * f; fy[b] -= uy * f;
+      }
+      for (let i = 0; i < n; i++) {
+        fx[i] += (cx - px[i]) * 0.012; fy[i] += (cy - py[i]) * 0.012;
+        px[i] += Math.max(-6, Math.min(6, fx[i]));
+        py[i] += Math.max(-6, Math.min(6, fy[i]));
+        px[i] = Math.max(18, Math.min(W - 18, px[i]));
+        py[i] = Math.max(14, Math.min(H - 14, py[i]));
+      }
+    }
+    const parts = [];
+    const maxC = Math.max(1, ...edges.map(e => e.count));
+    for (const e of edges) {
+      if (e.a >= n || e.b >= n) continue;
+      const wgt = (0.8 + 2.6 * e.count / maxC).toFixed(1);
+      parts.push(`<line data-edge="${e.a}-${e.b}" x1="${px[e.a].toFixed(1)}" y1="${py[e.a].toFixed(1)}" x2="${px[e.b].toFixed(1)}" y2="${py[e.b].toFixed(1)}" stroke="#94a3b8" stroke-width="${wgt}"/>`);
+    }
+    const eMin = confEnsemble[0].E, eMax = confEnsemble[n - 1].E || eMin + 1;
+    for (let i = 0; i < n; i++) {
+      const t = (confEnsemble[i].E - eMin) / Math.max(1e-9, eMax - eMin);
+      const hue = 215 - 215 * t;   // blue (low E) → red (high E)
+      const r = (5 + 13 * Math.sqrt(occOf(i))).toFixed(1);
+      const sel = selConf === i;
+      parts.push(`<circle data-basin="${i}" cx="${px[i].toFixed(1)}" cy="${py[i].toFixed(1)}" r="${r}" fill="hsl(${hue.toFixed(0)},62%,${sel ? 42 : 52}%)" stroke="${sel ? '#b45309' : '#fff'}" stroke-width="${sel ? 2.4 : 1.2}" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();"><title>盆地 ${i + 1} · E = ${confEnsemble[i].E.toFixed(2)} · 占据 ${(100 * occOf(i)).toFixed(0)}%${md ? ' (MD)' : ''}</title></circle>`);
+      parts.push(`<text x="${px[i].toFixed(1)}" y="${(py[i] + 3).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="#fff" style="pointer-events:none">${i + 1}</text>`);
+    }
+    parts.push(`<text x="${W - 8}" y="14" text-anchor="end" font-size="9" fill="#64748b">节点∝占据 · 边∝转移 · ${md ? 'MD 无偏梯' : 'metad 梯'}</text>`);
+    svg.innerHTML = parts.join('');
+    svg.onkeydown = null;
+    svg.dataset.leaves = String(n);
+  }
+
+  // ---- plain-MD occupancy verification on the live coordinator ----
+  window.runMdVerify = async function runMdVerify() {
+    if (mdVerifyRunning) return;
+    if (!imtdVerifyHandle) { set3dStatus('无可用景观协调器——先运行 iMTD 搜索'); return; }
+    mdVerifyRunning = true;
+    const btn = document.getElementById('btnMdVerify');
+    btn.textContent = '验证中…';
+    const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 4));
+    const releases = [];
+    const nTok = Math.min(W, taskScheduler.stats().total);
+    for (let i = 0; i < nTok; i++) releases.push(await taskScheduler.acquire('interactive'));
+    try {
+      set3dStatus('MD 占据验证:纯 MD(hill=0)批次采样当前盆地…');
+      const steps = Math.max(2000, lastImtdSteps * 2);
+      const out = await imtdVerifyHandle.verify(W, steps);
+      try { lastLandscape = JSON.parse(out.landscapeJson || 'null'); } catch (e) { lastLandscape = null; }
+      drawLandscape();
+      const md = lastLandscape && lastLandscape.md;
+      set3dStatus(`MD 占据验证完成 — ${md ? md.frames + ' 帧无偏占据已并入景观(MD 占据列与网络图切至 MD 梯)' : '无数据'}`);
+    } catch (e) {
+      showError(e);
+      set3dStatus('MD 占据验证失败');
+    } finally {
+      for (const r of releases) { try { r(); } catch (e) {} }
+      mdVerifyRunning = false;
+      btn.textContent = 'MD 占据验证';
+    }
+  };
+  document.getElementById('lsViewDg').onclick = () => setLandscapeView('dg');
+  document.getElementById('lsViewNet').onclick = () => setLandscapeView('net');
+  document.getElementById('btnMdVerify').onclick = () => window.runMdVerify();
 
   document.getElementById('confChart').addEventListener('click', (e) => {
     if (!confEnsemble || !confEnsemble.length) return;

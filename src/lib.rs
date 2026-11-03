@@ -2001,6 +2001,36 @@ impl ImtdSearch {
             None => "{\"round\":0,\"runs\":[]}".to_string(),
         }
     }
+    /// Plan a plain-MD verification batch (hill_height = 0) AFTER the search
+    /// finished: `{"round": 0, "runs": [spec, ...]}` (empty runs = refused —
+    /// search not done or a batch is in flight). Execute the specs with the
+    /// caller's cadence options (steps/quench overrides) and fold via
+    /// `gather_verify`; the results feed the MD occupancy ladder.
+    pub fn plan_verify_json(&mut self, n: usize) -> String {
+        match self.core.as_mut() {
+            Some(c) => crate::metad::imtd::plan_to_json(0, &c.plan_verify(n)),
+            None => "{\"round\":0,\"runs\":[]}".to_string(),
+        }
+    }
+
+    /// Deposit one verification run's minima JSON (any order). Returns false
+    /// when the payload was rejected.
+    pub fn gather_verify(&mut self, run_index: usize, minima_json: &str) -> bool {
+        let Some(c) = self.core.as_mut() else {
+            return false;
+        };
+        match crate::metad::imtd::minima_from_json(minima_json) {
+            Ok(minima) => {
+                c.gather_verify(run_index, minima);
+                true
+            }
+            Err(e) => {
+                self.error = e;
+                false
+            }
+        }
+    }
+
     /// Deposit one run's minima JSON (any order; run_index from the spec).
     /// Returns false when the payload was rejected (parse failure, unknown
     /// run index, or duplicate deposit).
@@ -2024,10 +2054,7 @@ impl ImtdSearch {
     /// upper bounds, and the disconnectivity forest.
     pub fn landscape_json(&self) -> String {
         match self.core.as_ref() {
-            Some(c) => {
-                let (land, tree) = c.landscape();
-                crate::metad::imtd::landscape_to_json(&land, &tree)
-            }
+            Some(c) => crate::metad::imtd::landscape_to_json(&c.landscape()),
             None => "{\"frames\":0,\"pruned\":0,\"basins\":[],\"transitions\":[],\"dgraph\":[]}"
                 .to_string(),
         }

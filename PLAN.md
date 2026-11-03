@@ -1,33 +1,29 @@
-# Plan: 能量景观视图接入 workbench(引擎轨迹记录 + 断连图 + 盆地统计)(已完成)
+# Plan: 景观 v2——纯 MD 盆地验证(无偏占据)+ 力导向网络图(已完成)
 
-用户裁决(设计页三决策全按建议):①景观数据**始终记录**(契约零变更,UI 按需展示);②v1 主视觉=**断连图**;③纯 MD 盆地模式**不排,记 v2**。远期项就此进入实施。
+用户指令「继续」= 按 CODE_STATUS v2 队列:设计页 v2 包(纯 MD 盆地模式 + 网络图)。队列其余(鞍点精搜、占据玻尔兹曼重构、rerun UI、GFNFF quencher 缓存)仍记录不排期。
 
 ## 交付
-1. **引擎轨迹记录(src/metad/imtd.rs + mod.rs 一个观测方法)**
-   - `MetaDynamics::underlying_energy(&self, coords)`(无偏势能观测;零语义改动,不触山体状态)。
-   - `Minimum` 增字段:`pe_max_since_prev`(同 run 相邻淬灭帧窗口内**无偏** PE 峰=观测转移势垒上界)、`snapshot`(run 内淬灭序号);execute_run 每步采无偏 PE 维护窗口峰(重置于快照点);minima JSON 增 pe/snap 字段(解析容缺省)。
-2. **折叠统计与系综对齐**
-   - Ensemble 提取两级同构象判据为 `find_conformer(&coords,&energy)->Option<usize>`;`try_add_quenched` 返回改 **Option<usize>**(成员位置;创建即计 1 次访问);容量逐出同步收缩统计向量。
-   - ImtdSearch.fold:逐帧分类(重复→访问+1;新→try_add;窗/容量拒→pruned);同 run 相邻**已指派**帧:异盆→转移计数+势垒取历史最小上界,同盆→驻留+1;跨 run 不计转移;pruned 帧断链(记录语义)。
-   - finalize 重构出 `finalized_members()->(Vec<Conformer>, 旧→新映射)`:result() 与 landscape() 共用,统计按最终序重排(窗滤/容量截断丢弃的成员统计随之丢弃)。
-3. **断连图(确定性合并树)**
-   - `DgNode{threshold, basin:Option, children}`;构造=Kruskal 升序(势垒,from,to)+union-find,每次合并生成内节点;观测不连通⇒森林(诚实)。叶 threshold=盆地能量。
-   - 类型:`BasinStats{visits,residence,transitions_in/out}`、`TransitionStats{from,to,count,barrier}`(有向计数,势垒无向取最小)、`Landscape{basins,transitions,frames,pruned}`。
-4. **JSON/WASM(加法)**
-   - `landscape_to_json`(能量/势垒/阈值走 f64 字符串通道,同 spec/minima 纪律);`ImtdSearch::landscape()`(原生,测试面);wasm `ImtdSearch.landscape_json()`(d.ts +1 方法);驱动 result 增 `landscapeJson`(gather 后于协调器上取)。
-5. **UI(index.html,confPanel 景观区)**
-   - `landscapeWrap`:诚实横幅(metad 偏置采样,占据定性;势垒=观测上界非鞍点)+ `dgraphSvg`(手绘 SVG:叶=盆地按能量排布 y=E、内节点 y=阈值 x=子均值;叶可点/键盘 ←→)+ 盆地表(E/占据%/驻留/转入转出,行点击联动)。
-   - 叶子点击→`showEnsembleConf(i)`(复用 3D/能量面板/状态行);iMTD 完成时 `lastLandscape=JSON.parse(res.landscapeJson)` 并绘制;ETKDG conformers 路径(finishConformers)与 reset3DState 隐藏景观区。
-6. **测试**:原生(轨迹字段有限/序号连续;frames 守恒 Σvisits+pruned≤frames;全局 Σin==Σout;势垒≥max(E_a,E_b)-ε;断连树叶数==系综数;顺序==散射-收集 landscape 逐位;JSON 往返);CDP 新套件 **m17_landscape**(乙醇:景观区可见、叶数==系综数、占据列和≈100%、横幅文案在、点叶→selConf 联动、表行数、零 page error);run.sh 挂 m17。
-7. **不做(记录)**:纯 MD 盆地模式与力导向网络图(v2)、鞍点精搜、占据的玻尔兹曼重构。
+1. **引擎:纯 MD 验证阶段(src/metad/imtd.rs)**
+   - `plan_verify(n)->Vec<RunSpec>`:hill_height=0(零偏置=纯 MD;CV 仍评估但零贡献),起点=低能盆轮换,seed=config.seed+1e6+i 与 metad 种子空间不相交;仅 finished 且无在途轮/验证批次可规划;验证批次可多次规划(「再来一批」)。
+   - `gather_verify(idx, minima)`:缓冲收齐后**只做分类折叠**(访问/转移/驻留/pruned 断链)进 **MD 统计梯**,新极小照常入系综(诚实);无交叉、无收敛判定、rounds 不动。步长/淬灭间隔由驱动侧 ImtdOptions 覆盖(RunSpec 不载步数,worker 用 opts 执行)。
+   - Ensemble 统计双梯化:`Ladder{Metad,Md}`,note_visit/residence/transition/pruned 带梯参数;try_add_quenched 创建改推零、由调用方梯计一次访问(排雷语义变化:交叉产盆不再虚计 1 访问——占据 0% 直到被轨迹访问,更诚实);逐出/重排同步双梯。
+   - `Landscape` 增 md 块(md_basins/md_transitions/md_frames/md_pruned)+ dgraph_md(MD 边的断连森林,同 dgraph 纯函数复用);landscape_json 增 "md" 子对象(无验证数据时省略)。
+2. **WASM(加法)**:`ImtdSearch.plan_verify_json(n)`、`gather_verify(idx, minima_json)->bool`(镜像 gather 错误通道);d.ts 导出集合不变(类 +2 方法)。
+3. **驱动(app/tasks/imtd.js)**:start() 返回的 handle 增 `verify(nRuns, stepsOverride)->Promise<landscapeJson>`——主循环后协调器不弃,验证批次自建临时 worker 池(同 ready 门/轮内散射),与主循环共享 cancelFlag(取消即断);opts 覆盖 steps_per_run/quench_interval。
+4. **UI(index.html 景观区)**
+   - 视图切换「断连图 | 网络图」;**网络图**:确定性力导向(圆周初值+固定迭代斥力/弹簧/向心,无 RNG),节点=盆地(半径∝√占据%,能量热色,标注 #i),边宽∝转移计数,边源=MD 梯优先否则 metad;点节点→showEnsembleConf 联动。
+   - 「MD 占据验证」按钮:调存活 handle.verify(W, max(2000, steps×2));期间持 min(W,调度器总量) interactive 令牌;完成刷新 lastLandscape 重绘;盆地表增「MD 占据」列(有数据时);元行追加 MD 帧数;reset3DState/新运行清 handle。
+   - 断连图在 MD 数据在手时可切 dgraph_md(切换跟随边源选择)。
+5. **测试**:原生(plan_verify 规格:零偏置/种子不相交/守卫;MD 梯折叠:md_frames 记账、Σin==Σout、md 占据和≤100%、确定性;交叉产盆 0 访问语义;JSON md 块);CDP 新套件 **m18_landscape_v2**(断连图↔网络图切换:节点==盆地数、点节点联动;MD 验证按钮:md 帧>0、MD 占列出现、元行更新、令牌全释;零 page error);run.sh 挂 m18。
+6. **不做(记录)**:鞍点精搜、占据玻尔兹曼重构、rerun UI、GFNFF quencher 缓存、MD 验证的任务层记账(视图精化动作,interactive 令牌即可;后续可补)。
 
 ## 验收(实测)
-cargo fmt/clippy 双目标 0(sort_by→sort_by_key 一处修复);cargo test 347(lib,+4 景观)+ 7(sascore_golden)全绿;wasm 重编 d.ts 导出集合零变化(ImtdSearch 类 +1 方法 landscape_json);run.sh 29/30 CDP 全绿(m1 xtb 环境项)+ m17 11/11 + Node 153/153。
+cargo fmt/clippy 双目标 0(unused_parens 九处清理);cargo test 348(lib,+1 验证阶段)+ 7 全绿;wasm 重编 d.ts 导出集合零变化(ImtdSearch 类 +2 方法 plan_verify_json/gather_verify);run.sh 30/31 CDP 全绿(m1 xtb 环境项)+ m18 14/14 + m15/m16/m17 零回归 + Node 153/153。
 
 ## 排雷存档(本轮)
-- **势垒必须采无偏势能**:runner.potential_energy() 含 metad 偏置(山体填井后峰被压平)——给 MetaDynamics 加零语义观测方法 underlying_energy(&self)(走内层 ff.energy),每步一额外能量求值;execute_run 持 Rc 克隆保句柄(原实现 move 进 MDRunner 后无法再采样)。
-- **逐出路径的位置重排**:容量逐出收缩五条平行统计向量外,pair_stats 里的盆地号也要 >i_max 减一——首版占位写法被编译器抓住,重写为 shift 闭包;返回位置=pos-1(新成员永不被逐,cap 检查保证 strictly-below-max)。
-- **转移链语义**:pruned 帧(窗/容量拒)断链——相邻已指派帧之间才计转移,跨 run 不计;驻留=同盆连续快照对数。frames 守恒为不等式(Σvisits+pruned≤frames,因 finalize 窗滤/截断丢成员丢访问)。
-- **锚点差异再犯**:finishConformers 的实际代码序(showSdfIn3D 在 display=block 前)与记忆不符——脚本断言失败即退出不写盘,重读真实块后 5 锚全中;同轮 m17 的 ETKDG 隐藏路径用真实断言兜住。
-- **JS 闭包递归**:SVG 叶计数首版用闭包 let count_leaves = |n| {... map(count_leaves)}(Rust 闭包不能自引用)——改 fn 声明;浏览器端 drawLandscape 的树遍历无此问题(JS 闭包可递归)。
-- dgraph 森林语义:观测不连通的盆地各为一根(诚实"observed disconnected"),非断言真不连通;Kruskal 序 (barrier, from, to) 确定性。
+- **JS 闭包域**:verify 定义在 start 的 promise IIFE 之外,引用不到 IIFE 内的 search/wasmUrl——"search is not defined" 运行时才爆;修法:search 提升到 start 作用域由 IIFE 赋值,wasmUrl 在 verify 内自取。排雷手法:page.evaluate 直调 handle.verify 返回错误串,比等状态行超时快得多。
+- **wasm 包滞后**:lib.rs 加了方法但没重编 pkg —— 浏览器里 "plan_verify_json is not a function";凡动 WASM 面,先 npm run build 再跑 CDP。
+- **创建访问语义变化**:try_add_quenched 改推零、调用方梯计一次访问——交叉产盆从虚计 1 访问变为 0% 直到被轨迹访问(更诚实);frames 记账同步移到 note_visit/note_pruned。
+- **Ladder 双梯重构**:六条平行向量收进 LadderStats 结构(on_new_basin/on_evict/note_*),Ensemble 持 metad+md 两梯——逐出/重排一处实现两梯共用,免六字段×2 的散弹式修改。
+- **python 拼接残渣**:drawDgraph 抽取后旧 drawLandscape 体内留下引用未定义 W 的悬空变量——整块重写(6679..6922)比补丁可靠;node --check 内联脚本兜底。
+- classify_frames 的 DRY:metad 折叠与验证折叠共用逐帧分类(同判据/同转移链语义),差异仅梯与 Origin;新极小 round_found 取 rounds_executed。
