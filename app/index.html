@@ -1143,6 +1143,14 @@ details {
        <strong>Conformer Ensemble (kcal/mol, pruned)</strong>
        <canvas id="confChart" tabindex="0" style="width:100%; height:96px; margin:0.4rem 0 0.2rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;" aria-label="Conformer energy chart - click a bar or use arrow keys to show that conformer"></canvas>
        <div class="version" id="confChartAxis" style="margin-bottom:0.4rem;"></div>
+       <div id="landscapeWrap" style="display:none; margin-top:0.5rem;">
+         <div class="version" style="display:flex; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+           <span><b>能量景观</b> — 断连图(叶=极小,枝=观测势垒上界)· <i>metad 偏置采样:占据为定性拓扑证据,非平衡布居;势垒随采样下降,非鞍点能</i></span>
+           <span id="landscapeMeta"></span>
+         </div>
+         <svg id="dgraphSvg" tabindex="0" role="img" aria-label="Disconnectivity graph - arrow keys or click a leaf to view that conformer" style="width:100%; height:230px; margin-top:0.3rem; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer;"></svg>
+         <div id="basinTableWrap" style="margin-top:0.35rem; max-height:180px; overflow:auto;"></div>
+       </div>
        <button onclick="exportEnsembleSDF()" style="margin-top:0.5rem;">Export ensemble SDF</button>
      </div>
      <div class="spiral-note">
@@ -5302,6 +5310,7 @@ function reset3DState() {
   document.getElementById('chargeColor').checked = false;
   document.getElementById('energyPanel').style.display = 'none';
   document.getElementById('confPanel').style.display = 'none';
+  hideLandscape();
   clear3DViewer();
   for (const id of ['btnEmbed', 'btnOpt', 'btnConf', 'btnImtd', 'btnSdf', 'btnXyz', 'btnPng']) {
     document.getElementById(id).disabled = true;
@@ -6406,6 +6415,8 @@ async function runImtd() {
     document.getElementById('confPanel').style.display = 'block';
     drawConformerChart();
     syncConformerEnergy(0);
+    try { lastLandscape = JSON.parse(res.landscapeJson || 'null'); } catch (e) { lastLandscape = null; }
+    drawLandscape();
     set3dStatus(`<b>iMTD-GC: ${res.nConfs} unique minima, ${res.roundsExecuted} round${res.roundsExecuted > 1 ? 's' : ''}${res.converged ? ' (converged)' : ' (budget cap)'} on ${res.workers} worker${res.workers > 1 ? 's' : ''} in ${(res.ms / 1000).toFixed(1)}s</b> — minima fully quenched (no ΔE re-opt needed) · lowest E(${engineSel}) = ${Emin.toFixed(2)} kcal/mol`);
     imtdTaskEnd('complete', { nConfs: res.nConfs, roundsExecuted: res.roundsExecuted, converged: res.converged });
   } catch (e) {
@@ -6562,6 +6573,7 @@ function finishConformers(engine, rmsdCut, W) {
   selConf = 0;
   showSdfIn3D(confEnsemble[0].sdf);
   document.getElementById('confPanel').style.display = 'block';
+  hideLandscape();   // ETKDG ensembles carry no trajectory trace
   drawConformerChart();
   syncConformerEnergy(0);   // energy panel shows rank-1 terms by default
   set3dStatus(`<b>Conformers: ${confs.length} optimized (${dt}s on ${W} worker${W > 1 ? 's' : ''}), ` +
@@ -6652,6 +6664,112 @@ function exportEnsembleSDF() {
   }
 </script>
 <script>
+  // ---- energy landscape view (iMTD runs only): disconnectivity graph ----
+  // + basin statistics. Leaf click / arrow keys reuse the conformer
+  // selection (showEnsembleConf), so 3D + energy panel follow for free.
+  let lastLandscape = null;   // parsed landscape JSON of the last iMTD run
+
+  function hideLandscape() {
+    lastLandscape = null;
+    const wrap = document.getElementById('landscapeWrap');
+    if (wrap) wrap.style.display = 'none';
+  }
+  window.hideLandscape = hideLandscape;
+
+  function drawLandscape() {
+    const wrap = document.getElementById('landscapeWrap');
+    const svg = document.getElementById('dgraphSvg');
+    const meta = document.getElementById('landscapeMeta');
+    const tableWrap = document.getElementById('basinTableWrap');
+    if (!wrap || !svg || !lastLandscape || !confEnsemble || !confEnsemble.length) {
+      if (wrap) wrap.style.display = 'none';
+      return;
+    }
+    const L = lastLandscape;
+    wrap.style.display = '';
+    const W = svg.clientWidth || 600, H = svg.clientHeight || 230;
+    const padX = 46, padTop = 16, padBot = 26;
+
+    // layout: leaf x by basin order (energy-sorted), y by energy;
+    // internal x = mean of children, y = merge threshold
+    const eMin = confEnsemble[0].E;
+    let tMax = confEnsemble[confEnsemble.length - 1].E;
+    const scanT = n => { const t = parseFloat(n.t); if (isFinite(t) && t > tMax) tMax = t; (n.children || []).forEach(scanT); };
+    (L.dgraph || []).forEach(scanT);
+    const span = Math.max(tMax - eMin, 0.5);
+    const yOf = e => padTop + (1 - (e - eMin) / span) * (H - padTop - padBot);
+    const leafX = [];
+    const nLeaves = confEnsemble.length;
+    for (let i = 0; i < nLeaves; i++) leafX.push(padX + (i + 0.5) * (W - 2 * padX) / nLeaves);
+
+    const parts = [];
+    let leafCount = 0;
+    const layout = (node) => {
+      if (!node.children || !node.children.length) {
+        const i = node.basin;
+        node.__x = (i != null && leafX[i] != null) ? leafX[i] : W / 2;
+        node.__y = yOf(parseFloat(node.t));
+        return node;
+      }
+      const kids = node.children.map(layout);
+      node.__x = kids.reduce((a, k) => a + k.__x, 0) / kids.length;
+      node.__y = yOf(parseFloat(node.t));
+      for (const k of kids) {
+        parts.push(`<path d="M ${k.__x.toFixed(1)} ${k.__y.toFixed(1)} V ${node.__y.toFixed(1)} H ${node.__x.toFixed(1)}" fill="none" stroke="#64748b" stroke-width="1.4"/>`);
+      }
+      return node;
+    };
+    const roots = (L.dgraph || []).map(layout);
+    const drawLeaf = (node) => {
+      if (!node.children || !node.children.length) {
+        const i = node.basin;
+        if (i == null || !confEnsemble[i]) return;
+        const sel = selConf === i;
+        parts.push(`<circle data-basin="${i}" cx="${node.__x.toFixed(1)}" cy="${node.__y.toFixed(1)}" r="${sel ? 6 : 4.5}" fill="${sel ? '#b45309' : '#1e6bb8'}" stroke="#fff" stroke-width="1.2" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();"><title>盆地 ${i + 1} · E = ${confEnsemble[i].E.toFixed(2)} kcal/mol · 占据 ${(100 * (L.basins[i] ? L.basins[i].visits : 0) / Math.max(1, L.frames)).toFixed(0)}%</title></circle>`);
+        parts.push(`<text x="${node.__x.toFixed(1)}" y="${(node.__y + 16).toFixed(1)}" text-anchor="middle" font-size="9" fill="#475569">#${i + 1}</text>`);
+        leafCount++;
+        return;
+      }
+      node.children.forEach(drawLeaf);
+    };
+    roots.forEach(drawLeaf);
+    // energy axis
+    parts.push(`<line x1="${padX - 14}" y1="${padTop}" x2="${padX - 14}" y2="${H - padBot}" stroke="#94a3b8" stroke-width="1"/>`);
+    for (let k = 0; k <= 3; k++) {
+      const e = eMin + k * span / 3;
+      const y = yOf(e);
+      parts.push(`<line x1="${padX - 17}" y1="${y.toFixed(1)}" x2="${padX - 11}" y2="${y.toFixed(1)}" stroke="#94a3b8"/><text x="${padX - 22}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#64748b">${e.toFixed(1)}</text>`);
+    }
+    parts.push(`<text x="${padX - 22}" y="${padTop - 4}" text-anchor="end" font-size="9" fill="#64748b">E</text>`);
+    svg.innerHTML = parts.join('');
+    svg.dataset.leaves = String(leafCount);
+    svg.onkeydown = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const d = e.key === 'ArrowLeft' ? -1 : 1;
+      const next = Math.max(0, Math.min(confEnsemble.length - 1, (selConf < 0 ? 0 : selConf) + d));
+      showEnsembleConf(next);
+      drawLandscape();
+    };
+    meta.textContent = `${L.frames} 帧淬灭 · ${L.pruned} 剔除 · ${(L.transitions || []).length} 观测转移边`;
+
+    // basin table
+    const rows = (L.basins || []).map((b, i) => {
+      const c = confEnsemble[i];
+      if (!c) return '';
+      const occ = (100 * b.visits / Math.max(1, L.frames)).toFixed(0);
+      const sel = selConf === i ? ' style="background:#fef3c7"' : '';
+      return `<tr${sel} data-basin="${i}" style="cursor:pointer" onclick="showEnsembleConf(${i}); drawLandscape();">
+        <td>#${i + 1}</td><td>${c.E.toFixed(2)}</td><td>${c.dE.toFixed(2)}</td>
+        <td>${occ}%</td><td>${b.residence}</td><td>${b.transitions_in} / ${b.transitions_out}</td></tr>`;
+    }).join('');
+    tableWrap.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:0.78rem;">
+      <thead><tr style="text-align:left; border-bottom:1px solid var(--border);">
+        <th>盆地</th><th>E</th><th>ΔE</th><th>占据</th><th>驻留</th><th>转入/转出</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+  window.drawLandscape = drawLandscape;
+
   document.getElementById('confChart').addEventListener('click', (e) => {
     if (!confEnsemble || !confEnsemble.length) return;
     const rect = e.target.getBoundingClientRect();
@@ -6659,7 +6777,7 @@ function exportEnsembleSDF() {
     const pad = 14 / rect.width;
     const shown = displayedConfCount();
     const idx = Math.floor((x - pad) / ((1 - 2 * pad) / shown));
-    if (idx >= 0 && idx < shown) showEnsembleConf(idx);
+    if (idx >= 0 && idx < shown) { showEnsembleConf(idx); if (lastLandscape) drawLandscape(); }
   });
   document.getElementById('chargeColor').addEventListener('change', (e) => {
     chargeColorOn = e.target.checked;

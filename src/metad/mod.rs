@@ -245,6 +245,13 @@ impl MetaDynamics {
         *self.last_cv.borrow()
     }
 
+    /// Potential energy of the WRAPPED force field only, without the bias
+    /// (the physical surface). Observational accessor for trajectory
+    /// analysis (landscape PE peaks); never touches hill state.
+    pub fn underlying_energy(&self, coords: &[[f64; 3]]) -> f64 {
+        self.ff.energy(coords)
+    }
+
     /// The CV's [min, max] range (for FES grid plotting).
     pub fn cv_range(&self) -> (f64, f64) {
         self.cv.range()

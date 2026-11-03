@@ -133,7 +133,9 @@
       }
 
       const res = search.result();
+      const landscapeJson = search.landscape_json();
       return {
+        landscapeJson,
         nConfs: res.n_confs(),
         energies: res.energies(),
         coordinates: res.coordinates(),

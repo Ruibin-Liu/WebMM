@@ -2019,6 +2019,20 @@ impl ImtdSearch {
             }
         }
     }
+    /// Landscape snapshot as JSON: basin statistics (aligned with the
+    /// `result()` conformer order), pair transitions with observed-barrier
+    /// upper bounds, and the disconnectivity forest.
+    pub fn landscape_json(&self) -> String {
+        match self.core.as_ref() {
+            Some(c) => {
+                let (land, tree) = c.landscape();
+                crate::metad::imtd::landscape_to_json(&land, &tree)
+            }
+            None => "{\"frames\":0,\"pruned\":0,\"basins\":[],\"transitions\":[],\"dgraph\":[]}"
+                .to_string(),
+        }
+    }
+
     /// Snapshot of the ensemble + iteration stats (non-destructive).
     pub fn result(&self) -> ImtdSearchResult {
         match self.core.as_ref() {
