@@ -94,5 +94,13 @@ else
   echo "FAIL (log: /tmp/webmm-platform-node.log)"; fail=$((fail+1)); failed="$failed platform-node"
 fi
 
+echo "== node agent suite"
+printf '%-22s ' "tests/agent/run.js"
+if ( cd ../.. && node tests/agent/run.js > /tmp/webmm-agent-node.log 2>&1 ); then
+  tail -1 /tmp/webmm-agent-node.log; pass=$((pass+1))
+else
+  echo "FAIL (log: /tmp/webmm-agent-node.log)"; fail=$((fail+1)); failed="$failed agent-node"
+fi
+
 echo "RESULT: $pass suites passed, $fail failed${failed:+ —failed:$failed}"
 [ "$fail" -eq 0 ]
