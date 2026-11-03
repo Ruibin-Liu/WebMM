@@ -1,33 +1,33 @@
-# Plan: 简并度恢复 + 谐振自由能校正(占据科学性一轮交付)(已完成)
+# Plan: 收官轮——攀岩像两阶段 / C3 置换筒并 / 准谐振 / rerun UI / 任务层记账 / GFNFF 缓存度量(已完成)
 
-用户裁决「按流程来」= 设计页建议项 ①+② 连做:恢复被两级去重折叠的镜像简并度(Boltzmann 乘 g_i),并把布居从能量升级为自由能(G = E + 谐振 ZPE + S_vib 项)。
+用户指令「剩余的都做,然后冻结 feature」。dimer 按已批准建议保持关闭。本轮后仓库进入 feature freeze(仅修复与回归)。
 
 ## 交付
-1. **简并度恢复(src/metad/imtd.rs)**
-   - 能量判据分支细分:折叠发生时做**镜面叠合检验**(固定反射 z→−z 后再做真旋转 Kabsch=无叠合)——反射叠合 < tol ⇒ 镜像对 → `degeneracy[i] += 1`(折叠保留 + 记 g);否则 ⇒ 甲基置换 → 普通折叠(g 不变)。C3 类置换相关筒并(methanol 甲基转动)不计——v1 诚实边界,记录。
-   - Ensemble 增 `degeneracy: Vec<u64>` 平行向量(默认 1,逐出同步收缩);landscape basins 增 "g";Boltzmann 升级 `boltzmann_populations(energies, degeneracies, t)`(权重 g·exp(−ΔE/kT));旧签名 wasm 导出保留(g=1 包装),新增 `imtd_boltzmann_populations_g_json`。
-   - 语义:镜像帧仍是该折叠盆地的"访问"(占据归入折叠条目);g=该盆地观测到的**不同井数**(≤2)。
-   - 测试:手工构造乙醇 OH 转动异构三元组(H8 绕 C–O 轴 0°/±120° 淬灭)经 gather_verify 折叠 → 2 成员、basins g=[1,2];丁烷镜像对(重原子镜像,不折叠)各自 g=1 且布居求和天然等价 g=2(断言)。
-2. **谐振自由能校正(新模块 src/vib.rs)**
-   - `frequencies(ff, coords, masses) -> Vec<f64>`(**带符号** cm⁻¹):解析梯度中心差分 Hessian(h=0.005 Å,3N×2 次梯度),质量加权,`sym_jacobi` 对角化;单位换算常数从基本常数推出,甲烷/水频带测试锁定(最高频 2800–3300 等)。
-   - `harmonic_correction(freqs, t) -> (g_corr, zpe, n_imag)`:<25 cm⁻¹ 模式剔除(平动/转动残迹);虚频计 n_imag 并按 |ν| 计入(诚实旗标);G_i(T) = E_i + Σ[½k θ + kT ln(1−e^{−θ/T})],θ=1.43877·ν̃ K;同分子转动/平动熵自动相消故不计。
-   - 测试:H 对称;淬灭甲烷 6 个近零模 < 25;频带;T→0 ⇒ G_corr→ZPE;确定性。
-3. **协调器 + WASM(加法)**
-   - `ImtdSearch.thermo_json(t)`(原生+wasm 方法):对最终系综逐盆地算频率与 G(引擎同系综,GFN-FF 亦可——FD 梯度可得);输出 {i, G, gCorr, zpe, nImag, nuMax, nuMin}。
-   - d.ts:ImtdSearch +1 方法 + 新自由函数;既有导出零变化。
-4. **UI(index.html)**
-   - 盆地表:增「简并度 g」「G(T)」「Boltzmann(G)」列;Boltzmann(E) 列改乘 g;虚频盆地 ⚠ 标注;T 输入 onchange 触发 thermo 重算(协调器缓存按 (系综版本,T) 失效)。
-   - 驱动 handle.thermo(t) 或直接协调器方法(结果已含)——走后者,thermo 属视图派生非批次。
-5. **测试**:原生(vib 模块 + 简并度构造 + thermo 乙醇 n_imag=0、ZPE 量带);CDP 新套件 **m20_degeneracy_thermo**(确定性种子钉实测:g 列存在且至少一盆地 g=2;Boltzmann(E) 与手算 g·exp 一致;G 列有限、Boltzmann(G) 和=100%;换 T 更新;零 page error);run.sh 挂 m20。
-6. **不做(记录)**:C3+ 置换筒并、准谐振(QT)低频处理、转动/平动熵显式项(同分子相消)、简并度对 metad/MD 采样占据的分解。
+1. **筒并统一:变体几何计数(src/metad/imtd.rs,替代镜像特判)**
+   - 能量分支帧统一走 `note_variant(i, coords)`:与该盆地已存**变体代表几何**(含成员自身)真旋转全原子 RMSD < tol ⇒ 重访;否则新变体入档、degeneracy+1。镜像对/甲基置换/C3 转子统一为"观测到的不同井数"(≤对称数,诚实);边际镜像判据与 improper_rmsd 降级为测试工具。
+   - 测试:乙醇 OH 镜像孪生 g=2(回归);甲醇甲基转子三井 g=3(新);重访不涨。
+2. **攀岩像两阶段(src/neb.rs)**
+   - Phase1 标准带松弛至力阈(或 60% 预算);Phase2 激活攀岩像继续同判据——此前失败根因是攀岩在未收敛带上启动,预算被带松弛耗尽。默认 climbing=true 恢复;`NebResult` 增 phase 拐点信息。
+   - 测试:丁烷 anti↔gauche:CI 收敛、鞍点落在 [带峰−0.1, 带峰+0.8] 且 barrier∈[2,6];景观 refine 路径自动受益(默认配置即 CI)。
+3. **准谐振低频处理(src/vib.rs + thermo)**
+   - `harmonic_correction` 增 QH 变体:ν̃' = max(ν̃, 100 cm⁻¹)(Grimme 式,缓解软扭转谐振熵高估);thermo 同算 plain 与 QH 双 G,JSON 增 "Gqh"/"qhCut";UI G 列用 QH,tooltip 注明并给 plain 值。
+   - 测试:全频 ≥ 截止时与 plain 逐位相等;软模系统 QH G > plain G;T 极限不变式。
+4. **任务层记账(契约 §9.5 v1.1,可选 phase 字段)+ rerun UI**
+   - contract.js:imtd input 增可选 `phase:'verify'|'refine'`(默认缺省=搜索;verify 记 runs/steps/workers,refine 记 jobs)+ effectiveInput 钳制;docs 契约注记。
+   - index.html:runMdVerify/runNebRefine 提交 typed task(令牌已持有,补 spec/旁表/托盘/终态 facts:mdFrames/refinedCount);boot 对账沿用薄壳(无 facts⇒abandoned 自动覆盖)。
+   - **rerun**:托盘终态记录(conformers/imtd)增 ↻;重跑用**快照参数**(绝不取当前默认),守卫=快照 molblock 哈希 vs 当前结构,不符诚实拒绝并提示(镜像 optimize kind 语义);conformers 回填 confN/confRmsd/engineSel 后调 runConformers,imtd(含 phase 记录)回填轮/步/T 后重放对应动作。
+   - 测试:CDP m21(verify/refine 各留 complete 记录含 facts;托盘 ↻ 重跑产生新 complete 记录;结构变更后 ↻ 拒绝且状态行明示)。
+5. **GFNFF quencher 缓存:度量裁决**
+   - 基准:乙醇/阿司匹林量级 GfnffForceField::new 计时;若 <100μs/次(淬灭占比可忽略)→ 记录度量与"不做"结论(诚实);否则实现**零风险精确坐标缓存**(同坐标重复淬灭场景:NEB 端点、refine 重算)。结果落入 CODE_STATUS。
+6. **冻结准备**:CODE_STATUS 记录 freeze 姿态(后续仅修复/回归/性能,无新面)。
 
 ## 验收(实测)
-cargo fmt/clippy 双目标 0(redundant_clone/len>1 三处);cargo test 360(lib,+3:镜像孪生折叠构造/简并玻尔兹曼/热力学层;vib 模块另 4)+ 7 全绿;wasm 重编 d.ts 增 imtd_boltzmann_populations_g_json(+此前轮的 neb/ boltzmann 基线)+ ImtdSearch.thermo_json 方法;run.sh 32/33 CDP 全绿(m1 xtb 环境项)+ m20 9/9;m18/m19 因表列变更同步断言(排雷);m6_platform 出现两次 import-pins flake,stash 二分 + 复跑证实非本轮回归(既有脆弱家族)。
+cargo fmt/clippy 双目标 0(死码测试内迁/type alias/冗余克隆六处);cargo test 362(lib:筒并统一 2 新+攀岩断言改带峰语义+QH 1 新)+ 7 全绿;wasm 重编 d.ts 导出集合与上轮一致(本轮无新 wasm 面);run.sh 33/34 CDP 全绿(m1 xtb 环境项)+ m21 11/11;m20 的 g 断言随语义升级同步(≤2→观测井数合理域);GFNFF 度量入档(乙醇 9 原子 535µs/次构建)。**feature freeze 自本提交生效。**
 
 ## 排雷存档(本轮)
-- **镜像判据被标签噪声污染**:固定标签下甲基近自由旋转使 proper/improper RMSD 同涨(实测孪生 vs 成员 0.411/1.178 与 1.178/0.411 互换)——绝对 improper 阈值失效;改**边际判据** proper−improper > 0.15(置换帧两者相等,天然排除),探针实证 g=2。
-- **孪生构造两课**:±120° 旋转起点会被再淬灭把 C–C 扭转拖进另一转子(能量差恰为 anti/gauche 0.18);镜像孪生必须由**重原子平面反射**构造(反射极小=极小)。gather_verify 前忘 plan_verify 会静默丢弃(守卫返回空)。
-- **表头/行单元格错位**:MD 占据列条件渲染表头但行恒发 11 格——m19 列索引读到 '–' 得 NaN;m20 硬编码索引恰逢错位巧合通过。统一恒发(占位列未验证时显示 –),五套件列索引重核。表头文案改名 Boltzmann→Boltz.E 也牵动 m19 正则。
-- **ln(1−e^{−θ/T}) 符号**:exp_m1 少取负 → ln(负数) = NaN(T→0 暴露);直接写 1−exp。振动熵项恒负,G_corr(298) < ZPE(首版断言方向写反)。
-- **平转残迹含小负本征值**:淬灭极小的 FD Hessian 六个近零模正负兼有——"真极小"断言须容 cutoff(谐波求和已 <25 cm⁻¹ 剔除,虚频只在 |ν|≥25 计)。
-- 单位换算常数(108.6 cm⁻¹/√(kcal·mol⁻¹·Å⁻²·amu⁻¹))由甲烷 C–H 顶带 2800–3300 端到端锁定;水/乙醇频带与 ZPE≈48.8 量带交叉验证。
+- **攀岩像两阶段:机制就绪、默认仍关**——QuickMin 在攀岩相存在极限环(实测 maxF 1.66/2.13 交替、鞍点冻在 -1.999 低于真鞍点 -1.68),需阻尼投影 LBFGS 类积分器,越过冻结线;带峰=上界语义保持,两阶段代码与 climb_started 字段保留待后续。
+- **筒并统一揭示更深化学**:变体计数自动捕获转子对称数——乙醇实测单盆地观测 3~5 个等能井(甲基 σ3 × OH 双位组合),镜像对只是其特例;边际镜像判据随之退役(降级为测试工具)。
+- **甲醇孪生构造过滤器 bug**:`src[i]==base[o1]` 位置比较 intending 跳过 OH 氢,实际只匹配 O 自身——OH 氢被误旋转,三井退化为两井;改邻接 BFS 圈定甲基侧。
+- **imtd 记录身份双轨**:搜索记录 molblock=嵌入全 H 3D,而 rerun 守卫比较的是 sourceMolblock——苹果比橙子;§9.5 v1.1 增可选 sourceHash(源结构身份),守卫按 kind 分流(conformers 直比 molblock,imtd 比 sourceHash)。
+- **脚本断言中止=未写盘再犯两次**:runMdVerify 头部改动与 lastImtdMolblock 声明分落两次脚本,一次断言中止丢头部、一次丢声明——运行期 ReferenceError 才暴露;多段拼接后必须 node --check + 全符号 grep。
+- GFNFF 度量:535µs/构建(9 原子)——精确坐标缓存只惠及同坐标重算(thermo 换 T、NEB 端点);拓扑哈希缓存会重跑它想省的感知,不做。

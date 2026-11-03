@@ -155,6 +155,16 @@
       return {
         molblock: typeof i.molblock === 'string' ? i.molblock : '',
         engine: i.engine === 'gfnff' ? 'gfnff' : 'mmff',
+        // v1.1 optional phase: null = the search itself; 'verify' = plain-MD
+        // occupancy batch; 'refine' = NEB saddle pass (both extend the same
+        // structure — rerun of a phase record replays the search first)
+        phase: i.phase === 'verify' || i.phase === 'refine' ? i.phase : null,
+        // v1.1: the SOURCE structure hash (the search record's molblock is
+        // the embedded all-H 3D, not the source — rerun identity uses this)
+        sourceHash: typeof i.sourceHash === 'string' ? i.sourceHash : '',
+        runs: int(i.runs, 0, 12, 0),
+        steps: int(i.steps, 0, 200000, 0),
+        jobs: int(i.jobs, 0, 50, 0),
         rounds: int(i.rounds, 1, 50, 4),
         runsPerRound: int(i.runsPerRound, 1, 12, 3),
         stepsPerRun: int(i.stepsPerRun, 100, 200000, 2000),

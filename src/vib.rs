@@ -71,12 +71,24 @@ pub fn frequencies(ff: &dyn ForceField, coords: &[[f64; 3]], masses: &[f64]) -> 
 /// and excluded from the harmonic sum (soft torsions are well above).
 pub const TR_ROT_CUTOFF_CM: f64 = 25.0;
 
+/// Quasi-harmonic frequency floor (cm⁻¹, Grimme-style): modes below it are
+/// raised to it in the correction, mitigating the harmonic overestimate of
+/// soft-torsion entropy.
+pub const QH_CUTOFF_CM: f64 = 100.0;
+
 /// Harmonic free-energy correction at temperature `t` (K), in kcal/mol:
 /// Σ over real modes of [½·kB·θ + kB·T·ln(1 − exp(−θ/T))] with θ = (hc/kB)·ν̃;
 /// imaginary modes are counted (`n_imag`) and included with |ν̃| — the
 /// conformer is then flagged as not a true minimum by the caller.
-/// Returns (g_corr, zpe, n_imag).
+/// With `quasi_harmonic`, mode wavenumbers are floored at
+/// [`QH_CUTOFF_CM`] (Grimme-style), mitigating the harmonic overestimate of
+/// soft-torsion entropy. Returns (g_corr, zpe, n_imag).
 pub fn harmonic_correction(freqs: &[f64], t: f64) -> (f64, f64, usize) {
+    harmonic_correction_opt(freqs, t, false)
+}
+
+/// [`harmonic_correction`] with the quasi-harmonic floor switch.
+pub fn harmonic_correction_opt(freqs: &[f64], t: f64, quasi_harmonic: bool) -> (f64, f64, usize) {
     let kb = crate::md::KB; // kcal/(mol·K)
     let t = if t > 1.0 { t } else { 298.15 };
     let hc_over_kb = 1.43877; // K·cm
@@ -90,7 +102,12 @@ pub fn harmonic_correction(freqs: &[f64], t: f64) -> (f64, f64, usize) {
         if nu < 0.0 {
             n_imag += 1;
         }
-        let theta = hc_over_kb * nu.abs(); // K
+        let nu_eff = if quasi_harmonic {
+            nu.abs().max(QH_CUTOFF_CM)
+        } else {
+            nu.abs()
+        };
+        let theta = hc_over_kb * nu_eff; // K
         let zpe_m = 0.5 * kb * theta;
         zpe += zpe_m;
         let ln_term = (1.0 - (-theta / t).exp()).ln(); // ln(1 − e^{−θ/T})
@@ -211,6 +228,26 @@ mod tests {
         let (gn, _, nn) = harmonic_correction(&[0.0, 5.0, 24.9, 1000.0], 298.15);
         assert_eq!(nn, 0);
         assert!((gn - g298).abs() < 1e-12);
+    }
+
+    #[test]
+    fn quasi_harmonic_floor_behavior() {
+        // all modes above the floor: bit-identical to plain harmonic
+        let hi = [1200.0, 3000.0, 3100.0];
+        let (g1, z1, _) = harmonic_correction_opt(&hi, 298.15, true);
+        let (g0, z0, _) = harmonic_correction(&hi, 298.15);
+        assert_eq!((g1, z1), (g0, z0));
+        // soft torsion below the floor: QH raises G (less entropy credit)
+        let soft = [80.0, 1200.0, 3000.0];
+        let (gs, _, _) = harmonic_correction_opt(&soft, 298.15, true);
+        let (gp, _, _) = harmonic_correction(&soft, 298.15);
+        assert!(
+            gs > gp,
+            "QH floor removes the soft-mode entropy overcredit: {gs} vs {gp}"
+        );
+        // the tr/rot residue stays excluded either way
+        let (gr, _, _) = harmonic_correction_opt(&[0.0, 10.0, 80.0, 1200.0], 298.15, true);
+        assert!(gr > 0.0 && gr.is_finite());
     }
 
     #[test]

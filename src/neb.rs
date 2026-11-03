@@ -26,7 +26,9 @@ pub struct NebConfig {
     /// (kcal/mol/Å). The CI-NEB literature standard is ~0.05 eV/Å ≈ 1.2;
     /// 0.3 is comfortably tighter.
     pub force_tol: f64,
-    /// Enable the climbing image (saddle refinement).
+    /// Enable the climbing image (saddle refinement) — run as PHASE 2 after
+    /// the standard band relaxed (climbing on an unconverged band wastes the
+    /// budget on band relaxation at climbing pace).
     pub climbing: bool,
 }
 
@@ -40,10 +42,13 @@ impl Default for NebConfig {
             spring: 5.0,
             max_iterations: 20000,
             force_tol: 0.5,
-            // v1 reports the relaxed band PEAK (an upper bound of the saddle
-            // that decreases with image count). The climbing image refines
-            // to the true saddle but needs far more iterations than the
-            // QuickMin budget converges reliably within — kept for later.
+            // OFF by default: the two-phase machinery is in place, but the
+            // QuickMin integrator falls into a limit cycle in the climbing
+            // phase (observed maxF oscillating 1.66/2.13 with the saddle
+            // frozen below the true crossing) — needs a damped-projected
+            // LBFGS-style optimizer, deferred past the feature freeze. The
+            // reported saddle is the relaxed band PEAK: an upper bound that
+            // decreases with image count.
             climbing: false,
         }
     }
@@ -68,6 +73,8 @@ pub struct NebResult {
     pub saddle_image: usize,
     pub converged: bool,
     pub iterations: usize,
+    /// Iteration at which the climbing phase activated (0 = never).
+    pub climb_started: usize,
 }
 
 /// Per-image QuickMin integrator (the VTST-standard NEB optimizer): each
@@ -204,10 +211,13 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         vmax: 0.06,
     };
 
-    let climbing_start = config.max_iterations / 5;
+    // two-phase: standard band first (climbing off), climbing image after
+    // the band relaxes (force tol) or after 60% of the budget
+    let mut climb_started = 0usize;
     let mut converged = false;
     let mut iterations = 0usize;
     let mut saddle_image = 0usize;
+    let mut prev_max_force = f64::INFINITY;
 
     for it in 0..config.max_iterations {
         iterations = it + 1;
@@ -225,15 +235,24 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
             grads[k] = g;
         }
 
-        // climbing image = highest interior energy (after warm-up)
-        let climb_idx = if config.climbing && it >= climbing_start {
-            (1..=n_interior).max_by(|&i, &j| energies[i].total_cmp(&energies[j]))
+        // climbing image = highest interior energy, activated in phase 2
+        let band_relaxed = prev_max_force < config.force_tol * 3.0;
+        if config.climbing
+            && climb_started == 0
+            && (band_relaxed || it >= config.max_iterations * 3 / 5)
+        {
+            climb_started = it + 1;
+        }
+        let climb_active = config.climbing && climb_started > 0;
+        let climb_idx = if climb_active {
+            let ci = (1..=n_interior)
+                .max_by(|&i, &j| energies[i].total_cmp(&energies[j]))
+                .unwrap_or(1);
+            saddle_image = ci;
+            Some(ci)
         } else {
             None
         };
-        if let Some(ci) = climb_idx {
-            saddle_image = ci;
-        }
 
         // forces on interior images (flattened); convergence tracks the
         // per-image force NORM (component-max is unrealistically strict)
@@ -331,10 +350,13 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         for norm in image_norm2.iter().take(n_interior + 1).skip(1) {
             max_force = max_force.max(norm.sqrt());
         }
-        if max_force < config.force_tol {
+        // phase 2 restarts the relaxation: the climbing image injects force
+        // when activated, so only check convergence in a stable phase
+        if max_force < config.force_tol && (!climb_active || it > climb_started + 20) {
             converged = true;
             break;
         }
+        prev_max_force = max_force;
         // per-image QuickMin steps (the NEB force couples images only
         // through neighbors — independent image steps are the VTST norm)
         let stride = n_atoms * 3;
@@ -374,6 +396,7 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         },
         converged,
         iterations,
+        climb_started,
     }
 }
 
@@ -465,6 +488,13 @@ mod tests {
             "butane central-torsion MMFF barrier ~3-4 kcal/mol, got {}",
             res.barrier
         );
+        // v1 semantics: converged standard band; the peak is an upper bound
+        assert!(
+            res.converged,
+            "standard band must converge, used {}",
+            res.iterations
+        );
+        assert_eq!(res.climb_started, 0, "climbing off by default");
         // endpoints stay fixed
         for (p, q) in res.path[0].iter().zip(a.iter()) {
             assert_eq!(p, q, "endpoint A fixed");

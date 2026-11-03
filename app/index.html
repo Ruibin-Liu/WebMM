@@ -6205,8 +6205,64 @@ function taskTrayRender() {
       '<span>' + escHtml(t.stage || '') + '</span>' +
       '<span style="color:#64748b;">' + ((performance.now() - t.startedAt) / 1000).toFixed(0) + 's</span>' +
       '<button style="margin-left:auto; border:1px solid #cbd5e1; background:#fff; border-radius:6px; cursor:pointer; font-size:0.72rem; padding:1px 6px;" onclick="taskTrayCancel(\'' + escHtml(t.taskId) + '\')">取消</button></div>').join('') +
-    recent.map(t => '<div style="color:#64748b; padding:2px 0;">' + escHtml(t.kind) + ' #' + escHtml(t.taskId.slice(0, 6)) + ' — ' + escHtml(t.state) + '</div>').join('');
+    recent.map(t => '<div style="color:#64748b; padding:2px 0; display:flex; gap:6px; align-items:center;">' +
+      escHtml(t.kind) + ' #' + escHtml(t.taskId.slice(0, 6)) + ' — ' + escHtml(t.state) +
+      (canRerun(t.kind)
+        ? '<button title="按快照参数重跑(结构哈希守卫)" style="margin-left:auto; border:1px solid #cbd5e1; background:#fff; border-radius:6px; cursor:pointer; font-size:0.72rem; padding:0 6px;" onclick="rerunWbTask(\'' + escHtml(t.taskId) + '\')">↻ 重跑</button>'
+        : '') + '</div>').join('');
 }
+
+function canRerun(kind) {
+  return kind === 'conformers' || kind === 'imtd';   // phase records replay via the search
+}
+window.canRerun = canRerun;
+
+// Replay a terminal workbench task from its SNAPSHOT input (never the
+// current field defaults). Guard: the structure hash must match the current
+// molecule (the optimize-kind semantics — refuse honestly with both hashes).
+window.rerunWbTask = async function rerunWbTask(taskId) {
+  clearError();
+  try {
+    const ts = await wbTaskStore.ensure();
+    if (!ts) { set3dStatus('重跑失败:任务侧表不可用'); return; }
+    const rows = await ts.all('tasks');
+    const rec = rows.map(r => r.value).find(v => v.spec.taskId === taskId);
+    if (!rec) { set3dStatus('重跑失败:找不到任务记录'); return; }
+    const input = rec.spec.input || {};
+    const Cn = window.Tasks.Contract;
+    const curHash = 'h' + Cn.fnv1a(Cn.canon(currentMolblock() || '')).toString(16);
+    // identity per kind: conformers records carry the SOURCE molblock
+    // directly; imtd records carry the embedded 3D + the source hash
+    const snapHash = rec.spec.kind === 'imtd' && input.sourceHash ? input.sourceHash
+      : 'h' + Cn.fnv1a(Cn.canon(input.molblock || '')).toString(16);
+    if (snapHash !== curHash) {
+      set3dStatus(`重跑被拒:记录属于旧结构(快照 ${snapHash.slice(0, 8)} vs 当前 ${curHash.slice(0, 8)})——切回该结构后再试`);
+      return;
+    }
+    if (rec.spec.kind === 'conformers') {
+      document.getElementById('confN').value = String(input.n || 50);
+      document.getElementById('confRmsd').value = String(input.rmsdCut || 0.5);
+      document.getElementById('engineSel').value = input.engine === 'gfnff' ? 'GFNFF' : 'MMFF94s';
+      set3dStatus('按快照重跑 conformers…');
+      runConformers();
+    } else if (rec.spec.kind === 'imtd') {
+      if (input.phase === 'verify' || input.phase === 'refine') {
+        set3dStatus('阶段记录(verify/refine)不能单独重跑——先重跑对应搜索,再点景观区的验证/精修按钮');
+        return;
+      }
+      document.getElementById('imtdRounds').value = String(input.rounds || 4);
+      document.getElementById('imtdSteps').value = String(input.stepsPerRun || 2000);
+      document.getElementById('engineSel').value = input.engine === 'gfnff' ? 'GFNFF' : 'MMFF94s';
+      set3dStatus('按快照重跑 iMTD 搜索…');
+      runImtd();
+    } else {
+      set3dStatus('该 kind 暂不支持工作台重跑');
+    }
+  } catch (e) {
+    showError(e);
+    set3dStatus('重跑失败');
+  }
+};
 function taskTrayAdd(t) { taskTrayItems.push({ state: 'running', ...t }); taskTrayRender(); }
 function taskTrayFinish(taskId, state) { const t = taskTrayItems.find(x => x.taskId === taskId); if (t) { t.state = state; t.stage = ''; taskTrayRender(); } }
 window.taskTrayCancel = function (taskId) { taskScheduler.cancel(taskId); if (confTask && confTask.taskId === taskId) cancelConformers(); if (imtdTask && imtdTask.taskId === taskId) cancelImtd(); };
@@ -6366,11 +6422,12 @@ async function runImtd() {
 
     // §9.5 typed task: spec snapshot + side table + tokens + tray
     const Cn = window.Tasks.Contract;
+    const srcHash = 'h' + Cn.fnv1a(Cn.canon(currentMolblock() || '')).toString(16);
     const taskId = 'i' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
     let tstore = null, spec = null;
     try {
       spec = Cn.makeSpec({ taskId, kind: 'imtd', seed: null,
-        input: { molblock: mb, engine: engineSel === 'GFNFF' ? 'gfnff' : 'mmff',
+        input: { molblock: mb, sourceHash: srcHash, engine: engineSel === 'GFNFF' ? 'gfnff' : 'mmff',
                  rounds, runsPerRound: 3, stepsPerRun: steps,
                  quenchInterval: Math.max(10, Math.round(steps / 8)), quenchMaxIter: 300,
                  crossingPairs: 4, seed: 42, energyWindow: 6, rmsdTol: 0.25, workers: W },
@@ -6431,6 +6488,8 @@ async function runImtd() {
     imtdVerifyHandle = handle;   // live coordinator for MD/NEB batches
     lastImtdSteps = steps;
     lastImtdEngine = engineSel;
+    lastImtdMolblock = mb;       // snapshot identity for verify/refine records
+    lastImtdSourceHash = srcHash;
     drawLandscape();
     set3dStatus(`<b>iMTD-GC: ${res.nConfs} unique minima, ${res.roundsExecuted} round${res.roundsExecuted > 1 ? 's' : ''}${res.converged ? ' (converged)' : ' (budget cap)'} on ${res.workers} worker${res.workers > 1 ? 's' : ''} in ${(res.ms / 1000).toFixed(1)}s</b> — minima fully quenched (no ΔE re-opt needed) · lowest E(${engineSel}) = ${Emin.toFixed(2)} kcal/mol`);
     imtdTaskEnd('complete', { nConfs: res.nConfs, roundsExecuted: res.roundsExecuted, converged: res.converged });
@@ -6687,6 +6746,8 @@ function exportEnsembleSDF() {
   let imtdVerifyHandle = null;   // live coordinator of the last completed iMTD run
   let lastImtdSteps = 2000;
   let lastImtdEngine = 'MMFF94s';
+  let lastImtdMolblock = '';    // the structure the live coordinator runs on
+  let lastImtdSourceHash = '';  // SOURCE structure hash (rerun identity)
   let mdVerifyRunning = false;
 
   function hideLandscape() {
@@ -6741,7 +6802,9 @@ function exportEnsembleSDF() {
       const bz = boltz[i] !== undefined ? `${(100 * boltz[i]).toFixed(0)}%` : '–';
       const gCol = b.g && b.g > 1 ? `<b>${b.g}</b>` : (b.g || 1);
       const t = th[i];
-      const gFree = t && isFinite(t.G) ? t.G.toFixed(2) : '…';
+      const gFree = t && isFinite(t.G)
+        ? `<span title="准谐振 G(软模 100 cm⁻¹ 地板);纯谐振 G = ${t.Gplain !== undefined && isFinite(t.Gplain) ? t.Gplain.toFixed(2) : '?'}">${t.G.toFixed(2)}</span>`
+        : '…';
       const imag = t && t.nImag > 0 ? ` <span title="存在虚频——非真极小(淬灭欠收敛?)" style="color:#b91c1c;">⚠${t.nImag}</span>` : '';
       const bzg = boltzG[i] !== undefined ? `${(100 * boltzG[i]).toFixed(0)}%` : '–';
       const sel = selConf === i ? ' style="background:#fef3c7"' : '';
@@ -6941,22 +7004,53 @@ function exportEnsembleSDF() {
     const btn = document.getElementById('btnMdVerify');
     btn.textContent = '验证中…';
     const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 4));
-    const releases = [];
-    const nTok = Math.min(W, taskScheduler.stats().total);
-    for (let i = 0; i < nTok; i++) releases.push(await taskScheduler.acquire('interactive'));
+    const steps = Math.max(2000, lastImtdSteps * 2);
+    // §9.5 v1.1: the verification batch is a typed phase record on the same
+    // structure snapshot (identity = molblock hash, same as the search task)
+    const Cn = window.Tasks.Contract;
+    const taskId = 'v' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    let vTask = null;
     try {
+      const spec = Cn.makeSpec({ taskId, kind: 'imtd', seed: null,
+        input: { molblock: lastImtdMolblock, sourceHash: lastImtdSourceHash, engine: lastImtdEngine === 'GFNFF' ? 'gfnff' : 'mmff',
+                 phase: 'verify', runs: W, steps, workers: W,
+                 rounds: 1, runsPerRound: 1, stepsPerRun: steps,
+                 quenchInterval: Math.max(10, Math.round(steps / 8)), quenchMaxIter: 300,
+                 crossingPairs: 0, seed: 42, energyWindow: 6, rmsdTol: 0.25 },
+        provenance: { projectId: null, buildId: await ensureWbBuildId() } });
+      const tstore = await wbTaskStore.ensure();
+      if (tstore) { try { await tstore.submit(spec); } catch (e) {} }
+      const releases = [];
+      const nTok = Math.min(W, taskScheduler.stats().total);
+      for (let i = 0; i < nTok; i++) releases.push(await taskScheduler.acquire('interactive'));
+      const th = taskScheduler.startTask(taskId, 'interactive');
+      if (tstore) { try { await tstore.transition(taskId, 'running', { startedAt: Date.now(), generation: th.generation }); } catch (e) {} }
+      vTask = { taskId, tstore, releases, t0: performance.now() };
+      taskTrayAdd({ taskId, kind: 'imtd·verify', label: lastImtdEngine, stage: 'MD', startedAt: performance.now() });
       set3dStatus('MD 占据验证:纯 MD(hill=0)批次采样当前盆地…');
-      const steps = Math.max(2000, lastImtdSteps * 2);
       const out = await imtdVerifyHandle.verify(W, steps);
       try { lastLandscape = JSON.parse(out.landscapeJson || 'null'); } catch (e) { lastLandscape = null; }
       drawLandscape();
       const md = lastLandscape && lastLandscape.md;
       set3dStatus(`MD 占据验证完成 — ${md ? md.frames + ' 帧无偏占据已并入景观(MD 占据列与网络图切至 MD 梯)' : '无数据'}`);
+      if (vTask) {
+        for (const r of vTask.releases) { try { r(); } catch (e2) {} }
+        taskScheduler.drop(vTask.taskId);
+        taskTrayFinish(vTask.taskId, 'complete');
+        if (vTask.tstore) vTask.tstore.transition(vTask.taskId, 'complete',
+          { durationMs: Math.round(performance.now() - vTask.t0), mdFrames: md ? md.frames : 0 }).catch(() => {});
+      }
     } catch (e) {
+      if (vTask) {
+        for (const r of vTask.releases) { try { r(); } catch (e2) {} }
+        taskScheduler.drop(vTask.taskId);
+        taskTrayFinish(vTask.taskId, 'failed');
+        if (vTask.tstore) vTask.tstore.transition(vTask.taskId, 'failed',
+          { durationMs: Math.round(performance.now() - vTask.t0), failure: String(e && e.message || e) }).catch(() => {});
+      }
       showError(e);
       set3dStatus('MD 占据验证失败');
     } finally {
-      for (const r of releases) { try { r(); } catch (e) {} }
       mdVerifyRunning = false;
       btn.textContent = 'MD 占据验证';
     }
@@ -6978,7 +7072,11 @@ function exportEnsembleSDF() {
         T: tK,
         n: confEnsemble.length,
         entries: (d.basins || []).map(b => ({
-          G: parseFloat(b.G), gCorr: parseFloat(b.gCorr), zpe: parseFloat(b.zpe),
+          // the column shows the QUASI-HARMONIC G (soft modes floored at
+          // 100 cm⁻¹); the plain harmonic value rides in the title
+          G: isFinite(parseFloat(b.Gqh)) ? parseFloat(b.Gqh) : parseFloat(b.G),
+          Gplain: parseFloat(b.G),
+          gCorr: parseFloat(b.gCorr), zpe: parseFloat(b.zpe),
           nImag: b.nImag,
         })),
       };
@@ -6998,21 +7096,52 @@ function exportEnsembleSDF() {
     const btn = document.getElementById('btnNebRefine');
     btn.textContent = '精修中…';
     const W = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 4));
-    const releases = [];
-    const nTok = Math.min(W, taskScheduler.stats().total);
-    for (let i = 0; i < nTok; i++) releases.push(await taskScheduler.acquire('interactive'));
+    // §9.5 v1.1: refinement is a typed phase record (jobs count recorded
+    // after the plan resolves inside the driver)
+    const Cn = window.Tasks.Contract;
+    const taskId = 'r' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    let nTask = null;
     try {
+      const spec = Cn.makeSpec({ taskId, kind: 'imtd', seed: null,
+        input: { molblock: lastImtdMolblock, sourceHash: lastImtdSourceHash, engine: lastImtdEngine === 'GFNFF' ? 'gfnff' : 'mmff',
+                 phase: 'refine', jobs: 0, workers: W,
+                 rounds: 1, runsPerRound: 1, stepsPerRun: 0,
+                 quenchInterval: 10, quenchMaxIter: 300,
+                 crossingPairs: 0, seed: 42, energyWindow: 6, rmsdTol: 0.25 },
+        provenance: { projectId: null, buildId: await ensureWbBuildId() } });
+      const tstore = await wbTaskStore.ensure();
+      if (tstore) { try { await tstore.submit(spec); } catch (e) {} }
+      const releases = [];
+      const nTok = Math.min(W, taskScheduler.stats().total);
+      for (let i = 0; i < nTok; i++) releases.push(await taskScheduler.acquire('interactive'));
+      const th = taskScheduler.startTask(taskId, 'interactive');
+      if (tstore) { try { await tstore.transition(taskId, 'running', { startedAt: Date.now(), generation: th.generation }); } catch (e) {} }
+      nTask = { taskId, tstore, releases, t0: performance.now() };
+      taskTrayAdd({ taskId, kind: 'imtd·refine', label: lastImtdEngine, stage: 'NEB', startedAt: performance.now() });
       set3dStatus('势垒精修:对观测转移边并行跑 CI-NEB 带…');
       const out = await imtdVerifyHandle.refine();
       try { lastLandscape = JSON.parse(out.landscapeJson || 'null'); } catch (e) { lastLandscape = null; }
       drawLandscape();
       const nRef = (lastLandscape && lastLandscape.transitions || []).filter(t => t.refined !== null && t.refined !== undefined).length;
       set3dStatus(`势垒精修完成 — ${nRef} 条边获得 NEB 鞍点能(转移边表与断连图阈值已更新)`);
+      if (nTask) {
+        for (const r of nTask.releases) { try { r(); } catch (e2) {} }
+        taskScheduler.drop(nTask.taskId);
+        taskTrayFinish(nTask.taskId, 'complete');
+        if (nTask.tstore) nTask.tstore.transition(nTask.taskId, 'complete',
+          { durationMs: Math.round(performance.now() - nTask.t0), refinedCount: nRef, jobs: out.jobs || 0 }).catch(() => {});
+      }
     } catch (e) {
+      if (nTask) {
+        for (const r of nTask.releases) { try { r(); } catch (e2) {} }
+        taskScheduler.drop(nTask.taskId);
+        taskTrayFinish(nTask.taskId, 'failed');
+        if (nTask.tstore) nTask.tstore.transition(nTask.taskId, 'failed',
+          { durationMs: Math.round(performance.now() - nTask.t0), failure: String(e && e.message || e) }).catch(() => {});
+      }
       showError(e);
       set3dStatus('势垒精修失败');
     } finally {
-      for (const r of releases) { try { r(); } catch (e) {} }
       nebRunning = false;
       btn.textContent = '势垒精修(NEB)';
     }

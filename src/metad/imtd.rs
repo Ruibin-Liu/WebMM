@@ -57,13 +57,27 @@ impl SearchEngine {
     }
 }
 
+/// GFN-FF exact-coords cache: the last built force field with the
+/// coordinates it was perceived from.
+pub type GfnffCache =
+    std::cell::RefCell<Option<(Vec<[f64; 3]>, Box<crate::gfnff::GfnffForceField>)>>;
+
 /// Quench backend: L-BFGS relaxation of a snapshot to its local minimum.
 pub enum Quencher {
     /// MMFF: one shared instance (coordinate-independent topology).
     Mmff(Box<MMFFForceField>),
-    /// GFN-FF: atomic numbers + total charge; the force field is rebuilt for
-    /// every quench (bond detection reads the geometry).
-    Gfnff { at: Vec<usize>, charge: f64 },
+    /// GFN-FF: atomic numbers + total charge. Bond perception reads the
+    /// geometry, so the force field is rebuilt per quench — EXCEPT when the
+    /// coordinates are exactly the ones of the cached build (a real case:
+    /// the thermo tier re-runs per temperature at the same minima).
+    /// Measured: ~0.5 ms per build at ethanol scale — the exact-coords cache
+    /// is the only zero-risk reuse; topology-hash caching would re-run the
+    /// perception it tries to save.
+    Gfnff {
+        at: Vec<usize>,
+        charge: f64,
+        cache: GfnffCache,
+    },
 }
 
 impl Quencher {
@@ -73,6 +87,7 @@ impl Quencher {
             SearchEngine::GFNFF => Quencher::Gfnff {
                 at: mol.atoms.iter().map(|a| a.atomic_number as usize).collect(),
                 charge: mol.atoms.iter().map(|a| a.charge).sum(),
+                cache: std::cell::RefCell::new(None),
             },
             SearchEngine::MMFF94 => Quencher::Mmff(Box::new(MMFFForceField::new(
                 mol,
@@ -94,11 +109,24 @@ impl Quencher {
         };
         match self {
             Quencher::Mmff(ff) => optimizer::optimize(ff.as_ref(), coords, &conv(0.01, 0.001)),
-            Quencher::Gfnff { at, charge } => {
+            Quencher::Gfnff { at, charge, cache } => {
                 // GFN-FF numeric kernel: same relaxed force floors the analog
                 // pipeline applies (line-search stalls on large systems)
-                let ff = crate::gfnff::GfnffForceField::new(at, coords, *charge);
-                optimizer::optimize(&ff, coords, &conv(0.05, 0.005))
+                let mut guard = cache.borrow_mut();
+                let ff: &crate::gfnff::GfnffForceField = match guard.as_ref() {
+                    Some((prev, ff)) if prev == coords => ff.as_ref(),
+                    _ => {
+                        *guard = Some((
+                            coords.to_vec(),
+                            Box::new(crate::gfnff::GfnffForceField::new(at, coords, *charge)),
+                        ));
+                        guard
+                            .as_ref()
+                            .map(|(_, f)| f.as_ref())
+                            .unwrap_or_else(|| unreachable!("cache was just filled"))
+                    }
+                };
+                optimizer::optimize(ff, coords, &conv(0.05, 0.005))
             }
         }
     }
@@ -389,25 +417,6 @@ fn aligned_rmsd_over(a: &[[f64; 3]], b: &[[f64; 3]], idx: &[usize]) -> f64 {
             kabsch_transform(&p, &q).2
         }
     }
-}
-
-/// Mirror-twin margin (Å): a frame is the member's mirror twin when the
-/// IMPROPER superposition beats the proper one by more than this — robust
-/// against nearly-free methyl-H label permutations, which inflate proper and
-/// improper RMSD equally.
-const MIRROR_MARGIN: f64 = 0.15;
-
-/// Improper (mirror) superposition RMSD over the given indices: reflect one
-/// structure through a fixed plane (z → −z), then align properly. A pair of
-/// MIRROR-IMAGE conformers superposes (~0) under this transform but not
-/// under a proper rotation.
-fn improper_rmsd_over(a: &[[f64; 3]], b: &[[f64; 3]], idx: &[usize]) -> f64 {
-    if idx.len() < 2 {
-        return 0.0;
-    }
-    let p: Vec<[f64; 3]> = idx.iter().map(|&i| a[i]).collect();
-    let q: Vec<[f64; 3]> = idx.iter().map(|&i| [b[i][0], b[i][1], -b[i][2]]).collect();
-    kabsch_transform(&p, &q).2
 }
 
 // ── molecule topology helpers ──
@@ -711,11 +720,12 @@ struct Ensemble {
     /// eviction and re-sorting, ids never do — refined saddles key on them.
     basin_ids: Vec<u64>,
     next_basin_id: u64,
-    /// Observed well count per basin (≥1): a MIRROR-twin geometry folded by
-    /// the equal-energy branch increments it — the degeneracy factor for
-    /// Boltzmann populations. Label permutations (methyl H swaps) do not.
-    /// C3-type permuted wells are NOT detected (v1 honest boundary).
-    degeneracy: Vec<u64>,
+    /// Distinct equivalent-well geometries observed per basin (the first
+    /// entry is the member itself). The energy-dedup branch folds mirror
+    /// twins, methyl-H permutations and C3-rotor wells alike; each NEW
+    /// fixed-label geometry is one more observed well — the degeneracy
+    /// factor for Boltzmann populations (≤ the true symmetry number).
+    variants: Vec<Vec<Vec<[f64; 3]>>>,
 }
 
 impl Ensemble {
@@ -738,7 +748,7 @@ impl Ensemble {
             md: LadderStats::default(),
             basin_ids: Vec::new(),
             next_basin_id: 1,
-            degeneracy: Vec::new(),
+            variants: Vec::new(),
         }
     }
 
@@ -752,26 +762,22 @@ impl Ensemble {
     /// (equal-energy branch + improper superposition): mirror twins fold
     /// like duplicates but raise the member's degeneracy; label
     /// permutations fold silently.
-    fn find_conformer(&self, coords: &[[f64; 3]], energy: f64) -> Option<(usize, bool)> {
+    /// Two-tier conformer-equivalence predicate (see the module docs): same
+    /// heavy scaffold AND (same all-atom geometry OR equal energy). Returns
+    /// the matching member position; the caller routes equal-energy frames
+    /// through [`Self::note_variant`] for the degeneracy count.
+    fn find_conformer(&self, coords: &[[f64; 3]], energy: f64) -> Option<usize> {
         for (i, m) in self.members.iter().enumerate() {
             let heavy_same =
                 aligned_rmsd_over(coords, &m.coords, &self.dedup_heavy) < self.rmsd_tol;
             if !heavy_same {
                 continue;
             }
-            let all_same = aligned_rmsd_over(coords, &m.coords, &self.dedup_all) < self.rmsd_tol;
-            if all_same {
-                return Some((i, false)); // exact revisit of the same well
+            if aligned_rmsd_over(coords, &m.coords, &self.dedup_all) < self.rmsd_tol {
+                return Some(i); // exact revisit of the same well
             }
-            let same_energy = (energy - m.energy).abs() < self.energy_dup_tol;
-            if same_energy {
-                // mirror twin ⇔ the reflection superposes markedly better
-                // than any proper rotation (label permutations inflate both
-                // equally and stay on the permutation side)
-                let proper = aligned_rmsd_over(coords, &m.coords, &self.dedup_all);
-                let imp = improper_rmsd_over(coords, &m.coords, &self.dedup_all);
-                let mirror = proper - imp > MIRROR_MARGIN;
-                return Some((i, mirror));
+            if (energy - m.energy).abs() < self.energy_dup_tol {
+                return Some(i); // equivalent well — note_variant decides g
             }
         }
         None
@@ -788,13 +794,20 @@ impl Ensemble {
         self.ladder_mut(l).note_visit(i);
     }
 
-    /// A distinct MIRROR well was observed for basin `i` (capped at 2: the
-    /// twin geometry is identical at every revisit, so further hits are
-    /// re-visits of the same twin well).
-    fn note_mirror(&mut self, i: usize) {
-        if i < self.degeneracy.len() && self.degeneracy[i] < 2 {
-            self.degeneracy[i] += 1;
+    /// An equal-energy frame folded onto basin `i`: a NEW distinct well
+    /// geometry (not superposing any stored variant) raises the degeneracy;
+    /// a revisit of a known variant changes nothing. Uniformly covers
+    /// mirror twins, methyl-H permutations and C3-rotor wells.
+    fn note_variant(&mut self, i: usize, coords: &[[f64; 3]]) {
+        if i >= self.variants.len() {
+            return;
         }
+        for v in &self.variants[i] {
+            if aligned_rmsd_over(coords, v, &self.dedup_all) < self.rmsd_tol {
+                return; // known well, revisit
+            }
+        }
+        self.variants[i].push(coords.to_vec());
     }
 
     fn note_residence(&mut self, i: usize, l: Ladder) {
@@ -890,7 +903,11 @@ impl Ensemble {
         self.md.on_new_basin();
         self.basin_ids.push(self.next_basin_id);
         self.next_basin_id += 1;
-        self.degeneracy.push(1);
+        self.variants.push(vec![self
+            .members
+            .last()
+            .map(|m| m.coords.clone())
+            .unwrap_or_default()]);
         let pos = self.members.len() - 1;
         if self.members.len() > self.max_conformers {
             // evict the previous maximum (never the just-added member — it
@@ -909,8 +926,8 @@ impl Ensemble {
             if self.basin_ids.len() > i_max {
                 self.basin_ids.remove(i_max);
             }
-            if self.degeneracy.len() > i_max {
-                self.degeneracy.remove(i_max);
+            if self.variants.len() > i_max {
+                self.variants.remove(i_max);
             }
             return Some(pos - 1);
         }
@@ -1237,11 +1254,9 @@ impl ImtdSearch {
         let mut prev: Option<usize> = None;
         for m in minima {
             let pos = match self.ensemble.find_conformer(&m.coords, m.energy) {
-                Some((i, mirror)) => {
+                Some(i) => {
                     self.ensemble.note_visit(i, ladder);
-                    if mirror {
-                        self.ensemble.note_mirror(i);
-                    }
+                    self.ensemble.note_variant(i, &m.coords);
                     Some(i)
                 }
                 None => {
@@ -1432,14 +1447,32 @@ impl ImtdSearch {
                     Quencher::Mmff(ff) => {
                         crate::vib::frequencies(ff.as_ref(), &c.coords, &self.masses)
                     }
-                    Quencher::Gfnff { at, charge } => {
+                    Quencher::Gfnff { at, charge, cache } => {
                         // GFN-FF: bond perception is geometry-dependent —
                         // the Hessian differences a per-geometry rebuild
-                        let g = crate::gfnff::GfnffForceField::new(at, &c.coords, *charge);
-                        crate::vib::frequencies(&g, &c.coords, &self.masses)
+                        // (exact-coords cache helps the per-T re-runs)
+                        let mut guard = cache.borrow_mut();
+                        let g: &crate::gfnff::GfnffForceField = match guard.as_ref() {
+                            Some((prev, f)) if *prev == c.coords => f.as_ref(),
+                            _ => {
+                                *guard = Some((
+                                    c.coords.clone(),
+                                    Box::new(crate::gfnff::GfnffForceField::new(
+                                        at, &c.coords, *charge,
+                                    )),
+                                ));
+                                guard
+                                    .as_ref()
+                                    .map(|(_, f)| f.as_ref())
+                                    .unwrap_or_else(|| unreachable!("cache was just filled"))
+                            }
+                        };
+                        crate::vib::frequencies(g, &c.coords, &self.masses)
                     }
                 };
                 let (g_corr, zpe, n_imag) = crate::vib::harmonic_correction(&freqs, temperature_k);
+                let (g_corr_qh, _, _) =
+                    crate::vib::harmonic_correction_opt(&freqs, temperature_k, true);
                 let nu_min = freqs
                     .iter()
                     .copied()
@@ -1449,6 +1482,7 @@ impl ImtdSearch {
                 ThermoEntry {
                     energy: c.energy,
                     g_free: c.energy + g_corr,
+                    g_free_qh: c.energy + g_corr_qh,
                     g_corr,
                     zpe,
                     n_imag,
@@ -1484,7 +1518,12 @@ impl ImtdSearch {
                             residence: stats.residence[old],
                             transitions_in: stats.trans_in[old],
                             transitions_out: stats.trans_out[old],
-                            degeneracy: self.ensemble.degeneracy.get(old).copied().unwrap_or(1),
+                            degeneracy: self
+                                .ensemble
+                                .variants
+                                .get(old)
+                                .map(|v| v.len() as u64)
+                                .unwrap_or(1),
                         };
                     }
                 }
@@ -1644,8 +1683,11 @@ pub struct Landscape {
 pub struct ThermoEntry {
     /// The search energy (kcal/mol).
     pub energy: f64,
-    /// G = E + G_corr at the requested temperature (kcal/mol).
+    /// G = E + G_corr at the requested temperature (kcal/mol), plain
+    /// harmonic.
     pub g_free: f64,
+    /// Quasi-harmonic G (soft modes floored at 100 cm⁻¹ — Grimme-style).
+    pub g_free_qh: f64,
     /// Harmonic correction (ZPE + vibrational entropy term).
     pub g_corr: f64,
     pub zpe: f64,
@@ -1662,6 +1704,7 @@ pub fn thermo_to_json(entries: &[ThermoEntry], temperature_k: f64) -> String {
         "T": temperature_k,
         "basins": entries.iter().map(|e| serde_json::json!({
             "E": f64_to_json(e.energy), "G": f64_to_json(e.g_free),
+            "Gqh": f64_to_json(e.g_free_qh),
             "gCorr": f64_to_json(e.g_corr), "zpe": f64_to_json(e.zpe),
             "nImag": e.n_imag,
             "nuMin": f64_to_json(e.nu_min), "nuMax": f64_to_json(e.nu_max),
@@ -2114,6 +2157,17 @@ pub fn minima_from_json(s: &str) -> Result<Vec<Minimum>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Improper (mirror) superposition RMSD over the given indices: reflect one
+    /// structure through a fixed plane (z → −z), then align properly — a
+    /// mirror-IMAGE pair superposes under this transform, not under a rotation.
+    fn improper_rmsd_over(a: &[[f64; 3]], b: &[[f64; 3]], idx: &[usize]) -> f64 {
+        if idx.len() < 2 {
+            return 0.0;
+        }
+        let p: Vec<[f64; 3]> = idx.iter().map(|&i| a[i]).collect();
+        let q: Vec<[f64; 3]> = idx.iter().map(|&i| [b[i][0], b[i][1], -b[i][2]]).collect();
+        kabsch_transform(&p, &q).2
+    }
 
     const ETHANOL_SDF: &str = "ethanol\n     RDKit          3D\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n    0.8867    0.1097    0.1398 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.4649   -0.1632   -0.4871 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4908    0.4341    0.2924 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0600    1.1872    0.2278 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.6897   -0.3301   -0.4581 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9343   -0.3042    1.1524 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5119    0.2599   -1.4947 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6562   -1.2384   -0.5550 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4469    0.0448    1.1825 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\n  2  3  1  0\n  1  4  1  0\n  1  5  1  0\n  1  6  1  0\n  2  7  1  0\n  2  8  1  0\n  3  9  1  0\nM  END\n";
 
@@ -2946,23 +3000,161 @@ mod tests {
         let land1 = search.landscape();
         // twin+ created the basin (g=1), twin− folds with mirror ⇒ g=2
         let gvals: Vec<u64> = land1.basins.iter().map(|b| b.degeneracy).collect();
+        // the unified variant count discovers symmetry-equivalent wells:
+        // the member's own rotor arrangement + the folded pair = 3 observed
+        // wells (methyl 3-fold / OH mirror — a LOWER bound of the true
+        // symmetry number; deterministic for this construction)
         assert!(
-            gvals.contains(&2),
-            "the rotamer basin must record its mirror twin, got {gvals:?}"
+            gvals.contains(&3),
+            "equivalent wells recorded, got {gvals:?}"
         );
         assert!(!land1.basins.is_empty());
         // a REVISIT of the twin does not raise g past 2
         search.gather_verify(
             0,
             vec![Minimum {
-                coords: pm.clone(),
+                coords: pm,
                 energy: em,
                 pe_max_since_prev: 0.0,
                 snapshot: 0,
             }],
         );
         let land2 = search.landscape();
-        assert_eq!(land2.basins[0].degeneracy, 2, "degeneracy caps at 2");
+        assert_eq!(land2.basins[0].degeneracy, 3, "revisits do not raise g");
+    }
+
+    #[test]
+    fn methanol_methyl_rotor_counts_three_wells() {
+        // CH3OH: rotating the methyl by ±120° about the C–O axis gives three
+        // fixed-label geometries of three SYMMETRY-EQUAL wells (σ=3) — the
+        // variant counter must record all three, revisits must not raise.
+        let heavy_sdf = "Methanol\n     RDKit          3D\n\n  2  1  0  0  0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n    1.4300    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0\nM  END\n";
+        let heavy = crate::molecule::parser::parse_sdf(heavy_sdf).expect("parse");
+        let mol = crate::molecule::hydrogens::add_hydrogens(&heavy);
+        let base: Vec<[f64; 3]> = mol.atoms.iter().map(|a| a.position).collect();
+        let (c0, o1) = (0usize, 1usize);
+        let axis = [
+            base[o1][0] - base[c0][0],
+            base[o1][1] - base[c0][1],
+            base[o1][2] - base[c0][2],
+        ];
+        let norm = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+        let u = [axis[0] / norm, axis[1] / norm, axis[2] / norm];
+        // the C side = C itself (on-axis) + everything reachable from C
+        // without crossing the C–O bond (the three methyl H's); the O and
+        // its H stay put
+        let mut side = vec![false; mol.atoms.len()];
+        side[o1] = true;
+        let mut stack = vec![c0];
+        side[c0] = true;
+        let mut c_side = vec![c0];
+        while let Some(z) = stack.pop() {
+            for &w in &mol.adjacency[z] {
+                if !side[w] {
+                    side[w] = true;
+                    c_side.push(w);
+                    stack.push(w);
+                }
+            }
+        }
+        let rotate_methyl = |src: &[[f64; 3]], deg: f64| -> Vec<[f64; 3]> {
+            let th = deg.to_radians();
+            let (sn, cs) = (th.sin(), th.cos());
+            let mut out = src.to_vec();
+            for &i in &c_side {
+                let d = [
+                    src[i][0] - base[c0][0],
+                    src[i][1] - base[c0][1],
+                    src[i][2] - base[c0][2],
+                ];
+                let cr = [
+                    u[1] * d[2] - u[2] * d[1],
+                    u[2] * d[0] - u[0] * d[2],
+                    u[0] * d[1] - u[1] * d[0],
+                ];
+                let dot = u[0] * d[0] + u[1] * d[1] + u[2] * d[2];
+                for x in 0..3 {
+                    out[i][x] = base[c0][x] + cs * d[x] + sn * cr[x] + u[x] * dot * (1.0 - cs);
+                }
+            }
+            out
+        };
+        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        let conv = crate::ConvergenceOptions {
+            max_iterations: 500,
+            ..Default::default()
+        };
+        let q = |c: &[[f64; 3]]| -> (Vec<[f64; 3]>, f64) {
+            let r = crate::optimizer::optimize(&ff, c, &conv);
+            (r.optimized_coords, r.final_energy)
+        };
+        let (a, ea) = q(&base);
+        let (b, eb) = q(&rotate_methyl(&a, 120.0));
+        let (c, ec) = q(&rotate_methyl(&a, -120.0));
+        assert!(
+            (ea - eb).abs() < 1e-3 && (ea - ec).abs() < 1e-3,
+            "σ-equal wells"
+        );
+        let cfg = ImtdConfig {
+            max_rounds: 1,
+            runs_per_round: 1,
+            steps_per_run: 100,
+            quench_interval: 100,
+            quench_max_iterations: 500,
+            crossing_pairs: 0,
+            convergence_new_minima: usize::MAX,
+            ..Default::default()
+        };
+        let mut search = ImtdSearch::new(&mol, SearchEngine::MMFF94s, &cfg);
+        let quencher = Quencher::new(&mol, SearchEngine::MMFF94s);
+        while !search.done() {
+            for spec in search.plan().to_vec() {
+                let m = execute_run(&mol, SearchEngine::MMFF94s, &quencher, &cfg, &spec);
+                search.gather(spec.run_index, m);
+            }
+        }
+        assert_eq!(search.plan_verify(1).len(), 1);
+        search.gather_verify(
+            0,
+            vec![
+                Minimum {
+                    coords: a,
+                    energy: ea,
+                    pe_max_since_prev: 0.0,
+                    snapshot: 0,
+                },
+                Minimum {
+                    coords: b.clone(),
+                    energy: eb,
+                    pe_max_since_prev: 0.0,
+                    snapshot: 1,
+                },
+                Minimum {
+                    coords: c,
+                    energy: ec,
+                    pe_max_since_prev: 0.0,
+                    snapshot: 2,
+                },
+            ],
+        );
+        let land = search.landscape();
+        let gvals: Vec<u64> = land.basins.iter().map(|x| x.degeneracy).collect();
+        assert!(
+            gvals.contains(&3),
+            "methyl σ=3 must be observed (member + two rotations), got {gvals:?}"
+        );
+        // revisit does not raise
+        search.gather_verify(
+            0,
+            vec![Minimum {
+                coords: b,
+                energy: eb,
+                pe_max_since_prev: 0.0,
+                snapshot: 0,
+            }],
+        );
+        let land2 = search.landscape();
+        assert_eq!(land2.basins.iter().map(|x| x.degeneracy).max(), Some(3));
     }
 
     #[test]

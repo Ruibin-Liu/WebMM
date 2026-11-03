@@ -276,7 +276,7 @@
       } finally {
         for (const w of nWorkers) w.terminate();
       }
-      return { landscapeJson: search.landscape_json(), cancelled };
+      return { landscapeJson: search.landscape_json(), cancelled, jobs: plan.jobs.length };
     };
 
     return {

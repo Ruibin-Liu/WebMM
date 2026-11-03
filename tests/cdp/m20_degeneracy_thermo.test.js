@@ -48,7 +48,7 @@ function check(name, cond, detail) {
   const bzi = st.th.findIndex(t => /Boltz\.E/.test(t));
   check('g + Boltz.E + Boltz.G columns present', gi >= 0 && bzi >= 0 && st.th.some(t => /Boltz\.G/.test(t)),
         st.th.join('|'));
-  check('g column valid (≥1, ≤2 per basin)', st.g.length === st.n && st.g.every(x => x >= 1 && x <= 2), JSON.stringify(st.g));
+  check('g column valid (≥1, sane upper bound on observed wells)', st.g.length === st.n && st.g.every(x => x >= 1 && x <= 24), JSON.stringify(st.g));
   const boltzOk = await page.evaluate(() => {
     const L = lastLandscape;
     const gs = L.basins.map(b => b.g || 1);
