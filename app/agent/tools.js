@@ -12,7 +12,7 @@
   // Only the selected design context may cross the model boundary. Execution
   // payloads (SDF, candidate molblocks, build IDs) stay in the local layer.
   function sanitizeContext(context) {
-    const allowed = ['revision', 'parentRef', 'siteRef', 'fragmentSet', 'parentSmiles', 'projectId', 'roundId', 'designGoals', 'availableEvidence', 'audit'];
+    const allowed = ['revision', 'parentRef', 'siteRef', 'fragmentSet', 'fragmentCategory', 'parentSmiles', 'projectId', 'roundId', 'designGoals', 'availableEvidence', 'audit'];
     const out = {};
     for (const key of allowed) if (context[key] !== undefined) out[key] = context[key];
     if (Array.isArray(context.candidates)) out.candidateCount = context.candidates.length;

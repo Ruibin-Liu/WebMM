@@ -7,7 +7,7 @@
 // BITWISE-identical results.
 const { chromium } = require('/opt/homebrew/lib/node_modules/playwright');
 const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell';
-const URL = 'http://localhost:8901/app/platform.html';
+const URL = process.env.WEBMM_CDP_URL || 'http://localhost:8901/app/platform.html';
 
 let pass = 0, fail = 0;
 function check(name, cond, detail) {

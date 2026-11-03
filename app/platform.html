@@ -1795,6 +1795,27 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        <button class="action-btn edit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.75rem;" onclick="analogDetectSites()" title="Detect replaceable terminal groups on the CURRENT single-view molecule">用当前分子</button>
        <span class="card-sub">来源 = 分子工作台当前分子</span>
      </div>
+     <div id="agentPlanCard" style="margin:0.45rem 0; border:1px solid var(--ll-line); border-radius:10px; padding:0.6rem 0.7rem;">
+       <div class="path-head"><b>AI 协同计划</b><span class="card-sub">草稿 → 编辑 → 本地批准 → 同一 analogScan 执行 → 证据复盘</span></div>
+       <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
+         <input id="agentIntent" aria-label="设计意图" value="探索保守的局部 R-group 类似物；实验活性仅作未验证目标" style="flex:1; min-width:240px; padding:0.4rem; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text);">
+         <button class="action-btn edit" id="agentDraftBtn" style="width:auto;" onclick="agentPlanDraft()">生成草稿</button>
+         <button class="action-btn primary" id="agentApproveBtn" style="width:auto;" disabled onclick="agentPlanApproveAndRun()">批准并运行</button>
+         <button class="action-btn edit" id="agentReviewBtn" style="width:auto;" disabled onclick="agentPlanReview()">证据复盘</button>
+       </div>
+       <div id="agentPlanEditor" style="display:none; margin-top:0.45rem;">
+         <label class="hint" for="agentHypothesis">设计假设</label>
+         <input id="agentHypothesis" aria-label="设计假设" style="width:100%; margin:0.2rem 0 0.4rem; padding:0.4rem; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text);">
+         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; font-size:0.75rem;">
+           <label>候选 <input id="agentMaxCandidates" type="number" min="1" max="400" value="40" aria-label="最大候选数" style="width:70px;"></label>
+           <label>精化 <input id="agentRefineTop" type="number" min="1" max="30" value="10" aria-label="精化候选数" style="width:60px;"></label>
+           <label>柔性 <input id="agentFinalTop" type="number" min="1" max="10" value="5" aria-label="柔性精化数" style="width:60px;"></label>
+           <label class="hint"><input id="agentActivityUnverified" type="checkbox" checked> 活性仅作未验证目标</label>
+         </div>
+       </div>
+       <div id="agentPlanStatus" class="hint" role="status" style="margin-top:0.35rem;">先选当前分子、位点和片段类别；未配置 Provider 时使用明确标注的本地草稿。</div>
+       <pre id="agentReviewOut" class="hint" style="white-space:pre-wrap; margin:0.35rem 0 0;"></pre>
+     </div>
      <div class="analog-entry-grid">
        <div class="analog-path">
          <div class="path-head"><b>单位点交换</b><span class="card-sub" title="完整流程 — A 枚举:SMARTS 检测当前分子的可替换末端基(卤素/甲基/羟基/伯胺/甲氧基/腈 6 类),按所选类别拼接内置片段集,经价键合法性、重原子窗口、转子数(≤10)过滤,硬顶 400 产物; B 粗筛:每候选 ETKDG 嵌入 10 构象并 MMFF94s 优化,逐构象与母体参照构象刚性形状叠合,取最佳 Tanimoto 流式排序(持久 worker 池);C 精化:top-30 扩至 30 构象系综,与 B 轮取最大值; D 柔性:top-10 从最优刚姿出发,MCS 配对核心 + Kabsch 核心入位 + 位置约束(fc=25)MMFF 扭转松弛后重打分,Flex T 单列独立呈现(可低于刚性,如实显示)。SA 列为 Ertl 合成可达性(1=易,10=难)。">位点 → 片段 → 形状漏斗 B·C·D</span></div>
@@ -2002,6 +2023,14 @@ function rdkitAvailable() {
 <script src="tasks/pools.js"></script>
 <script src="tasks/funnel.js"></script>
 <script src="tasks/store.js"></script>
+<script src="agent/capabilities.js"></script>
+<script src="agent/skills.js"></script>
+<script src="agent/plans.js"></script>
+<script src="agent/evidence.js"></script>
+<script src="agent/tools.js"></script>
+<script src="agent/orchestrator.js"></script>
+<script src="agent/rgroup.js"></script>
+<script src="agent/browser-host.js"></script>
 <script src="platform/compat.js"></script>
 <script>initRDKit();</script>
 
@@ -4352,65 +4381,22 @@ function rdkitAvailable() {
     if (!siteVal || !analogParentMolblock) { analogStatus('Pick a site first (use current molecule → site)'); return; }
     const cat = document.getElementById('analogFragCat').value;
     const frags = ANALOG_FRAGMENTS.filter(f => cat === 'all' || f[1] === cat);
-    try { window.__analogRunCtx = { mode: 'swap', site: siteVal, fragCat: cat, deaza: false, parentSmiles: rdkitModule.get_mol(analogParentMolblock).get_smiles() }; } catch (e) { window.__analogRunCtx = { mode: 'swap', site: siteVal, fragCat: cat, deaza: false }; }
-    if (!frags.length) { analogStatus('No fragments in category'); return; }
-    // --- stage A: enumerate + filter (hard caps: ≤400 products, rotor ≤10)
     analogRunToken++;
     const token = analogRunToken;
     analogThumbsOn = false;
     analogStatus('Enumerating…');
-    const coreMb = analogCoreMolblock(siteVal.split(',').map(Number));   // 0-based (matches get_substruct_matches convention)
-    if (!coreMb) { analogStatus('Site surgery failed (multi-attachment?)'); return; }
-    const cm = rdkitModule.get_mol(coreMb);
-    if (!cm || !cm.is_valid()) { if (cm) cm.delete(); analogStatus('Core (capped with R#) unparseable'); return; }
-    const coreSmiles = cm.get_smiles();
-    cm.delete();
-    if (!coreSmiles.includes('*')) { analogStatus('Core SMILES lacks the attachment dummy'); return; }
-    const parentMol = rdkitModule.get_mol(analogParentMolblock);
-    const pDesc = JSON.parse(parentMol.get_descriptors());
-    const pHeavy = pDesc.NumHeavyAtoms || 0;
-    parentMol.delete();
-    const cands = [];
-    let nEnum = 0, nFilteredA = 0;
-    for (const [body, fcat] of frags) {
-      if (cands.length >= 400) break;
-      if (++nEnum % 20 === 0) await new Promise(r => setTimeout(r, 0));
-      { const _keep = () => nFilteredA++;
-      // plain replace, NO added parens: the core SMILES already carries the
-      // grouping it needs ('c1ccc(*)cc1' -> 'c1ccc(C)cc1'; tail '*' chains
-      // on: 'CC(=O)*' + 'OC' -> 'CC(=O)OC'). Invalid combinations are
-      // skipped honestly by the sanitize filter below.
-      const smi = coreSmiles.replace('*', body);
-      let m = null;
-      try { m = rdkitModule.get_mol(smi); } catch (e) { _keep(); continue; }
-      if (!m || !m.is_valid()) { if (m) m.delete(); _keep(); continue; }
-      const d = JSON.parse(m.get_descriptors());
-      const rotb = d.NumRotatableBonds ?? 0;
-      const heavy = d.NumHeavyAtoms || 0;
-      if (rotb > 10 || heavy > pHeavy + 9 || heavy < Math.max(1, pHeavy - 6)) { m.delete(); _keep(); continue; }
-      let canon = m.get_smiles();
-      m.delete();
-      // the surgical core carries explicit [H] literals (sdf3d heritage);
-      // the engine's conformer entry only ever receives H-FREE molblocks
-      // (every existing pipeline strips them) — mixed-H input traps it.
-      // Strip [H] literals and re-sanitize; invalid results drop out here.
-      const canonClean = canon.replace(/\[H\]/g, '').replace(/\(\)/g, '');
-      let m2 = null;
-      try { m2 = rdkitModule.get_mol(canonClean); } catch (e) {}
-      if (!m2 || !m2.is_valid()) { if (m2) m2.delete(); _keep(); continue; }
-      canon = m2.get_smiles();
-      const mb = m2.get_molblock();
-      m2.delete();
-      let sa = null;
-      if (await ensureSaTable()) {
-        try { sa = +window.webmm.sa_score_wasm(mb).toFixed(2); } catch (e) { /* keep null */ }
-      }
-      cands.push({ smiles: canon, molblock: mb, mw: +d.amw.toFixed(2), rotb, sa });
-    }
-    }
-    window.__analogAudit = { filtered: nFilteredA, notEvaluated: Math.max(0, frags.length - nEnum) };
-    if (!cands.length) { analogStatus('No candidates passed the sanity filters'); return; }
-    runAnalogFromCands(cands, token);
+    try {
+      const result = await Agent.RGroup.enumerateRgroup({
+        rdkitModule, webmm: window.webmm,
+        coreMolblock: analogCoreMolblock(siteVal.split(',').map(Number)),
+        parentMolblock: analogParentMolblock, fragments: frags,
+        ensureSaTable, maxCandidates: 400,
+      });
+      window.__analogRunCtx = { mode: 'swap', site: siteVal, fragCat: cat, deaza: false, parentSmiles: result.parentSmiles };
+      window.__analogAudit = result.audit;
+      if (!result.candidates.length) { analogStatus('No candidates passed the sanity filters'); return; }
+      runAnalogFromCands(result.candidates, token);
+    } catch (error) { analogStatus('Enumeration failed: ' + error.message); }
   }
   window.runAnalogExplorer = runAnalogExplorer;
 
@@ -4503,7 +4489,7 @@ function rdkitAvailable() {
   // shared funnel (B -> C -> D) over an enumerated candidate list — Top-5:
   // now a typed analogScan task (scheduler tokens + barriered funnel + task
   // side table; cancel before Done still writes nothing to facts)
-  async function runAnalogFromCands(candsRaw, token) {
+  async function runAnalogFromCands(candsRaw, token, approvedRun) {
     const Cn = window.Tasks.Contract, Fn = window.Tasks.Funnel;
     // candidates arrive from the exempt main-thread enumeration; array
     // position IS the identity for seeds and the deterministic tie-break
@@ -4521,14 +4507,23 @@ function rdkitAvailable() {
     const taskId = 'a' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
     let spec;
     try {
-      spec = Cn.makeSpec({ taskId, kind: 'analogScan', seed: 7, input: {
-        parentSmiles: (window.__analogRunCtx && window.__analogRunCtx.parentSmiles) || null,
-        parentSdf: analogParentSdf || '',
-        candidates: cands.map(c => ({ idx: c.idx, smiles: c.smiles, molblock: c.molblock, mw: c.mw != null ? c.mw : null, rotb: c.rotb != null ? c.rotb : null, sa: c.sa != null ? c.sa : null })),
-        audit,
-        inputRevision: { fragmentSet: 'builtin-v1' },
-      }, provenance: { projectId: (window.__activeProject && window.__activeProject.id) || null, buildId: await ensureBuildId() } });
-    } catch (e) { analogStatus('任务 spec 被拒:' + e.message); return; }
+      if (approvedRun) {
+        spec = Agent.Plans.compileApprovedPlan({
+          plan: approvedRun.plan,
+          approval: approvedRun.approval,
+          context: { ...approvedRun.context, candidates: cands },
+          taskId,
+        });
+      } else {
+        spec = Cn.makeSpec({ taskId, kind: 'analogScan', seed: 7, input: {
+          parentSmiles: (window.__analogRunCtx && window.__analogRunCtx.parentSmiles) || null,
+          parentSdf: analogParentSdf || '',
+          candidates: cands.map(c => ({ idx: c.idx, smiles: c.smiles, molblock: c.molblock, mw: c.mw != null ? c.mw : null, rotb: c.rotb != null ? c.rotb : null, sa: c.sa != null ? c.sa : null })),
+          audit,
+          inputRevision: { fragmentSet: 'builtin-v1' },
+        }, provenance: { projectId: (window.__activeProject && window.__activeProject.id) || null, buildId: await ensureBuildId() } });
+      }
+    } catch (e) { analogStatus('任务 spec 被拒:' + e.message); return null; }
     const tstore = await ensureTaskStore();
     if (!tstore) { analogStatus('项目存储不可用 — 无法入档'); return; }
     try { await tstore.submit(spec); } catch (e) { analogStatus('任务提交失败:' + e.message); return; }
@@ -4615,6 +4610,7 @@ function rdkitAvailable() {
       }
       taskScheduler.drop(taskId); activeAnalogTask = null;
       taskTrayFinish(taskId, 'complete');
+      return taskId;
     } catch (err) {
       if (err && (err.code === 'TASK_CANCELLED' || err.code === 'TASK_INTERRUPTED')) {
         document.getElementById('analogCancel').style.display = 'none';
@@ -4629,6 +4625,142 @@ function rdkitAvailable() {
     }
   }
   window.runAnalogFromCands = runAnalogFromCands;
+
+  // ---- AI collaboration browser host + minimal Plan Card ----
+  const webMMAgentHost = Agent.BrowserHost.createBrowserHost({
+    rdkitModule: () => rdkitModule,
+    webmm: () => window.webmm,
+    getParentMolblock: () => analogParentMolblock,
+    getParentSdf: () => analogParentSdf,
+    getSite: () => document.getElementById('analogSite').value,
+    getFragmentCategory: () => document.getElementById('analogFragCat').value,
+    getFragments: () => ANALOG_FRAGMENTS,
+    coreMolblock: atoms => analogCoreMolblock(atoms),
+    ensureSaTable,
+    ensureBuildId,
+    getTaskRecord: async id => { const store = await ensureTaskStore(); return store ? store.get(id) : null; },
+    getFact: async key => window.__platformCompat ? window.__platformCompat.getFact(key) : null,
+    getProjectId: () => window.__activeProject && window.__activeProject.id || null,
+    getRoundId: () => null,
+  });
+  const webMMAgentTools = Agent.Tools.createTools(webMMAgentHost);
+  window.WebMMAgentHost = webMMAgentHost;
+  window.WebMMAgentTools = webMMAgentTools;
+
+  let agentDraftPlan = null, agentLastTaskId = null;
+  const agentPlanStatus = message => { document.getElementById('agentPlanStatus').textContent = message; };
+  const agentBudgetFromInputs = () => ({
+    maxCandidates: parseInt(document.getElementById('agentMaxCandidates').value, 10),
+    refineTop: parseInt(document.getElementById('agentRefineTop').value, 10),
+    finalTop: parseInt(document.getElementById('agentFinalTop').value, 10),
+  });
+
+  function agentPlanShowDraft(validation) {
+    agentDraftPlan = validation.plan;
+    document.getElementById('agentPlanEditor').style.display = '';
+    document.getElementById('agentHypothesis').value = agentDraftPlan.hypothesis;
+    document.getElementById('agentMaxCandidates').value = agentDraftPlan.budget.maxCandidates;
+    document.getElementById('agentRefineTop').value = agentDraftPlan.budget.refineTop;
+    document.getElementById('agentFinalTop').value = agentDraftPlan.budget.finalTop;
+    document.getElementById('agentActivityUnverified').checked = agentDraftPlan.unverifiedGoals.includes('experimentalActivity');
+    document.getElementById('agentApproveBtn').disabled = false;
+    agentPlanStatus('等待本地批准 · ' + validation.planHash + ' · ' + agentDraftPlan.fragmentCategory + ' / ' + agentDraftPlan.siteRef);
+  }
+
+  async function agentPlanDraft() {
+    const button = document.getElementById('agentDraftBtn');
+    button.disabled = true;
+    try {
+      const intent = document.getElementById('agentIntent').value.trim();
+      let validation;
+      if (window.WebMMAgentProvider) {
+        const orchestrator = Agent.Orchestrator.createOrchestrator({ provider: window.WebMMAgentProvider, tools: webMMAgentTools });
+        const result = await orchestrator.proposePlan({ intent });
+        if (result.status === 'rejected') { agentPlanStatus('Provider 草稿被拒：' + result.errors.join('；')); return; }
+        validation = Agent.Plans.validatePlan(result.plan, await webMMAgentHost.getDesignContext());
+      } else {
+        const draft = await webMMAgentHost.createLocalPlan({
+          hypothesis: intent,
+          includeActivity: document.getElementById('agentActivityUnverified').checked,
+          budget: agentBudgetFromInputs(),
+        });
+        validation = Agent.Plans.validatePlan(draft, await webMMAgentHost.getDesignContext());
+      }
+      if (!validation.ok) { agentPlanStatus('计划校验失败：' + validation.errors.join('；')); return; }
+      agentPlanShowDraft(validation);
+    } catch (error) { agentPlanStatus('草稿失败：' + error.message); }
+    finally { button.disabled = false; }
+  }
+
+  function agentPlanReadEditor() {
+    const plan = JSON.parse(JSON.stringify(agentDraftPlan));
+    plan.hypothesis = document.getElementById('agentHypothesis').value;
+    plan.budget = agentBudgetFromInputs();
+    plan.goals = plan.goals.filter(goal => goal !== 'experimentalActivity');
+    plan.unverifiedGoals = plan.unverifiedGoals.filter(goal => goal !== 'experimentalActivity');
+    if (document.getElementById('agentActivityUnverified').checked) {
+      plan.goals.push('experimentalActivity');
+      plan.unverifiedGoals.push('experimentalActivity');
+    }
+    return plan;
+  }
+
+  async function agentPlanApproveAndRun() {
+    if (!agentDraftPlan) return;
+    const approveButton = document.getElementById('agentApproveBtn');
+    const draftButton = document.getElementById('agentDraftBtn');
+    approveButton.disabled = true; draftButton.disabled = true;
+    document.getElementById('agentReviewBtn').disabled = true;
+    agentLastTaskId = null;
+    try {
+      const plan = agentPlanReadEditor();
+      const validation = Agent.Plans.validatePlan(plan, await webMMAgentHost.getDesignContext());
+      if (!validation.ok) { agentPlanStatus('批准前校验失败：' + validation.errors.join('；')); return; }
+      agentDraftPlan = validation.plan;
+      const approval = Agent.Plans.issueApproval(agentDraftPlan, { approvedBy: 'user:local' });
+      analogRunToken++;
+      const token = analogRunToken;
+      analogThumbsOn = false;
+      analogStatus('Enumerating approved plan…');
+      const enumerated = await webMMAgentHost.enumerate(agentDraftPlan);
+      if (!enumerated.candidates.length) { agentPlanStatus('没有候选通过过滤'); analogStatus('No candidates passed the sanity filters'); return; }
+      window.__analogRunCtx = enumerated.runCtx;
+      window.__analogAudit = enumerated.audit;
+      agentLastTaskId = await runAnalogFromCands(enumerated.candidates, token, { plan: agentDraftPlan, approval, context: enumerated.context });
+      if (agentLastTaskId) {
+        document.getElementById('agentReviewBtn').disabled = false;
+        agentPlanStatus('已完成并保存 · ' + agentLastTaskId + ' · ' + approval.planHash);
+      } else agentPlanStatus('运行未完成或被取消；没有可复盘证据');
+    } catch (error) { agentPlanStatus('批准运行失败：' + error.message); }
+    finally { draftButton.disabled = false; approveButton.disabled = !agentDraftPlan; }
+  }
+
+  async function agentPlanReview() {
+    if (!agentLastTaskId) return;
+    const output = document.getElementById('agentReviewOut');
+    output.textContent = '读取真实证据…';
+    try {
+      const evidence = await webMMAgentHost.getEvidence(agentLastTaskId);
+      if (window.WebMMAgentProvider) {
+        const orchestrator = Agent.Orchestrator.createOrchestrator({ provider: window.WebMMAgentProvider, tools: webMMAgentTools });
+        const result = await orchestrator.reviewResults({ taskId: agentLastTaskId });
+        if (result.status === 'rejected') { output.textContent = 'Provider 复盘被拒：' + result.errors.join('；'); return; }
+        const lines = result.review.claims.map(claim => '• ' + claim.text + '\n  [' + claim.evidenceRefs.join(', ') + ']');
+        if (result.review.unresolved.length) lines.push('未解决：' + result.review.unresolved.join('、'));
+        if (result.nextPlan) lines.push('下一轮：' + result.nextPlan.status + '（未执行）');
+        output.textContent = lines.join('\n');
+      } else {
+        output.textContent = [
+          '本地证据摘要（非 AI 复盘）',
+          evidence.evidenceId,
+          '返回候选：' + evidence.resultCount + ' · truncated=' + evidence.truncated,
+          '四类记账：' + JSON.stringify(evidence.accounts),
+          '未验证目标：' + (evidence.unverifiedGoals.join('、') || '无'),
+          '边界：' + evidence.limitations[0],
+        ].join('\n');
+      }
+    } catch (error) { output.textContent = '复盘失败：' + error.message; }
+  }
 
   // ---- scaffold-hop spike: aza-scan (M3 spike) ----
   // Swap each H-bearing aromatic 6-ring carbon C→N by ATOM-LINE SURGERY on

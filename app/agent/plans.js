@@ -11,7 +11,7 @@
   'use strict';
 
   const PLAN_VERSION = 1;
-  const FIELDS = new Set(['version', 'kind', 'capability', 'capabilityRevision', 'skillId', 'skillVersion', 'baseRevision', 'parentRef', 'siteRef', 'fragmentSet', 'hypothesis', 'goals', 'unverifiedGoals', 'budget']);
+  const FIELDS = new Set(['version', 'kind', 'capability', 'capabilityRevision', 'skillId', 'skillVersion', 'baseRevision', 'parentRef', 'siteRef', 'fragmentSet', 'fragmentCategory', 'hypothesis', 'goals', 'unverifiedGoals', 'budget']);
   const BUDGET_FIELDS = new Set(['maxCandidates', 'refineTop', 'finalTop']);
   const clone = value => JSON.parse(JSON.stringify(value));
   const nonEmpty = value => typeof value === 'string' && value.trim().length > 0;
@@ -38,7 +38,10 @@
       if (!nonEmpty(raw[field])) errors.push(field + ' must be a non-empty string');
     }
     const fragmentSet = raw.fragmentSet === undefined ? 'builtin-v1' : raw.fragmentSet;
-    if (capability && !capability.fragmentSets.some(f => f.id === fragmentSet)) errors.push('unsupported fragmentSet: ' + fragmentSet);
+    const fragmentCategory = raw.fragmentCategory === undefined ? 'all' : raw.fragmentCategory;
+    const fragmentSetInfo = capability ? capability.fragmentSets.find(f => f.id === fragmentSet) : null;
+    if (capability && !fragmentSetInfo) errors.push('unsupported fragmentSet: ' + fragmentSet);
+    if (fragmentSetInfo && !fragmentSetInfo.categories.includes(fragmentCategory)) errors.push('unsupported fragmentCategory: ' + fragmentCategory);
 
     const goals = Array.isArray(raw.goals) ? [...new Set(raw.goals)] : [];
     if (!Array.isArray(raw.goals) || !goals.length) errors.push('goals must be a non-empty string array');
@@ -83,6 +86,7 @@
       parentRef: nonEmpty(raw.parentRef) ? raw.parentRef.trim() : raw.parentRef,
       siteRef: nonEmpty(raw.siteRef) ? raw.siteRef.trim() : raw.siteRef,
       fragmentSet,
+      fragmentCategory,
       hypothesis: nonEmpty(raw.hypothesis) ? raw.hypothesis.trim() : raw.hypothesis,
       goals,
       unverifiedGoals,
@@ -100,6 +104,7 @@
       if (context.parentRef !== undefined && context.parentRef !== plan.parentRef) errors.push('parentRef does not match the current context');
       if (context.siteRef !== undefined && context.siteRef !== plan.siteRef) errors.push('siteRef does not match the current context');
       if (context.fragmentSet !== undefined && context.fragmentSet !== plan.fragmentSet) errors.push('fragmentSet does not match the current context');
+      if (context.fragmentCategory !== undefined && context.fragmentCategory !== plan.fragmentCategory) errors.push('fragmentCategory does not match the current context');
     }
     let hash = null;
     if (plan) {
@@ -126,7 +131,7 @@
     if (!nonEmpty(approval.approvedBy)) fail('APPROVER_REQUIRED', 'approvedBy must be a non-empty string');
     if (!nonEmpty(taskId)) fail('TASK_ID_REQUIRED', 'taskId must be a non-empty string');
     if (!context || !nonEmpty(context.parentSmiles) || !nonEmpty(context.parentSdf)) fail('CONTEXT_INVALID', 'parentSmiles and parentSdf are required');
-    for (const field of ['revision', 'parentRef', 'siteRef', 'fragmentSet', 'buildId']) {
+    for (const field of ['revision', 'parentRef', 'siteRef', 'fragmentSet', 'fragmentCategory', 'buildId']) {
       if (!nonEmpty(context[field])) fail('CONTEXT_INVALID', field + ' is required');
     }
     if (!Array.isArray(context.candidates) || !context.candidates.length) fail('CANDIDATES_REQUIRED', 'at least one enumerated candidate is required');
@@ -181,6 +186,7 @@
         baseRevision: p.baseRevision,
         parentRef: p.parentRef,
         siteRef: p.siteRef,
+        fragmentCategory: p.fragmentCategory,
         skillId: p.skillId,
         skillVersion: p.skillVersion,
         hypothesis: p.hypothesis,

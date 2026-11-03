@@ -1,6 +1,6 @@
 # AI collaboration core — Capability / Plan / Tools / Evidence
 
-> Status: first headless contract slice. No model vendor, UI, or browser wiring yet.
+> Status: browser vertical slice complete with a mock provider. No real model vendor is configured.
 > Scope: one skill (`rgroup-optimization`) and one capability (`analogScan`).
 
 ## 1. Boundary
@@ -29,6 +29,8 @@ There is no autonomous loop. Execution happens only after the UI/execution layer
 | `app/agent/skills.js` | Versioned LBDD SOP for planning and reviewing R-group optimization |
 | `app/agent/plans.js` | Plan normalization, scientific-goal checks, plan hash, approval, and TaskSpec compilation |
 | `app/agent/tools.js` | Allow-listed model tools and model-boundary context sanitization |
+| `app/agent/rgroup.js` | Headless stage-A enumeration shared by the legacy explorer and Agent |
+| `app/agent/browser-host.js` | Current R-group identity, execution context, enumeration, library summary, and real evidence access |
 | `app/agent/evidence.js` | Citation-ready artifacts from real task records and review-reference validation |
 | `app/agent/orchestrator.js` | One bounded planning call and one bounded review call; no execution method |
 
@@ -55,13 +57,13 @@ kind = rgroupOptimization
 capability = analogScan
 capabilityRevision = 1
 skillId = rgroup-optimization
-baseRevision / parentRef / siteRef / fragmentSet
+baseRevision / parentRef / siteRef / fragmentSet / fragmentCategory
 hypothesis
 goals / unverifiedGoals
 budget { maxCandidates, refineTop, finalTop }
 ```
 
-Unknown top-level and budget fields are rejected. Budgets are integers capped by the existing funnel at 400 / 30 / 10. Defaults shrink consistently for smaller runs.
+Unknown top-level and budget fields are rejected. `fragmentCategory` defaults to `all` and is part of both `planHash` and the browser context revision; changing the category after approval invalidates that approval. Budgets are integers capped by the existing funnel at 400 / 30 / 10. Defaults shrink consistently for smaller runs.
 
 `planHash` fingerprints the complete normalized plan using the existing task canonicalization. Editing goals, identity, hypothesis, or budget changes the hash.
 
@@ -121,7 +123,20 @@ The compiler emits the existing frozen `analogScan input v1`. It changes only de
 
 A `nextPlanDraft` is validated against the current context and returned as `awaiting_approval`. Review never creates a user Decision or starts another run.
 
-## 8. Provider interface
+## 8. Browser execution and Plan Card
+
+`platform.html` loads the Agent modules and creates `WebMMAgentHost` / `WebMMAgentTools`. The legacy explorer and approved Agent run both call `Agent.RGroup.enumerateRgroup`, then share the same worker pool, scheduler, task store, funnel, and Done-fact transaction.
+
+The minimal Plan Card supports:
+
+1. local draft, or an injected `window.WebMMAgentProvider`;
+2. hypothesis, budget, and unverified-activity editing;
+3. local approval followed by headless enumeration and `runAnalogFromCands`;
+4. local evidence summary, or provider review with real evidence references.
+
+Without a provider, the UI explicitly says “local draft” and “local evidence summary (not AI review)”. It never simulates an AI response. With a provider, planning and review each make one bounded call. Provider text reaches the page only through form values or `textContent`.
+
+## 9. Provider interface
 
 The orchestrator is model-vendor agnostic:
 
@@ -137,21 +152,33 @@ provider.review({
 
 A provider may call a local model, a remote model, or a deterministic test double. Network authentication, streaming, retries, and vendor tool protocols belong outside the core contract.
 
-## 9. Tests and next slice
+## 10. GLM feasibility probe
+
+`glm-5.3-flash` was tested through Sider with the R-group contract:
+
+- its first DesignPlan was schema-valid, including an explicit unverified experimental-activity goal;
+- its first DesignReview added unrequested fields and unsupported interpretation, so the deterministic validator rejected it;
+- after a schema-specific corrective prompt, it produced a valid review with only real evidence references and no unsupported activity claim.
+
+GLM is therefore a candidate provider for **structured draft + deterministic validation + corrective retry**, not a trusted execution authority. The Sider session is only a test harness. Production use still needs a separately configured GLM-compatible endpoint or a thin model proxy and an explicit privacy decision.
+
+## 11. Tests and next slice
 
 Run:
 
 ```sh
 node tests/agent/run.js
 node tests/platform/run.js
+tests/cdp/run.sh agent_plan
 ```
+
+`agent_plan` uses a schema-valid mock provider and verifies the complete browser path plus the legacy explorer. `m12_tasks` remains the determinism, cancellation, and reconciliation regression gate.
 
 The next implementation slice should:
 
-1. extract the existing R-group enumeration/context into a headless browser host;
-2. load these modules in `platform.html` without changing current UI behavior;
-3. connect approved compiled specs to the existing task store and funnel;
-4. add a minimal Plan Card for edit/approve/run/review;
-5. only then add a model-provider adapter.
+1. add a configurable GLM/OpenAI-compatible provider with schema-specific corrective retry;
+2. define endpoint/key handling and exactly which molecular context may leave the browser;
+3. persist Plan/Review as first-class project artifacts rather than only task provenance;
+4. add a second LBDD skill only after the R-group loop is used successfully.
 
-No cloud provider, autonomous execution, general chat, additional skills, MCP, or new LBDD algorithms are part of this slice.
+No autonomous execution, general chat, MCP, or new LBDD algorithms are part of this slice.

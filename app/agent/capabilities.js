@@ -15,7 +15,7 @@
     requiredContext: ['parentRef', 'siteRef', 'parentSmiles', 'parentSdf', 'candidates', 'fragmentSet'],
     supportedGoals: ['descriptors', 'shapeTanimoto', 'SA'],
     knownUnverifiedGoals: ['experimentalActivity', 'solubility', 'selectivity'],
-    fragmentSets: [{ id: 'builtin-v1', kind: 'rgroup', description: 'Built-in categorized R-group fragments; the host supplies category details.' }],
+    fragmentSets: [{ id: 'builtin-v1', kind: 'rgroup', description: 'Built-in categorized R-group fragments; the host supplies category details.', categories: ['all', 'alkyl', 'halo', 'O', 'N', 'acyl', 'aryl'] }],
     budgetLimits: { maxCandidates: 400, refineTop: 30, finalTop: 10 },
     stages: [
       { id: 'A', operation: 'enumerate-and-filter' },

@@ -32,6 +32,7 @@ function basePlan() {
     parentRef: 'mol:lead-01',
     siteRef: 'attachment:2',
     fragmentSet: 'builtin-v1',
+    fragmentCategory: 'alkyl',
     hypothesis: 'Bounded local substitutions preserve the parent scaffold while improving the evidence profile.',
     goals: ['descriptors', 'shapeTanimoto'],
     budget: { maxCandidates: 20, refineTop: 5, finalTop: 3 },
@@ -39,7 +40,7 @@ function basePlan() {
 }
 function baseContext() {
   return {
-    revision: 'rev-8', parentRef: 'mol:lead-01', siteRef: 'attachment:2', fragmentSet: 'builtin-v1',
+    revision: 'rev-8', parentRef: 'mol:lead-01', siteRef: 'attachment:2', fragmentSet: 'builtin-v1', fragmentCategory: 'alkyl',
     parentSmiles: 'CCO', parentSdf: 'PARENT-SDF', buildId: 'build-a', projectId: 'project-a', roundId: 'round-8',
     audit: { filtered: 2, notEvaluated: 1 },
     candidates: [
@@ -86,6 +87,10 @@ async function main() {
   const unknownGoal = basePlan(); unknownGoal.goals.push('bindingAffinity');
   check('unknown goals are rejected rather than silently relabelled', !Plans.validatePlan(unknownGoal).ok);
   check('unknown plan fields are rejected', !Plans.validatePlan({ ...basePlan(), autoExecute: true }).ok);
+  check('fragmentCategory defaults to all and rejects unknown categories',
+    Plans.validatePlan((() => { const p = basePlan(); delete p.fragmentCategory; return p; })()).plan.fragmentCategory === 'all' &&
+    !Plans.validatePlan({ ...basePlan(), fragmentCategory: 'unknown' }).ok);
+  check('fragmentCategory participates in planHash', valid.planHash !== Plans.validatePlan({ ...basePlan(), fragmentCategory: 'aryl' }).planHash);
   check('budget hard limits match the existing analog funnel',
     !Plans.validatePlan({ ...basePlan(), budget: { maxCandidates: 401 } }).ok &&
     !Plans.validatePlan({ ...basePlan(), budget: { refineTop: 31 } }).ok &&
