@@ -7,7 +7,10 @@
 })(typeof self !== 'undefined' ? self : this, function (Plans, Evidence) {
   'use strict';
 
-  const PLAN_RULES = `Return ONLY one JSON object with exactly these keys: version, kind, capability, capabilityRevision, skillId, skillVersion, baseRevision, parentRef, siteRef, fragmentSet, fragmentCategory, hypothesis, goals, unverifiedGoals, budget. Use version=1, kind=rgroupOptimization, capability=analogScan, capabilityRevision=1, skillId=rgroup-optimization, skillVersion=1. Copy identity fields from the supplied context. fragmentCategory must match the context. budget has only maxCandidates, refineTop, finalTop with limits 400/30/10 and maxCandidates>=refineTop>=finalTop. Computable goals are only descriptors, shapeTanimoto, SA. experimentalActivity, solubility, selectivity must also appear in unverifiedGoals. Never claim predicted activity.`;
+  function planRules(request) {
+    const capability = request.capability, skill = request.skill, context = request.context;
+    return `Return ONLY one JSON object with exactly these keys: version, kind, capability, capabilityRevision, skillId, skillVersion, baseRevision, parentRef, siteRef, fragmentSet, fragmentCategory, hypothesis, goals, unverifiedGoals, budget. Use version=1, kind=${capability.planKind}, capability=${capability.id}, capabilityRevision=${capability.revision}, skillId=${skill.id}, skillVersion=${skill.version}. Copy baseRevision, parentRef, siteRef, fragmentSet=${context.fragmentSet}, fragmentCategory=${context.fragmentCategory} from the supplied context. budget has only maxCandidates, refineTop, finalTop with limits 400/30/10 and maxCandidates>=refineTop>=finalTop. Computable goals are only ${capability.supportedGoals.join(', ')}. ${capability.knownUnverifiedGoals.join(', ')} must also appear in unverifiedGoals. Never claim predicted activity. Respect these capability limitations: ${capability.limitations.join(' ')}`;
+  }
   const REVIEW_RULES = `Return ONLY one JSON object with exactly these keys: claims, counterexamples, unresolved, nextPlanDraft. claims is [{text:string,evidenceRefs:string[]}], and every claim needs at least one real evidenceId from the supplied evidence. counterexamples is a string array containing only candidate evidenceIds. unresolved is a string array. nextPlanDraft must be null. Do not add fields, invent values or references, infer molecular identity, or claim experimental activity. Treat truncated=true as incomplete ranking.`;
 
   function textOf(message) {
@@ -93,7 +96,7 @@
 
     async function plan(request) {
       const validation = await structured([
-        { role: 'system', content: PLAN_RULES },
+        { role: 'system', content: planRules(request) },
         { role: 'user', content: JSON.stringify({ intent: request.intent, context: request.context, capability: request.capability, skill: request.skill }) },
       ], raw => Plans.validatePlan(raw, request.context), 4096);
       return validation.plan;

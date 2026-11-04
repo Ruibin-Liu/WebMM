@@ -37,6 +37,7 @@ Or just run everything, in dependency order:
 | `m6_repoint` | platform | M4 P2 §3 pointer repoint: restore-into-current swaps the DB atomically, other tabs get the forced-reload modal, old DB trashed |
 | `m6_scratch` | platform | M4 P3 scratch pad: legacy-history migration to webmm-scratch, IDB-backed clipboard, send-to-library gesture |
 | `agent_plan` | platform | AI collaboration: sanitized tools, approval/execution, cited review, persisted Plan/Review/Decision, history lineage, reload and copy-as-draft, legacy regression |
+| `bio_agent_plan` | platform | Second Skill: bioisostere aza/deaza plan, shared approval/execution, evidence/review/next Decision, legacy reverse substitution |
 | `m7_activity` | platform | M5 assay foundation (docs/assay-foundation.md; suite number = sequence): activity CSV two-step import with match ladder + tiers, result-table activity column, identity audit families (full/parent), undo incl. first-import, reload replay, export |
 
 Note: since the workbench swap, m0–m5 run against `app/index.html` (the
@@ -69,5 +70,6 @@ Only two real inputs; everything else under /tmp is written by the suites
 - `node tests/agent/run.js` — Agent contracts and provider corrective-retry suites
 - `node tests/agent/proxy.mjs` — real local proxy with a fake upstream (model override and traversal guards)
 - `node tests/cdp/agent_glm_live.test.js` — manual real pi/magpie acceptance; requires `npm run agent:dev`, not part of default CI
+- `WEBMM_AGENT_SKILL=bioisostere-exploration node tests/cdp/agent_glm_live.test.js` — same live gate for the second Skill
 - `scripts/build-ketcher.sh` — reproducible Ketcher bundle build (pinned
   versions; `--install` writes into app/vendor/ketcher)

@@ -1,26 +1,31 @@
-# Plan: LBDD 项目历史视图（Plan / Review / Decision / Lineage）
+# Plan: 第二个 LBDD Skill（Bioisostere / aza-deaza Exploration）
 
-用户确认「好」= 继续做下一项：让已持久化的设计产物在 analog 页面可见、可检查轮次关系，并可从旧计划显式复制为当前上下文的新草稿；不改执行语义。
+用户确认继续 = 增加真实第二个 Skill，但范围限定为现有芳环 aza/deaza 扫描，不接全部 479 条反应库；泛化 Skill→Capability→PlanKind→Enumerator 映射，R-group 全链路零回归。
 
 ## 交付
-1. **设计历史 UI（platform.html）**
-   - 在 AI Plan Card 下新增可折叠设计历史：计划状态、短 planHash、假设、片段类别、模型、taskId、createdAt。
-   - 按 planHash 分组显示 Review claims/unresolved 与 Decision action/actor/reason；next 显示旧 plan → 新 plan 的链接。
-   - 全部用 DOM/textContent，模型内容不进入 innerHTML；隐藏覆盖层继续由 getArtifacts 过滤。
-2. **刷新与复制新草稿**
-   - draft/approval/complete/review/decision 后及进入 analog 模式时刷新；重载后无需恢复旧 Plan Card 也能看到项目历史。
-   - `agentPlanCopyDraft(planHash)`：仅在当前 parent/site/category 与旧计划一致时，更新 baseRevision、复制假设并生成独立待批准草稿；不复制 approval/taskId，不自动执行。
-3. **测试与文档**
-   - CDP agent_plan 增加历史分组、next 链接、重载后可见性、复制为第四草稿且任务数不变；既有 15 项零回归。
-   - m12_tasks、Node suites、真实 GLM live 按需回归；docs 明确历史语义和复制边界。
+1. **Capability / Skill 泛化**
+   - Capabilities 增 `azaScan` revision 1（taskKind=analogScan、planKind=bioisostereExploration、fragmentSet=builtin-aza-v1、category=aza|aza+deaza、真实证据与限制）。
+   - Skills 增 `bioisostere-exploration` v1；Orchestrator/Provider 由 skill 决定 capability 与动态提示，不再硬编码 R-group。
+   - DesignPlan 按 capability 校验 kind/skill/fragmentSet/category；provenance/Evidence 带 capability；Decision.next 接受两种 planKind。
+2. **Headless aza 枚举（app/agent/aza.js + bio-host.js）**
+   - 抽取现有 C→N 单/双位点、可选 N→C 单/双位点、规范 SMILES 去重、描述符/SA、__azaCounts 和 RDKit 对象释放；legacy runAzaScan 共用。
+   - BioHost 使用 siteRef=aromatic-ring:auto、方向 category 和母体 revision；返回与 R-group 相同的 candidates/audit/runCtx/execution context，批准与任务执行不复制。
+3. **Plan Card 与历史接入**
+   - 新增 Skill 选择（R-group / Bioisostere），动态切换 host/tools/provider skill；批准、运行、复盘、Decision 和复制均使用当前 plan 的 skill/capability。
+   - 历史显示 planKind/capability；复制按当前 plan skill 取对应 host，不允许跨 skill/上下文误套。
+4. **测试与文档**
+   - Node 增 aza capability/plan 校验、动态 provider、Decision next、Evidence limitations；R-group 既有断言全保留。
+   - CDP 新 bio_agent_plan：mock bio Provider → 小预算批准 → 真 aza task → evidence/review → next draft；legacy aza/deaza 与 R-group agent_plan 零回归。
+   - docs 明确这只是 aza/deaza 第二 Skill，不代表通用 bioisostere 反应库。
 
 ## 验收
-- CDP agent_plan 全绿：三版本历史可见、Review/Decision 归属正确、重载后仍可见，复制产生第四 draft 且无新 task、无 page error。
-- Node agent/platform/proxy 全绿；m12_tasks 14/14；agent_glm_live 8/8（若模型可用）。
-- node --check / bash -n / git diff --check 全过；无新依赖、无自主执行、无历史事实改写；推送分支。
+- Node agent/platform/proxy 全绿；R-group CDP agent_plan 18/18；新 bio CDP 覆盖 aza 单/双替换、deaza 方向、spec capability/planHash/budget、Evidence/Review/Decision。
+- m12_tasks 14/14、真实 GLM live 8/8；无 page error、无新依赖、无自主执行。
+- node --check/bash -n/git diff --check 全过并推送分支。
 
 ## 排雷存档
-- 设计历史与 analog 执行历史分开：前者按 planHash 解释设计/证据/人工决策，后者只列 run；next lineage 用规范化的 nextPlanDraft hash 关联。
-- 复制旧计划不能盲目 rebase 到另一分子：仅 parentRef/siteRef/fragmentCategory 一致时更新 baseRevision；approval/taskId 不复制，CDP 验证第四 draft 但 task 数不变。
-- 重载不恢复旧 Plan Card 内存状态，history 必须直接从 project projection 渲染；getProjectState 在 compat 未就绪时降级空对象，避免启动竞态。
-- 所有模型/旧计划文本均 DOM textContent；next/复制后历史即时刷新，进入 analog 模式也刷新。
+- 显式 H 的 3D 母体可产生显式 H SMILES；直接替换原子会错位。Aza 先去 H 并 canonicalize，再**重新解析 canonical SMILES** 生成 surgery base——get_molblock 保留输入序，仅 canonicalize 不重解析仍不够。
+- 化学验收不能只查 SMILES 含 N（原分子酰胺 N 也会误过）；bio CDP 要求真实芳环 n 生成物，legacy deaza 要求 N-free 产物。
+- BioHost 初始化未写 __azaCounts/__azaRun，已补；完成时 __azaRun 会复位，断言使用 runCtx.mode 与 counts。
+- legacy 完成状态在 Done 文本后仍可能 running，测试改为等待无 planHash task=complete，避免提交事务竞态误判。
+- Orchestrator/MagpieProvider 不再硬编码 R-group，改由 skill 决定 capability/planKind/提示；两种真实 GLM live 各 8/8。

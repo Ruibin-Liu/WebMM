@@ -8,6 +8,7 @@
 
   const ANALOG_SCAN = {
     id: 'analogScan',
+    defaultSkillId: 'rgroup-optimization',
     revision: 1,
     taskKind: 'analogScan',
     planKind: 'rgroupOptimization',
@@ -31,14 +32,39 @@
     ],
   };
 
-  const REGISTRY = { analogScan: ANALOG_SCAN };
+  const AZA_SCAN = {
+    id: 'azaScan',
+    defaultSkillId: 'bioisostere-exploration',
+    revision: 1,
+    taskKind: 'analogScan',
+    planKind: 'bioisostereExploration',
+    description: 'Enumerate single/double aromatic C-H to N substitutions and optionally reverse pyridine-type N to C-H substitutions, then use the same deterministic scoring funnel.',
+    requiredContext: ['parentRef', 'siteRef', 'parentSmiles', 'parentSdf', 'candidates', 'fragmentSet', 'fragmentCategory'],
+    supportedGoals: ['descriptors', 'shapeTanimoto', 'SA'],
+    knownUnverifiedGoals: ['experimentalActivity', 'solubility', 'selectivity'],
+    fragmentSets: [{ id: 'builtin-aza-v1', kind: 'bioisostere', description: 'Aromatic aza and optional deaza transformations.', categories: ['aza', 'aza+deaza'] }],
+    budgetLimits: { maxCandidates: 400, refineTop: 30, finalTop: 10 },
+    stages: ANALOG_SCAN.stages,
+    limitations: [
+      'Aza/deaza substitution is one bioisostere family, not a general reaction library.',
+      'Experimental activity is not predicted by this capability.',
+      'Shape similarity is not evidence of equal or improved activity.',
+      'MMFF energies must not be compared as a cross-molecule activity ranking.',
+      'A receptor-free run makes no binding-affinity or selectivity claim.',
+    ],
+  };
+
+  const REGISTRY = { analogScan: ANALOG_SCAN, azaScan: AZA_SCAN };
   const clone = value => JSON.parse(JSON.stringify(value));
 
   function listCapabilities() { return Object.keys(REGISTRY).sort().map(id => clone(REGISTRY[id])); }
   function getCapability(id) { return REGISTRY[id] ? clone(REGISTRY[id]) : null; }
   function getLibrarySummary(id) {
-    const capability = getCapability('analogScan');
-    return capability.fragmentSets.find(f => f.id === id) || null;
+    for (const capability of Object.values(REGISTRY)) {
+      const hit = capability.fragmentSets.find(f => f.id === id);
+      if (hit) return clone(hit);
+    }
+    return null;
   }
 
   return { listCapabilities, getCapability, getLibrarySummary };

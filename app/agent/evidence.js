@@ -14,7 +14,7 @@
     if (!spec || spec.kind !== 'analogScan') throw new Error('analogScan spec required');
     if (!fact || !Array.isArray(fact.results)) throw new Error('analog fact with results required');
     const rootId = 'evidence:analog:' + spec.taskId;
-    const capability = Capabilities.getCapability('analogScan');
+    const capability = Capabilities.getCapability(spec.provenance && spec.provenance.capability || 'analogScan');
     const candidates = fact.results.map(result => ({
       evidenceId: rootId + ':candidate:' + result.idx,
       candidateRef: 'candidate:' + spec.taskId + ':' + result.idx,
@@ -37,6 +37,7 @@
       plan: {
         planHash: spec.provenance && spec.provenance.planHash || null,
         kind: spec.provenance && spec.provenance.planKind || null,
+        capability: spec.provenance && spec.provenance.capability || 'analogScan',
         hypothesis: spec.provenance && spec.provenance.hypothesis || null,
         baseRevision: spec.provenance && spec.provenance.baseRevision || null,
         modelProvider: spec.provenance && spec.provenance.modelProvider || null,

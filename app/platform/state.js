@@ -280,7 +280,7 @@
         }
         if (s.designDecisions[cmd.decisionId]) return { state: prev, error: 'RecordDesignDecision: duplicate decisionId' };
         if (!rec || rec.status !== 'complete' || rec.taskId !== cmd.taskId) return { state: prev, error: 'RecordDesignDecision: task does not match completed plan' };
-        if (cmd.action === 'next' && (!cmd.nextPlanDraft || cmd.nextPlanDraft.kind !== 'rgroupOptimization')) return { state: prev, error: 'RecordDesignDecision: next requires nextPlanDraft' };
+        if (cmd.action === 'next' && (!cmd.nextPlanDraft || !['rgroupOptimization', 'bioisostereExploration'].includes(cmd.nextPlanDraft.kind))) return { state: prev, error: 'RecordDesignDecision: next requires nextPlanDraft' };
         if (cmd.action !== 'next' && cmd.nextPlanDraft != null) return { state: prev, error: 'RecordDesignDecision: nextPlanDraft only belongs to next' };
         s.designDecisions[cmd.decisionId] = {
           taskId: cmd.taskId, planHash: cmd.planHash, action: cmd.action,

@@ -1799,6 +1799,10 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        <div class="path-head"><b>AI 协同计划</b><span class="card-sub">草稿 → 编辑 → 本地批准 → 同一 analogScan 执行 → 证据复盘</span></div>
        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
          <input id="agentIntent" aria-label="设计意图" value="探索保守的局部 R-group 类似物；实验活性仅作未验证目标" style="flex:1; min-width:240px; padding:0.4rem; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text);">
+         <select id="agentSkill" aria-label="LBDD Skill" onchange="agentSetSkill(this.value)">
+           <option value="rgroup-optimization">R-group</option>
+           <option value="bioisostere-exploration">Bioisostere (aza)</option>
+         </select>
          <button class="action-btn edit" id="agentConnectBtn" style="width:auto;" onclick="agentPlanConnect()">连接 pi GLM</button>
          <button class="action-btn edit" id="agentDraftBtn" style="width:auto;" onclick="agentPlanDraft()">生成草稿</button>
          <button class="action-btn primary" id="agentApproveBtn" style="width:auto;" disabled onclick="agentPlanApproveAndRun()">批准并运行</button>
@@ -2046,7 +2050,9 @@ function rdkitAvailable() {
 <script src="agent/orchestrator.js"></script>
 <script src="agent/magpie-provider.js"></script>
 <script src="agent/rgroup.js"></script>
+<script src="agent/aza.js"></script>
 <script src="agent/browser-host.js"></script>
+<script src="agent/bio-host.js"></script>
 <script src="platform/compat.js"></script>
 <script>initRDKit();</script>
 
@@ -4643,7 +4649,7 @@ function rdkitAvailable() {
   window.runAnalogFromCands = runAnalogFromCands;
 
   // ---- AI collaboration browser host + minimal Plan Card ----
-  const webMMAgentHost = Agent.BrowserHost.createBrowserHost({
+  const webMMAgentHostEnv = {
     rdkitModule: () => rdkitModule,
     webmm: () => window.webmm,
     getParentMolblock: () => analogParentMolblock,
@@ -4661,10 +4667,32 @@ function rdkitAvailable() {
     makeId: prefix => prefix + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
     getProjectId: () => window.__activeProject && window.__activeProject.id || null,
     getRoundId: () => null,
-  });
-  const webMMAgentTools = Agent.Tools.createTools(webMMAgentHost);
+    getAzaDeaza: () => !!(document.getElementById('azaDeaza') && document.getElementById('azaDeaza').checked),
+  };
+  const webMMRgroupAgentHost = Agent.BrowserHost.createBrowserHost(webMMAgentHostEnv);
+  const webMMBioAgentHost = Agent.BioHost.createBioBrowserHost(webMMAgentHostEnv);
+  let webMMAgentHost = webMMRgroupAgentHost;
+  let webMMAgentTools = Agent.Tools.createTools(webMMAgentHost);
   window.WebMMAgentHost = webMMAgentHost;
   window.WebMMAgentTools = webMMAgentTools;
+  window.WebMMBioAgentHost = webMMBioAgentHost;
+
+  function agentSetSkill(skillId) {
+    const useBio = skillId === 'bioisostere-exploration';
+    webMMAgentHost = useBio ? webMMBioAgentHost : webMMRgroupAgentHost;
+    webMMAgentTools = Agent.Tools.createTools(webMMAgentHost);
+    window.WebMMAgentHost = webMMAgentHost;
+    window.WebMMAgentTools = webMMAgentTools;
+    document.getElementById('agentSkill').value = useBio ? 'bioisostere-exploration' : 'rgroup-optimization';
+    agentDraftPlan = null; agentCurrentPlanHash = null; agentLastTaskId = null;
+    document.getElementById('agentPlanEditor').style.display = 'none';
+    document.getElementById('agentApproveBtn').disabled = true;
+    document.getElementById('agentReviewBtn').disabled = true;
+    document.getElementById('agentDecisionControls').style.display = 'none';
+    document.getElementById('agentReviewOut').textContent = '';
+    agentPlanStatus((useBio ? 'Bioisostere / aza-deaza' : 'R-group') + ' · 选择当前分子后生成新草稿');
+    agentRenderDesignHistory();
+  }
 
   let agentDraftPlan = null, agentCurrentPlanHash = null, agentLastTaskId = null;
   const agentPlanStatus = message => { document.getElementById('agentPlanStatus').textContent = message; };
@@ -4713,7 +4741,7 @@ function rdkitAvailable() {
       const head = agentHistoryElement('div', 'agent-history-plan-head', null);
       head.style.cssText = 'display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;';
       head.appendChild(agentHistoryElement('b', null, record.status + ' · ' + planHash.slice(0, 10)));
-      head.appendChild(agentHistoryElement('span', 'hint', record.plan.fragmentCategory + ' · ' + (record.model || 'local')));
+      head.appendChild(agentHistoryElement('span', 'hint', record.plan.capability + ' · ' + record.plan.fragmentCategory + ' · ' + (record.model || 'local')));
       const copy = agentHistoryElement('button', 'action-btn edit agent-copy-draft', '复制为新草稿');
       copy.style.cssText = 'width:auto; padding:0.15rem 0.45rem; font-size:0.7rem;';
       copy.addEventListener('click', () => agentPlanCopyDraft(planHash));
@@ -4746,8 +4774,9 @@ function rdkitAvailable() {
     try {
       const entry = webMMAgentHost.getArtifacts().plans.find(([hash]) => hash === planHash);
       if (!entry) { agentPlanStatus('找不到要复制的计划'); return; }
-      const current = await webMMAgentHost.getDesignContext();
       const previous = entry[1].plan;
+      agentSetSkill(previous.skillId);
+      const current = await webMMAgentHost.getDesignContext();
       if (previous.parentRef !== current.parentRef || previous.siteRef !== current.siteRef || previous.fragmentCategory !== current.fragmentCategory) {
         agentPlanStatus('当前分子、位点或片段类别已变化；不能复制到不同上下文');
         return;
@@ -4786,7 +4815,7 @@ function rdkitAvailable() {
       let validation;
       if (window.WebMMAgentProvider) {
         const orchestrator = Agent.Orchestrator.createOrchestrator({ provider: window.WebMMAgentProvider, tools: webMMAgentTools });
-        const result = await orchestrator.proposePlan({ intent });
+        const result = await orchestrator.proposePlan({ intent, skillId: document.getElementById('agentSkill').value });
         if (result.status === 'rejected') { agentPlanStatus('Provider 草稿被拒：' + result.errors.join('；')); return; }
         validation = Agent.Plans.validatePlan(result.plan, await webMMAgentHost.getDesignContext());
       } else {
@@ -4846,6 +4875,8 @@ function rdkitAvailable() {
       if (!enumerated.candidates.length) { agentPlanStatus('没有候选通过过滤'); analogStatus('No candidates passed the sanity filters'); return; }
       window.__analogRunCtx = enumerated.runCtx;
       window.__analogAudit = enumerated.audit;
+      if (agentDraftPlan.capability === 'azaScan') { window.__azaCounts = enumerated.counts; window.__azaRun = true; }
+      else window.__azaRun = false;
       agentLastTaskId = await runAnalogFromCands(enumerated.candidates, token, { plan: agentDraftPlan, approval, context: enumerated.context });
       if (agentLastTaskId) {
         await webMMAgentHost.recordPlanComplete(approval.planHash, agentLastTaskId);
@@ -4865,7 +4896,7 @@ function rdkitAvailable() {
       const evidence = await webMMAgentHost.getEvidence(agentLastTaskId);
       if (window.WebMMAgentProvider) {
         const orchestrator = Agent.Orchestrator.createOrchestrator({ provider: window.WebMMAgentProvider, tools: webMMAgentTools });
-        const result = await orchestrator.reviewResults({ taskId: agentLastTaskId });
+        const result = await orchestrator.reviewResults({ taskId: agentLastTaskId, skillId: agentDraftPlan.skillId });
         if (result.status === 'rejected') { output.textContent = 'Provider 复盘被拒：' + result.errors.join('；'); return; }
         await webMMAgentHost.recordReview(agentLastTaskId, evidence.plan.planHash, result.review, agentModelInfo());
         const lines = result.review.claims.map(claim => '• ' + claim.text + '\n  [' + claim.evidenceRefs.join(', ') + ']');
@@ -4931,122 +4962,24 @@ function rdkitAvailable() {
     const token = analogRunToken;
     analogThumbsOn = false;
     analogParentSdf = sdf3d;
+    analogParentMolblock = sdf3d;
     analogStatus('Aza-scanning…');
-    // H-bearing aromatic 6-ring carbons via RDKit SMARTS
-    const q = rdkitModule.get_qmol('[c;H1;r5,r6]');
-    let ringCH = [];
-    let m0 = null;
-    let surgeryBase = null;
-    try {
-      m0 = rdkitModule.get_mol(sdf3d);
-      if (m0 && m0.is_valid()) {
-        const arr = JSON.parse(m0.get_substruct_matches(q));
-        if (Array.isArray(arr)) ringCH = arr.map(mt => mt.atoms[0]);
-        // surgery base = the HEAVY-ATOM molblock rebuilt from the parent's
-        // canonical SMILES (implicit H). The engine sdf3d carries explicit
-        // H atoms — swapping an aromatic C-H to N would leave a bonded
-        // explicit H on the new pyridine N (invalid).
-        const curSmiles = (document.getElementById('smiles').textContent || '').trim();
-        const mS = rdkitModule.get_mol(curSmiles);
-        if (mS && mS.is_valid()) {
-          surgeryBase = sdfLines(mS.get_molblock());
-          mS.delete();
-        }
-      }
-    } catch (e) { /* none */ }
-    if (q) q.delete();
-    // reverse direction (deaza): pyridine-type aromatic ring N (no H) —
-    // matched on the same mol the aza indices come from, so the surgery
-    // base indexing stays consistent. [nH]-type drops out via is_valid.
     const wantDeaza = !!(document.getElementById('azaDeaza') && document.getElementById('azaDeaza').checked);
-    let ringN = [];
-    if (wantDeaza && m0) {
-      let qn = null;
-      try { qn = rdkitModule.get_qmol('[n;r5,r6;!H1]'); } catch (e) { qn = null; }
-      if (!qn) { try { qn = rdkitModule.get_qmol('[n;r5,r6]'); } catch (e) { qn = null; } }
-      if (qn) {
-        try {
-          const arrN = JSON.parse(m0.get_substruct_matches(qn));
-          if (Array.isArray(arrN)) ringN = arrN.map(mt => mt.atoms[0]);
-        } catch (e) { /* none */ }
-        qn.delete();
-      }
-    }
-    if (!ringCH.length && !ringN.length) { if (m0) m0.delete(); analogStatus('No aromatic ring carbons (C-H) or pyridine-type nitrogens to swap'); return; }
-    const base = surgeryBase;
-    const na = parseInt(base[3].substring(0, 3));
-    const cands = [];
-    const seen = new Set();
-    const trySwap = (swapSet, elem) => {
-      const lines = base.slice();
-      for (const idx of swapSet) {
-        const l = lines[4 + idx];
-        lines[4 + idx] = l.substring(0, 31) + elem + l.substring(35);
-      }
-      return lines.join('\n');
-    };
-    const addCand = (mb) => {
-      let m = null;
-      try { m = rdkitModule.get_mol(mb); } catch (e) { return; }
-      if (!m || !m.is_valid()) { if (m) m.delete(); return; }
-      const canon = m.get_smiles();
-      const mbClean = m.get_molblock();
-      const d = JSON.parse(m.get_descriptors());
-      m.delete();
-      if (seen.has(canon)) return;
-      seen.add(canon);
-      cands.push({ smiles: canon, molblock: mbClean, mw: +d.amw.toFixed(2), rotb: d.NumRotatableBonds ?? 0, sa: null });
-    };
-    let nSingle = 0, nDouble = 0;
-    const uiYield = () => new Promise(r => setTimeout(r, 0));   // enumerate off
-    // the critical path: a warfarin-size double-swap sweep measured 1.4s of
-    // unbroken main-thread work before this
-    for (const idx of ringCH) {
-      nSingle++;
-      addCand(trySwap([idx], 'N   '));
-      if (nSingle % 20 === 0) await uiYield();
-    }
-    // double swaps (diazines / azoles): C(n,2) — invalid valences (e.g.
-    // adjacent N pairs RDKit rejects) drop out via is_valid
-    for (let x = 0; x < ringCH.length; x++) {
-      for (let y = x + 1; y < ringCH.length; y++) {
-        nDouble++;
-        addCand(trySwap([ringCH[x], ringCH[y]], 'N   '));
-        if (nDouble % 20 === 0) await uiYield();
-      }
-    }
-    // reverse direction (deaza): N -> CH on pyridine-type ring nitrogens;
-    // implicit H comes back from valence on the heavy-atom surgery base
-    let dSingle = 0, dDouble = 0;
-    for (const idx of ringN) {
-      dSingle++;
-      addCand(trySwap([idx], 'C   '));
-      if (dSingle % 20 === 0) await uiYield();
-    }
-    for (let x = 0; x < ringN.length; x++) {
-      for (let y = x + 1; y < ringN.length; y++) {
-        dDouble++;
-        addCand(trySwap([ringN[x], ringN[y]], 'C   '));
-        if (dDouble % 20 === 0) await uiYield();
-      }
-    }
-    if (await ensureSaTable()) {
-      let nSa = 0;
-      for (const c of cands) {
-        try { c.sa = +window.webmm.sa_score_wasm(c.molblock).toFixed(2); } catch (e) {}
-        if (++nSa % 20 === 0) await uiYield();
-      }
-    }
-    if (m0) m0.delete();
-    if (!cands.length) { analogStatus('No valid aza-isomers'); return; }
-    window.__azaCounts = { n: cands.length, single: nSingle, double: nDouble,
-      deazaSingle: ringN.length ? dSingle : undefined, deazaDouble: ringN.length ? dDouble : undefined };
-    try { window.__analogRunCtx = { mode: 'aza', site: null, fragCat: null, deaza: wantDeaza, parentSmiles: rdkitModule.get_mol(analogParentMolblock).get_smiles() }; } catch (e) { window.__analogRunCtx = { mode: 'aza', deaza: wantDeaza }; }
-    analogStatus(cands.length + ' aza-isomers (' + nSingle + ' single + ' + nDouble + ' double positions'
-      + (ringN.length ? ' · deaza ' + dSingle + ' + ' + dDouble : '') + ') — funnel…');
-    window.__azaRun = true;   // the funnel's final status appends the marker
-    window.__analogAudit = { filtered: 0, notEvaluated: 0 };   // aza path: dedupe/swap attempts are not deterministic filters — audit stays empty for v1
-    runAnalogFromCands(cands, token);
+    try {
+      const result = await Agent.Aza.enumerateAza({
+        rdkitModule, webmm: window.webmm, parentSdf: sdf3d, parentMolblock: analogParentMolblock,
+        parentSmiles: (document.getElementById('smiles').textContent || '').trim() || undefined,
+        wantDeaza, ensureSaTable, maxCandidates: 400,
+      });
+      window.__azaCounts = result.counts;
+      window.__analogRunCtx = { mode: 'aza', site: null, fragCat: null, deaza: wantDeaza, parentSmiles: result.parentSmiles };
+      window.__azaRun = true;
+      window.__analogAudit = result.audit;
+      if (!result.candidates.length) { analogStatus('No valid aza-isomers'); return; }
+      analogStatus(result.candidates.length + ' aza-isomers (' + result.counts.single + ' single + ' + result.counts.double + ' double positions'
+        + (result.counts.deazaSingle != null ? ' · deaza ' + result.counts.deazaSingle + ' + ' + result.counts.deazaDouble : '') + ') — funnel…');
+      runAnalogFromCands(result.candidates, token);
+    } catch (error) { analogStatus('Aza-scan failed: ' + error.message); }
   }
   window.runAzaScan = runAzaScan;
 

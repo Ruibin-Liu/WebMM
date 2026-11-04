@@ -4,6 +4,8 @@
 const { chromium } = require('/opt/homebrew/lib/node_modules/playwright');
 const EXE = '/Users/rliu/Library/Caches/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell';
 const URL = process.env.WEBMM_AGENT_URL || 'http://127.0.0.1:8902/app/platform.html';
+const SKILL = process.env.WEBMM_AGENT_SKILL || 'rgroup-optimization';
+const EXPECTED_CAPABILITY = SKILL === 'bioisostere-exploration' ? 'azaScan' : 'analogScan';
 let pass = 0, fail = 0, browser;
 function check(name, cond, detail) {
   if (cond) { pass++; console.log('  ✓ ' + name); }
@@ -20,7 +22,10 @@ function check(name, cond, detail) {
   await page.waitForFunction(() => !!document.querySelector('#svg svg'), null, { timeout: 60000 });
   await page.evaluate(() => embed3D());
   await page.waitForFunction(() => !!document.querySelector('#viewer3d canvas'), null, { timeout: 60000 });
-  await page.evaluate(() => { switchMode('analog'); analogDetectSites(); });
+  await page.evaluate(skill => {
+    switchMode('analog'); analogDetectSites(); agentSetSkill(skill);
+    if (skill === 'bioisostere-exploration') document.getElementById('agentIntent').value = '探索芳环 aza 等排替换；实验活性与选择性仅作未验证目标';
+  }, SKILL);
   await page.waitForFunction(() => [...document.getElementById('analogSite').options].some(o => o.value), null, { timeout: 30000 });
   await page.evaluate(() => {
     document.getElementById('analogSite').selectedIndex = 1;
@@ -52,7 +57,7 @@ function check(name, cond, detail) {
   check('real GLM plan completes after local approval', !!run && !!run.fact, run ? '' : 'no complete fact');
   if (run) {
     check('task and evidence retain pi/magpie model provenance',
-      run.record.spec.provenance.modelProvider === 'pi/magpie' && run.record.spec.provenance.model.includes('GLM') && run.record.spec.provenance.providerRevision === 'magpie-provider-v1' && run.record.spec.provenance.planHash.startsWith('dp'));
+      run.record.spec.provenance.modelProvider === 'pi/magpie' && run.record.spec.provenance.model.includes('GLM') && run.record.spec.provenance.providerRevision === 'magpie-provider-v1' && run.record.spec.provenance.planHash.startsWith('dp') && run.record.spec.provenance.capability === EXPECTED_CAPABILITY);
     check('live run uses the edited small budget', run.record.spec.input.candidates.length <= 4 && run.record.spec.input.stages[2].cap === 2 && run.record.spec.input.stages[3].cap === 1);
   }
   await page.evaluate(() => agentPlanReview());

@@ -25,20 +25,20 @@
     for (const key of Object.keys(raw)) if (!FIELDS.has(key)) errors.push('unknown plan field: ' + key);
 
     const capability = Capabilities.getCapability(raw.capability || 'analogScan');
-    const skill = Skills.getSkill(raw.skillId || 'rgroup-optimization');
+    const skill = Skills.getSkill(raw.skillId || (capability && capability.defaultSkillId) || 'rgroup-optimization');
     if (!capability) errors.push('unknown capability: ' + raw.capability);
     if (!skill) errors.push('unknown skill: ' + raw.skillId);
-    if (raw.kind !== 'rgroupOptimization') errors.push('kind must be rgroupOptimization');
+    if (capability && raw.kind !== capability.planKind) errors.push('kind must be ' + capability.planKind);
     if (raw.version !== undefined && raw.version !== PLAN_VERSION) errors.push('unsupported plan version: ' + raw.version);
     if (capability && raw.capabilityRevision !== capability.revision) errors.push('capabilityRevision must be ' + capability.revision);
     if (skill && raw.skillVersion !== undefined && raw.skillVersion !== skill.version) errors.push('skillVersion must be ' + skill.version);
-    if (capability && skill && (skill.capability !== capability.id || skill.capabilityRevision !== capability.revision)) errors.push('skill and capability revisions do not match');
+    if (capability && skill && (skill.capability !== capability.id || skill.capabilityRevision !== capability.revision || skill.planKind !== raw.kind)) errors.push('skill, kind, and capability revisions do not match');
 
     for (const field of ['baseRevision', 'parentRef', 'siteRef', 'hypothesis']) {
       if (!nonEmpty(raw[field])) errors.push(field + ' must be a non-empty string');
     }
-    const fragmentSet = raw.fragmentSet === undefined ? 'builtin-v1' : raw.fragmentSet;
-    const fragmentCategory = raw.fragmentCategory === undefined ? 'all' : raw.fragmentCategory;
+    const fragmentSet = raw.fragmentSet === undefined ? (capability ? capability.fragmentSets[0].id : 'builtin-v1') : raw.fragmentSet;
+    const fragmentCategory = raw.fragmentCategory === undefined ? (capability && capability.planKind === 'rgroupOptimization' ? 'all' : capability ? capability.fragmentSets[0].categories[0] : 'all') : raw.fragmentCategory;
     const fragmentSetInfo = capability ? capability.fragmentSets.find(f => f.id === fragmentSet) : null;
     if (capability && !fragmentSetInfo) errors.push('unsupported fragmentSet: ' + fragmentSet);
     if (fragmentSetInfo && !fragmentSetInfo.categories.includes(fragmentCategory)) errors.push('unsupported fragmentCategory: ' + fragmentCategory);
@@ -80,7 +80,7 @@
       kind: raw.kind,
       capability: raw.capability || 'analogScan',
       capabilityRevision: raw.capabilityRevision,
-      skillId: raw.skillId || 'rgroup-optimization',
+      skillId: raw.skillId || (capability && capability.defaultSkillId) || 'rgroup-optimization',
       skillVersion: raw.skillVersion === undefined ? (skill ? skill.version : null) : raw.skillVersion,
       baseRevision: nonEmpty(raw.baseRevision) ? raw.baseRevision.trim() : raw.baseRevision,
       parentRef: nonEmpty(raw.parentRef) ? raw.parentRef.trim() : raw.parentRef,
@@ -189,6 +189,7 @@
         buildId: context.buildId,
         planHash: validation.planHash,
         planKind: p.kind,
+        capability: p.capability,
         capabilityRevision: p.capabilityRevision,
         baseRevision: p.baseRevision,
         parentRef: p.parentRef,

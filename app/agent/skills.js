@@ -30,7 +30,30 @@
     ],
   };
 
-  const SKILLS = { 'rgroup-optimization': RGROUP_OPTIMIZATION };
+  const BIOISOSTERE_EXPLORATION = {
+    id: 'bioisostere-exploration',
+    version: 1,
+    planKind: 'bioisostereExploration',
+    capability: 'azaScan',
+    capabilityRevision: 1,
+    whenToUse: 'The user wants a bounded aromatic aza or optional deaza bioisostere scan on one current parent.',
+    requiredContext: ['parentRef', 'siteRef', 'baseRevision', 'designGoals', 'availableEvidence', 'fragmentCategory'],
+    planRules: [
+      'Use siteRef=aromatic-ring:auto for the automatic ring-site scan.',
+      'Use category=aza for C-H to N only or aza+deaza for both directions.',
+      'Keep single and double substitutions within the approved candidate budget.',
+      'Do not describe this as a general bioisostere reaction library.',
+      'Declare experimental activity, selectivity, and solubility unverified unless real evidence exists.',
+    ],
+    reviewRules: [
+      'Attach every claim to real evidence identifiers.',
+      'Report direction and substitution counts without inferring activity or selectivity.',
+      'Shape similarity alone does not establish bioisosteric success.',
+      'A next-round plan is a new draft requiring independent approval.',
+    ],
+  };
+
+  const SKILLS = { 'rgroup-optimization': RGROUP_OPTIMIZATION, 'bioisostere-exploration': BIOISOSTERE_EXPLORATION };
   const clone = value => JSON.parse(JSON.stringify(value));
 
   function listSkills() { return Object.keys(SKILLS).sort().map(id => clone(SKILLS[id])); }

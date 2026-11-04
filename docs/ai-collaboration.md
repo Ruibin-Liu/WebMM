@@ -1,7 +1,7 @@
 # AI collaboration core — Capability / Plan / Tools / Evidence
 
 > Status: real pi/magpie GLM provider and browser vertical slice are working.
-> Scope: one skill (`rgroup-optimization`) and one capability (`analogScan`).
+> Scope: two skills (`rgroup-optimization`, `bioisostere-exploration`) over the shared analogScan task executor.
 
 ## 1. Boundary
 
@@ -201,25 +201,41 @@ The Design History view groups visible Plan/Review/Decision records by `planHash
 
 “复制为新草稿” requires the current parent, site, and fragment category to match the old plan. It refreshes `baseRevision`, creates a new hypothesis/hash, and preserves the old approval and task as history. It never starts a task.
 
-## 12. Tests and next slice
+## 12. Second Skill: bioisostere / aza-deaza
+
+`bioisostere-exploration` uses the independent `azaScan` capability and `bioisostereExploration` plan kind. It is deliberately scoped to aromatic single/double C-H→N substitution and optional pyridine-type N→C-H substitution. It does not claim a general bioisostere reaction library.
+
+The route is skill-driven rather than a second Agent:
+
+```text
+skillId → capability → planKind → headless enumerator
+        → shared approval → analogScan TaskSpec → Evidence → Decision
+```
+
+R-group uses `BrowserHost`; aza uses `BioHost` plus the shared persistence/evidence implementation. `fragmentCategory` is `aza` or `aza+deaza`; automatic ring sites use `siteRef=aromatic-ring:auto`. Task and Evidence provenance retain `capability`, and DesignReview limitations come from the active capability.
+
+A 3D parent can produce explicit-H SMILES. Aza enumeration removes explicit-H literals, canonicalizes the result, and reparses canonical form before building the atom-indexed surgery base. `get_molblock` preserves input atom order, so canonicalization without reparsing is not sufficient. Tests check actual ring-N products rather than merely checking for any nitrogen in SMILES.
+
+## 13. Tests and next slice
 
 Run:
 
 ```sh
 node tests/agent/run.js
 node tests/platform/run.js
-tests/cdp/run.sh agent_plan
+tests/cdp/run.sh agent_plan bio_agent_plan
 node tests/agent/proxy.mjs
 # Manual live acceptance; requires local pi/magpie and agent:dev:
 node tests/cdp/agent_glm_live.test.js
+WEBMM_AGENT_SKILL=bioisostere-exploration node tests/cdp/agent_glm_live.test.js
 ```
 
 `agent_plan` uses a schema-valid mock provider and verifies the complete browser path plus the legacy explorer. `m12_tasks` remains the determinism, cancellation, and reconciliation regression gate.
 
 The next implementation slice should:
 
-1. evaluate a second LBDD skill only after the R-group loop is used successfully;
-2. preserve the same capability/approval/evidence/decision contracts when adding that skill;
-3. keep autonomous execution and MCP out of the default scope.
+1. use both skills in real design sessions and review their Plan/Decision artifacts;
+2. add another capability only when a demonstrated workflow requires it;
+3. keep autonomous execution, MCP, and a general reaction library out of the default scope.
 
 No autonomous execution, general chat, MCP, or new LBDD algorithms are part of this slice.

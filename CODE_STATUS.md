@@ -4,9 +4,10 @@
 WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force field and L-BFGS optimization.
 
 ## Current Focus
-**LBDD 设计历史视图已落地：Plan/Review/Decision 按 planHash 分组，next 轮次血缘可见，重载后直接恢复；旧计划可复制为当前上下文的新草稿且不继承批准/任务。** 下一步评估第二个 LBDD Skill，沿用同一 Capability/Approval/Evidence/Decision 契约。
+**第二个 LBDD Skill 已完成：bioisostere-exploration / azaScan 与 R-group 共用批准、执行、证据、Decision 和历史体系；两种真实 GLM 路径均通过。** 当前范围为芳环 aza/deaza，不是通用等排反应库；下一步先进行真实设计会话评审，再按需求选择新 Capability。
 ## Recently Completed
 (更早的 305 条历史记录与历史段落已归档至 docs/CODE_STATUS-archive.md)
+- **第二个 LBDD Skill：bioisostere / aza-deaza(用户确认继续)。** ①Capability/Skill 泛化：新增 azaScan rev1/bioisostereExploration/builtin-aza-v1(aza|aza+deaza)，Orchestrator/MagpieProvider 按 skill 动态选 capability 和提示；Plan/provenance/Evidence 带 capability，Decision.next 接受两种 kind。②Aza/BioHost 抽取：单双 C-H→N、可选 N→C-H、canonical 去重/描述符/SA/__azaCounts，legacy runAzaScan 与 Agent 共用；siteRef=aromatic-ring:auto。排雷：显式 H SMILES 去 H 后必须 canonicalize+重新解析，get_molblock 输入序与 canonical 序不同，否则误换 ester O。③Plan Card 增 Skill 选择/动态 host/tools；历史显示 capability，复制先切回原 skill。④验收:Node agent 72/72、platform 153/153、proxy 9/9；R-group agent_plan 18/18、bio_agent_plan 8/8(真实芳环 n/Review/Next/legacy deaza/零 page error)；m12_tasks 14/14；真实 GLM R-group 与 bio 各 8/8。未做:通用等排反应库、更多 Skill、MCP/自主循环。
 - **LBDD 项目历史视图(用户确认继续下一项)。** ①analog 新增可折叠设计历史：计划状态/短 hash/假设/类别/模型/task/时间与 Review claims/unresolved、Decision action/actor/reason 分组展示，next → 新 planHash 血缘与 analog run 历史分离；DOM textContent 防注入，hidden 记录继续过滤。②draft/approval/complete/review/decision 与进入 analog 时刷新；重载不恢复 Plan Card 也可直接从 projection 查看。③复制为新草稿：parent/site/category 必须同当前上下文，刷新 baseRevision 与假设/hash，不复制 approval/taskId、不自动执行。④验收:CDP agent_plan 18/18(三版本分组/next 血缘/重载可见/复制第四 draft 且 task 数不变/零 page error)；真实 GLM live 8/8；m12_tasks 14/14；Node agent 63/63、platform 153/153、proxy 9/9。未做:第二 Skill、MCP/自主循环。
 - **Plan/Review/Decision 项目级持久化与下一轮草稿(用户「继续下一项」)。** ①State 增 designPlans/designReviews/designDecisions+hidden 覆盖层：RecordDesignPlan→Approve→Complete(taskId)→Review→Decision，重复/跳状态/错 task/非 user actor 全拒绝；Review/Decision hide-unhide，Complete 或依赖后的 Approve 拒绝 undo；schema v1 旧快照兼容、导出 format 不变。②BrowserHost 提供 recordPlanDraft/Approval/Complete/Review/Decision/getArtifacts，模型 Tools 仍无写权限；相同草稿幂等，批准前编辑另存新 hash。③Plan Card 全接线：真实/本地复盘入档，accept/reject/needsExperiment/next 仅 user:local；next 先保存旧 task 决策，再生成独立待批准草稿。④验收:Node agent 63/63、platform 153/153、proxy 9/9；CDP agent_plan 15/15(三计划版本/Review/Next/导出命令/重载/legacy/零 page error)；真实 GLM live 8/8(Plan+Review 模型谱系持久)；m12_tasks 14/14。未做:项目历史视图、第二 Skill、MCP/自主循环。
 - **pi/magpie GLM Provider 落地(用户「就用我们 pi 里有的」)。** ①复用本机 magpie :3425/zcode-GLM-5.3-Flash，无账号/密钥入仓；scripts/agent-dev-server.mjs 仅 127.0.0.1:8902，静态+status/chat 同源代理，模型服务端固定、消息/1MiB/token 白名单、路径穿越拒绝、payload 不记日志。②MagpieProvider:status/plan/review + OpenAI content/围栏解析，Plan/Review 各一次 Schema 纠正重试，二次失败 PROVIDER_SCHEMA 关闭执行；Review token 4096→8192 修复长推理空 content，网络错误不盲重试。③Plan Card 显式连接，模型名/路由可见；approval/TaskSpec/Evidence 增 modelProvider/model/providerRevision。④验收:Node agent 51/51、proxy 9/9、platform 153/153；mock agent_plan 10/10、m12_tasks 14/14；真实 agent_glm_live 7/7(GLM Plan→小预算批准执行→模型谱系→真实引用复盘/零 page error)。未做:Plan/Review 独立项目事实、用户 Decision、第二 Skill、MCP/自主循环。
@@ -37,7 +38,7 @@ WebMM is a WASM-based molecular geometry optimizer using MMFF94/MMFF94s force fi
 - 无活跃进行项(Top-5 阶段 4 收口完成;下一候选见 Upcoming)
 
 ## Upcoming
-- 评估第二个 LBDD Skill（优先 bioisostere exploration）：先冻结 Capability/Plan/Evidence 差异，复用批准、执行、复盘、Decision 和历史血缘，不复制一套 Agent。
+- 用 R-group 与 aza 两种 Skill 进行真实设计会话，评审 Plan/Review/Decision 是否有决策价值；按实际需求再选下一 Capability，不默认扩反应库。
 - MCP、多轮自主执行和新生成算法不在近期默认范围；main 保持 feature freeze，本分支仅 AI 协同及必要修复/回归。
 
 ## Constraints & Assumptions

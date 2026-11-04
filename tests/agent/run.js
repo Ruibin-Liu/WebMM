@@ -61,6 +61,16 @@ function baseContext() {
     ],
   };
 }
+function bioPlan() {
+  return {
+    ...basePlan(), kind: 'bioisostereExploration', capability: 'azaScan', skillId: 'bioisostere-exploration',
+    baseRevision: 'rev-bio', siteRef: 'aromatic-ring:auto', fragmentSet: 'builtin-aza-v1', fragmentCategory: 'aza',
+    hypothesis: 'Bounded aromatic aza substitutions with explicit experimental uncertainty.',
+  };
+}
+function bioContext() {
+  return { ...baseContext(), revision: 'rev-bio', siteRef: 'aromatic-ring:auto', fragmentSet: 'builtin-aza-v1', fragmentCategory: 'aza' };
+}
 function approvedSpec() {
   const plan = basePlan();
   plan.goals.push('experimentalActivity');
@@ -139,6 +149,30 @@ async function main() {
     Plans.compileApprovedPlan({ plan, context, approval, taskId: 't' });
   }, 'CONTEXT_INVALID');
 
+  console.log('second Skill: bioisostere / aza-deaza:');
+  const azaCapability = Capabilities.getCapability('azaScan');
+  const bioSkill = Skills.getSkill('bioisostere-exploration');
+  check('aza capability has its own planKind/library/direction and honest scope',
+    azaCapability.planKind === 'bioisostereExploration' && azaCapability.fragmentSets[0].id === 'builtin-aza-v1' &&
+    azaCapability.fragmentSets[0].categories.includes('aza+deaza') && azaCapability.limitations[0].includes('not a general reaction library'));
+  check('bio skill drives a different capability without changing taskKind', bioSkill.capability === 'azaScan' && azaCapability.taskKind === 'analogScan');
+  const bioValidation = Plans.validatePlan(bioPlan(), bioContext());
+  check('bio plan validates with its own identity', bioValidation.ok && bioValidation.plan.skillId === 'bioisostere-exploration', bioValidation.errors);
+  const bioApproval = Plans.issueApproval(bioPlan(), { approvedBy: 'user:test' });
+  const bioSpec = Plans.compileApprovedPlan({ plan: bioPlan(), context: bioContext(), approval: bioApproval, taskId: 'task-bio-1' });
+  check('bio compiler reuses analogScan while retaining capability provenance',
+    bioSpec.kind === 'analogScan' && bioSpec.provenance.capability === 'azaScan' && bioSpec.provenance.planKind === 'bioisostereExploration' && bioSpec.input.inputRevision.fragmentSet === 'builtin-aza-v1');
+  const bioEvidence = Evidence.makeAnalogEvidence({ spec: bioSpec, fact: { results: [{ idx: 0, smiles: 'c1ccncc1', tanimoto: 0.9 }], accounts: {}, versions: {} } });
+  check('bio evidence uses aza limitations and capability', bioEvidence.plan.capability === 'azaScan' && bioEvidence.limitations[0].includes('one bioisostere family'));
+  let bioPrompt = '';
+  const bioProvider = MagpieProvider.createMagpieProvider({ fetchImpl: async (url, init) => { bioPrompt = JSON.parse(init.body).messages[0].content; return fakeChat(JSON.stringify(bioPlan())); } });
+  const bioProviderPlan = await bioProvider.plan({ intent: 'aza scan', context: bioContext(), capability: azaCapability, skill: bioSkill });
+  check('provider prompt is generated from the active bio skill', bioProviderPlan.kind === 'bioisostereExploration' && bioPrompt.includes('kind=bioisostereExploration') && bioPrompt.includes('capability=azaScan'));
+  const bioTools = Tools.createTools({ getDesignContext: async () => bioContext(), getEvidence: async () => bioEvidence });
+  const bioOrchestrator = Orchestrator.createOrchestrator({ provider: { plan: async request => { check('orchestrator selects capability from bio skill', request.capability.id === 'azaScan' && request.skill.id === 'bioisostere-exploration'); return bioPlan(); }, review: async () => ({ claims: [] }) }, tools: bioTools });
+  const bioDraft = await bioOrchestrator.proposePlan({ intent: 'aza scan', skillId: 'bioisostere-exploration' });
+  check('bio orchestrator returns approval-bound draft', bioDraft.status === 'awaiting_approval' && bioDraft.plan.capability === 'azaScan');
+
   console.log('project Plan/Review/Decision persistence:');
   const persistedPlan = basePlan(), persistedHash = Plans.validatePlan(persistedPlan).planHash;
   let projectState = State.initialState();
@@ -162,6 +196,8 @@ async function main() {
   check('review and next-round decision persist with the old task identity',
     projectState.designReviews.r1.taskId === 'task-1' && projectState.designDecisions.d1.nextPlanDraft.hypothesis.includes('distinct'));
   check('AI cannot record a human Decision', !!State.applyCommand(projectState, { type: 'RecordDesignDecision', decisionId: 'd2', taskId: 'task-1', planHash: persistedHash, action: 'accept', actor: 'ai:glm' }).error);
+  reduce({ type: 'RecordDesignDecision', decisionId: 'd-bio', taskId: 'task-1', planHash: persistedHash, action: 'next', actor: 'user:local', nextPlanDraft: bioPlan() });
+  check('Decision.next accepts the second planKind', projectState.designDecisions['d-bio'].nextPlanDraft.kind === 'bioisostereExploration');
   const decisionInverse = State.inverse({ type: 'RecordDesignDecision', decisionId: 'd1' }, projectState);
   reduce(decisionInverse);
   check('decision undo hides but never deletes the fact', projectState.hiddenDesignDecisions.d1 === true && !!projectState.designDecisions.d1);

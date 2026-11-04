@@ -18,9 +18,9 @@
 
     async function proposePlan(options) {
       const context = options.context || await tools.getDesignContext();
-      const capability = Capabilities.getCapability('analogScan');
       const skill = Skills.getSkill(options.skillId || 'rgroup-optimization');
       if (!skill) throw new Error('unknown skill: ' + options.skillId);
+      const capability = Capabilities.getCapability(skill.capability);
       const raw = await provider.plan({ intent: options.intent, context, capability, skill });
       const validation = Plans.validatePlan(raw, context);
       if (!validation.ok) return { status: 'rejected', errors: validation.errors, plan: validation.plan, planHash: validation.planHash };
@@ -35,9 +35,9 @@
 
     async function reviewResults(options) {
       const evidence = await tools.getEvidence(options.taskId);
-      const capability = Capabilities.getCapability('analogScan');
       const skill = Skills.getSkill(options.skillId || 'rgroup-optimization');
       if (!skill) throw new Error('unknown skill: ' + options.skillId);
+      const capability = Capabilities.getCapability(skill.capability);
       if (options.plan) {
         const planValidation = Plans.validatePlan(options.plan);
         if (!planValidation.ok || planValidation.planHash !== evidence.plan.planHash) {
