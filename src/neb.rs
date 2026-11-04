@@ -45,14 +45,12 @@ impl Default for NebConfig {
             max_iterations: 20000,
             force_tol: 0.5,
             integrator: Integrator::default(),
-            // OFF by default: the two-phase machinery is in place, but the
-            // QuickMin integrator falls into a limit cycle in the climbing
-            // phase (observed maxF oscillating 1.66/2.13 with the saddle
-            // frozen below the true crossing) — needs a damped-projected
-            // LBFGS-style optimizer, deferred past the feature freeze. The
-            // reported saddle is the relaxed band PEAK: an upper bound that
-            // decreases with image count.
-            climbing: false,
+            // ON since the climbing-force overhaul: the climber is PINNED
+            // at activation (the old per-iteration argmax role-hopping was
+            // the limit cycle) and phase 2 keeps the whole band relaxing
+            // under per-image QuickMin (classic CI-NEB). Coarse bands fall
+            // back to the phase-1 peak honestly when the climb regresses.
+            climbing: true,
         }
     }
 }
@@ -306,13 +304,28 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         Integrator::Fire => Some(Fire::new(0.02)),
     };
 
-    // two-phase: standard band first (climbing off), climbing image after
-    // the band relaxes (force tol) or after 60% of the budget
+    // two-phase: standard band first (FIRE, image freezing), then a PINNED
+    // climbing image with the WHOLE band still relaxing under QuickMin (the
+    // classic CI-NEB structure — the springs hold every image on the path,
+    // which no single-image scheme can do: a scaffold-frozen climber either
+    // ran away along a straight tangent ray, pinned itself on a bounding
+    // wall, or slid down the curved path into a well; all measured). The
+    // old limit cycle was ROLE-HOPPING (per-iteration argmax reassigning
+    // the climb), not the integrator — pinning removes it.
+    let mut climb_idx_pinned: Option<usize> = None;
+    let climb_available = config.climbing;
+    // energy-stall convergence bookkeeping (phase 2 chatter around the
+    // discrete band maximum can hold the force just above tol forever)
+    let mut climb_e_ref = 0.0f64;
+    let mut climb_stall = 0usize;
+    // phase-1 snapshot (taken at climb activation; empty = no climb ran)
+    let mut phase1_energies: Vec<f64> = Vec::new();
+    let mut phase1_path: Vec<Vec<[f64; 3]>> = Vec::new();
+    let mut phase1_peak = f64::NEG_INFINITY;
     let mut climb_started = 0usize;
     let mut converged = false;
     let mut iterations = 0usize;
     let mut saddle_image = 0usize;
-    let mut prev_max_force = f64::INFINITY;
 
     // hoisted iteration buffers (the force loop ran 4+ Vec allocs per image
     // per iteration — ~125k allocations on a 2k-iteration band)
@@ -346,24 +359,12 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
             energies[k] = ff.energy_and_gradient(&cur[k], &mut grads[k]);
         }
 
-        // climbing image = highest interior energy, activated in phase 2
-        let band_relaxed = prev_max_force < config.force_tol * 3.0;
-        if config.climbing
-            && climb_started == 0
-            && (band_relaxed || it >= config.max_iterations * 3 / 5)
-        {
-            climb_started = it + 1;
-        }
-        let climb_active = config.climbing && climb_started > 0;
-        let climb_idx = if climb_active {
-            let ci = (1..=n_interior)
-                .max_by(|&i, &j| energies[i].total_cmp(&energies[j]))
-                .unwrap_or(1);
-            saddle_image = ci;
-            Some(ci)
-        } else {
-            None
-        };
+        // climbing: pinned at activation; the 60%-budget fallback activates
+        // late on slow bands. The strict-interior-max guard refuses to climb
+        // when the peak borders an endpoint or is not meaningfully above
+        // both endpoints (honest climb_started = 0).
+        let climb_active = climb_idx_pinned.is_some();
+        let climb_idx = climb_idx_pinned;
 
         // forces on interior images (flattened, hoisted buffers); convergence
         // tracks the per-image force NORM. Frozen images: spring/tangent
@@ -422,7 +423,6 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
                 continue; // degenerate band
             }
             let inv_t = 1.0 / t_norm;
-
             let is_climb = climb_idx == Some(k);
             // spring force along the tangent
             let spring_f = if is_climb {
@@ -461,9 +461,11 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         // rule: the highest-energy image (the saddle carrier) NEVER freezes
         // — a prematurely frozen peak locks a distorted band (measured
         // barrier 6.03 vs the physical ~3.3).
-        let peak = (1..=n_interior)
-            .max_by(|&a, &b| energies[a].total_cmp(&energies[b]))
-            .unwrap_or(1);
+        let peak = climb_idx_pinned.unwrap_or_else(|| {
+            (1..=n_interior)
+                .max_by(|&a, &b| energies[a].total_cmp(&energies[b]))
+                .unwrap_or(1)
+        });
         let mut all_frozen = true;
         for k in 1..=n_interior {
             let norm = image_norm2[k].sqrt();
@@ -481,21 +483,84 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
             }
             max_force = max_force.max(norm);
         }
-        if all_frozen {
-            converged = true;
-            break;
+        // (all_frozen folds into phase-1 convergence below — the climb
+        // hand-over must run on BOTH exit paths: a fully-frozen band in a
+        // debug build (no FMA contraction ⇒ different freeze pattern)
+        // bypassed the hand-over and silently skipped the climb)
+        // phase-2 energy-stall convergence: chatter around the discrete
+        // band maximum can hold the force marginally above tol forever
+        if climb_active {
+            let e_ci = energies[climb_idx.expect("climb idx")];
+            if (e_ci - climb_e_ref).abs() < 1e-4 {
+                climb_stall += 1;
+            } else {
+                climb_stall = 0;
+                climb_e_ref = e_ci;
+            }
+            if climb_stall >= 100 && max_force < config.force_tol * 4.0 && it > climb_started + 120
+            {
+                converged = true;
+                break;
+            }
         }
-        // phase 2 restarts the relaxation: the climbing image injects force
-        // when activated, so only check convergence in a stable phase
-        if max_force < config.force_tol && (!climb_active || it > climb_started + 20) {
-            converged = true;
-            break;
+        // phase-1 exit hands over to phase 2 when climbing is requested and
+        // the strict-interior-max guard passes (peak strictly interior and
+        // meaningfully above both endpoints); phase 2 = classic CI-NEB: the
+        // WHOLE band keeps relaxing under per-image QuickMin with the
+        // pinned climber unsprung and tangentially inverted
+        if all_frozen || max_force < config.force_tol {
+            if !climb_active {
+                let (e_peak, i_peak) = (1..=n_interior)
+                    .map(|k| (energies[k], k))
+                    .max_by(|a, b| a.0.total_cmp(&b.0))
+                    .unwrap_or((energies[1], 1));
+                let e_ends = energies[0].max(energies[total - 1]);
+                if climb_available && i_peak > 1 && i_peak < n_interior && e_peak > e_ends + 0.1 {
+                    climb_idx_pinned = Some(i_peak);
+                    climb_started = it + 1;
+                    climb_e_ref = e_peak;
+                    climb_stall = 0;
+                    saddle_image = i_peak;
+                    // phase-1 snapshot for the regression fallback: coarse
+                    // bands (≤10 images) let the climber drag the peak down
+                    // (measured: 8-image band sank -1.33 → -2.00); when the
+                    // climb finishes below the band peak it started from,
+                    // report the better phase-1 band honestly instead.
+                    phase1_energies = energies.clone();
+                    phase1_path = cur.clone();
+                    phase1_peak = e_peak;
+                    for (fr, cm) in frozen.iter_mut().zip(calm.iter_mut()) {
+                        *fr = false;
+                        *cm = 0;
+                    }
+                    for vi in v.iter_mut() {
+                        *vi = 0.0;
+                    }
+                    continue;
+                }
+                converged = true;
+                break;
+            } else if it > climb_started + 20 {
+                converged = true;
+                break;
+            }
         }
-        prev_max_force = max_force;
         // per-image QuickMin steps (the NEB force couples images only
         // through neighbors — independent image steps are the VTST norm)
         let stride = n_atoms * 3;
-        if let Some(fire) = fire.as_mut() {
+        if climb_active {
+            // classic CI-NEB: per-image QuickMin across the whole active
+            // band (the climber included — damped projection handles the
+            // inverted tangential force; the springs keep the band on-path)
+            for (k, fr) in frozen.iter().enumerate() {
+                if *fr {
+                    continue;
+                }
+                let lo = k * stride;
+                let hi = lo + stride;
+                qm.step(&mut x[lo..hi], &mut v[lo..hi], &f[lo..hi]);
+            }
+        } else if let Some(fire) = fire.as_mut() {
             // global FIRE over the ACTIVE images: zero frozen slices so the
             // band vector stays consistent, step, then re-zero them
             for k in 0..n_interior {
@@ -546,10 +611,27 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         let mut g = vec![[0.0f64; 3]; n_atoms];
         final_energies[k] = ff.energy_and_gradient(&final_path[k], &mut g);
     }
-    let (saddle_energy, saddle_idx) = (1..=n_interior)
+    let (mut saddle_energy, mut saddle_idx) = (1..=n_interior)
         .map(|k| (final_energies[k], k))
         .max_by(|a, b| a.0.total_cmp(&b.0))
         .unwrap_or((final_energies[0], 0));
+    // climb regression fallback: the refined saddle must beat the phase-1
+    // band peak; otherwise the coarse-band climb failed and the honest
+    // result is the phase-1 band (climb_started = 0 ⇒ no refined saddle)
+    let mut climb_started_out = climb_started;
+    if climb_started > 0 && saddle_energy < phase1_peak - 0.1 {
+        final_path.clone_from(&phase1_path);
+        final_energies.clone_from(&phase1_energies);
+        saddle_idx = (1..=n_interior)
+            .map(|k| (final_energies[k], k))
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, k)| k)
+            .unwrap_or(1);
+        saddle_energy = final_energies[saddle_idx];
+        saddle_image = saddle_idx;
+        climb_started_out = 0;
+        converged = true;
+    }
     let e_low = final_energies[0].min(final_energies[total - 1]);
     NebResult {
         path: final_path,
@@ -563,7 +645,7 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         },
         converged,
         iterations,
-        climb_started,
+        climb_started: climb_started_out,
         evals_skipped,
         n_frozen: frozen.iter().filter(|&&b| b).count(),
     }
@@ -639,6 +721,65 @@ mod tests {
         (ra.optimized_coords, rb.optimized_coords, mol)
     }
 
+    /// Short-route edge: rotate the QUENCHED anti geometry (the raw-
+    /// geometry rotation in `butane_rotamers` quenches into the LONG 240°
+    /// route crossing two eclipsed ridges — legal, but the coarse band
+    /// sags and the climb honestly falls back; the short route has a
+    /// single ridge and is the reference climb case.
+    fn butane_rotamers_short() -> (Vec<[f64; 3]>, Vec<[f64; 3]>, crate::molecule::Molecule) {
+        let (anti, _long_gauche, mol) = butane_rotamers();
+        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        let conv = crate::ConvergenceOptions {
+            max_iterations: 500,
+            ..Default::default()
+        };
+        let a0 = crate::optimizer::optimize(&ff, &anti, &conv).optimized_coords;
+        let (j, k) = (1usize, 2usize);
+        let axis = [
+            a0[k][0] - a0[j][0],
+            a0[k][1] - a0[j][1],
+            a0[k][2] - a0[j][2],
+        ];
+        let norm = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+        let u = [axis[0] / norm, axis[1] / norm, axis[2] / norm];
+        let th = std::f64::consts::PI * 2.0 / 3.0;
+        let (sn, cs) = (th.sin(), th.cos());
+        let mut seen = vec![false; mol.atoms.len()];
+        seen[j] = true;
+        seen[k] = true;
+        let mut side = vec![k];
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(k);
+        while let Some(z) = queue.pop_front() {
+            for &w in &mol.adjacency[z] {
+                if !seen[w] {
+                    seen[w] = true;
+                    side.push(w);
+                    queue.push_back(w);
+                }
+            }
+        }
+        let mut gauche = a0.clone();
+        for &i in &side {
+            let d = [
+                a0[i][0] - a0[k][0],
+                a0[i][1] - a0[k][1],
+                a0[i][2] - a0[k][2],
+            ];
+            let cr = [
+                u[1] * d[2] - u[2] * d[1],
+                u[2] * d[0] - u[0] * d[2],
+                u[0] * d[1] - u[1] * d[0],
+            ];
+            let dot = u[0] * d[0] + u[1] * d[1] + u[2] * d[2];
+            for x in 0..3 {
+                gauche[i][x] = a0[k][x] + cs * d[x] + sn * cr[x] + u[x] * dot * (1.0 - cs);
+            }
+        }
+        let b0 = crate::optimizer::optimize(&ff, &gauche, &conv).optimized_coords;
+        (a0, b0, mol)
+    }
+
     #[test]
     fn neb_butane_anti_gauche_barrier_is_physical() {
         let (a, b, mol) = butane_rotamers();
@@ -657,13 +798,13 @@ mod tests {
             "butane central-torsion MMFF barrier ~3-4 kcal/mol, got {}",
             res.barrier
         );
-        // v1 semantics: converged standard band; the peak is an upper bound
         assert!(
             res.converged,
             "standard band must converge, used {}",
             res.iterations
         );
-        assert_eq!(res.climb_started, 0, "climbing off by default");
+        // (no climb_started assert here: this raw-rotation edge is the
+        // LONG 240° route — two ridges, coarse band, honest fallback)
         // endpoints stay fixed
         for (p, q) in res.path[0].iter().zip(a.iter()) {
             assert_eq!(p, q, "endpoint A fixed");
@@ -672,6 +813,87 @@ mod tests {
         let res2 = neb(&ff, &a, &b, &cfg);
         assert_eq!(res.saddle_energy, res2.saddle_energy);
         assert_eq!(res.energies, res2.energies);
+    }
+
+    #[test]
+    /// Pinned CI converges on the default band and brackets the scan
+    /// reference (restrained torsion scan, heavy atoms frozen + H relaxed:
+    /// saddle ≈ -1.09, barrier ≈ 3.95). Bit-identical on repeat.
+    fn neb_climbing_converges_near_scan_reference() {
+        let (a, b, mol) = butane_rotamers_short();
+        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        let cfg = NebConfig::default();
+        let r1 = neb(&ff, &a, &b, &cfg);
+        let r2 = neb(&ff, &a, &b, &cfg);
+        assert!(r1.converged, "climb phase must converge");
+        assert!(r1.climb_started > 0, "climb must activate");
+        assert!(
+            (-1.45..-0.9).contains(&r1.saddle_energy),
+            "refined saddle near the scan reference -1.09, got {}",
+            r1.saddle_energy
+        );
+        assert!(
+            (3.5..4.5).contains(&r1.barrier),
+            "refined barrier near the scan reference 3.95, got {}",
+            r1.barrier
+        );
+        assert_eq!(
+            (r1.saddle_energy.to_bits(), r1.iterations),
+            (r2.saddle_energy.to_bits(), r2.iterations),
+            "climbing must be bit-identical on repeat"
+        );
+    }
+
+    #[test]
+    /// Coarse bands (8 images) let the climber drag the peak down; the
+    /// regression fallback must report the better phase-1 band peak with
+    /// climb_started = 0 (honest: no refined saddle produced).
+    fn neb_climbing_coarse_band_falls_back() {
+        let (a, b, mol) = butane_rotamers_short();
+        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        let plain = neb(
+            &ff,
+            &a,
+            &b,
+            &NebConfig {
+                n_images: 8,
+                climbing: false,
+                ..Default::default()
+            },
+        );
+        let climbed = neb(
+            &ff,
+            &a,
+            &b,
+            &NebConfig {
+                n_images: 8,
+                climbing: true,
+                ..Default::default()
+            },
+        );
+        assert!(climbed.converged);
+        // either the climb beat the band peak, or it fell back to it —
+        // never worse than 0.1 below
+        assert!(
+            climbed.saddle_energy >= plain.saddle_energy - 0.1,
+            "climb result must not regress below the band peak: {} vs {}",
+            climbed.saddle_energy,
+            plain.saddle_energy
+        );
+        if climbed.saddle_energy < plain.saddle_energy {
+            assert_eq!(climbed.climb_started, 0, "regression ⇒ honest fallback");
+        }
+    }
+
+    #[test]
+    /// Degenerate edges (identical endpoints) must not climb: no strict
+    /// interior maximum exists.
+    fn neb_climbing_refuses_degenerate_edge() {
+        let (a, _b, mol) = butane_rotamers_short();
+        let ff = MMFFForceField::new(&mol, crate::MMFFVariant::MMFF94s);
+        let res = neb(&ff, &a, &a, &NebConfig::default());
+        assert!(res.converged);
+        assert_eq!(res.climb_started, 0, "degenerate edge must not climb");
     }
 
     #[test]
