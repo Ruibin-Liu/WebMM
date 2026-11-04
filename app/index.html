@@ -6758,6 +6758,7 @@ function exportEnsembleSDF() {
   function hideLandscape() {
     lastLandscape = null;
     lastThermo = null;
+    netLayoutCache = null;
     const wrap = document.getElementById('landscapeWrap');
     if (wrap) wrap.style.display = 'none';
   }
@@ -6934,6 +6935,11 @@ function exportEnsembleSDF() {
   }
 
   // ---- force-directed network (deterministic: circular init, no RNG) ----
+  // The layout depends only on (basin count, edge list, viewport size) —
+  // NOT on the selection. Cache it so selection clicks re-render circles
+  // without re-running the 220-iteration simulation (n=250 basins ≈ 14M
+  // operations ≈ 100 ms of main-thread jank per click).
+  let netLayoutCache = null;   // { key, px: [], py: [] }
   function drawNetwork() {
     const svg = document.getElementById('dgraphSvg');
     const L = lastLandscape;
@@ -6942,14 +6948,24 @@ function exportEnsembleSDF() {
     // edge/occupancy source: prefer the unbiased MD ladder when present
     const md = L.md && L.md.frames ? L.md : null;
     const edges = (md ? md.transitions : L.transitions) || [];
+    const W0 = svg.clientWidth || 600, H0 = svg.clientHeight || 230;
+    const cacheKey = n + '|' + edges.map(e => e.a + '-' + e.b + ':' + e.count).join(',') +
+      '|' + W0 + 'x' + H0 + (md ? '|md' : '');
+    let px, py;
+    if (netLayoutCache && netLayoutCache.key === cacheKey) {
+      px = netLayoutCache.px;
+      py = netLayoutCache.py;
+      renderNetwork(svg, L, md, edges, px, py, n, W0, H0);
+      return;
+    }
     const occOf = i => {
       const b = md ? md.basins[i] : (L.basins || [])[i];
       const fr = md ? md.frames : L.frames;
       return b && fr ? b.visits / fr : 0;
     };
-    const W = svg.clientWidth || 600, H = svg.clientHeight || 230;
+    const W = W0, H = H0;
     const cx = W * 0.56, cy = H / 2, R = Math.min(W, H) * 0.32;
-    const px = [], py = [];
+    px = []; py = [];
     for (let i = 0; i < n; i++) {
       const a = 2 * Math.PI * i / n;
       px.push(cx + R * Math.cos(a)); py.push(cy + R * Math.sin(a));
@@ -6979,6 +6995,16 @@ function exportEnsembleSDF() {
         py[i] = Math.max(14, Math.min(H - 14, py[i]));
       }
     }
+    netLayoutCache = { key: cacheKey, px: px.slice(), py: py.slice() };
+    renderNetwork(svg, L, md, edges, px, py, n, W, H);
+  }
+
+  function renderNetwork(svg, L, md, edges, px, py, n, W, H) {
+    const occOf = i => {
+      const b = md ? md.basins[i] : (L.basins || [])[i];
+      const fr = md ? md.frames : L.frames;
+      return b && fr ? b.visits / fr : 0;
+    };
     const parts = [];
     const maxC = Math.max(1, ...edges.map(e => e.count));
     for (const e of edges) {

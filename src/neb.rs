@@ -75,6 +75,10 @@ pub struct NebResult {
     pub iterations: usize,
     /// Iteration at which the climbing phase activated (0 = never).
     pub climb_started: usize,
+    /// Gradient evaluations skipped by the freeze/lazy policy (diagnostics).
+    pub evals_skipped: usize,
+    /// Number of images frozen at exit.
+    pub n_frozen: usize,
 }
 
 /// Per-image QuickMin integrator (the VTST-standard NEB optimizer): each
@@ -121,6 +125,12 @@ impl QuickMin {
     }
 }
 
+/// An image whose force norm stays below `force_tol`·FREEZE_FRAC for this
+/// many consecutive iterations is FROZEN: its eval and integration stop.
+/// Converged endpoint-side images stop moving long before the saddle region
+/// settles — freezing them skips the majority of gradient evaluations.
+const FREEZE_PATIENCE: usize = 40;
+const FREEZE_FRAC: f64 = 0.5;
 /// Collective distance between two images: the norm of the concatenated
 /// displacement vector (NOT the sum of per-atom distances — the standard NEB
 /// spring uses image norms).
@@ -219,20 +229,36 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
     let mut saddle_image = 0usize;
     let mut prev_max_force = f64::INFINITY;
 
+    // hoisted iteration buffers (the force loop ran 4+ Vec allocs per image
+    // per iteration — ~125k allocations on a 2k-iteration band)
+    let mut cur: Vec<Vec<[f64; 3]>> = images.clone();
+    let mut f: Vec<f64> = vec![0.0; n_interior * n_atoms * 3];
+    let mut image_norm2: Vec<f64> = vec![0.0; n_interior + 1];
+    let mut tp: Vec<[f64; 3]> = vec![[0.0; 3]; n_atoms];
+    let mut tm: Vec<[f64; 3]> = vec![[0.0; 3]; n_atoms];
+    let mut tangent: Vec<[f64; 3]> = vec![[0.0; 3]; n_atoms];
+    // freeze state per interior image (index k-1)
+    let mut frozen: Vec<bool> = vec![false; n_interior];
+    let mut calm: Vec<usize> = vec![0; n_interior];
+    let mut evals_skipped: usize = 0;
+
     for it in 0..config.max_iterations {
         iterations = it + 1;
-        // unpack interior images back into a geometry array
-        let mut cur: Vec<Vec<[f64; 3]>> = images.clone();
+        // unpack interior images into the geometry buffer
         for (k, chunk) in x.chunks(n_atoms * 3).enumerate() {
             for (ai, c) in chunk.iter().enumerate() {
                 cur[k + 1][ai / 3][ai % 3] = *c;
             }
         }
-        // refresh energies/gradients of interior images
+        // refresh energies/gradients: frozen images skip entirely; active
+        // images always re-evaluate (a stale-gradient coasting experiment
+        // made the tail dynamics 6× WORSE — 1937 → 12293 iterations)
         for k in 1..=n_interior {
-            let mut g = vec![[0.0f64; 3]; n_atoms];
-            energies[k] = ff.energy_and_gradient(&cur[k], &mut g);
-            grads[k] = g;
+            if frozen[k - 1] {
+                evals_skipped += 1;
+                continue;
+            }
+            energies[k] = ff.energy_and_gradient(&cur[k], &mut grads[k]);
         }
 
         // climbing image = highest interior energy, activated in phase 2
@@ -254,37 +280,35 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
             None
         };
 
-        // forces on interior images (flattened); convergence tracks the
-        // per-image force NORM (component-max is unrealistically strict)
-        let mut f = vec![0.0f64; n_interior * n_atoms * 3];
+        // forces on interior images (flattened, hoisted buffers); convergence
+        // tracks the per-image force NORM. Frozen images: spring/tangent
+        // terms only need POSITIONS (unchanged), the gradient is cached, so
+        // their force is recomputed cheaply from cache — but they are
+        // excluded from the convergence max and from integration below.
         let mut max_force = 0.0f64;
-        let mut image_norm2 = vec![0.0f64; n_interior + 1];
+        for v in image_norm2.iter_mut() {
+            *v = 0.0;
+        }
         for k in 1..=n_interior {
-            // improved tangent (Henkelman et al. 2000)
-            let tp: Vec<[f64; 3]> = (0..n_atoms)
-                .map(|i| {
-                    [
-                        cur[k + 1][i][0] - cur[k][i][0],
-                        cur[k + 1][i][1] - cur[k][i][1],
-                        cur[k + 1][i][2] - cur[k][i][2],
-                    ]
-                })
-                .collect();
-            let tm: Vec<[f64; 3]> = (0..n_atoms)
-                .map(|i| {
-                    [
-                        cur[k][i][0] - cur[k - 1][i][0],
-                        cur[k][i][1] - cur[k - 1][i][1],
-                        cur[k][i][2] - cur[k - 1][i][2],
-                    ]
-                })
-                .collect();
-            let mut tangent = vec![[0.0f64; 3]; n_atoms];
+            // improved tangent (Henkelman et al. 2000) — written into the
+            // hoisted tp/tm/tangent buffers
+            for i in 0..n_atoms {
+                tp[i] = [
+                    cur[k + 1][i][0] - cur[k][i][0],
+                    cur[k + 1][i][1] - cur[k][i][1],
+                    cur[k + 1][i][2] - cur[k][i][2],
+                ];
+                tm[i] = [
+                    cur[k][i][0] - cur[k - 1][i][0],
+                    cur[k][i][1] - cur[k - 1][i][1],
+                    cur[k][i][2] - cur[k - 1][i][2],
+                ];
+            }
             let (e_prev, e_next) = (energies[k - 1], energies[k + 1]);
             if e_next > energies[k] && energies[k] > e_prev {
-                tangent = tp.clone();
+                tangent.copy_from_slice(&tp);
             } else if e_next < energies[k] && energies[k] < e_prev {
-                tangent = tm.clone();
+                tangent.copy_from_slice(&tm);
             } else {
                 let dmax = (e_next - energies[k])
                     .abs()
@@ -312,10 +336,7 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
             if t_norm < 1e-12 {
                 continue; // degenerate band
             }
-            let that: Vec<[f64; 3]> = tangent
-                .iter()
-                .map(|p| [p[0] / t_norm, p[1] / t_norm, p[2] / t_norm])
-                .collect();
+            let inv_t = 1.0 / t_norm;
 
             let is_climb = climb_idx == Some(k);
             // spring force along the tangent
@@ -324,22 +345,26 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
             } else {
                 config.spring * (dist(&cur[k + 1], &cur[k]) - dist(&cur[k], &cur[k - 1]))
             };
+            let coef = if is_climb {
+                // climbing image: full gradient with the tangential
+                // component INVERTED (drives up to the saddle)
+                2.0
+            } else {
+                1.0
+            };
             for i in 0..n_atoms {
-                let gdot = grads[k][i][0] * that[i][0]
-                    + grads[k][i][1] * that[i][1]
-                    + grads[k][i][2] * that[i][2];
-                let coef = if is_climb {
-                    // climbing image: full gradient with the tangential
-                    // component INVERTED (drives up to the saddle)
-                    2.0
-                } else {
-                    1.0
-                };
+                let (tx, ty, tz) = (
+                    tangent[i][0] * inv_t,
+                    tangent[i][1] * inv_t,
+                    tangent[i][2] * inv_t,
+                );
+                let gdot = grads[k][i][0] * tx + grads[k][i][1] * ty + grads[k][i][2] * tz;
                 for c in 0..3 {
+                    let t_c = [tx, ty, tz][c];
                     // F = -∇E + coef·(∇E·t̂)t̂ + k·Δℓ·t̂
-                    let mut fc = -grads[k][i][c] + coef * gdot * that[i][c];
+                    let mut fc = -grads[k][i][c] + coef * gdot * t_c;
                     if !is_climb {
-                        fc += spring_f * that[i][c];
+                        fc += spring_f * t_c;
                     }
                     let dst = (k - 1) * n_atoms * 3 + i * 3 + c;
                     f[dst] = fc;
@@ -347,8 +372,33 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
                 }
             }
         }
-        for norm in image_norm2.iter().take(n_interior + 1).skip(1) {
-            max_force = max_force.max(norm.sqrt());
+        // freeze bookkeeping + convergence over ACTIVE images only. Iron
+        // rule: the highest-energy image (the saddle carrier) NEVER freezes
+        // — a prematurely frozen peak locks a distorted band (measured
+        // barrier 6.03 vs the physical ~3.3).
+        let peak = (1..=n_interior)
+            .max_by(|&a, &b| energies[a].total_cmp(&energies[b]))
+            .unwrap_or(1);
+        let mut all_frozen = true;
+        for k in 1..=n_interior {
+            let norm = image_norm2[k].sqrt();
+            if frozen[k - 1] {
+                continue;
+            }
+            all_frozen = false;
+            if norm < config.force_tol * FREEZE_FRAC && k != peak {
+                calm[k - 1] += 1;
+                if calm[k - 1] >= FREEZE_PATIENCE {
+                    frozen[k - 1] = true;
+                }
+            } else {
+                calm[k - 1] = 0;
+            }
+            max_force = max_force.max(norm);
+        }
+        if all_frozen {
+            converged = true;
+            break;
         }
         // phase 2 restarts the relaxation: the climbing image injects force
         // when activated, so only check convergence in a stable phase
@@ -361,6 +411,12 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         // through neighbors — independent image steps are the VTST norm)
         let stride = n_atoms * 3;
         for k in 0..n_interior {
+            if frozen[k] {
+                for vi in &mut v[k * stride..(k + 1) * stride] {
+                    *vi = 0.0;
+                }
+                continue;
+            }
             let lo = k * stride;
             let hi = lo + stride;
             qm.step(&mut x[lo..hi], &mut v[lo..hi], &f[lo..hi]);
@@ -397,6 +453,8 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         converged,
         iterations,
         climb_started,
+        evals_skipped,
+        n_frozen: frozen.iter().filter(|&&b| b).count(),
     }
 }
 
