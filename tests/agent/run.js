@@ -9,6 +9,8 @@ const Tools = require(path.join(__dirname, '../../app/agent/tools.js'));
 const Orchestrator = require(path.join(__dirname, '../../app/agent/orchestrator.js'));
 const MagpieProvider = require(path.join(__dirname, '../../app/agent/magpie-provider.js'));
 const Contract = require(path.join(__dirname, '../../app/tasks/contract.js'));
+const State = require(path.join(__dirname, '../../app/platform/state.js'));
+const Project = require(path.join(__dirname, '../../app/platform/project.js'));
 
 let pass = 0, fail = 0;
 function check(name, condition, detail) {
@@ -136,6 +138,43 @@ async function main() {
     const plan = basePlan(); const approval = Plans.issueApproval(plan, { approvedBy: 'u' }); const context = baseContext(); delete context.revision;
     Plans.compileApprovedPlan({ plan, context, approval, taskId: 't' });
   }, 'CONTEXT_INVALID');
+
+  console.log('project Plan/Review/Decision persistence:');
+  const persistedPlan = basePlan(), persistedHash = Plans.validatePlan(persistedPlan).planHash;
+  let projectState = State.initialState();
+  const reduce = cmd => { const result = State.applyCommand(projectState, cmd); if (result.error) throw new Error(result.error); projectState = result.state; return result; };
+  reduce({ type: 'RecordDesignPlan', planHash: persistedHash, plan: persistedPlan, modelProvider: 'pi/magpie', model: 'zcode/GLM-5.3-Flash', createdAt: 1 });
+  check('RecordDesignPlan projects a model-tagged draft', projectState.designPlans[persistedHash].status === 'draft' && projectState.designPlans[persistedHash].model.includes('GLM'));
+  check('duplicate plan and approval-before-draft invariants hold',
+    !!State.applyCommand(projectState, { type: 'RecordDesignPlan', planHash: persistedHash, plan: persistedPlan }).error &&
+    !!State.applyCommand(State.initialState(), { type: 'ApproveDesignPlan', planHash: persistedHash, approval: {} }).error);
+  const persistedApproval = Plans.issueApproval(persistedPlan, { approvedBy: 'user:test', modelProvider: 'pi/magpie', model: 'zcode/GLM-5.3-Flash' });
+  reduce({ type: 'ApproveDesignPlan', planHash: persistedHash, approval: persistedApproval });
+  check('approval moves draft to approved without deleting plan', projectState.designPlans[persistedHash].status === 'approved' && projectState.designPlans[persistedHash].approval.approvedBy === 'user:test');
+  check('review cannot attach before task completion', !!State.applyCommand(projectState, { type: 'RecordDesignReview', reviewId: 'r1', taskId: 'task-1', planHash: persistedHash, review: {} }).error);
+  reduce({ type: 'CompleteDesignPlan', planHash: persistedHash, taskId: 'task-1' });
+  check('completion links the real task and blocks approval undo as dependent',
+    projectState.designPlans[persistedHash].status === 'complete' && projectState.designPlans[persistedHash].taskId === 'task-1' &&
+    State.hasDependents({ type: 'ApproveDesignPlan', planHash: persistedHash }, projectState));
+  reduce({ type: 'RecordDesignReview', reviewId: 'r1', taskId: 'task-1', planHash: persistedHash, review: { claims: [] }, model: 'zcode/GLM-5.3-Flash', createdAt: 2 });
+  const nextDraft = { ...persistedPlan, hypothesis: 'A distinct next-round hypothesis.' };
+  reduce({ type: 'RecordDesignDecision', decisionId: 'd1', taskId: 'task-1', planHash: persistedHash, action: 'next', actor: 'user:local', nextPlanDraft: nextDraft, createdAt: 3 });
+  check('review and next-round decision persist with the old task identity',
+    projectState.designReviews.r1.taskId === 'task-1' && projectState.designDecisions.d1.nextPlanDraft.hypothesis.includes('distinct'));
+  check('AI cannot record a human Decision', !!State.applyCommand(projectState, { type: 'RecordDesignDecision', decisionId: 'd2', taskId: 'task-1', planHash: persistedHash, action: 'accept', actor: 'ai:glm' }).error);
+  const decisionInverse = State.inverse({ type: 'RecordDesignDecision', decisionId: 'd1' }, projectState);
+  reduce(decisionInverse);
+  check('decision undo hides but never deletes the fact', projectState.hiddenDesignDecisions.d1 === true && !!projectState.designDecisions.d1);
+  reduce(State.inverse(decisionInverse, projectState));
+  check('decision redo unhides the same fact', !projectState.hiddenDesignDecisions.d1);
+  const reviewInverse = State.inverse({ type: 'RecordDesignReview', reviewId: 'r1' }, projectState);
+  reduce(reviewInverse);
+  check('review undo also uses the hidden overlay', projectState.hiddenDesignReviews.r1 === true && !!projectState.designReviews.r1);
+  const restoredState = Project.deserializeState(Project.serializeState(projectState));
+  check('snapshot round-trip preserves Plan/Review/Decision projections',
+    restoredState.designPlans[persistedHash].status === 'complete' && !!restoredState.designReviews.r1 && !!restoredState.designDecisions.d1);
+  const legacyState = Project.deserializeState({ libraries: {}, activities: {} });
+  check('old snapshots deserialize without schema migration', legacyState.designPlans === undefined && State.initialState().schemaVersion === 1);
 
   console.log('evidence bundle + cited review:');
   const evidence = Evidence.makeAnalogEvidence({ spec, fact: {

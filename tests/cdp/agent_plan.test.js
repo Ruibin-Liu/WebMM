@@ -118,12 +118,30 @@ let browser;
       spec.input.candidates.length <= 4 && spec.input.stages[1].cap === 4 && spec.input.stages[2].cap === 2 && spec.input.stages[3].cap === 1,
       JSON.stringify({ candidates: spec.input.candidates.length, stages: spec.input.stages }));
     check('real evidence points back to the approved plan', run.fact.results.length > 0 && run.fact.accounts && spec.provenance.unverifiedGoals.includes('experimentalActivity'));
+    const projected = await page.evaluate(hash => window.__platformCompat.projectApi().state.designPlans[hash], spec.provenance.planHash);
+    check('Plan projection persists approved → complete with taskId', projected && projected.status === 'complete' && projected.taskId === spec.taskId && projected.approval.planHash === spec.provenance.planHash);
   }
 
   await page.evaluate(() => agentPlanReview());
   await page.waitForFunction(() => /Mock GLM review/.test(document.getElementById('agentReviewOut').textContent), null, { timeout: 30000 });
   const review = await page.evaluate(() => ({ text: document.getElementById('agentReviewOut').textContent, calls: window.__providerReviewCalls }));
   check('review uses real evidence references and leaves activity unresolved', review.text.includes('evidence:analog:') && review.text.includes('experimentalActivity') && review.calls === 1, review.text.slice(0, 220));
+  const reviewArtifacts = await page.evaluate(async () => ({ reviews: (await WebMMAgentHost.getArtifacts()).reviews, taskId: agentLastTaskId }));
+  check('Review is a first-class project artifact', reviewArtifacts.reviews.length === 1 && reviewArtifacts.reviews[0][1].taskId === reviewArtifacts.taskId && reviewArtifacts.reviews[0][1].review.claims.length > 0);
+
+  await page.evaluate(() => {
+    document.getElementById('agentDecisionReason').value = 'Next round: address unresolved activity with a distinct bounded hypothesis.';
+    agentDecision('next');
+  });
+  await page.waitForFunction(() => /草稿已保存，等待本地批准/.test(document.getElementById('agentPlanStatus').textContent), null, { timeout: 30000 });
+  const decisionArtifacts = await page.evaluate(async () => {
+    const artifacts = await WebMMAgentHost.getArtifacts();
+    return { plans: artifacts.plans, reviews: artifacts.reviews, decisions: artifacts.decisions, currentHash: agentCurrentPlanHash };
+  });
+  check('next Decision preserves old task and creates a distinct pending draft',
+    decisionArtifacts.plans.length === 3 && decisionArtifacts.decisions.length === 1 && decisionArtifacts.decisions[0][1].action === 'next' &&
+    decisionArtifacts.decisions[0][1].actor === 'user:local' && decisionArtifacts.decisions[0][1].nextPlanDraft &&
+    decisionArtifacts.plans.some(([, p]) => p.status === 'complete') && decisionArtifacts.plans.some(([hash, p]) => p.status === 'draft' && hash === decisionArtifacts.currentHash));
 
   // Legacy explorer must use the same extracted enumeration but no plan approval.
   await page.evaluate(() => { analogStatus(''); runAnalogExplorer(); });
@@ -134,6 +152,19 @@ let browser;
     return records[records.length - 1].spec;
   });
   check('legacy explorer still works without plan provenance', legacy.kind === 'analogScan' && !legacy.provenance.planHash && legacy.input.candidates.length > 0);
+  const exported = await page.evaluate(() => window.__platformCompat.exportProjectData());
+  const commandTypes = exported.commands.map(command => command.type);
+  check('project export includes Plan/Review/Decision command history',
+    ['RecordDesignPlan', 'ApproveDesignPlan', 'CompleteDesignPlan', 'RecordDesignReview', 'RecordDesignDecision'].every(type => commandTypes.includes(type)) &&
+    commandTypes.filter(type => type === 'RecordDesignPlan').length === 3);
+
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => window.WebMMAgentHost && window.__platformCompat && window.__platformCompat.ready(), null, { timeout: 120000 });
+  const restored = await page.evaluate(async () => {
+    const artifacts = await WebMMAgentHost.getArtifacts();
+    return { plans: artifacts.plans.map(([, p]) => p.status).sort(), reviews: artifacts.reviews.length, decisions: artifacts.decisions.length };
+  });
+  check('reload restores all plan versions and their review/decision', restored.plans.length === 3 && restored.plans.filter(status => status === 'draft').length === 2 && restored.plans.includes('complete') && restored.reviews === 1 && restored.decisions === 1, JSON.stringify(restored));
   check('zero page errors across provider, approved run, review and legacy run', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   await browser.close();

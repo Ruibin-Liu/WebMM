@@ -132,7 +132,8 @@ The minimal Plan Card supports:
 1. local draft, or an injected `window.WebMMAgentProvider`;
 2. hypothesis, budget, and unverified-activity editing;
 3. local approval followed by headless enumeration and `runAnalogFromCands`;
-4. local evidence summary, or provider review with real evidence references.
+4. local evidence summary, or provider review with real evidence references;
+5. user Decision (`accept`, `reject`, `needsExperiment`, or `next`) and an optional next-round draft.
 
 Without a provider, the UI explicitly says “local draft” and “local evidence summary (not AI review)”. It never simulates an AI response. With a provider, planning and review each make one bounded call. Provider text reaches the page only through form values or `textContent`.
 
@@ -178,7 +179,25 @@ Click “连接 pi GLM” to allow the current whitelisted design context to use
 
 GLM is therefore suitable for **structured draft + deterministic validation + corrective retry**, not as a trusted execution authority. The subsequent real pi/magpie browser run passed end to end: valid plan, local approval, real analogScan, model provenance, and cited review. The first live review returned empty content because long reasoning exhausted the 4096-token budget; review now has an 8192-token ceiling and passed. No provider output bypasses the validators.
 
-## 11. Tests and next slice
+## 11. Project persistence
+
+Plan, Review, and Decision are first-class records in the existing append-only project command log. No second database and no export-format version change are involved.
+
+```text
+RecordDesignPlan (draft)
+  → ApproveDesignPlan
+  → CompleteDesignPlan (taskId)
+  → RecordDesignReview
+  → RecordDesignDecision
+```
+
+The reducer rejects duplicate records, state skips, task/plan mismatches, and non-user Decision actors. Old snapshots default to empty design collections. Old applications keep their existing unknown-command replay policy.
+
+Every edited normalized plan gets its own `planHash`: provider draft, edited-before-approval version, and next-round draft can coexist. Identical repeated drafts are idempotent. Review and Decision always reference the completed task, while a next Decision carries the new draft separately. Approval or execution never happens implicitly.
+
+Decision undo uses hide/unhide overlays; command facts are never deleted. Approval undo is refused once completion, review, or decision dependencies exist. Project export and reload use the same commands and snapshots as all other project artifacts.
+
+## 12. Tests and next slice
 
 Run:
 
@@ -195,8 +214,8 @@ node tests/cdp/agent_glm_live.test.js
 
 The next implementation slice should:
 
-1. persist Plan/Review as first-class project artifacts rather than only task provenance;
-2. add explicit user decisions and optional next-round drafts;
-3. add a second LBDD skill only after the R-group loop is used successfully.
+1. make saved Plan/Review/Decision artifacts visible in a project history view;
+2. evaluate a second LBDD skill only after the R-group loop is used successfully;
+3. keep autonomous execution and MCP out of the default scope.
 
 No autonomous execution, general chat, MCP, or new LBDD algorithms are part of this slice.

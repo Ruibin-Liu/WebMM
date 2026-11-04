@@ -35,11 +35,18 @@
       analogRuns: {},          // runId -> {parentSmiles, mode, site, fragCat, deaza, versions, at} (M4 P2, docs §4)
       hiddenRuns: {},          // runId -> true (undo/hide; facts are never deleted)
       activities: {},          // M5 (docs/assay-foundation.md §2): assayId -> {meta, records: Map(molId -> [{value,qualifier,valueRaw,note?,replicateId?,matchTier?}])}
+      designPlans: {},         // planHash -> {plan,status,approval,taskId,modelProvider,model,providerRevision,createdAt}
+      designReviews: {},       // reviewId -> {taskId,planHash,review,modelProvider,model,providerRevision,createdAt}
+      designDecisions: {},     // decisionId -> {taskId,planHash,action,reason,actor,nextPlanDraft,createdAt}
+      hiddenDesignPlans: {},   // undo = hide; command facts are never deleted
+      hiddenDesignReviews: {},
+      hiddenDesignDecisions: {},
       maxCommandId: 0,
     };
   }
 
   function err(msg) { return { __error: msg }; }
+  function nonEmptyString(value) { return typeof value === 'string' && value.trim().length > 0; }
 
   // Returns {state, error?} — reducer never throws; errors are returned so
   // the log replay can surface the first illegal transition deterministically.
@@ -221,6 +228,91 @@
         r.name = cmd.name;
         return { state: s };
       }
+      case 'RecordDesignPlan': {
+        if (!nonEmptyString(cmd.planHash) || !cmd.plan || typeof cmd.plan !== 'object') return { state: prev, error: 'RecordDesignPlan: planHash and plan required' };
+        if (s.designPlans[cmd.planHash]) return { state: prev, error: 'RecordDesignPlan: duplicate planHash' };
+        s.designPlans[cmd.planHash] = {
+          plan: cmd.plan, status: 'draft', approval: null, taskId: null,
+          modelProvider: cmd.modelProvider || null, model: cmd.model || null,
+          providerRevision: cmd.providerRevision || null, createdAt: cmd.createdAt || Date.now(),
+        };
+        return { state: s };
+      }
+      case 'ApproveDesignPlan': {
+        const rec = s.designPlans[cmd.planHash];
+        if (!rec || rec.status !== 'draft') return { state: prev, error: 'ApproveDesignPlan: plan is not a draft' };
+        const approval = cmd.approval;
+        if (!approval || approval.planHash !== cmd.planHash || approval.baseRevision !== rec.plan.baseRevision || !nonEmptyString(approval.approvedBy)) {
+          return { state: prev, error: 'ApproveDesignPlan: approval does not match plan identity' };
+        }
+        s.designPlans[cmd.planHash] = { ...rec, status: 'approved', approval };
+        return { state: s };
+      }
+      case 'UnapproveDesignPlan': {
+        const rec = s.designPlans[cmd.planHash];
+        if (!rec || rec.status !== 'approved') return { state: prev, error: 'UnapproveDesignPlan: plan is not approved' };
+        s.designPlans[cmd.planHash] = { ...rec, status: 'draft', approval: null };
+        return { state: s };
+      }
+      case 'CompleteDesignPlan': {
+        const rec = s.designPlans[cmd.planHash];
+        if (!rec || rec.status !== 'approved' || !nonEmptyString(cmd.taskId)) return { state: prev, error: 'CompleteDesignPlan: approved plan and taskId required' };
+        s.designPlans[cmd.planHash] = { ...rec, status: 'complete', taskId: cmd.taskId };
+        return { state: s };
+      }
+      case 'RecordDesignReview': {
+        const rec = s.designPlans[cmd.planHash];
+        if (!nonEmptyString(cmd.reviewId) || !nonEmptyString(cmd.taskId) || !cmd.review || typeof cmd.review !== 'object') return { state: prev, error: 'RecordDesignReview: reviewId, taskId and review required' };
+        if (s.designReviews[cmd.reviewId]) return { state: prev, error: 'RecordDesignReview: duplicate reviewId' };
+        if (!rec || rec.status !== 'complete' || rec.taskId !== cmd.taskId) return { state: prev, error: 'RecordDesignReview: task does not match completed plan' };
+        s.designReviews[cmd.reviewId] = {
+          taskId: cmd.taskId, planHash: cmd.planHash, review: cmd.review,
+          modelProvider: cmd.modelProvider || null, model: cmd.model || null,
+          providerRevision: cmd.providerRevision || null, createdAt: cmd.createdAt || Date.now(),
+        };
+        return { state: s };
+      }
+      case 'RecordDesignDecision': {
+        const rec = s.designPlans[cmd.planHash];
+        const actions = ['accept', 'reject', 'needsExperiment', 'next'];
+        if (!nonEmptyString(cmd.decisionId) || !nonEmptyString(cmd.taskId) || !actions.includes(cmd.action) || !nonEmptyString(cmd.actor) || !cmd.actor.startsWith('user:')) {
+          return { state: prev, error: 'RecordDesignDecision: decisionId, taskId, valid action and user actor required' };
+        }
+        if (s.designDecisions[cmd.decisionId]) return { state: prev, error: 'RecordDesignDecision: duplicate decisionId' };
+        if (!rec || rec.status !== 'complete' || rec.taskId !== cmd.taskId) return { state: prev, error: 'RecordDesignDecision: task does not match completed plan' };
+        if (cmd.action === 'next' && (!cmd.nextPlanDraft || cmd.nextPlanDraft.kind !== 'rgroupOptimization')) return { state: prev, error: 'RecordDesignDecision: next requires nextPlanDraft' };
+        if (cmd.action !== 'next' && cmd.nextPlanDraft != null) return { state: prev, error: 'RecordDesignDecision: nextPlanDraft only belongs to next' };
+        s.designDecisions[cmd.decisionId] = {
+          taskId: cmd.taskId, planHash: cmd.planHash, action: cmd.action,
+          reason: cmd.reason == null ? null : String(cmd.reason), actor: cmd.actor,
+          nextPlanDraft: cmd.nextPlanDraft || null, createdAt: cmd.createdAt || Date.now(),
+        };
+        return { state: s };
+      }
+      case 'HideDesignPlan': {
+        if (!s.designPlans[cmd.planHash]) return { state: prev, error: 'HideDesignPlan: unknown plan' };
+        s.hiddenDesignPlans[cmd.planHash] = true; return { state: s };
+      }
+      case 'UnhideDesignPlan': {
+        if (!s.designPlans[cmd.planHash]) return { state: prev, error: 'UnhideDesignPlan: unknown plan' };
+        delete s.hiddenDesignPlans[cmd.planHash]; return { state: s };
+      }
+      case 'HideDesignReview': {
+        if (!s.designReviews[cmd.reviewId]) return { state: prev, error: 'HideDesignReview: unknown review' };
+        s.hiddenDesignReviews[cmd.reviewId] = true; return { state: s };
+      }
+      case 'UnhideDesignReview': {
+        if (!s.designReviews[cmd.reviewId]) return { state: prev, error: 'UnhideDesignReview: unknown review' };
+        delete s.hiddenDesignReviews[cmd.reviewId]; return { state: s };
+      }
+      case 'HideDesignDecision': {
+        if (!s.designDecisions[cmd.decisionId]) return { state: prev, error: 'HideDesignDecision: unknown decision' };
+        s.hiddenDesignDecisions[cmd.decisionId] = true; return { state: s };
+      }
+      case 'UnhideDesignDecision': {
+        if (!s.designDecisions[cmd.decisionId]) return { state: prev, error: 'UnhideDesignDecision: unknown decision' };
+        delete s.hiddenDesignDecisions[cmd.decisionId]; return { state: s };
+      }
       default:
         return { state: prev, error: 'unknown command type: ' + (cmd && cmd.type) };
     }
@@ -236,6 +328,12 @@
       analogRuns: { ...prev.analogRuns },
       hiddenRuns: { ...prev.hiddenRuns },
       activities: cloneActivities(prev.activities),
+      designPlans: { ...prev.designPlans },
+      designReviews: { ...prev.designReviews },
+      designDecisions: { ...prev.designDecisions },
+      hiddenDesignPlans: { ...prev.hiddenDesignPlans },
+      hiddenDesignReviews: { ...prev.hiddenDesignReviews },
+      hiddenDesignDecisions: { ...prev.hiddenDesignDecisions },
       maxCommandId: prev.maxCommandId,
     };
   }
@@ -287,6 +385,16 @@
       case 'CreateAnalogRun': return { type: 'HideAnalogRun', runId: cmd.runId };   // undo = hide (facts stay, docs §4)
       case 'HideAnalogRun': return { type: 'UnhideAnalogRun', runId: cmd.runId };
       case 'UnhideAnalogRun': return { type: 'HideAnalogRun', runId: cmd.runId };
+      case 'RecordDesignPlan': return { type: 'HideDesignPlan', planHash: cmd.planHash };
+      case 'ApproveDesignPlan': return { type: 'UnapproveDesignPlan', planHash: cmd.planHash };
+      case 'RecordDesignReview': return { type: 'HideDesignReview', reviewId: cmd.reviewId };
+      case 'RecordDesignDecision': return { type: 'HideDesignDecision', decisionId: cmd.decisionId };
+      case 'HideDesignPlan': return { type: 'UnhideDesignPlan', planHash: cmd.planHash };
+      case 'UnhideDesignPlan': return { type: 'HideDesignPlan', planHash: cmd.planHash };
+      case 'HideDesignReview': return { type: 'UnhideDesignReview', reviewId: cmd.reviewId };
+      case 'UnhideDesignReview': return { type: 'HideDesignReview', reviewId: cmd.reviewId };
+      case 'HideDesignDecision': return { type: 'UnhideDesignDecision', decisionId: cmd.decisionId };
+      case 'UnhideDesignDecision': return { type: 'HideDesignDecision', decisionId: cmd.decisionId };
       case 'Unpin': return null;                       // needs prior value; caller snapshots overlay for undo stack
       case 'Exclude': return { type: 'Include', molId: cmd.molId };
       case 'Include': return null;
@@ -307,6 +415,12 @@
     }
     if (cmd.type === 'ImportLibrary') {
       return Object.values(state.rounds).some(r => r.inputRef && String(r.inputRef).startsWith('lib:' + cmd.libraryId));
+    }
+    if (cmd.type === 'RecordDesignPlan' || cmd.type === 'ApproveDesignPlan') {
+      const rec = state.designPlans[cmd.planHash];
+      const hasArtifacts = Object.values(state.designReviews).some(r => r.planHash === cmd.planHash) ||
+        Object.values(state.designDecisions).some(d => d.planHash === cmd.planHash);
+      return hasArtifacts || (rec && (cmd.type === 'RecordDesignPlan' ? rec.status !== 'draft' : rec.status === 'complete'));
     }
     return false;
   }

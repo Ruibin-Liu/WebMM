@@ -10,7 +10,7 @@
   'use strict';
 
   function createBrowserHost(env) {
-    const required = ['rdkitModule', 'webmm', 'getParentMolblock', 'getParentSdf', 'getSite', 'getFragmentCategory', 'getFragments', 'coreMolblock', 'ensureSaTable', 'ensureBuildId', 'getTaskRecord', 'getFact'];
+    const required = ['rdkitModule', 'webmm', 'getParentMolblock', 'getParentSdf', 'getSite', 'getFragmentCategory', 'getFragments', 'coreMolblock', 'ensureSaTable', 'ensureBuildId', 'getTaskRecord', 'getFact', 'applyCommand', 'getProjectState', 'makeId'];
     for (const key of required) if (!env || typeof env[key] !== 'function') throw new Error('browser host requires ' + key);
 
     function identity(categoryOverride) {
@@ -87,6 +87,32 @@
       return Evidence.makeAnalogEvidence({ spec: record.spec, fact });
     }
 
+    async function recordPlanDraft(plan, planHash, model) {
+      const existing = (env.getProjectState().designPlans || {})[planHash];
+      if (existing && JSON.stringify(existing.plan) === JSON.stringify(plan)) return { already: true, status: existing.status };
+      return env.applyCommand({ type: 'RecordDesignPlan', planHash, plan, modelProvider: model && model.provider, model: model && model.name, providerRevision: model && model.revision });
+    }
+    async function recordPlanApproval(planHash, approval) { return env.applyCommand({ type: 'ApproveDesignPlan', planHash, approval }); }
+    async function recordPlanComplete(planHash, taskId) { return env.applyCommand({ type: 'CompleteDesignPlan', planHash, taskId }); }
+    async function recordReview(taskId, planHash, review, model) {
+      const reviewId = 'review:' + taskId + ':' + env.makeId('r');
+      await env.applyCommand({ type: 'RecordDesignReview', reviewId, taskId, planHash, review, modelProvider: model && model.provider, model: model && model.name, providerRevision: model && model.revision });
+      return reviewId;
+    }
+    async function recordDecision(taskId, planHash, action, reason, nextPlanDraft) {
+      const decisionId = 'decision:' + taskId + ':' + env.makeId('d');
+      await env.applyCommand({ type: 'RecordDesignDecision', decisionId, taskId, planHash, action, reason: reason || null, actor: 'user:local', nextPlanDraft: nextPlanDraft || null });
+      return decisionId;
+    }
+    function getArtifacts() {
+      const state = env.getProjectState();
+      return {
+        plans: Object.entries(state.designPlans || {}).filter(([id]) => !(state.hiddenDesignPlans || {})[id]),
+        reviews: Object.entries(state.designReviews || {}).filter(([id]) => !(state.hiddenDesignReviews || {})[id]),
+        decisions: Object.entries(state.designDecisions || {}).filter(([id]) => !(state.hiddenDesignDecisions || {})[id]),
+      };
+    }
+
     async function getLibrarySummary(id) {
       if (id !== 'builtin-v1') return null;
       const fragments = env.getFragments();
@@ -95,7 +121,7 @@
       return { id, kind: 'rgroup', count: fragments.length, categories };
     }
 
-    return Object.freeze({ getDesignContext, createLocalPlan, enumerate, getEvidence, getLibrarySummary });
+    return Object.freeze({ getDesignContext, createLocalPlan, enumerate, getEvidence, getLibrarySummary, recordPlanDraft, recordPlanApproval, recordPlanComplete, recordReview, recordDecision, getArtifacts });
   }
 
   return { createBrowserHost };

@@ -59,6 +59,11 @@ function check(name, cond, detail) {
   await page.waitForFunction(() => document.getElementById('agentReviewOut').textContent.length > 20, null, { timeout: 240000 });
   const review = await page.evaluate(() => document.getElementById('agentReviewOut').textContent);
   check('real GLM review cites actual evidence without execution', review.includes('evidence:analog:') && !/复盘被拒|复盘失败/.test(review), review.slice(0, 400));
+  const persisted = await page.evaluate(hash => ({
+    plan: window.__platformCompat.projectApi().state.designPlans[hash],
+    reviews: Object.values(window.__platformCompat.projectApi().state.designReviews),
+  }), run.record.spec.provenance.planHash);
+  check('real GLM Plan/Review persist with task and model lineage', persisted.plan && persisted.plan.status === 'complete' && persisted.reviews.length === 1 && persisted.reviews[0].model === run.record.spec.provenance.model);
   check('zero page errors in the live path', errors.length === 0, errors.join(' | '));
   await browser.close();
   console.log('RESULT: ' + pass + ' passed, ' + fail + ' failed');

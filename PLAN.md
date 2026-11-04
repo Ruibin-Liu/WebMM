@@ -1,32 +1,33 @@
-# Plan: 接入 pi/magpie GLM Provider（本地代理 / Schema 重试 / 实跑验收）
+# Plan: Plan / Review / Decision 项目级持久化与下一轮草稿
 
-用户裁决「就用我们 pi 里有的」= 复用本机 pi/magpie `127.0.0.1:3425` 与 `zcode/GLM-5.3-Flash`，不引入模型账号或密钥到 WebMM；增加 localhost 开发代理和真实 Provider，保留本地草稿降级。
+用户裁决「继续下一项」= 将 AI 协同产物从 TaskSpec provenance 提升为现有项目命令日志的一等记录，支持重载/导出、人工决策与下一轮计划草稿；不新增数据库或第二 Skill。
 
 ## 交付
-1. **localhost 开发服务器（scripts/agent-dev-server.mjs，无新依赖）**
-   - 仅绑定 127.0.0.1，服务仓库静态文件与 `/api/agent/status`、`/api/agent/chat`；默认 :8902，可用 AGENT_DEV_PORT 改。
-   - `/v1/chat/completions` 上游固定 MAGPIE_URL（默认 pi :3425）与 AGENT_MODEL（默认 zcode/GLM-5.3-Flash），请求体白名单/1 MiB/超时，非流式，不记录分子 payload。
-   - package.json 增 `agent:dev` 脚本；不改现有 :8901 或 magpie 服务。
-2. **Magpie Provider（app/agent/magpie-provider.js）**
-   - `status()` + `plan(request)` + `review(request)`，fetch 可注入以便 Node 测试。
-   - 严格 JSON 提示、OpenAI content 解析/代码围栏恢复；Plan 用 Plans.validatePlan，Review 用 Evidence.validateReview。
-   - Schema 失败仅纠正重试一次（回传具体错误）；二次失败抛 PROVIDER_SCHEMA，不执行；网络失败不盲目重试。
-3. **Plan Card 显式连接**
-   - 新增“连接 pi GLM”：status 成功才设置 window.WebMMAgentProvider；展示模型名和“上下文经 pi/magpie 路由”。
-   - 未连接保持本地草稿/本地证据摘要；连接后沿用现有双调用、编辑、user:local 批准、真实执行和引用复盘。
+1. **State 命令与投影（app/platform/state.js，schema v1 向前兼容）**
+   - 新增 designPlans/designReviews/designDecisions 及 hidden 覆盖层；旧快照缺省为空，旧应用重放未知命令沿用跳过策略。
+   - RecordDesignPlan(draft) → ApproveDesignPlan → CompleteDesignPlan(taskId) → RecordDesignReview → RecordDesignDecision；引用、状态、重复记录和 task/plan 匹配由 reducer 拒绝。
+   - Decision action=accept/reject/needsExperiment/next，actor/reason/nextPlanDraft 可选语义明确；hide/unhide 支持 Decision/Review 撤销，Approve 在有完成/复盘/决策依赖时拒绝 undo。
+2. **BrowserHost 持久化接口**
+   - 注入现有 project.apply，提供 recordPlanDraft/Approval/Complete/Review/Decision 与 artifacts 读取；模型 Tools 不增加写权限。
+   - Plan/Review 保存 provider/model/providerRevision；Decision 永远 actor=user:local，AI 不替人做 Decision。
+3. **Plan Card 接线**
+   - 有效草稿落 RecordDesignPlan，批准落 Approval，任务完成落 Complete，真实或本地复盘落 Review；保存失败明确提示且不伪称成功。
+   - 新增 accept/reject/needsExperiment/next 决策与 reason；next 保存含 nextPlanDraft 的 Decision 后生成新的待批准草稿，不自动执行。
+   - 项目导出/重载经既有命令日志和快照恢复，不改 format.version。
 4. **测试与文档**
-   - Node 增 Provider 单测：status、合法 JSON、围栏恢复、Plan/Review 首次错误后纠正、二次失败、无执行方法、payload 白名单。
-   - 新增默认不注册的 agent_glm_live CDP：连接真实 pi/magpie → GLM Plan → 编辑小预算 → 真 analogScan → GLM Review；仅手动 WEBMM_AGENT_URL 运行。
-   - 原 agent_plan/mock、m12_tasks、Node suites 零回归；docs 记录启动方式、隐私边界和 GLM 实测。
+   - Node 覆盖状态机、重复/错误引用、hide/unhide、依赖拒绝、序列化与 replay；保留 153 项既有测试。
+   - CDP agent_plan 增 Plan/Review/Decision 投影、下一轮新 draft、导出命令和重载恢复；live 仅模型谱系不受影响。
+   - docs/CODE_STATUS 更新真实边界；run.sh 不注册 live。
 
 ## 验收
-- `node tests/agent/run.js`、`node tests/platform/run.js` 全绿；静态/代理单测覆盖路径穿越与上游模型不可由浏览器改写。
-- `tests/cdp/run.sh agent_plan` 10/10，`m12_tasks` 14/14 零回归。
-- 手动 live：真实 GLM 计划可校验，批准后 task 带 planHash/approvedBy，复盘引用真实 evidenceId；若 GLM 输出非法必须经一次纠正或诚实失败，不得执行非法计划。
-- node --check / bash -n / git diff --check 全过；无新 npm 依赖、无密钥入仓、不重启 magpie；推送分支。
+- Node agent/platform 全绿：Plan 不能跳状态、Review 必须指已完成 task、Decision 必须 user actor、next 必须带有效 nextPlanDraft、undo 不删事实。
+- CDP agent_plan 全绿：draft→approved→complete→review→next decision 全入项目，导出含新命令，重载后记录仍在；legacy 与零 page error 保持。
+- m12_tasks 14/14、agent_glm_live 7/7（若模型服务可用）无回归；node --check/bash -n/git diff --check 全过。
+- 无新依赖、无新数据库、无自主执行；推送 feat/lbdd-ai-copilot。
 
 ## 排雷存档
-- pi/magpie :3425 的 OPTIONS 不支持浏览器预检；未改 magpie，新增仅 localhost 的静态+API 同源代理，模型由服务端固定，浏览器不能覆盖。
-- GLM 首次真实 Plan 合法并执行成功；Review 空 content 是长推理耗尽 4096 tokens，简单复现显示 reasoning_content 与最终 content 共用预算。Review 上限升 8192 后 live 7/7，空响应错误现带 finish_reason/completion_tokens。
-- 真实模型谱系不能只留 planHash：approval 增加 modelProvider/model/providerRevision，随 TaskSpec 与 Evidence 持久；本地草稿记 null。
-- 原 :8901 与 magpie :3425 均未重启；测试只启动/停止本 worktree 的 :8902 agent:dev。live 默认不注册 run.sh，避免 CI 隐式消耗模型。
+- 批准前编辑会改变 planHash：先在 UI 保存初稿、再保存批准前规范版本，不能只对旧 hash 调 Approve。CDP 实证应保留初稿/编辑版/下一轮三个 RecordDesignPlan，而非两个。
+- Decision 必须引用已完成的旧 plan+task；nextPlanDraft 另存新 hash 和新 draft，不能继承旧批准或自动执行。
+- Review/Decision undo 只走 hidden overlay；Complete/依赖后的 Approve 不允许 undo，保持追加日志与依赖语义。
+- schema v1 未升：旧快照缺省 design 集合，旧应用重放未知命令仍按既有跳过策略；导出自动包含新命令。
+- 测试初稿误把 Node 侧不存在的 agentLastTaskId 当变量、误算计划版本数；分别改为 page.evaluate 返回与三版本语义，最终 agent_plan 15/15、live 8/8。

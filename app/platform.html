@@ -1816,6 +1816,15 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        </div>
        <div id="agentPlanStatus" class="hint" role="status" style="margin-top:0.35rem;">先选当前分子、位点和片段类别；未配置 Provider 时使用明确标注的本地草稿。</div>
        <pre id="agentReviewOut" class="hint" style="white-space:pre-wrap; margin:0.35rem 0 0;"></pre>
+       <div id="agentDecisionControls" style="display:none; margin-top:0.35rem;">
+         <input id="agentDecisionReason" aria-label="决策理由或下一轮假设" placeholder="决策理由；选择下一轮时作为新假设" style="width:100%; padding:0.4rem; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text);">
+         <div style="display:flex; gap:0.35rem; margin-top:0.35rem; flex-wrap:wrap;">
+           <button class="action-btn primary" style="width:auto;" onclick="agentDecision('accept')">接受本轮</button>
+           <button class="action-btn clear" style="width:auto;" onclick="agentDecision('reject')">拒绝本轮</button>
+           <button class="action-btn edit" style="width:auto;" onclick="agentDecision('needsExperiment')">需要实验</button>
+           <button class="action-btn edit" style="width:auto;" onclick="agentDecision('next')">保存并生成下一轮草稿</button>
+         </div>
+       </div>
      </div>
      <div class="analog-entry-grid">
        <div class="analog-path">
@@ -4642,6 +4651,9 @@ function rdkitAvailable() {
     ensureBuildId,
     getTaskRecord: async id => { const store = await ensureTaskStore(); return store ? store.get(id) : null; },
     getFact: async key => window.__platformCompat ? window.__platformCompat.getFact(key) : null,
+    applyCommand: cmd => window.__platformCompat.projectApi().apply(cmd),
+    getProjectState: () => window.__platformCompat.projectApi().state,
+    makeId: prefix => prefix + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
     getProjectId: () => window.__activeProject && window.__activeProject.id || null,
     getRoundId: () => null,
   });
@@ -4649,7 +4661,7 @@ function rdkitAvailable() {
   window.WebMMAgentHost = webMMAgentHost;
   window.WebMMAgentTools = webMMAgentTools;
 
-  let agentDraftPlan = null, agentLastTaskId = null;
+  let agentDraftPlan = null, agentCurrentPlanHash = null, agentLastTaskId = null;
   const agentPlanStatus = message => { document.getElementById('agentPlanStatus').textContent = message; };
   async function agentPlanConnect() {
     const button = document.getElementById('agentConnectBtn');
@@ -4675,16 +4687,22 @@ function rdkitAvailable() {
     finalTop: parseInt(document.getElementById('agentFinalTop').value, 10),
   });
 
-  function agentPlanShowDraft(validation) {
+  const agentModelInfo = () => ({ provider: window.WebMMAgentProviderName || null, name: window.WebMMAgentModel || null, revision: window.WebMMAgentProviderRevision || null });
+  async function agentPlanShowDraft(validation) {
     agentDraftPlan = validation.plan;
+    agentCurrentPlanHash = validation.planHash;
     document.getElementById('agentPlanEditor').style.display = '';
     document.getElementById('agentHypothesis').value = agentDraftPlan.hypothesis;
     document.getElementById('agentMaxCandidates').value = agentDraftPlan.budget.maxCandidates;
     document.getElementById('agentRefineTop').value = agentDraftPlan.budget.refineTop;
     document.getElementById('agentFinalTop').value = agentDraftPlan.budget.finalTop;
     document.getElementById('agentActivityUnverified').checked = agentDraftPlan.unverifiedGoals.includes('experimentalActivity');
-    document.getElementById('agentApproveBtn').disabled = false;
-    agentPlanStatus('等待本地批准 · ' + validation.planHash + ' · ' + agentDraftPlan.fragmentCategory + ' / ' + agentDraftPlan.siteRef);
+    document.getElementById('agentApproveBtn').disabled = true;
+    try {
+      await webMMAgentHost.recordPlanDraft(agentDraftPlan, validation.planHash, agentModelInfo());
+      document.getElementById('agentApproveBtn').disabled = false;
+      agentPlanStatus('草稿已保存，等待本地批准 · ' + validation.planHash + ' · ' + agentDraftPlan.fragmentCategory + ' / ' + agentDraftPlan.siteRef);
+    } catch (error) { agentDraftPlan = null; agentCurrentPlanHash = null; agentPlanStatus('草稿保存失败：' + error.message); }
   }
 
   async function agentPlanDraft() {
@@ -4707,7 +4725,7 @@ function rdkitAvailable() {
         validation = Agent.Plans.validatePlan(draft, await webMMAgentHost.getDesignContext());
       }
       if (!validation.ok) { agentPlanStatus('计划校验失败：' + validation.errors.join('；')); return; }
-      agentPlanShowDraft(validation);
+      await agentPlanShowDraft(validation);
     } catch (error) { agentPlanStatus('草稿失败：' + error.message); }
     finally { button.disabled = false; }
   }
@@ -4737,12 +4755,15 @@ function rdkitAvailable() {
       const validation = Agent.Plans.validatePlan(plan, await webMMAgentHost.getDesignContext());
       if (!validation.ok) { agentPlanStatus('批准前校验失败：' + validation.errors.join('；')); return; }
       agentDraftPlan = validation.plan;
+      agentCurrentPlanHash = validation.planHash;
+      await webMMAgentHost.recordPlanDraft(agentDraftPlan, validation.planHash, agentModelInfo());
       const approval = Agent.Plans.issueApproval(agentDraftPlan, {
         approvedBy: 'user:local',
         modelProvider: window.WebMMAgentProviderName || null,
         model: window.WebMMAgentModel || null,
         providerRevision: window.WebMMAgentProviderRevision || null,
       });
+      await webMMAgentHost.recordPlanApproval(approval.planHash, approval);
       analogRunToken++;
       const token = analogRunToken;
       analogThumbsOn = false;
@@ -4753,6 +4774,7 @@ function rdkitAvailable() {
       window.__analogAudit = enumerated.audit;
       agentLastTaskId = await runAnalogFromCands(enumerated.candidates, token, { plan: agentDraftPlan, approval, context: enumerated.context });
       if (agentLastTaskId) {
+        await webMMAgentHost.recordPlanComplete(approval.planHash, agentLastTaskId);
         document.getElementById('agentReviewBtn').disabled = false;
         agentPlanStatus('已完成并保存 · ' + agentLastTaskId + ' · ' + approval.planHash);
       } else agentPlanStatus('运行未完成或被取消；没有可复盘证据');
@@ -4770,11 +4792,17 @@ function rdkitAvailable() {
         const orchestrator = Agent.Orchestrator.createOrchestrator({ provider: window.WebMMAgentProvider, tools: webMMAgentTools });
         const result = await orchestrator.reviewResults({ taskId: agentLastTaskId });
         if (result.status === 'rejected') { output.textContent = 'Provider 复盘被拒：' + result.errors.join('；'); return; }
+        await webMMAgentHost.recordReview(agentLastTaskId, evidence.plan.planHash, result.review, agentModelInfo());
         const lines = result.review.claims.map(claim => '• ' + claim.text + '\n  [' + claim.evidenceRefs.join(', ') + ']');
         if (result.review.unresolved.length) lines.push('未解决：' + result.review.unresolved.join('、'));
         if (result.nextPlan) lines.push('下一轮：' + result.nextPlan.status + '（未执行）');
         output.textContent = lines.join('\n');
       } else {
+        const localReview = {
+          claims: [{ text: 'Local deterministic evidence summary; no AI interpretation.', evidenceRefs: [evidence.evidenceId] }],
+          counterexamples: [], unresolved: evidence.unverifiedGoals.slice(), nextPlanDraft: null,
+        };
+        await webMMAgentHost.recordReview(agentLastTaskId, evidence.plan.planHash, localReview, { provider: null, name: null, revision: null });
         output.textContent = [
           '本地证据摘要（非 AI 复盘）',
           evidence.evidenceId,
@@ -4784,7 +4812,34 @@ function rdkitAvailable() {
           '边界：' + evidence.limitations[0],
         ].join('\n');
       }
+      document.getElementById('agentDecisionControls').style.display = '';
     } catch (error) { output.textContent = '复盘失败：' + error.message; }
+  }
+
+  async function agentDecision(action) {
+    if (!agentLastTaskId || !agentDraftPlan) return;
+    const taskId = agentLastTaskId, planHash = agentCurrentPlanHash;
+    const reason = document.getElementById('agentDecisionReason').value.trim();
+    try {
+      let nextPlanDraft = null;
+      if (action === 'next') {
+        const draft = JSON.parse(JSON.stringify(agentDraftPlan));
+        draft.hypothesis = reason || 'Follow-up design round based on the previous evidence and unresolved goals.';
+        const validation = Agent.Plans.validatePlan(draft, await webMMAgentHost.getDesignContext());
+        if (!validation.ok) { agentPlanStatus('下一轮草稿无效：' + validation.errors.join('；')); return; }
+        nextPlanDraft = validation.plan;
+      }
+      const decisionId = await webMMAgentHost.recordDecision(taskId, planHash, action, reason, nextPlanDraft);
+      if (action === 'next') {
+        const validation = Agent.Plans.validatePlan(nextPlanDraft, await webMMAgentHost.getDesignContext());
+        agentLastTaskId = null;
+        document.getElementById('agentReviewBtn').disabled = true;
+        document.getElementById('agentDecisionControls').style.display = 'none';
+        document.getElementById('agentReviewOut').textContent = '';
+        agentPlanStatus('决策已保存 · ' + decisionId);
+        await agentPlanShowDraft(validation);
+      } else agentPlanStatus('决策已保存 · ' + action + ' · ' + decisionId);
+    } catch (error) { agentPlanStatus('决策保存失败：' + error.message); }
   }
 
   // ---- scaffold-hop spike: aza-scan (M3 spike) ----
