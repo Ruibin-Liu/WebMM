@@ -197,6 +197,10 @@ Every edited normalized plan gets its own `planHash`: provider draft, edited-bef
 
 Decision undo uses hide/unhide overlays; command facts are never deleted. Approval undo is refused once completion, review, or decision dependencies exist. Project export and reload use the same commands and snapshots as all other project artifacts.
 
+The Design History view groups visible Plan/Review/Decision records by `planHash`, including model identity, task links, unresolved questions, and `next → new planHash` lineage. It is separate from the analog execution-history view and works after reload without restoring the old Plan Card.
+
+“复制为新草稿” requires the current parent, site, and fragment category to match the old plan. It refreshes `baseRevision`, creates a new hypothesis/hash, and preserves the old approval and task as history. It never starts a task.
+
 ## 12. Tests and next slice
 
 Run:
@@ -214,8 +218,8 @@ node tests/cdp/agent_glm_live.test.js
 
 The next implementation slice should:
 
-1. make saved Plan/Review/Decision artifacts visible in a project history view;
-2. evaluate a second LBDD skill only after the R-group loop is used successfully;
+1. evaluate a second LBDD skill only after the R-group loop is used successfully;
+2. preserve the same capability/approval/evidence/decision contracts when adding that skill;
 3. keep autonomous execution and MCP out of the default scope.
 
 No autonomous execution, general chat, MCP, or new LBDD algorithms are part of this slice.

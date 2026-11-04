@@ -142,6 +142,15 @@ let browser;
     decisionArtifacts.plans.length === 3 && decisionArtifacts.decisions.length === 1 && decisionArtifacts.decisions[0][1].action === 'next' &&
     decisionArtifacts.decisions[0][1].actor === 'user:local' && decisionArtifacts.decisions[0][1].nextPlanDraft &&
     decisionArtifacts.plans.some(([, p]) => p.status === 'complete') && decisionArtifacts.plans.some(([hash, p]) => p.status === 'draft' && hash === decisionArtifacts.currentHash));
+  const historyView = await page.evaluate(() => ({
+    plans: document.querySelectorAll('#agentDesignHistoryItems .agent-history-plan').length,
+    reviews: document.querySelectorAll('#agentDesignHistoryItems .agent-history-review').length,
+    decisions: document.querySelectorAll('#agentDesignHistoryItems .agent-history-decision').length,
+    lineage: document.querySelector('#agentDesignHistoryItems .agent-next-lineage') && document.querySelector('#agentDesignHistoryItems .agent-next-lineage').textContent,
+    currentHash: agentCurrentPlanHash,
+  }));
+  check('history groups Plan/Review/Decision and renders next lineage',
+    historyView.plans === 3 && historyView.reviews === 1 && historyView.decisions === 1 && historyView.lineage && historyView.lineage.includes(historyView.currentHash));
 
   // Legacy explorer must use the same extracted enumeration but no plan approval.
   await page.evaluate(() => { analogStatus(''); runAnalogExplorer(); });
@@ -165,6 +174,36 @@ let browser;
     return { plans: artifacts.plans.map(([, p]) => p.status).sort(), reviews: artifacts.reviews.length, decisions: artifacts.decisions.length };
   });
   check('reload restores all plan versions and their review/decision', restored.plans.length === 3 && restored.plans.filter(status => status === 'draft').length === 2 && restored.plans.includes('complete') && restored.reviews === 1 && restored.decisions === 1, JSON.stringify(restored));
+  await page.evaluate(() => agentRenderDesignHistory());
+  const restoredHistoryCount = await page.evaluate(() => document.querySelectorAll('#agentDesignHistoryItems .agent-history-plan').length);
+  check('history is visible after reload without restoring the old Plan Card', restoredHistoryCount === 3, String(restoredHistoryCount));
+
+  await page.evaluate(() => { document.getElementById('input').value = 'CC(=O)Oc1ccccc1O'; process(true); });
+  await page.waitForFunction(() => !!document.querySelector('#svg svg'), null, { timeout: 60000 });
+  await page.evaluate(() => embed3D());
+  await page.waitForFunction(() => !!document.querySelector('#viewer3d canvas'), null, { timeout: 60000 });
+  await page.evaluate(() => { switchMode('analog'); analogDetectSites(); });
+  await page.waitForFunction(() => [...document.getElementById('analogSite').options].some(o => o.value), null, { timeout: 30000 });
+  const beforeCopy = await page.evaluate(async () => {
+    document.getElementById('analogSite').selectedIndex = 1;
+    document.getElementById('analogFragCat').value = 'alkyl';
+    const artifacts = await WebMMAgentHost.getArtifacts();
+    return {
+      hash: artifacts.plans.find(([, plan]) => plan.status === 'draft')[0],
+      tasks: (await window.__platformCompat.getStorage().all('tasks')).length,
+    };
+  });
+  await page.evaluate(hash => agentPlanCopyDraft(hash), beforeCopy.hash);
+  await page.waitForFunction(() => /草稿已保存，等待本地批准/.test(document.getElementById('agentPlanStatus').textContent), null, { timeout: 30000 });
+  const copied = await page.evaluate(async () => ({
+    plans: (await WebMMAgentHost.getArtifacts()).plans,
+    tasks: (await window.__platformCompat.getStorage().all('tasks')).length,
+    history: document.querySelectorAll('#agentDesignHistoryItems .agent-history-plan').length,
+    currentHash: agentCurrentPlanHash,
+  }));
+  check('copy creates a fourth independent draft and no computation task',
+    copied.plans.length === 4 && copied.plans.filter(([, p]) => p.status === 'draft').length === 3 && copied.plans.some(([hash]) => hash === copied.currentHash) &&
+    copied.tasks === beforeCopy.tasks && copied.history === 4 && copied.currentHash !== beforeCopy.hash);
   check('zero page errors across provider, approved run, review and legacy run', errors.length === 0, errors.slice(0, 3).join(' | '));
 
   await browser.close();

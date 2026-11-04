@@ -1826,6 +1826,11 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
          </div>
        </div>
      </div>
+     <details id="agentDesignHistory" open style="margin:0.45rem 0; border:1px solid var(--ll-line); border-radius:10px; padding:0.55rem 0.7rem;">
+       <summary style="cursor:pointer; font-size:0.82rem;"><b>设计历史</b> <span id="agentDesignHistoryCounts" class="hint"></span></summary>
+       <div class="hint" style="margin:0.25rem 0;">计划版本、证据复盘和人工决策按 planHash 分组；复制只产生新草稿，不继承批准。</div>
+       <div id="agentDesignHistoryItems" style="display:flex; flex-direction:column; gap:0.4rem;"></div>
+     </details>
      <div class="analog-entry-grid">
        <div class="analog-path">
          <div class="path-head"><b>单位点交换</b><span class="card-sub" title="完整流程 — A 枚举:SMARTS 检测当前分子的可替换末端基(卤素/甲基/羟基/伯胺/甲氧基/腈 6 类),按所选类别拼接内置片段集,经价键合法性、重原子窗口、转子数(≤10)过滤,硬顶 400 产物; B 粗筛:每候选 ETKDG 嵌入 10 构象并 MMFF94s 优化,逐构象与母体参照构象刚性形状叠合,取最佳 Tanimoto 流式排序(持久 worker 池);C 精化:top-30 扩至 30 构象系综,与 B 轮取最大值; D 柔性:top-10 从最优刚姿出发,MCS 配对核心 + Kabsch 核心入位 + 位置约束(fc=25)MMFF 扭转松弛后重打分,Flex T 单列独立呈现(可低于刚性,如实显示)。SA 列为 Ertl 合成可达性(1=易,10=难)。">位点 → 片段 → 形状漏斗 B·C·D</span></div>
@@ -4652,7 +4657,7 @@ function rdkitAvailable() {
     getTaskRecord: async id => { const store = await ensureTaskStore(); return store ? store.get(id) : null; },
     getFact: async key => window.__platformCompat ? window.__platformCompat.getFact(key) : null,
     applyCommand: cmd => window.__platformCompat.projectApi().apply(cmd),
-    getProjectState: () => window.__platformCompat.projectApi().state,
+    getProjectState: () => window.__platformCompat && window.__platformCompat.projectApi() ? window.__platformCompat.projectApi().state : {},
     makeId: prefix => prefix + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
     getProjectId: () => window.__activeProject && window.__activeProject.id || null,
     getRoundId: () => null,
@@ -4688,6 +4693,73 @@ function rdkitAvailable() {
   });
 
   const agentModelInfo = () => ({ provider: window.WebMMAgentProviderName || null, name: window.WebMMAgentModel || null, revision: window.WebMMAgentProviderRevision || null });
+  function agentHistoryElement(tag, className, text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text != null) element.textContent = text;
+    return element;
+  }
+  function agentRenderDesignHistory() {
+    const container = document.getElementById('agentDesignHistoryItems');
+    if (!container) return;
+    const artifacts = webMMAgentHost.getArtifacts();
+    document.getElementById('agentDesignHistoryCounts').textContent = artifacts.plans.length + ' 计划 · ' + artifacts.reviews.length + ' 复盘 · ' + artifacts.decisions.length + ' 决策';
+    container.replaceChildren();
+    const byTime = (a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0) || a[0].localeCompare(b[0]);
+    for (const [planHash, record] of artifacts.plans.slice().sort(byTime)) {
+      const card = agentHistoryElement('div', 'agent-history-plan', null);
+      card.dataset.planHash = planHash;
+      card.style.cssText = 'border-top:1px solid var(--ll-line); padding-top:0.35rem;';
+      const head = agentHistoryElement('div', 'agent-history-plan-head', null);
+      head.style.cssText = 'display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;';
+      head.appendChild(agentHistoryElement('b', null, record.status + ' · ' + planHash.slice(0, 10)));
+      head.appendChild(agentHistoryElement('span', 'hint', record.plan.fragmentCategory + ' · ' + (record.model || 'local')));
+      const copy = agentHistoryElement('button', 'action-btn edit agent-copy-draft', '复制为新草稿');
+      copy.style.cssText = 'width:auto; padding:0.15rem 0.45rem; font-size:0.7rem;';
+      copy.addEventListener('click', () => agentPlanCopyDraft(planHash));
+      head.appendChild(copy);
+      card.appendChild(head);
+      card.appendChild(agentHistoryElement('div', 'agent-history-hypothesis', record.plan.hypothesis));
+      card.appendChild(agentHistoryElement('div', 'hint', (record.taskId ? 'task=' + record.taskId + ' · ' : '') + new Date(record.createdAt || 0).toLocaleString()));
+      for (const [reviewId, review] of artifacts.reviews.filter(([, r]) => r.planHash === planHash).sort(byTime)) {
+        const block = agentHistoryElement('div', 'agent-history-review', null);
+        block.appendChild(agentHistoryElement('b', null, '复盘 · ' + reviewId + ' · ' + (review.model || 'local')));
+        for (const claim of review.review.claims || []) block.appendChild(agentHistoryElement('div', null, '• ' + claim.text));
+        if ((review.review.unresolved || []).length) block.appendChild(agentHistoryElement('div', 'hint', '未解决：' + review.review.unresolved.join('、')));
+        card.appendChild(block);
+      }
+      for (const [decisionId, decision] of artifacts.decisions.filter(([, d]) => d.planHash === planHash).sort(byTime)) {
+        const block = agentHistoryElement('div', 'agent-history-decision', null);
+        block.appendChild(agentHistoryElement('b', null, '决策 · ' + decision.action + ' · ' + decision.actor));
+        if (decision.reason) block.appendChild(agentHistoryElement('div', null, decision.reason));
+        if (decision.nextPlanDraft) {
+          const nextHash = Agent.Plans.validatePlan(decision.nextPlanDraft).planHash;
+          block.appendChild(agentHistoryElement('div', 'agent-next-lineage', 'next → ' + nextHash + '（独立待批准草稿）'));
+        }
+        block.appendChild(agentHistoryElement('div', 'hint', decisionId));
+        card.appendChild(block);
+      }
+      container.appendChild(card);
+    }
+  }
+  async function agentPlanCopyDraft(planHash) {
+    try {
+      const entry = webMMAgentHost.getArtifacts().plans.find(([hash]) => hash === planHash);
+      if (!entry) { agentPlanStatus('找不到要复制的计划'); return; }
+      const current = await webMMAgentHost.getDesignContext();
+      const previous = entry[1].plan;
+      if (previous.parentRef !== current.parentRef || previous.siteRef !== current.siteRef || previous.fragmentCategory !== current.fragmentCategory) {
+        agentPlanStatus('当前分子、位点或片段类别已变化；不能复制到不同上下文');
+        return;
+      }
+      const draft = JSON.parse(JSON.stringify(previous));
+      draft.baseRevision = current.revision;
+      draft.hypothesis = 'Copy of ' + planHash.slice(0, 10) + ' — ' + previous.hypothesis;
+      const validation = Agent.Plans.validatePlan(draft, current);
+      if (!validation.ok) { agentPlanStatus('复制草稿失败：' + validation.errors.join('；')); return; }
+      await agentPlanShowDraft(validation);
+    } catch (error) { agentPlanStatus('复制草稿失败：' + error.message); }
+  }
   async function agentPlanShowDraft(validation) {
     agentDraftPlan = validation.plan;
     agentCurrentPlanHash = validation.planHash;
@@ -4700,6 +4772,7 @@ function rdkitAvailable() {
     document.getElementById('agentApproveBtn').disabled = true;
     try {
       await webMMAgentHost.recordPlanDraft(agentDraftPlan, validation.planHash, agentModelInfo());
+      agentRenderDesignHistory();
       document.getElementById('agentApproveBtn').disabled = false;
       agentPlanStatus('草稿已保存，等待本地批准 · ' + validation.planHash + ' · ' + agentDraftPlan.fragmentCategory + ' / ' + agentDraftPlan.siteRef);
     } catch (error) { agentDraftPlan = null; agentCurrentPlanHash = null; agentPlanStatus('草稿保存失败：' + error.message); }
@@ -4764,6 +4837,7 @@ function rdkitAvailable() {
         providerRevision: window.WebMMAgentProviderRevision || null,
       });
       await webMMAgentHost.recordPlanApproval(approval.planHash, approval);
+      agentRenderDesignHistory();
       analogRunToken++;
       const token = analogRunToken;
       analogThumbsOn = false;
@@ -4775,6 +4849,7 @@ function rdkitAvailable() {
       agentLastTaskId = await runAnalogFromCands(enumerated.candidates, token, { plan: agentDraftPlan, approval, context: enumerated.context });
       if (agentLastTaskId) {
         await webMMAgentHost.recordPlanComplete(approval.planHash, agentLastTaskId);
+        agentRenderDesignHistory();
         document.getElementById('agentReviewBtn').disabled = false;
         agentPlanStatus('已完成并保存 · ' + agentLastTaskId + ' · ' + approval.planHash);
       } else agentPlanStatus('运行未完成或被取消；没有可复盘证据');
@@ -4812,6 +4887,7 @@ function rdkitAvailable() {
           '边界：' + evidence.limitations[0],
         ].join('\n');
       }
+      agentRenderDesignHistory();
       document.getElementById('agentDecisionControls').style.display = '';
     } catch (error) { output.textContent = '复盘失败：' + error.message; }
   }
@@ -4830,6 +4906,7 @@ function rdkitAvailable() {
         nextPlanDraft = validation.plan;
       }
       const decisionId = await webMMAgentHost.recordDecision(taskId, planHash, action, reason, nextPlanDraft);
+      agentRenderDesignHistory();
       if (action === 'next') {
         const validation = Agent.Plans.validatePlan(nextPlanDraft, await webMMAgentHost.getDesignContext());
         agentLastTaskId = null;
@@ -7820,6 +7897,7 @@ function switchMode(m) {
   document.getElementById('rgdPanel').style.display = searchMode ? (rgdResults ? 'block' : 'none') : 'none';
   document.getElementById('analogPanel').style.display = analogMode ? 'block' : 'none';
     if (analogMode && typeof analogRenderHistory === 'function') analogRenderHistory();
+  if (analogMode && typeof agentRenderDesignHistory === 'function') agentRenderDesignHistory();
   document.getElementById('scaffoldPanel').style.display = searchMode ? (scaffoldResults ? 'block' : 'none') : 'none';
   document.getElementById('pharmQueryPanel').style.display = searchMode ? 'block' : 'none';
   if (searchMode) restoreSearchLibrary();

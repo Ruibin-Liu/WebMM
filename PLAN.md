@@ -1,33 +1,26 @@
-# Plan: Plan / Review / Decision 项目级持久化与下一轮草稿
+# Plan: LBDD 项目历史视图（Plan / Review / Decision / Lineage）
 
-用户裁决「继续下一项」= 将 AI 协同产物从 TaskSpec provenance 提升为现有项目命令日志的一等记录，支持重载/导出、人工决策与下一轮计划草稿；不新增数据库或第二 Skill。
+用户确认「好」= 继续做下一项：让已持久化的设计产物在 analog 页面可见、可检查轮次关系，并可从旧计划显式复制为当前上下文的新草稿；不改执行语义。
 
 ## 交付
-1. **State 命令与投影（app/platform/state.js，schema v1 向前兼容）**
-   - 新增 designPlans/designReviews/designDecisions 及 hidden 覆盖层；旧快照缺省为空，旧应用重放未知命令沿用跳过策略。
-   - RecordDesignPlan(draft) → ApproveDesignPlan → CompleteDesignPlan(taskId) → RecordDesignReview → RecordDesignDecision；引用、状态、重复记录和 task/plan 匹配由 reducer 拒绝。
-   - Decision action=accept/reject/needsExperiment/next，actor/reason/nextPlanDraft 可选语义明确；hide/unhide 支持 Decision/Review 撤销，Approve 在有完成/复盘/决策依赖时拒绝 undo。
-2. **BrowserHost 持久化接口**
-   - 注入现有 project.apply，提供 recordPlanDraft/Approval/Complete/Review/Decision 与 artifacts 读取；模型 Tools 不增加写权限。
-   - Plan/Review 保存 provider/model/providerRevision；Decision 永远 actor=user:local，AI 不替人做 Decision。
-3. **Plan Card 接线**
-   - 有效草稿落 RecordDesignPlan，批准落 Approval，任务完成落 Complete，真实或本地复盘落 Review；保存失败明确提示且不伪称成功。
-   - 新增 accept/reject/needsExperiment/next 决策与 reason；next 保存含 nextPlanDraft 的 Decision 后生成新的待批准草稿，不自动执行。
-   - 项目导出/重载经既有命令日志和快照恢复，不改 format.version。
-4. **测试与文档**
-   - Node 覆盖状态机、重复/错误引用、hide/unhide、依赖拒绝、序列化与 replay；保留 153 项既有测试。
-   - CDP agent_plan 增 Plan/Review/Decision 投影、下一轮新 draft、导出命令和重载恢复；live 仅模型谱系不受影响。
-   - docs/CODE_STATUS 更新真实边界；run.sh 不注册 live。
+1. **设计历史 UI（platform.html）**
+   - 在 AI Plan Card 下新增可折叠设计历史：计划状态、短 planHash、假设、片段类别、模型、taskId、createdAt。
+   - 按 planHash 分组显示 Review claims/unresolved 与 Decision action/actor/reason；next 显示旧 plan → 新 plan 的链接。
+   - 全部用 DOM/textContent，模型内容不进入 innerHTML；隐藏覆盖层继续由 getArtifacts 过滤。
+2. **刷新与复制新草稿**
+   - draft/approval/complete/review/decision 后及进入 analog 模式时刷新；重载后无需恢复旧 Plan Card 也能看到项目历史。
+   - `agentPlanCopyDraft(planHash)`：仅在当前 parent/site/category 与旧计划一致时，更新 baseRevision、复制假设并生成独立待批准草稿；不复制 approval/taskId，不自动执行。
+3. **测试与文档**
+   - CDP agent_plan 增加历史分组、next 链接、重载后可见性、复制为第四草稿且任务数不变；既有 15 项零回归。
+   - m12_tasks、Node suites、真实 GLM live 按需回归；docs 明确历史语义和复制边界。
 
 ## 验收
-- Node agent/platform 全绿：Plan 不能跳状态、Review 必须指已完成 task、Decision 必须 user actor、next 必须带有效 nextPlanDraft、undo 不删事实。
-- CDP agent_plan 全绿：draft→approved→complete→review→next decision 全入项目，导出含新命令，重载后记录仍在；legacy 与零 page error 保持。
-- m12_tasks 14/14、agent_glm_live 7/7（若模型服务可用）无回归；node --check/bash -n/git diff --check 全过。
-- 无新依赖、无新数据库、无自主执行；推送 feat/lbdd-ai-copilot。
+- CDP agent_plan 全绿：三版本历史可见、Review/Decision 归属正确、重载后仍可见，复制产生第四 draft 且无新 task、无 page error。
+- Node agent/platform/proxy 全绿；m12_tasks 14/14；agent_glm_live 8/8（若模型可用）。
+- node --check / bash -n / git diff --check 全过；无新依赖、无自主执行、无历史事实改写；推送分支。
 
 ## 排雷存档
-- 批准前编辑会改变 planHash：先在 UI 保存初稿、再保存批准前规范版本，不能只对旧 hash 调 Approve。CDP 实证应保留初稿/编辑版/下一轮三个 RecordDesignPlan，而非两个。
-- Decision 必须引用已完成的旧 plan+task；nextPlanDraft 另存新 hash 和新 draft，不能继承旧批准或自动执行。
-- Review/Decision undo 只走 hidden overlay；Complete/依赖后的 Approve 不允许 undo，保持追加日志与依赖语义。
-- schema v1 未升：旧快照缺省 design 集合，旧应用重放未知命令仍按既有跳过策略；导出自动包含新命令。
-- 测试初稿误把 Node 侧不存在的 agentLastTaskId 当变量、误算计划版本数；分别改为 page.evaluate 返回与三版本语义，最终 agent_plan 15/15、live 8/8。
+- 设计历史与 analog 执行历史分开：前者按 planHash 解释设计/证据/人工决策，后者只列 run；next lineage 用规范化的 nextPlanDraft hash 关联。
+- 复制旧计划不能盲目 rebase 到另一分子：仅 parentRef/siteRef/fragmentCategory 一致时更新 baseRevision；approval/taskId 不复制，CDP 验证第四 draft 但 task 数不变。
+- 重载不恢复旧 Plan Card 内存状态，history 必须直接从 project projection 渲染；getProjectState 在 compat 未就绪时降级空对象，避免启动竞态。
+- 所有模型/旧计划文本均 DOM textContent；next/复制后历史即时刷新，进入 analog 模式也刷新。
