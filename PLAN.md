@@ -1,33 +1,25 @@
-# Plan: 性能主线第一轮——NEB 冻结收敛像 + 网络图布局缓存(度量驱动)(已完成)
+# Plan: 性能主线第二轮——NEB 积分器升级(FIRE,速度+精度双胜)+ 攀岩相重评(已完成)
 
-用户指令「稳定接口」+「加强测试」。接口 golden 守卫本身即最强测试;同时补齐本轮功能演进暴露的覆盖缺口,并要求新守卫**能抓人为破坏**(自验红)。
+承接上轮记录的下一步候选。冻结期 patch 纪律:接口 golden 零差异;性能特征与数值结果不在保护域。
+
+## 背景
+QuickMin(逐像,dt 0.015/vmax 0.06)收敛 ~1900 迭代;攀岩相在其上有极限环(已默认关)。首轮 FIRE 尝试失败于四个数值陷阱修复**之前**(弹簧单位/集合范数/端点欠淬灭),这些现已修复——FIRE 值得重评。
 
 ## 交付
-1. **接口稳定化**(原方案):
-   - 版本 1.11.0 → 1.12.0(Cargo.toml + package.json;冻结线标记);
-   - **m22_api_surface(纯 Node)**:pkg/webmm.d.ts 导出函数全集+各类方法全集 vs golden(精确相等);三 worker `msg.type` 集合 vs golden;contract.js KINDS/ENVELOPE_VERSION vs golden;window.IMTD 键集 vs golden;版本一致性;
-   - docs/STABILITY.md(稳定域/semver 纪律/破坏性流程)+ docs/worker-protocol.md(三 worker 消息逐条)。
-2. **测试加固——引擎(原生)**:
-   - **系综容量逐出路径**(高风险未测):max_conformers=3 强制逐出——五统计向量+变体+ID+pair 重排一致性、landscape 对齐、refined 按 ID 存活;
-   - GFN-FF 热力学路径 + 精确坐标缓存正确性(同坐标两次 thermo 逐位相等;缓存命中不改结果);
-   - boltzmann 短 degeneracy 向量(chain+repeat 补 1 路径);
-   - JSON 编解码恶意输入(坏浮点串/错形 xyz/缺字段)诚实报错不 panic;
-   - NEB 退化输入守卫(端点原子数不等→debug_assert;同端点已测);
-   - 性质测试(proptest 增补):boltzmann(和=1、能量单调、g 乘子单调)、kabsch(平移/旋转不变式)。
-3. **测试加固——CDP(m23_hardening)**:
-   - conformers kind 的 ↻ 重跑(m21 只测了 imtd);
-   - **重载遗弃**:verify 进行中刷新页面 → boot 对账置 abandoned(阶段记录进薄壳语义);
-   - verify 中途取消(扣消息法确定性触发)→ 记录 failed + 原因;
-   - 恶意 minima JSON 经 UI 路径被拒(gather→false 不崩);
-   - 较大分子端到端(ibuprofen SMILES)imtd+验证+精修冒烟——性能包络不退化。
-4. **破坏性自验**:开发中临时破坏(m22 删一条 golden、引擎改一处行为)确认红灯,再还原——守卫的守卫。
+1. **FIRE 积分器(src/neb.rs)**:全带扁平向量的全局 FIRE(Bitzek 2006:功率检查→dt/α 自适应;上行 5 步后 dt×1.1/α×0.99,下行 dt×0.5/α 复位/速度清零);确定性;NebConfig 增 `integrator` 字段(Rust 侧内部类型,不入 wasm 面)。
+2. **基准对比**:perf_probe 丁烷边 QuickMin vs FIRE(迭代数与耗时);FIRE 胜出则默认 FIRE(QuickMin 保留为配置项)。
+3. **攀岩相重评**:FIRE 下两阶段攀岩是否摆脱极限环(判据:20k 预算内收敛且鞍点落在带峰上方 ≤0.8 kcal 带内);收敛则重开 climbing 默认并更新对应测试断言,不收敛则维持现状并记录。
+4. **回归**:NEB 全部物理测试(势垒带/端点固定/低于线性峰/确定性/冻结铁律)+ refine 集成测试 + m19 浏览器套件;数字入档。
 
 ## 验收(实测)
-m22 24/24(含破坏性自验:删 golden 条目红、篡改 worker 消息红,还原后绿);m23 10/10;cargo test 369(lib,+7:逐出一致性/GFNFF 热力学缓存逐位/短筒并向量/恶意 JSON 拒绝三则 + proptest 三性质);run.sh 36/37 CDP(m1 xtb 环境项)+ Node 153/153;fmt/clippy 双 0;版本 1.12.0 三处对齐;docs/STABILITY.md + docs/worker-protocol.md 落档。**修复一处真实取消缺陷(见排雷 4)。**
+**基准(丁烷边,3 轮中位):QuickMin 108.8ms/1937 迭代 → FIRE 40ms/803 迭代(2.7×,两轮合计相对最初基线 2.7×)。**
+**精度仲裁(受限扭转扫描参考,重原子冻结+H 弛豫):鞍点 ≈-1.09/势垒 ≈3.95——FIRE(-1.15/3.92)贴合参考;QuickMin(-1.75/3.33)欠松弛下垂 0.6 kcal。此前"物理 ~-1.6"的认知本身来自 QuickMin,系误。**
+**攀岩相裁决:FIRE 下仍不收敛(20k 迭代,鞍点冻 -1.96)——维持关闭,继续冻结后评估。**
+cargo test 369+7 全绿;clippy 双 0(derivable Default 一处);m22 golden 零差异;NEB 物理/确定性测试不变绿(势垒带 2–6 内 3.92);run.sh 36/37(m1 xtb 环境项);收紧 force_tol 实验(0.5→0.15)对 FIRE 鞍点影响 <0.15 kcal——默认 0.5 保持。
 
 ## 排雷存档(本轮)
-- **golden 生成必须从现实提取**:手写 golden 与真实 d.ts 面差 20 处(漏 ecfp4/tanimoto/sa_* 等旧导出、多写幻觉方法、漏 `msg.type !== 'run'` 负向守卫)——守卫先抓的是我的猜测而非代码;正道 = 从构建产物提取 → 固化 → 精确相等。wasm-bindgen 内部符号(init/initSync/free/toJSON…)须在提取侧过滤。
-- **proptest 语义边界即浮点边界**:「g 乘子严格抬升布居」在 f64 下有饱和反例(1−1e-35 == 1.0)与下溢反例(4·e^{−494}==0)——性质断言改为非严格 + 饱和分支,数学上正确的形式。
-- **JSON 字面量 null 是合法载荷**:refine_result_from_json("null")=Ok(None) 是"无鞍点"的诚实语义,不是畸形输入;恶意测试要打 "{"、坏浮点串,别打 null。
-- **真实缺陷(测试加固抓出):换分子不取消在途 verify/refine**——reset3DState 只清 handle 引用,cancel 闩未扳,Promise.race 永等(令牌泄漏 + 记录悬空);修复:clear 前先 handle.cancel('molecule changed'),驱动 verify 增 cancelled 分支(记录 cancelled+原因,状态行诚实)。这正是 m23 扣消息法要抓的类目。
-- m22 为纯 Node 套件(无浏览器):解析 d.ts/worker 源/contract.js/imtd.js,秒级运行;run.sh 无需服务器但共存无害。
+- **首轮 FIRE 失败的归因修正**:当时判"FIRE 黏滞"实为四个数值陷阱(弹簧单位/集合范数/端点欠淬灭/QuickMin 刚性过冲)修复前的表象——陷阱修复后 FIRE 2.7× 胜出。教训:优化器对比必须在正确力场上进行。
+- **"精度"先验可能来自被测对象自身**:此前"物理鞍点 ~-1.6"引用的正是 QuickMin 的输出——用独立参考(受限扭转扫描)仲裁后 QuickMin 才是偏差方(-0.6 下垂)。性能轮改数值方法时必须带独立参照。
+- 收紧 force_tol 不能救 QuickMin 式下垂(QuickMin 在更松判据下更早停);FIRE 对 tol 不敏感(0.5→0.15 鞍点移动 <0.15)。
+- FIRE 全局步进与像冻结共存:冻结切片在步进后从 cur 回写位置(防全局位移扰动冻结像)+ 速度清零;max_step=0.08 全带范数钳制。
+- 攀岩相在 FIRE 下同款极限环(鞍点冻 -1.96)——两积分器皆败,确认这是攀岩力结构问题(上坡驱动力与切向投影耦合)而非积分器问题,继续挂起。

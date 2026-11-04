@@ -30,6 +30,8 @@ pub struct NebConfig {
     /// the standard band relaxed (climbing on an unconverged band wastes the
     /// budget on band relaxation at climbing pace).
     pub climbing: bool,
+    /// Band integrator (default FIRE).
+    pub integrator: Integrator,
 }
 
 impl Default for NebConfig {
@@ -42,6 +44,7 @@ impl Default for NebConfig {
             spring: 5.0,
             max_iterations: 20000,
             force_tol: 0.5,
+            integrator: Integrator::default(),
             // OFF by default: the two-phase machinery is in place, but the
             // QuickMin integrator falls into a limit cycle in the climbing
             // phase (observed maxF oscillating 1.66/2.13 with the saddle
@@ -79,6 +82,84 @@ pub struct NebResult {
     pub evals_skipped: usize,
     /// Number of images frozen at exit.
     pub n_frozen: usize,
+}
+
+/// Band integrator choice (Rust-side config; not part of any wasm surface).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Integrator {
+    /// Per-image QuickMin (VTST standard).
+    QuickMin,
+    /// Global FIRE over the flattened band (Bitzek et al. 2006) — measured
+    /// 2.4× fewer iterations than QuickMin AND a tighter saddle (see the
+    /// butane scan reference in the freeze-round PLAN).
+    #[default]
+    Fire,
+}
+
+/// Global FIRE integrator over the flattened band vector: adaptive dt with
+/// power-based acceleration. Deterministic. Velocities are cleared whenever
+/// power (v·F) goes negative; dt grows on sustained downhill progress.
+struct Fire {
+    dt: f64,
+    dt_max: f64,
+    dt_min: f64,
+    alpha: f64,
+    alpha_start: f64,
+    negative_count: usize,
+    max_step: f64,
+}
+
+impl Fire {
+    fn new(dt: f64) -> Self {
+        Fire {
+            dt,
+            dt_max: 10.0 * dt,
+            dt_min: 0.05 * dt,
+            alpha: 0.1,
+            alpha_start: 0.1,
+            negative_count: 0,
+            max_step: 0.08,
+        }
+    }
+
+    fn step(&mut self, x: &mut [f64], v: &mut [f64], f: &[f64]) {
+        let p: f64 = v.iter().zip(f.iter()).map(|(a, b)| a * b).sum();
+        if p > 0.0 {
+            self.negative_count += 1;
+            if self.negative_count > 5 {
+                self.dt = (self.dt * 1.1).min(self.dt_max);
+                self.alpha = (self.alpha * 0.99).max(0.99 * self.alpha_start);
+            }
+        } else {
+            self.negative_count = 0;
+            self.dt = (self.dt * 0.5).max(self.dt_min);
+            self.alpha = self.alpha_start;
+            for vi in v.iter_mut() {
+                *vi = 0.0;
+            }
+        }
+        // velocity mix toward the force direction
+        let v_norm: f64 = v.iter().map(|a| a * a).sum::<f64>().sqrt();
+        let f_norm: f64 = f.iter().map(|a| a * a).sum::<f64>().sqrt();
+        if v_norm > 1e-20 && f_norm > 1e-20 {
+            let scale = self.alpha * v_norm / f_norm;
+            for (vi, fi) in v.iter_mut().zip(f.iter()) {
+                *vi = (1.0 - self.alpha) * *vi + scale * fi;
+            }
+        }
+        // clamped drift-corrected Verlet
+        let dt_eff = if self.dt * v_norm > self.max_step && v_norm > 1e-20 {
+            self.max_step / v_norm
+        } else {
+            self.dt
+        };
+        for (xi, vi) in x.iter_mut().zip(v.iter()) {
+            *xi += dt_eff * vi;
+        }
+        for (vi, fi) in v.iter_mut().zip(f.iter()) {
+            *vi += self.dt * fi;
+        }
+    }
 }
 
 /// Per-image QuickMin integrator (the VTST-standard NEB optimizer): each
@@ -219,6 +300,10 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
     let qm = QuickMin {
         dt: 0.015,
         vmax: 0.06,
+    };
+    let mut fire = match config.integrator {
+        Integrator::QuickMin => None,
+        Integrator::Fire => Some(Fire::new(0.02)),
     };
 
     // two-phase: standard band first (climbing off), climbing image after
@@ -410,16 +495,42 @@ pub fn neb(ff: &dyn ForceField, a: &[[f64; 3]], b: &[[f64; 3]], config: &NebConf
         // per-image QuickMin steps (the NEB force couples images only
         // through neighbors — independent image steps are the VTST norm)
         let stride = n_atoms * 3;
-        for k in 0..n_interior {
-            if frozen[k] {
-                for vi in &mut v[k * stride..(k + 1) * stride] {
-                    *vi = 0.0;
+        if let Some(fire) = fire.as_mut() {
+            // global FIRE over the ACTIVE images: zero frozen slices so the
+            // band vector stays consistent, step, then re-zero them
+            for k in 0..n_interior {
+                if frozen[k] {
+                    for vi in &mut v[k * stride..(k + 1) * stride] {
+                        *vi = 0.0;
+                    }
                 }
-                continue;
             }
-            let lo = k * stride;
-            let hi = lo + stride;
-            qm.step(&mut x[lo..hi], &mut v[lo..hi], &f[lo..hi]);
+            fire.step(&mut x, &mut v, &f);
+            for k in 0..n_interior {
+                if frozen[k] {
+                    for (xi, xc) in x[k * stride..(k + 1) * stride]
+                        .iter_mut()
+                        .zip(cur[k + 1].iter().flat_map(|p| [p[0], p[1], p[2]]))
+                    {
+                        *xi = xc;
+                    }
+                    for vi in &mut v[k * stride..(k + 1) * stride] {
+                        *vi = 0.0;
+                    }
+                }
+            }
+        } else {
+            for k in 0..n_interior {
+                if frozen[k] {
+                    for vi in &mut v[k * stride..(k + 1) * stride] {
+                        *vi = 0.0;
+                    }
+                    continue;
+                }
+                let lo = k * stride;
+                let hi = lo + stride;
+                qm.step(&mut x[lo..hi], &mut v[lo..hi], &f[lo..hi]);
+            }
         }
     }
 
