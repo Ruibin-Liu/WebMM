@@ -31,7 +31,7 @@ Structures never leave the user's machine.
 | Saddle refinement | CI-NEB (FIRE integrator, pinned climbing image) | True refined saddles (not just band-peak upper bounds); honest fallback on coarse/hard bands; butane edge 41.5 ms |
 | Vibrations & thermo | FD Hessian → frequencies, quasi-harmonic correction | QH floor 100 cm⁻¹; Boltzmann populations with observed-well degeneracy |
 | Implicit solvation | GBSA (OBC2 + LCPO) | Optional add-on; gas phase by default |
-| Ligand workbench | `app/` | Draw (JSME) → descriptors + QED + PAINS/BRENK alerts + Murcko scaffold (RDKit-js) → embed/optimize/rank conformers → batch sort/filter/export → library search (5-fingerprint Tanimoto + substructure + 3D Gaussian shape alignment, ROCS lineage); offline-capable |
+| Ligand workbench | `app/` | Draw (JSME) → descriptors + QED + PAINS/BRENK alerts + Murcko scaffold (RDKit-js) → embed/optimize/rank conformers → batch sort/filter/export → library search (5-fingerprint Tanimoto + substructure + 3D Gaussian shape alignment, ROCS lineage); offline-capable. **Design loop**: explorer-designed analogs push back into the single-molecule workbench with one click (⇗ in the results table) |
 | 3D shape similarity | `src/shape` | Gaussian-overlap rigid-body alignment (Grant–Pickup/shape-it constants), multi-start L-BFGS, shape Tanimoto; validated self-alignment 1.000000, RDKit-grid correlation ρ=0.96 |
 
 **Not covered:** proteins, periodic systems, QM beyond GFN-FF, explicit

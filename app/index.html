@@ -1281,7 +1281,7 @@ details {
      </div>
      <div class="hint" id="analogStatus"></div>
      <div id="analogResultsWrap" style="display:none; margin-top:0.4rem;">
-       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="Ertl synthetic accessibility — bit-exact port of RDKit sascorer (1 = easy, 10 = hard)">SA</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
+       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="Ertl synthetic accessibility — bit-exact port of RDKit sascorer (1 = easy, 10 = hard)">SA</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="push this designed molecule into the single-molecule workbench (embed → optimize → descriptors) — closes the design loop">⇗</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
      </div>
    </div>
    <div id="rgdPanel" class="panel" style="display:none;">
@@ -3893,6 +3893,7 @@ function rdkitAvailable() {
         '<td class="value">' + r.rotb + '</td>' +
         '<td class="value">' + (r.sa != null ? r.sa.toFixed(2) : '—') + '</td>' +
         '<td class="value">' + (r.flexT != null ? '<strong>' + (r.flexT * 100).toFixed(1) + '%</strong>' : '—') + '</td>' +
+        '<td><span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem;" title="push to the workbench (single view)" onclick="analogToBench(\'' + r.idx + '\')">⇗</span></td>' +
         '<td>' + (mid ? '<span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem; ' + (pinned ? '' : 'opacity:0.35;') + '" title="pin (synthetic-library identity)" onclick="analogPin(\'' + r.idx + '\',\'' + mid + '\')">' + (pinned ? '★' : '☆') + '</span>' : '') + '</td></tr>';
     }).join('');
   }
@@ -3906,6 +3907,23 @@ function rdkitAvailable() {
     renderWorkSet();
   }
   window.analogPin = analogPin;
+
+  // Design loop: push a designed analog into the single-molecule workbench
+  // (input → process pipeline: embed/optimize/descriptors). Pure DOM
+  // wiring — no engine surface involved.
+  function analogToBench(idx) {
+    // real explorer rows carry NUMERIC worker indices; the onclick template
+    // always passes a string — compare loosely (String() both sides)
+    const r = (analogLastResults() || []).find(x => String(x.idx) === String(idx));
+    if (!r || !r.smiles) return;
+    // switch FIRST: switchMode stashes/restores #input per mode, so filling
+    // the box before the switch would be overwritten by the restore
+    switchMode('single');
+    document.getElementById('input').value = r.smiles;
+    process(true);
+    analogStatus('analog #' + idx + ' → 工作台(single 视图,输入框已就绪)');
+  }
+  window.analogToBench = analogToBench;
   let __analogResults = [];
   const _origRender = renderAnalogRows;
   renderAnalogRows = function (results, token) { __analogResults = results; _origRender(results, token); };

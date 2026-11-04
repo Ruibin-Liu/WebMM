@@ -1832,7 +1832,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
          <button class="action-btn edit" style="width:auto;" onclick="exportAnalogCSV()" title="导出当前结果表为 CSV(SMILES/ShapeT/FlexT/MW/RotB/SA)">导出 CSV</button>
          <button class="action-btn edit" style="width:auto;" onclick="exportAnalogSDF()" title="导出当前结果为多记录 2D SDF,每记录携带 ShapeT/FlexT/SA/MW 数据字段(RDKit 可读)">导出 SDF</button>
        </div>
-       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="Ertl synthetic accessibility — bit-exact port of RDKit sascorer (1 = easy, 10 = hard)">SA</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
+       <table style="width:100%;"><thead><tr><th>#</th><th>SMILES</th><th>MW</th><th title="best shape Tanimoto vs the parent's reference conformer (rigid, best over the ensemble)">Shape T</th><th title="rotatable bonds (strict)">RotB</th><th title="Ertl synthetic accessibility — bit-exact port of RDKit sascorer (1 = easy, 10 = hard)">SA</th><th title="after flexible refinement: MCS-Kabsch core snap + position-restrained MMFF relaxation + rescore (stage D, top-10 only)">Flex T</th><th title="push this designed molecule into the single-molecule workbench (embed → optimize → descriptors) — closes the design loop">⇗</th><th title="pin to the working set — synthetic-library identity">★</th></tr></thead><tbody id="analogRows"></tbody></table>
      </div>
    </div>
    <div id="rgdPanel" class="panel" style="display:none;">
@@ -4846,6 +4846,7 @@ function rdkitAvailable() {
         '<td class="value">' + r.rotb + '</td>' +
         '<td class="value">' + (r.sa != null ? r.sa.toFixed(2) : '—') + '</td>' +
         '<td class="value" ' + (r.flexT != null ? 'data-heat="' + r.flexT.toFixed(3) + '"' : '') + '>' + (r.flexT != null ? '<strong>' + (r.flexT * 100).toFixed(1) + '%</strong>' : '—') + '</td>' +
+        '<td><span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem;" title="push to the workbench (single view)" onclick="analogToBench(\'' + r.idx + '\')">⇗</span></td>' +
         '<td>' + (mid ? '<span role="button" tabindex="0" style="cursor:pointer; font-size:0.95rem; ' + (pinned ? '' : 'opacity:0.35;') + '" title="pin (synthetic-library identity)" onclick="analogPin(\'' + r.idx + '\',\'' + mid + '\')">' + (pinned ? '★' : '☆') + '</span>' : '') + '</td></tr>';
     }).join('');
     applyHeat(tb);
@@ -4865,6 +4866,19 @@ function rdkitAvailable() {
     renderWorkSet();
   }
   window.analogPin = analogPin;
+
+  // Design loop: push a designed analog into the single-molecule workbench
+  // (input → process pipeline: embed/optimize/descriptors). Pure DOM
+  // wiring — no engine surface involved.
+  function analogToBench(idx) {
+    const r = (analogLastResults() || []).find(x => String(x.idx) === String(idx));
+    if (!r || !r.smiles) return;
+    document.getElementById('input').value = r.smiles;
+    switchMode('single');
+    process(true);
+    analogStatus('analog #' + idx + ' → 工作台(single 视图,输入框已就绪)');
+  }
+  window.analogToBench = analogToBench;
 
   // ---- M4 P2: saved explorer runs (docs/project-management.md §4) ----
   function analogRunLabel(meta) {
