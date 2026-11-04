@@ -102,5 +102,12 @@ else
   echo "FAIL (log: /tmp/webmm-agent-node.log)"; fail=$((fail+1)); failed="$failed agent-node"
 fi
 
+printf '%-22s ' "tests/agent/proxy.mjs"
+if ( cd ../.. && node tests/agent/proxy.mjs > /tmp/webmm-agent-proxy.log 2>&1 ); then
+  tail -1 /tmp/webmm-agent-proxy.log; pass=$((pass+1))
+else
+  echo "FAIL (log: /tmp/webmm-agent-proxy.log)"; fail=$((fail+1)); failed="$failed agent-proxy"
+fi
+
 echo "RESULT: $pass suites passed, $fail failed${failed:+ —failed:$failed}"
 [ "$fail" -eq 0 ]

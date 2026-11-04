@@ -121,6 +121,22 @@ visualization, and metadynamics with a live FES.
 > Serve over HTTP — browsers block WASM from `file://` URLs. The 3D viewer
 > (3Dmol.js) loads from a CDN; the engine itself makes no network calls.
 
+### AI collaboration via pi/magpie
+
+The LBDD Agent can draft and review R-group plans through the local pi/magpie
+OpenAI-compatible route. Molecular computation and execution approval stay in
+WebMM; the model never executes a plan directly.
+
+```bash
+npm run build
+npm run agent:dev
+# open http://127.0.0.1:8902/app/platform.html
+```
+
+The server defaults to `MAGPIE_URL=http://127.0.0.1:3425` and
+`AGENT_MODEL=zcode/GLM-5.3-Flash`. See `docs/ai-collaboration.md` for the
+context-sharing boundary and the manual live acceptance test.
+
 ### Option C — native Rust library
 
 ```bash

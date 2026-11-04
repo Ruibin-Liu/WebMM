@@ -7,7 +7,8 @@
     "build": "wasm-pack build --target web --out-dir pkg",
     "stage": "bash scripts/stage-pkg.sh",
     "serve": "python3 pkg/server.py",
-    "preview": "wasm-pack build --target web --out-dir pkg && python3 pkg/server.py"
+    "preview": "wasm-pack build --target web --out-dir pkg && python3 pkg/server.py",
+    "agent:dev": "node scripts/agent-dev-server.mjs"
   },
   "dependencies": {},
   "devDependencies": {

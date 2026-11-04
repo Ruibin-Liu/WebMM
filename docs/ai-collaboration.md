@@ -1,6 +1,6 @@
 # AI collaboration core — Capability / Plan / Tools / Evidence
 
-> Status: browser vertical slice complete with a mock provider. No real model vendor is configured.
+> Status: real pi/magpie GLM provider and browser vertical slice are working.
 > Scope: one skill (`rgroup-optimization`) and one capability (`analogScan`).
 
 ## 1. Boundary
@@ -152,6 +152,22 @@ provider.review({
 
 A provider may call a local model, a remote model, or a deterministic test double. Network authentication, streaming, retries, and vendor tool protocols belong outside the core contract.
 
+### Real pi/magpie provider
+
+`app/agent/magpie-provider.js` implements the provider through the relative `/api/agent` proxy. It validates Plan/Review JSON and makes at most one schema-specific corrective retry. A second invalid response fails closed. Network errors are not blindly retried.
+
+Start the local stack:
+
+```sh
+npm run build
+npm run agent:dev
+# open http://127.0.0.1:8902/app/platform.html
+```
+
+The development server binds only `127.0.0.1`. It proxies to `MAGPIE_URL` (default `http://127.0.0.1:3425`) with the server-selected `AGENT_MODEL` (default `zcode/GLM-5.3-Flash`). `MAGPIE_API_KEY` is optional and stays server-side. No model payload is logged.
+
+Click “连接 pi GLM” to allow the current whitelisted design context to use the pi/magpie route. The browser cannot select another upstream model. Task and Evidence artifacts record `modelProvider`, `model`, and `providerRevision`. Without a connection, the local draft/review path remains available.
+
 ## 10. GLM feasibility probe
 
 `glm-5.3-flash` was tested through Sider with the R-group contract:
@@ -160,7 +176,7 @@ A provider may call a local model, a remote model, or a deterministic test doubl
 - its first DesignReview added unrequested fields and unsupported interpretation, so the deterministic validator rejected it;
 - after a schema-specific corrective prompt, it produced a valid review with only real evidence references and no unsupported activity claim.
 
-GLM is therefore a candidate provider for **structured draft + deterministic validation + corrective retry**, not a trusted execution authority. The Sider session is only a test harness. Production use still needs a separately configured GLM-compatible endpoint or a thin model proxy and an explicit privacy decision.
+GLM is therefore suitable for **structured draft + deterministic validation + corrective retry**, not as a trusted execution authority. The subsequent real pi/magpie browser run passed end to end: valid plan, local approval, real analogScan, model provenance, and cited review. The first live review returned empty content because long reasoning exhausted the 4096-token budget; review now has an 8192-token ceiling and passed. No provider output bypasses the validators.
 
 ## 11. Tests and next slice
 
@@ -170,15 +186,17 @@ Run:
 node tests/agent/run.js
 node tests/platform/run.js
 tests/cdp/run.sh agent_plan
+node tests/agent/proxy.mjs
+# Manual live acceptance; requires local pi/magpie and agent:dev:
+node tests/cdp/agent_glm_live.test.js
 ```
 
 `agent_plan` uses a schema-valid mock provider and verifies the complete browser path plus the legacy explorer. `m12_tasks` remains the determinism, cancellation, and reconciliation regression gate.
 
 The next implementation slice should:
 
-1. add a configurable GLM/OpenAI-compatible provider with schema-specific corrective retry;
-2. define endpoint/key handling and exactly which molecular context may leave the browser;
-3. persist Plan/Review as first-class project artifacts rather than only task provenance;
-4. add a second LBDD skill only after the R-group loop is used successfully.
+1. persist Plan/Review as first-class project artifacts rather than only task provenance;
+2. add explicit user decisions and optional next-round drafts;
+3. add a second LBDD skill only after the R-group loop is used successfully.
 
 No autonomous execution, general chat, MCP, or new LBDD algorithms are part of this slice.

@@ -66,5 +66,8 @@ Only two real inputs; everything else under /tmp is written by the suites
 ## Related
 
 - `node tests/platform/run.js` — Node-only platform store suites (no browser)
+- `node tests/agent/run.js` — Agent contracts and provider corrective-retry suites
+- `node tests/agent/proxy.mjs` — real local proxy with a fake upstream (model override and traversal guards)
+- `node tests/cdp/agent_glm_live.test.js` — manual real pi/magpie acceptance; requires `npm run agent:dev`, not part of default CI
 - `scripts/build-ketcher.sh` — reproducible Ketcher bundle build (pinned
   versions; `--install` writes into app/vendor/ketcher)

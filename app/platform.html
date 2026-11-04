@@ -1799,6 +1799,7 @@ body[data-mode="batch"] .drop svg { width: 16px; height: 16px; }
        <div class="path-head"><b>AI 协同计划</b><span class="card-sub">草稿 → 编辑 → 本地批准 → 同一 analogScan 执行 → 证据复盘</span></div>
        <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
          <input id="agentIntent" aria-label="设计意图" value="探索保守的局部 R-group 类似物；实验活性仅作未验证目标" style="flex:1; min-width:240px; padding:0.4rem; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text);">
+         <button class="action-btn edit" id="agentConnectBtn" style="width:auto;" onclick="agentPlanConnect()">连接 pi GLM</button>
          <button class="action-btn edit" id="agentDraftBtn" style="width:auto;" onclick="agentPlanDraft()">生成草稿</button>
          <button class="action-btn primary" id="agentApproveBtn" style="width:auto;" disabled onclick="agentPlanApproveAndRun()">批准并运行</button>
          <button class="action-btn edit" id="agentReviewBtn" style="width:auto;" disabled onclick="agentPlanReview()">证据复盘</button>
@@ -2029,6 +2030,7 @@ function rdkitAvailable() {
 <script src="agent/evidence.js"></script>
 <script src="agent/tools.js"></script>
 <script src="agent/orchestrator.js"></script>
+<script src="agent/magpie-provider.js"></script>
 <script src="agent/rgroup.js"></script>
 <script src="agent/browser-host.js"></script>
 <script src="platform/compat.js"></script>
@@ -4649,6 +4651,24 @@ function rdkitAvailable() {
 
   let agentDraftPlan = null, agentLastTaskId = null;
   const agentPlanStatus = message => { document.getElementById('agentPlanStatus').textContent = message; };
+  async function agentPlanConnect() {
+    const button = document.getElementById('agentConnectBtn');
+    button.disabled = true;
+    try {
+      const provider = Agent.MagpieProvider.createMagpieProvider();
+      const status = await provider.status();
+      window.WebMMAgentProvider = provider;
+      window.WebMMAgentModel = status.model;
+      window.WebMMAgentProviderName = status.provider;
+      window.WebMMAgentProviderRevision = status.providerRevision;
+      button.textContent = 'pi GLM 已连接';
+      agentPlanStatus('已连接 ' + status.model + ' · 设计上下文将经 pi/magpie 路由；执行仍需本地批准');
+    } catch (error) {
+      window.WebMMAgentProvider = null;
+      button.disabled = false;
+      agentPlanStatus('未连接 pi GLM，仍可使用本地草稿：' + error.message);
+    }
+  }
   const agentBudgetFromInputs = () => ({
     maxCandidates: parseInt(document.getElementById('agentMaxCandidates').value, 10),
     refineTop: parseInt(document.getElementById('agentRefineTop').value, 10),
@@ -4717,7 +4737,12 @@ function rdkitAvailable() {
       const validation = Agent.Plans.validatePlan(plan, await webMMAgentHost.getDesignContext());
       if (!validation.ok) { agentPlanStatus('批准前校验失败：' + validation.errors.join('；')); return; }
       agentDraftPlan = validation.plan;
-      const approval = Agent.Plans.issueApproval(agentDraftPlan, { approvedBy: 'user:local' });
+      const approval = Agent.Plans.issueApproval(agentDraftPlan, {
+        approvedBy: 'user:local',
+        modelProvider: window.WebMMAgentProviderName || null,
+        model: window.WebMMAgentModel || null,
+        providerRevision: window.WebMMAgentProviderRevision || null,
+      });
       analogRunToken++;
       const token = analogRunToken;
       analogThumbsOn = false;

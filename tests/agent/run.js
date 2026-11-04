@@ -7,6 +7,7 @@ const Plans = require(path.join(__dirname, '../../app/agent/plans.js'));
 const Evidence = require(path.join(__dirname, '../../app/agent/evidence.js'));
 const Tools = require(path.join(__dirname, '../../app/agent/tools.js'));
 const Orchestrator = require(path.join(__dirname, '../../app/agent/orchestrator.js'));
+const MagpieProvider = require(path.join(__dirname, '../../app/agent/magpie-provider.js'));
 const Contract = require(path.join(__dirname, '../../app/tasks/contract.js'));
 
 let pass = 0, fail = 0;
@@ -18,6 +19,14 @@ function rejects(name, fn, code) {
   try { fn(); check(name, false, 'did not throw'); }
   catch (error) { check(name, !code || error.code === code, { code: error.code, message: error.message }); }
 }
+async function rejectsAsync(name, fn, code) {
+  try { await fn(); check(name, false, 'did not throw'); }
+  catch (error) { check(name, !code || error.code === code, { code: error.code, message: error.message }); }
+}
+function fakeResponse(data, ok = true, status = 200) {
+  return { ok, status, text: async () => JSON.stringify(data) };
+}
+function fakeChat(content) { return fakeResponse({ choices: [{ message: { content } }] }); }
 const clone = value => JSON.parse(JSON.stringify(value));
 
 function basePlan() {
@@ -54,7 +63,7 @@ function approvedSpec() {
   const plan = basePlan();
   plan.goals.push('experimentalActivity');
   plan.unverifiedGoals = ['experimentalActivity'];
-  const approval = Plans.issueApproval(plan, { approvedBy: 'user:test' });
+  const approval = Plans.issueApproval(plan, { approvedBy: 'user:test', modelProvider: 'pi/magpie', model: 'zcode/GLM-5.3-Flash', providerRevision: 'magpie-provider-v1' });
   return Plans.compileApprovedPlan({ plan, context: baseContext(), approval, taskId: 'task-agent-1' });
 }
 
@@ -106,7 +115,8 @@ async function main() {
     spec.input.stages[0].caps.products === 20 && spec.input.stages[1].cap === 20 && spec.input.stages[2].cap === 5 && spec.input.stages[3].cap === 3);
   check('compiler records plan, approval, unresolved goals and policy provenance',
     spec.provenance.planHash.startsWith('dp') && spec.provenance.approvedBy === 'user:test' &&
-    spec.provenance.unverifiedGoals.includes('experimentalActivity') && spec.provenance.policyRev === Contract.policyRev(spec.input.stages));
+    spec.provenance.unverifiedGoals.includes('experimentalActivity') && spec.provenance.policyRev === Contract.policyRev(spec.input.stages) &&
+    spec.provenance.model === 'zcode/GLM-5.3-Flash' && spec.provenance.modelProvider === 'pi/magpie');
   check('compiled spec retains analog inputRevision semantics', Contract.inputRevisionFor('analogScan', spec.input).policy === spec.provenance.policyRev);
   rejects('compile requires an approval object', () => Plans.compileApprovedPlan({ plan: basePlan(), context: baseContext(), taskId: 't' }), 'APPROVAL_MISMATCH');
   rejects('approval cannot be reused after a plan edit', () => {
@@ -133,7 +143,8 @@ async function main() {
     results: [{ idx: 0, smiles: 'CC', tanimoto: 0.8, flexT: 0.85, mw: 30, rotb: 0, sa: 1 }],
   } });
   check('evidence bundle preserves real results, accounts, truncation and unresolved goals',
-    evidence.resultCount === 1 && evidence.truncated && evidence.accounts.B.evaluated === 3 && evidence.unverifiedGoals.includes('experimentalActivity'));
+    evidence.resultCount === 1 && evidence.truncated && evidence.accounts.B.evaluated === 3 && evidence.unverifiedGoals.includes('experimentalActivity') &&
+    evidence.plan.model === 'zcode/GLM-5.3-Flash' && evidence.plan.providerRevision === 'magpie-provider-v1');
   const review = Evidence.validateReview({
     claims: [{ text: 'One candidate has computed shape evidence; activity remains unverified.', evidenceRefs: [evidence.evidenceId, evidence.candidates[0].evidenceId] }],
     counterexamples: [evidence.candidates[0].evidenceId], unresolved: ['experimentalActivity'],
@@ -143,6 +154,39 @@ async function main() {
   check('review rejects the summary as a candidate counterexample', !Evidence.validateReview({ claims: [], counterexamples: [evidence.evidenceId] }, evidence).ok);
   check('malformed unresolved data returns errors without throwing', !Evidence.validateReview({ claims: [], unresolved: 'activity' }, evidence).ok);
   check('malformed counterexample data returns errors without throwing', !Evidence.validateReview({ claims: [], counterexamples: {} }, evidence).ok);
+
+  console.log('pi/magpie provider + corrective retry:');
+  check('provider exposes only status/plan/review', (() => { const p = MagpieProvider.createMagpieProvider({ fetchImpl: async () => fakeResponse({}) }); return ['status', 'plan', 'review'].every(k => typeof p[k] === 'function') && !Object.keys(p).some(k => /execute|approve/i.test(k)); })());
+  check('JSON parser recovers fenced output and embedded object',
+    MagpieProvider.parseJsonText('```json\n{"ok":true}\n```').value.ok === true && MagpieProvider.parseJsonText('note {"x":1} tail').value.x === 1);
+  const statusProvider = MagpieProvider.createMagpieProvider({ fetchImpl: async url => fakeResponse({ ok: true, model: url.endsWith('/status') ? 'zcode/GLM-5.3-Flash' : null }) });
+  check('provider status uses the local pi/magpie route', (await statusProvider.status()).model === 'zcode/GLM-5.3-Flash');
+  let firstPlanCalls = 0;
+  const firstPlanProvider = MagpieProvider.createMagpieProvider({ fetchImpl: async () => { firstPlanCalls++; return fakeChat(JSON.stringify(basePlan())); } });
+  const firstPlan = await firstPlanProvider.plan({ intent: 'test', context: baseContext(), capability, skill });
+  check('valid GLM-shaped plan passes without retry', firstPlan.fragmentCategory === 'alkyl' && firstPlanCalls === 1);
+  let retryPlanCalls = 0;
+  const retryPlanProvider = MagpieProvider.createMagpieProvider({ fetchImpl: async (url, init) => {
+    retryPlanCalls++;
+    if (retryPlanCalls === 1) { const invalid = basePlan(); invalid.goals.push('experimentalActivity'); return fakeChat(JSON.stringify(invalid)); }
+    const messages = JSON.parse(init.body).messages;
+    check('corrective retry includes validation errors and prior model output', messages.length === 4 && /unverified/.test(messages[3].content));
+    return fakeChat(JSON.stringify(basePlan()));
+  } });
+  const retriedPlan = await retryPlanProvider.plan({ intent: 'test', context: baseContext(), capability, skill });
+  check('invalid plan is corrected once and normalized', retriedPlan.budget.maxCandidates === 20 && retryPlanCalls === 2);
+  let badPlanCalls = 0;
+  const badPlanProvider = MagpieProvider.createMagpieProvider({ fetchImpl: async () => { badPlanCalls++; const invalid = basePlan(); invalid.goals.push('experimentalActivity'); return fakeChat(JSON.stringify(invalid)); } });
+  await rejectsAsync('two invalid plan responses fail closed', () => badPlanProvider.plan({ intent: 'test', context: baseContext(), capability, skill }), 'PROVIDER_SCHEMA');
+  check('two invalid plan responses use exactly one corrective retry', badPlanCalls === 2);
+  let retryReviewCalls = 0;
+  const retryReviewProvider = MagpieProvider.createMagpieProvider({ fetchImpl: async () => {
+    retryReviewCalls++;
+    if (retryReviewCalls === 1) return fakeChat(JSON.stringify({ version: 1, claims: [] }));
+    return fakeChat(JSON.stringify({ claims: [{ text: 'Evidence only.', evidenceRefs: [evidence.evidenceId] }], counterexamples: [], unresolved: ['experimentalActivity'], nextPlanDraft: null }));
+  } });
+  const retriedReview = await retryReviewProvider.review({ evidence, capability, skill });
+  check('invalid review is corrected and retains real evidence refs', retriedReview.claims[0].evidenceRefs[0] === evidence.evidenceId && retryReviewCalls === 2);
 
   console.log('allow-listed tools + two-call orchestrator:');
   const host = {

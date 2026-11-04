@@ -119,7 +119,14 @@
     if (!validation.ok) fail('PLAN_INVALID', validation.errors.join('; '));
     const approvedBy = options && options.approvedBy;
     if (!nonEmpty(approvedBy)) fail('APPROVER_REQUIRED', 'approvedBy must be a non-empty string');
-    return { planHash: validation.planHash, baseRevision: validation.plan.baseRevision, approvedBy: approvedBy.trim() };
+    return {
+      planHash: validation.planHash,
+      baseRevision: validation.plan.baseRevision,
+      approvedBy: approvedBy.trim(),
+      modelProvider: options.modelProvider || null,
+      model: options.model || null,
+      providerRevision: options.providerRevision || null,
+    };
   }
 
   function compileApprovedPlan(options) {
@@ -192,6 +199,9 @@
         hypothesis: p.hypothesis,
         unverifiedGoals: p.unverifiedGoals.slice(),
         approvedBy: approval.approvedBy,
+        modelProvider: approval.modelProvider || null,
+        model: approval.model || null,
+        providerRevision: approval.providerRevision || null,
       },
     });
     spec.provenance.policyRev = Contract.policyRev(spec.input.stages);
