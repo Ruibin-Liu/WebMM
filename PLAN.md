@@ -1,4 +1,4 @@
-# Plan: 设计循环闭环——骨架探索结果一键推送到分子工作台(已完成)
+# Plan: 设计循环闭环(已完成)+ 文档经 gemini-4-argon 优化(已完成)
 
 用户点题:骨架探索(neighborhood explorer / aza-scan)设计出的分子,在结果列表里可一键推送到分子工作台(single 视图管线),形成 工作台→探索→新分子→回工作台 的循环。
 **性质:用户明示的功能需求(冻结豁免);纯前端(app/index.html),零接口面改动(m22 golden 不涉 app DOM)。**
@@ -21,3 +21,13 @@ m24_bench_loop 11/11(双页接线 8 项 + E2E 3 项:真探索→⇗→single 渲
 - **switchMode 会按模式暂存/恢复 #input**:先填输入再切模式会被恢复覆盖——填框必须在 switchMode 之后;mock 接线测试(没经过模式切换)对此不敏感,顺序语义靠 E2E 兜底。
 - 工作台(index.html)的 analog 面板在 single 模式**内部**(switchMode('analog') 实际落在 single),平台页(platform.html)的 analog 是独立搜索模式段——两页模式机制不同但同名函数,dual-page 补丁必须各自核对语义。
 - 两页内联脚本是手工同步的副本(无共享模块)——改一处必须同步另一处,m24 双页各测一遍。
+
+
+---
+
+# 附:文档优化轮(gemini-4-argon)
+
+用户点题:ENGINE-CAPABILITIES.md 交 sider gemini-4-argon 优化。事实冻结规则(数字/术语/语义零改动)前置声明;argon 返回后做提交者审计:
+- **事实审计脚本**:54 个关键数字/断言逐一比对原文——全部保留,无一缺失;
+- **提交者卫生修正**:①去 LaTeX 数学($..$ → 纯文本,仓库 Markdown 风格);②「对映异构镜像孪生」回退为「镜像孪生」(乙醇镜像可旋转重合,非对映异构体——argon 补的限定词过强);③「多轮 MD 梯子」回退「可多轮」(plan_verify(n) 的 n 是参数非常量);④「平底简谐」保留——经 src/optimizer/restraints.rs 头注释核实(flat-bottom harmonic terms),argon 补对了;⑤锚点链接简化为 §N(GitHub 中文锚点不稳定)。
+- 文尾留 optimized by gemini-4-argon 标记;数字零漂移;纯文档零代码。
