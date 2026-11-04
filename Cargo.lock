@@ -17,9 +17,11 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "avidity-engine"
 version = "0.1.0"
-source = "git+ssh://git@github.com/Ruibin-Liu/Avidity.git#6818aef0c92bb593783a2551619f961293be87d8"
+source = "git+ssh://git@github.com/Ruibin-Liu/Avidity.git#cc5d2136b3503351d4e1cf1deaedfaa44e2dcc2d"
 dependencies = [
+ "serde",
  "serde_json",
+ "web-time",
 ]
 
 [[package]]

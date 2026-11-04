@@ -105,42 +105,11 @@ pub fn energy_terms_wasm(sdf_content: &str, engine: String) -> Result<String, Js
 #[cfg(test)]
 mod opt_compare;
 
-/// MMFF variant selection
-#[wasm_bindgen]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MMFFVariant {
-    MMFF94,
-    #[default]
-    MMFF94s,
-}
+/// MMFF variant selection — now the engine's type (JS passes strings, never the enum).
+pub use crate::mmff::MMFFVariant;
 
-/// Convergence criteria options
-#[wasm_bindgen]
-#[derive(Debug, Clone)]
-pub struct ConvergenceOptions {
-    #[wasm_bindgen(getter_with_clone)]
-    pub max_force: f64,
-    #[wasm_bindgen(getter_with_clone)]
-    pub rms_force: f64,
-    #[wasm_bindgen(getter_with_clone)]
-    pub energy_change: f64,
-    #[wasm_bindgen(getter_with_clone)]
-    pub max_iterations: usize,
-}
-
-impl Default for ConvergenceOptions {
-    fn default() -> Self {
-        Self {
-            max_force: 0.01,
-            rms_force: 0.001,
-            energy_change: 1e-6,
-            // 200 was short for drug-like molecules under the RDKit protocol
-            // (aspirin-class aromatics need ~600-2000); easy molecules still
-            // exit on the energy/force criteria long before the cap
-            max_iterations: 1000,
-        }
-    }
-}
+/// Convergence criteria options — now the engine's type.
+pub use avidity_engine::ConvergenceOptions;
 
 /// Optimization options
 #[wasm_bindgen]
