@@ -26,6 +26,10 @@ Structures never leave the user's machine.
 | Broad-coverage force field | GFN-FF | For elements/patterns MMFF94 does not parameterize (incl. metal coordination complexes); validated vs xtb |
 | Molecular dynamics | Velocity-Verlet (NVE) / BAOAB Langevin (NVT) | Live-steppable for in-browser trajectory animation |
 | Enhanced sampling | Well-tempered metadynamics | Dihedral and distance collective variables, FES reconstruction |
+| Conformational search | iMTD-GC (CREST lineage) | Iterative short metadynamics with rotating bias/CVs + genetic crossing; deterministic, worker-parallel; ethanol 2×3×800 ≈ 17 ms, ibuprofen ≈ 0.3 s |
+| Energy landscapes | Disconnectivity forest + basin network + MD verify ladder | Basin table (E, G(QH), Boltzmann, degeneracy g, occupancy), transition table; unbiased MD ladder statistics |
+| Saddle refinement | CI-NEB (FIRE integrator, pinned climbing image) | True refined saddles (not just band-peak upper bounds); honest fallback on coarse/hard bands; butane edge 41.5 ms |
+| Vibrations & thermo | FD Hessian → frequencies, quasi-harmonic correction | QH floor 100 cm⁻¹; Boltzmann populations with observed-well degeneracy |
 | Implicit solvation | GBSA (OBC2 + LCPO) | Optional add-on; gas phase by default |
 | Ligand workbench | `app/` | Draw (JSME) → descriptors + QED + PAINS/BRENK alerts + Murcko scaffold (RDKit-js) → embed/optimize/rank conformers → batch sort/filter/export → library search (5-fingerprint Tanimoto + substructure + 3D Gaussian shape alignment, ROCS lineage); offline-capable |
 | 3D shape similarity | `src/shape` | Gaussian-overlap rigid-body alignment (Grant–Pickup/shape-it constants), multi-start L-BFGS, shape Tanimoto; validated self-alignment 1.000000, RDKit-grid correlation ρ=0.96 |
@@ -210,6 +214,12 @@ WASM vs **native** RDKit C++ / xtb on an M-series laptop (2026-09):
 
 Metadynamics per-step cost is flat in the number of deposited hills
 (4σ-truncated bias); long runs do not degrade.
+
+iMTD-GC search (native yardstick, `examples/perf_probe.rs`): ethanol
+2×3×800 in 17–22 ms, ibuprofen ≈ 220–300 ms. NEB edge (butane, FIRE +
+climbing on): 41.5 ms / 827 iterations; drug-scale edges 1.2–2 s each,
+refined in parallel across workers. Full engine-capability reference:
+`docs/ENGINE-CAPABILITIES.md`.
 
 ## Limitations
 
