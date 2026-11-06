@@ -32,8 +32,11 @@
 ## 字段与语义(按 t7 回执锁定)
 - 字段名固定:`coords_angstrom` / `energy_kcal_mol` / `energy_engine`
   (显式单位命名,不用泛 `coords`)。
-- `strategy` 默认 `'lowest_per_cluster'`(每 RMSD 簇取最低能);备选
-  `'energy_stratified'`(能量分层抽样,避免子集全为低能孪生)。
+- `strategy` 默认 `'lowest_per_cluster'`(ETKDG 嵌入池,每 RMSD 簇取最低能);备选
+  `'energy_stratified'`(ETKDG 池能量分层抽样);高采样档
+  `'imtd_lowest_per_cluster'`(v1.15.0,CREST iMTD-GC 谱系,固定 2×3×800
+  小规模预算后按簇取最低能)。iMTD 无结果时显式报错,不静默回退 ETKDG;
+  固定预算不声称全局覆盖或全局最低。provenance 增 `strategy` 记录采样档。
 - **硬上限(实现必须提供)**:`n_target`、`energy_window_kcal`、`rmsd_tol`
   三参数各自的合法上限与拒绝语义(超限报错,不静默钳制)。
 - consumer(WebQM)侧可自行记录 `webqm_version` 于其 provenance——双向版本锚点。

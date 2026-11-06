@@ -1,6 +1,6 @@
 # 引擎侧能力参考(Engine Capabilities)
 
-> WebMM v1.13.0 的 Rust/WASM 引擎面能力总览。所有性能与验证数字均取自实测基准(`examples/perf_probe.rs`、`examples/climb_molecules.rs`、`README` 性能表、各轮 `PLAN` / `CODE_STATUS` 记录)。协议规范见 `docs/task-contract.md` 与 `docs/worker-protocol.md`,接口冻结政策见 `docs/STABILITY.md`。
+> WebMM v1.15.0 的 Rust/WASM 引擎面能力总览。所有性能与验证数字均取自实测基准(`examples/perf_probe.rs`、`examples/climb_molecules.rs`、`README` 性能表、各轮 `PLAN` / `CODE_STATUS` 记录)。协议规范见 `docs/task-contract.md` 与 `docs/worker-protocol.md`,接口冻结政策见 `docs/STABILITY.md`。
 
 ---
 
@@ -73,6 +73,7 @@
 - **并行确定性**:子任务种子按 `seed + round*1000 + run` 公式派生;浏览器端多线程并行结果与单线程串行执行结果逐位一致(受 `m15` 测试守卫保护)。
 - **验证阶段(verify 相)**:构象搜索结束后,运行无偏(unbiased)MD 梯子(ladders,可多轮),直接产出盆地间的转迁计数与热力学占据统计——作为能量景观的无偏统计数据源(见 §8)。
 - **性能**:乙醇(2×3×800 规格)耗时 ≈ 17 ms;ibuprofen(2×3×800 规格,原生环境)耗时 ≈ 220–300 ms。
+- **构象子集契约(WebMM↔WebQM)**:`conformer_subset_json` 提供三档确定性采样——ETKDG 快速档 `lowest_per_cluster`(默认)与 `energy_stratified`,以及 CREST iMTD-GC 谱系档 `imtd_lowest_per_cluster`(固定 2×3×800 小规模预算)。统一输出能量升序的 `energy_kcal_mol` / `coords_angstrom` / `cluster_id`,provenance 记录 `webmm_version` / `seed` / `energy_engine` / `strategy`;`n_target`、能量窗和 RMSD 容差均设硬上限,超限显式报错。iMTD 无结果时不静默回退 ETKDG;任何档位均不声称全局覆盖或全局最低。契约全文见 `docs/webqm-conformer-subset-schema.md`。
 
 ---
 

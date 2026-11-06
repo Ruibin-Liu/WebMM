@@ -43,5 +43,6 @@ WebMM 自 v1.12.0 起处于 feature freeze。本文件定义哪些面是稳定�
 
 - 2026-11:feature freeze 宣布(a5a0b42 收官轮)。
 - v1.12.0:接口 golden 固化(本文件 + m22)。
+- v1.15.0:additive 语义扩展——`conformer_subset_json` 新增 strategy `imtd_lowest_per_cluster`(CREST iMTD-GC 谱系采样,固定 2×3×800 小规模预算);既有两种策略及默认不变,导出清单零变化;provenance 增 `strategy` 记录采样档。
 - v1.14.0:additive 新增——wasm `conformer_subset_json`(WebMM↔WebQM 构象子集契约,docs/webqm-conformer-subset-schema.md;硬上限显式报错;确定性 seed;Rust 内核 conformer_subset_core 供原生测试)。golden 更新:导出清单 +1。
 - v1.13.0:数值语义升级(接口面零差异,m22 golden 不变):①NEB 积分器默认 QuickMin→FIRE(2.7×,精度经受限扭转扫描独立仲裁更优);②攀岩相默认开启——refine 输出从"带峰上界"升级为"CI 精修鞍点"(钉住攀岩像+相位 1 快照回退;粗带爬坏时诚实回退带峰,climb_started=0)。NebConfig 增 Rust 侧内部字段 integrator(不入 wasm 面)。

@@ -5988,6 +5988,61 @@ M  END"#;
             assert!(e <= emin + 0.05 + 1e-9, "window violated: {e} vs {emin}");
         }
     }
+
+    #[test]
+    fn subset_imtd_strategy_is_deterministic_crest_lineage() {
+        let a = crate::conformer_subset_core(
+            ETHANOL_FIXTURE,
+            3,
+            6.0,
+            0.25,
+            42,
+            "imtd_lowest_per_cluster",
+        )
+        .expect("iMTD subset");
+        let b = crate::conformer_subset_core(
+            ETHANOL_FIXTURE,
+            3,
+            6.0,
+            0.25,
+            42,
+            "imtd_lowest_per_cluster",
+        )
+        .expect("iMTD subset");
+        assert_eq!(a, b, "iMTD strategy must be bit-identical on repeat");
+        let v: serde_json::Value = serde_json::from_str(&a).expect("json");
+        assert_eq!(v["provenance"]["strategy"], "imtd_lowest_per_cluster");
+        assert_eq!(v["provenance"]["energy_engine"], "MMFF94s");
+        let confs = v["conformers"].as_array().expect("conformers");
+        assert!(
+            confs.len() >= 2,
+            "ethanol iMTD finds anti + gauche families"
+        );
+        for (i, c) in confs.iter().enumerate() {
+            assert_eq!(c["rank"], (i + 1) as u64);
+            assert_eq!(c["coords_angstrom"].as_array().expect("coords").len(), 9);
+            assert!(c["energy_kcal_mol"].is_number());
+        }
+        let e0 = confs[0]["energy_kcal_mol"].as_f64().expect("e0");
+        let e1 = confs[1]["energy_kcal_mol"].as_f64().expect("e1");
+        assert!(e1 >= e0, "energy-ordered");
+        assert!(e0 < -1.0, "unexpected ethanol iMTD minimum: {e0}");
+    }
+
+    #[test]
+    fn subset_imtd_rigid_molecule_single_cluster() {
+        let out = crate::conformer_subset_core(
+            NAPHTHALENE_FIXTURE,
+            5,
+            6.0,
+            0.25,
+            7,
+            "imtd_lowest_per_cluster",
+        )
+        .expect("iMTD subset");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("json");
+        assert_eq!(v["conformers"].as_array().expect("conformers").len(), 1);
+    }
 }
 
 #[cfg(test)]
@@ -9429,12 +9484,13 @@ fn conformer_subset_core(
             CONFORMER_SUBSET_MAX_RMSD, rmsd_tol
         )));
     }
-    let stratified = match strategy {
-        "lowest_per_cluster" => false,
-        "energy_stratified" => true,
+    let (stratified, use_imtd) = match strategy {
+        "lowest_per_cluster" => (false, false),
+        "energy_stratified" => (true, false),
+        "imtd_lowest_per_cluster" => (false, true),
         other => {
             return Err(err(format!(
-                "strategy must be 'lowest_per_cluster' or 'energy_stratified', got '{}'",
+                "strategy must be 'lowest_per_cluster', 'energy_stratified' or 'imtd_lowest_per_cluster', got '{}'",
                 other
             )));
         }
@@ -9444,38 +9500,68 @@ fn conformer_subset_core(
     let heavy_idx: Vec<usize> = (0..mol_heavy.atoms.len()).collect();
     let conv = ConvergenceOptions::default();
 
-    // embed + optimize pool (same construction as the frozen batch pipeline:
-    // seed_base + i seeds, geometry-aware H attachment, shared MMFF94s)
-    let n_pool = (n_target * CONFORMER_SUBSET_OVERSAMPLE).min(400);
     let mut pool: Vec<(f64, Vec<[f64; 3]>)> = Vec::new();
-    let mut shared_ff: Option<crate::mmff::MMFFForceField> = None;
-    for i in 0..n_pool {
-        let config = crate::etkdg::ETKDGConfig {
-            random_seed: (seed + i as u64) as i64,
+    if use_imtd {
+        // Higher-sampling CREST-lineage tier: the caller explicitly opts into
+        // iMTD-GC, so an empty result is an error rather than a silent ETKDG
+        // fallback. The fixed 2×3×800 budget is the measured small-molecule
+        // preset, not a claim of global conformational coverage.
+        let with_h = crate::molecule::hydrogens::add_hydrogens(&mol_heavy);
+        let config = crate::metad::imtd::ImtdConfig {
+            max_rounds: 2,
+            runs_per_round: 3,
+            steps_per_run: 800,
+            energy_window: energy_window_kcal,
+            rmsd_tol,
+            max_conformers: (n_target * CONFORMER_SUBSET_OVERSAMPLE).min(250),
+            seed,
             ..Default::default()
         };
-        let coords = crate::etkdg::generate_initial_coords_with_config(&mol_heavy, &config);
-        if coords.is_empty() {
-            continue;
+        let result = crate::metad::imtd::imtd_conformer_search(
+            &with_h,
+            crate::metad::imtd::SearchEngine::MMFF94s,
+            &config,
+        );
+        pool.extend(result.conformers.into_iter().map(|c| (c.energy, c.coords)));
+        if pool.is_empty() {
+            return Err(err("iMTD-GC produced no conformers".into()));
         }
-        let mut mol_i = mol_heavy.clone();
-        for (a, c) in mol_i.atoms.iter_mut().zip(coords.iter()) {
-            a.position = *c;
+    } else {
+        // Fast ETKDG tier (same construction as the frozen batch pipeline:
+        // seed_base + i seeds, geometry-aware H attachment, shared MMFF94s).
+        let n_pool = (n_target * CONFORMER_SUBSET_OVERSAMPLE).min(400);
+        let mut shared_ff: Option<crate::mmff::MMFFForceField> = None;
+        for i in 0..n_pool {
+            let config = crate::etkdg::ETKDGConfig {
+                random_seed: (seed + i as u64) as i64,
+                ..Default::default()
+            };
+            let coords = crate::etkdg::generate_initial_coords_with_config(&mol_heavy, &config);
+            if coords.is_empty() {
+                continue;
+            }
+            let mut mol_i = mol_heavy.clone();
+            for (a, c) in mol_i.atoms.iter_mut().zip(coords.iter()) {
+                a.position = *c;
+            }
+            let with_h = crate::molecule::hydrogens::add_hydrogens(&mol_i);
+            let xyz: Vec<[f64; 3]> = with_h.atoms.iter().map(|a| a.position).collect();
+            if shared_ff.is_none() {
+                shared_ff = Some(crate::mmff::MMFFForceField::new(
+                    &with_h,
+                    crate::MMFFVariant::MMFF94s,
+                ));
+            }
+            let r = crate::optimizer::optimize(
+                shared_ff.as_ref().expect("initialized above"),
+                &xyz,
+                &conv,
+            );
+            pool.push((r.final_energy, r.optimized_coords));
         }
-        let with_h = crate::molecule::hydrogens::add_hydrogens(&mol_i);
-        let xyz: Vec<[f64; 3]> = with_h.atoms.iter().map(|a| a.position).collect();
-        if shared_ff.is_none() {
-            shared_ff = Some(crate::mmff::MMFFForceField::new(
-                &with_h,
-                crate::MMFFVariant::MMFF94s,
-            ));
+        if pool.is_empty() {
+            return Err(err("Embedding failed for every seed".into()));
         }
-        let r =
-            crate::optimizer::optimize(shared_ff.as_ref().expect("initialized above"), &xyz, &conv);
-        pool.push((r.final_energy, r.optimized_coords));
-    }
-    if pool.is_empty() {
-        return Err(err("Embedding failed for every seed".into()));
     }
     pool.sort_by(|a, b| a.0.total_cmp(&b.0));
     let e_min = pool[0].0;
@@ -9547,6 +9633,7 @@ fn conformer_subset_core(
             "webmm_version": env!("CARGO_PKG_VERSION"),
             "seed": seed,
             "energy_engine": "MMFF94s",
+            "strategy": strategy,
         },
         "conformers": conformers,
     });
