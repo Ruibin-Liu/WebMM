@@ -400,7 +400,9 @@ pub(crate) fn kabsch_transform(p: &[[f64; 3]], q: &[[f64; 3]]) -> ([f64; 9], [f6
 
 /// Aligned RMSD over the given atom indices (Å). For <2 indices no rotation is
 /// determined; the centroid gap of the single pair is returned.
-fn aligned_rmsd_over(a: &[[f64; 3]], b: &[[f64; 3]], idx: &[usize]) -> f64 {
+/// Heavy-atom aligned RMSD between two coordinate sets over `idx`
+/// (Kabsch; crate-internal: also used by the conformer-subset contract).
+pub(crate) fn aligned_rmsd_over(a: &[[f64; 3]], b: &[[f64; 3]], idx: &[usize]) -> f64 {
     match idx.len() {
         0 => 0.0,
         1 => {

@@ -5848,6 +5848,146 @@ M  END"#;
         let y: f64 = m1[0] * n2[0] + m1[1] * n2[1] + m1[2] * n2[2];
         y.atan2(x).to_degrees()
     }
+
+    // ---- conformer_subset_json (WebMM↔WebQM contract) ----
+    const ETHANOL_FIXTURE: &str = include_str!("../tests/fixtures/conformers/ethanol.sdf");
+    const NAPHTHALENE_FIXTURE: &str = include_str!("../tests/fixtures/conformers/naphthalene.sdf");
+
+    #[test]
+    fn subset_hard_cap_errors() {
+        assert!(crate::conformer_subset_core(
+            ETHANOL_FIXTURE,
+            0,
+            6.0,
+            0.25,
+            42,
+            "lowest_per_cluster"
+        )
+        .is_err());
+        assert!(crate::conformer_subset_core(
+            ETHANOL_FIXTURE,
+            201,
+            6.0,
+            0.25,
+            42,
+            "lowest_per_cluster"
+        )
+        .is_err());
+        assert!(crate::conformer_subset_core(
+            ETHANOL_FIXTURE,
+            3,
+            0.0,
+            0.25,
+            42,
+            "lowest_per_cluster"
+        )
+        .is_err());
+        assert!(crate::conformer_subset_core(
+            ETHANOL_FIXTURE,
+            3,
+            100.0,
+            0.25,
+            42,
+            "lowest_per_cluster"
+        )
+        .is_err());
+        assert!(crate::conformer_subset_core(
+            ETHANOL_FIXTURE,
+            3,
+            6.0,
+            0.0,
+            42,
+            "lowest_per_cluster"
+        )
+        .is_err());
+        assert!(crate::conformer_subset_core(
+            ETHANOL_FIXTURE,
+            3,
+            6.0,
+            5.0,
+            42,
+            "lowest_per_cluster"
+        )
+        .is_err());
+        assert!(crate::conformer_subset_core(ETHANOL_FIXTURE, 3, 6.0, 0.25, 42, "bogus").is_err());
+        assert!(crate::conformer_subset_core("", 3, 6.0, 0.25, 42, "lowest_per_cluster").is_err());
+    }
+
+    #[test]
+    fn subset_ethanol_deterministic_and_ordered() {
+        let a =
+            crate::conformer_subset_core(ETHANOL_FIXTURE, 3, 6.0, 0.25, 42, "lowest_per_cluster")
+                .expect("subset");
+        let b =
+            crate::conformer_subset_core(ETHANOL_FIXTURE, 3, 6.0, 0.25, 42, "lowest_per_cluster")
+                .expect("subset");
+        assert_eq!(a, b, "same seed must be bit-identical");
+        let v: serde_json::Value = serde_json::from_str(&a).expect("json");
+        let confs = v["conformers"].as_array().expect("conformers");
+        assert!(confs.len() >= 2, "ethanol has anti + gauche families");
+        assert_eq!(v["provenance"]["energy_engine"], "MMFF94s");
+        assert_eq!(v["provenance"]["seed"], 42);
+        assert!(v["provenance"]["webmm_version"].is_string());
+        for (i, c) in confs.iter().enumerate() {
+            assert_eq!(c["rank"], (i + 1) as u64);
+            assert!(c["energy_kcal_mol"].is_number());
+            assert_eq!(c["coords_angstrom"].as_array().expect("coords").len(), 9);
+        }
+        let e0 = confs[0]["energy_kcal_mol"].as_f64().expect("e0");
+        let e1 = confs[1]["energy_kcal_mol"].as_f64().expect("e1");
+        assert!(e1 >= e0, "energy-ordered");
+        assert!(
+            e0 < -1.0,
+            "ethanol MMFF94s global minimum measured ≈ -1.517, got {e0}"
+        );
+    }
+
+    #[test]
+    fn subset_naphthalene_single_cluster() {
+        let out = crate::conformer_subset_core(
+            NAPHTHALENE_FIXTURE,
+            5,
+            6.0,
+            0.25,
+            7,
+            "lowest_per_cluster",
+        )
+        .expect("subset");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("json");
+        let n = v["conformers"].as_array().expect("conformers").len();
+        assert_eq!(n, 1, "rigid naphthalene collapses to one cluster, got {n}");
+    }
+
+    #[test]
+    fn subset_strategies_differ() {
+        let lowest =
+            crate::conformer_subset_core(ETHANOL_FIXTURE, 2, 6.0, 0.25, 42, "lowest_per_cluster")
+                .expect("lowest");
+        let strat =
+            crate::conformer_subset_core(ETHANOL_FIXTURE, 2, 6.0, 0.25, 42, "energy_stratified")
+                .expect("stratified");
+        let a: serde_json::Value = serde_json::from_str(&lowest).expect("json");
+        let b: serde_json::Value = serde_json::from_str(&strat).expect("json");
+        assert_eq!(
+            a["conformers"].as_array().expect("c").len(),
+            b["conformers"].as_array().expect("c").len()
+        );
+        assert_ne!(a, b, "strategies select different representatives");
+    }
+
+    #[test]
+    fn subset_energy_window_filters() {
+        let out =
+            crate::conformer_subset_core(ETHANOL_FIXTURE, 5, 0.05, 0.25, 42, "lowest_per_cluster")
+                .expect("subset");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("json");
+        let confs = v["conformers"].as_array().expect("conformers");
+        let emin = confs[0]["energy_kcal_mol"].as_f64().expect("emin");
+        for c in confs {
+            let e = c["energy_kcal_mol"].as_f64().expect("e");
+            assert!(e <= emin + 0.05 + 1e-9, "window violated: {e} vs {emin}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -9211,4 +9351,204 @@ pub fn shape_align_color_wasm(
         starts: res.starts,
     };
     serde_json::to_string(&out).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// WebMM↔WebQM conformer-subset contract (docs/webqm-conformer-subset-schema.md)
+// Additive in v1.14.0 — a NEW export; nothing on the frozen surface changes.
+// ---------------------------------------------------------------------------
+
+/// Hard cap on the requested subset size (schema contract: over-cap is an
+/// explicit error, never a silent clamp).
+pub const CONFORMER_SUBSET_MAX_TARGET: usize = 200;
+/// Maximum energy window (kcal/mol).
+pub const CONFORMER_SUBSET_MAX_WINDOW: f64 = 50.0;
+/// Maximum heavy-atom aligned RMSD cluster tolerance (Å).
+pub const CONFORMER_SUBSET_MAX_RMSD: f64 = 2.0;
+/// Embeddings per target conformer (pool size = n_target × oversampling,
+/// capped) — enough to hit the target even with RMSD clustering.
+const CONFORMER_SUBSET_OVERSAMPLE: usize = 6;
+
+/// Generate a deterministic, deduplicated, energy-ordered conformer subset
+/// for downstream (e.g. WebQM fragment-level QM) consumers. Returns the
+/// contract JSON: provenance{webmm_version, seed, energy_engine:'MMFF94s'}
+/// plus conformers[{rank, energy_kcal_mol, coords_angstrom, cluster_id}].
+/// Errors (never silent clamping): empty/invalid input, n_target out of
+/// 1..=200, energy_window_kcal outside (0,50], rmsd_tol outside (0,2],
+/// unknown strategy, or no conformer surviving the energy window.
+#[wasm_bindgen]
+pub fn conformer_subset_json(
+    sdf_content: &str,
+    n_target: usize,
+    energy_window_kcal: f64,
+    rmsd_tol: f64,
+    seed: u64,
+    strategy: &str,
+) -> Result<String, JsValue> {
+    console_error_panic_hook::set_once();
+    conformer_subset_core(
+        sdf_content,
+        n_target,
+        energy_window_kcal,
+        rmsd_tol,
+        seed,
+        strategy,
+    )
+    .map_err(|e| JsValue::from_str(&e))
+}
+
+/// Native (non-wasm) core of the contract — unit tests call this directly
+/// (JsValue is not usable on non-wasm32 targets).
+fn conformer_subset_core(
+    sdf_content: &str,
+    n_target: usize,
+    energy_window_kcal: f64,
+    rmsd_tol: f64,
+    seed: u64,
+    strategy: &str,
+) -> Result<String, String> {
+    let err = |m: String| m;
+    if sdf_content.trim().len() < 10 {
+        return Err(err("Empty or invalid SDF content".into()));
+    }
+    if n_target == 0 || n_target > CONFORMER_SUBSET_MAX_TARGET {
+        return Err(err(format!(
+            "n_target must be in 1..={}, got {}",
+            CONFORMER_SUBSET_MAX_TARGET, n_target
+        )));
+    }
+    if !(energy_window_kcal > 0.0 && energy_window_kcal <= CONFORMER_SUBSET_MAX_WINDOW) {
+        return Err(err(format!(
+            "energy_window_kcal must be in (0, {}], got {}",
+            CONFORMER_SUBSET_MAX_WINDOW, energy_window_kcal
+        )));
+    }
+    if !(rmsd_tol > 0.0 && rmsd_tol <= CONFORMER_SUBSET_MAX_RMSD) {
+        return Err(err(format!(
+            "rmsd_tol must be in (0, {}], got {}",
+            CONFORMER_SUBSET_MAX_RMSD, rmsd_tol
+        )));
+    }
+    let stratified = match strategy {
+        "lowest_per_cluster" => false,
+        "energy_stratified" => true,
+        other => {
+            return Err(err(format!(
+                "strategy must be 'lowest_per_cluster' or 'energy_stratified', got '{}'",
+                other
+            )));
+        }
+    };
+    let mol_heavy = crate::molecule::parser::parse_sdf(sdf_content.trim())
+        .map_err(|e| err(format!("Parse error: {}", e)))?;
+    let heavy_idx: Vec<usize> = (0..mol_heavy.atoms.len()).collect();
+    let conv = ConvergenceOptions::default();
+
+    // embed + optimize pool (same construction as the frozen batch pipeline:
+    // seed_base + i seeds, geometry-aware H attachment, shared MMFF94s)
+    let n_pool = (n_target * CONFORMER_SUBSET_OVERSAMPLE).min(400);
+    let mut pool: Vec<(f64, Vec<[f64; 3]>)> = Vec::new();
+    let mut shared_ff: Option<crate::mmff::MMFFForceField> = None;
+    for i in 0..n_pool {
+        let config = crate::etkdg::ETKDGConfig {
+            random_seed: (seed + i as u64) as i64,
+            ..Default::default()
+        };
+        let coords = crate::etkdg::generate_initial_coords_with_config(&mol_heavy, &config);
+        if coords.is_empty() {
+            continue;
+        }
+        let mut mol_i = mol_heavy.clone();
+        for (a, c) in mol_i.atoms.iter_mut().zip(coords.iter()) {
+            a.position = *c;
+        }
+        let with_h = crate::molecule::hydrogens::add_hydrogens(&mol_i);
+        let xyz: Vec<[f64; 3]> = with_h.atoms.iter().map(|a| a.position).collect();
+        if shared_ff.is_none() {
+            shared_ff = Some(crate::mmff::MMFFForceField::new(
+                &with_h,
+                crate::MMFFVariant::MMFF94s,
+            ));
+        }
+        let r =
+            crate::optimizer::optimize(shared_ff.as_ref().expect("initialized above"), &xyz, &conv);
+        pool.push((r.final_energy, r.optimized_coords));
+    }
+    if pool.is_empty() {
+        return Err(err("Embedding failed for every seed".into()));
+    }
+    pool.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let e_min = pool[0].0;
+    let window: Vec<(f64, Vec<[f64; 3]>)> = pool
+        .into_iter()
+        .filter(|(e, _)| *e <= e_min + energy_window_kcal)
+        .collect();
+    if window.is_empty() {
+        return Err(err("No conformer within the energy window".into()));
+    }
+
+    // greedy heavy-atom aligned-RMSD clustering (cluster representative =
+    // lowest energy; representatives sorted by energy)
+    let mut reps: Vec<(f64, Vec<[f64; 3]>)> = Vec::new();
+    let mut cluster_ids: Vec<usize> = Vec::new();
+    for (e, xyz) in &window {
+        let mut found = None;
+        for (cid, (_, rep_xyz)) in reps.iter().enumerate() {
+            if crate::metad::imtd::aligned_rmsd_over(xyz, rep_xyz, &heavy_idx) < rmsd_tol {
+                found = Some(cid);
+                break;
+            }
+        }
+        match found {
+            Some(cid) => cluster_ids.push(cid),
+            None => {
+                cluster_ids.push(reps.len());
+                reps.push((*e, xyz.clone()));
+            }
+        }
+    }
+
+    // selection by strategy over the cluster representatives
+    let selected: Vec<(f64, Vec<[f64; 3]>)> = if stratified {
+        // energy-stratified: evenly spaced representatives across the
+        // window's energy ladder (one per distinct energy tier)
+        let n_take = n_target.min(reps.len());
+        if n_take == reps.len() {
+            reps
+        } else {
+            let mut out = Vec::with_capacity(n_take);
+            for k in 0..n_take {
+                let pos = k * (reps.len() - 1) / (n_take - 1).max(1);
+                out.push(reps[pos].clone());
+            }
+            out
+        }
+    } else {
+        reps.iter().take(n_target).cloned().collect()
+    };
+    if selected.is_empty() {
+        return Err(err("Subset selection produced an empty set".into()));
+    }
+    let conformers: Vec<serde_json::Value> = selected
+        .iter()
+        .enumerate()
+        .map(|(rank0, (e, xyz))| {
+            let coords: Vec<[f64; 3]> = xyz.to_vec();
+            serde_json::json!({
+                "rank": rank0 + 1,
+                "energy_kcal_mol": e,
+                "coords_angstrom": coords,
+                "cluster_id": rank0, // representatives are the clusters
+            })
+        })
+        .collect();
+    let out = serde_json::json!({
+        "provenance": {
+            "webmm_version": env!("CARGO_PKG_VERSION"),
+            "seed": seed,
+            "energy_engine": "MMFF94s",
+        },
+        "conformers": conformers,
+    });
+    serde_json::to_string(&out).map_err(|e| err(e.to_string()))
 }

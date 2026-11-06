@@ -14,11 +14,12 @@ function check(name, cond, detail) {
   else { fail++; console.log('  ✗ ' + name + (detail ? ' — ' + detail : '')); }
 }
 
-// ── GOLDEN: wasm export surface (v1.12.0 freeze line) ──
+// ── GOLDEN: wasm export surface (v1.12.0 freeze line; +conformer_subset_json additive v1.14.0) ──
 const GOLDEN_FUNCTIONS = [
   
   "add_hydrogens_wasm",
   "attach_hydrogens_3d_wasm",
+  "conformer_subset_json",
   "ecfp4_fingerprint_wasm",
   "energy_terms_wasm",
   "generate_conformers_wasm",

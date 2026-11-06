@@ -1,33 +1,25 @@
-# Plan: 设计循环闭环(已完成)+ 文档经 gemini-4-argon 优化(已完成)
+# Plan: WebMM↔WebQM 构象子集接口(方案 B 实现,additive minor → v1.14.0)(已完成)
 
-用户点题:骨架探索(neighborhood explorer / aza-scan)设计出的分子,在结果列表里可一键推送到分子工作台(single 视图管线),形成 工作台→探索→新分子→回工作台 的循环。
-**性质:用户明示的功能需求(冻结豁免);纯前端(app/index.html),零接口面改动(m22 golden 不涉 app DOM)。**
-
-## 现状依据
-- 探索结果:`renderAnalogRows`(表 #analogRows,行含 r.idx/r.smiles/r.mw/tanimoto/rotb/sa/flexT + ★pin 列);`analogLastResults()`/`__analogResults` 保底;aza-scan 复用同一表同一渲染 → 同列自动受益。
-- 工作台入口:`#input`(SMILES/MolBlock)+ `process(true)`(RDKit 解析→2D 渲染→历史/URL);`switchMode('single')` 切单分子视图。
-- 测试:m6 系只查 rows>0/fact 字段/thumbnail,不锁列数;fact 层 regex 在项目态不在 DOM。
+用户批准启动(此前 t8↔t7 契约互锁,docs/webqm-conformer-subset-schema.md 定稿)。
+性质:**additive 变更**(冻结面只增不改,m22 golden 显式更新 + 版本 bump 三处 + STABILITY 增条)。
 
 ## 交付
-1. **UI(app/index.html)**:analog 表头 + 列「⇗」(title:推送到工作台);每行按钮 `analogToBench(idx)`——从 analogLastResults() 取 smiles,写 `#input`,`switchMode('single')`,`process(true)`,`#analogStatus` 反馈「analog #N → 工作台」;窗口函数挂 window(analog 同款模式)。
-2. **测试(tests/cdp/m24_bench_loop.test.js)**:mock `__analogResults`(两条假记录)+ 直调 `renderAnalogRows` → 点 ⇗ → 断言:input.value === 该行 SMILES、模式切到 single、analogStatus 含反馈、无 page error;真跑一条小探索再推一条作 E2E(沿用 m6 模式,小分子快速档)。
-3. **文档**:README 能力表 Ligand workbench 行补"design loop"短语;CODE_STATUS 记用户豁免的功能例外;ENGINE-CAPABILITIES 不涉(引擎面无改动)。
+1. **Rust 端 `conformer_subset_json`(src/lib.rs 新增导出)**
+   - 输入:molblock/SDF + n_target + energy_window_kcal + rmsd_tol + seed + strategy('lowest_per_cluster' | 'energy_stratified')。
+   - 管线:ETKDG(seed 派生)→ 几何加氢 → MMFF94s 优化 → 能量窗过滤 → 全对重原子 Kabsch-RMSD 簇判定(贪心,按能量升序代表)→ strategy 子集选择;坐标扁平化 [x,y,z,…] 序列。
+   - **硬上限 + 显式报错(Err,不静默钳制)**:n_target ≤ 200 且 >0;energy_window_kcal ∈ (0,50];rmsd_tol ∈ (0,2];strategy 仅两枚举值;嵌入失败/空窗 → Err 诚实报错。
+   - 输出 JSON 契约:provenance{webmm_version, seed, energy_engine:'MMFF94s'};conformers[{rank, energy_kcal_mol, coords_angstrom, cluster_id}];坐标嵌套数组;能量排序升序 rank=1 起。
+   - energy_stratified:唯一能量序列(1e-3 kcal 容差合并)等距取代表,按窗口幅度自适应。
+2. **单测(src/lib.rs tests 段)**:乙醇 n_target=3 命中 3(最低能 gauche?实测确定);同 seed 位等;空窗报错;超限报错(n_target=0/201,窗口=0/100,rmsd=0/5);坏 strategy 报错;两 strategy 结果差异;naphthalene 刚性分子簇数=1;三策略下 cluster_id 自洽。
+3. **m22 golden 更新**:导出函数清单 + conformer_subset_json(唯一新增);版本三处(Cargo/package/CODE_STATUS)+ STABILITY v1.14.0 条目;契约文档标注“已实现”。
+4. **完成通知 t7**(hc):接口面、示例输出、测试状态。
 
 ## 验收(实测)
-m24_bench_loop 11/11(双页接线 8 项 + E2E 3 项:真探索→⇗→single 渲染);run.sh 36/37(唯 m1 xtb 环境项,m6 系全绿不受新列影响);m22 golden 零差异(零 Rust/wasm diff);run.sh 套件注册表加 m24。
+cargo test **377+7** 全绿(+5 subset 测试:硬上限拒绝/确定性+排序+坐标维数/萘单簇/双 strategy 差异/能量窗过滤);clippy 双 0(needless_question_mark 一处);m22 golden 更新后 24/24(导出清单 +conformer_subset_json,版本 1.14.0 三处一致);重建 wasm 后 golden 过;契约文档标"已实现 v1.14.0"。
+实现定稿:conformer_subset_json(wasm 壳)→ conformer_subset_core(原生内核,JsValue 在 non-wasm32 panic 故测试走内核);oversample 6×(pool ≤400);贪心重原子 Kabsch-RMSD 簇代表;两 strategy(lowest_per_cluster 默认 / energy_stratified 能量梯等距);全部超限显式 Err。
 
 ## 排雷存档(本轮)
-- **真实行 idx 是数字**(worker 索引,results.push({...cands[msg.idx], idx: msg.idx})),而 onclick 模板插值永远是字符串——严格相等静默失配(mock 测试用字符串 idx 完全测不出,E2E 才暴露);跨 DOM 边界的 id 比较一律 String() 两侧。
-- **switchMode 会按模式暂存/恢复 #input**:先填输入再切模式会被恢复覆盖——填框必须在 switchMode 之后;mock 接线测试(没经过模式切换)对此不敏感,顺序语义靠 E2E 兜底。
-- 工作台(index.html)的 analog 面板在 single 模式**内部**(switchMode('analog') 实际落在 single),平台页(platform.html)的 analog 是独立搜索模式段——两页模式机制不同但同名函数,dual-page 补丁必须各自核对语义。
-- 两页内联脚本是手工同步的副本(无共享模块)——改一处必须同步另一处,m24 双页各测一遍。
-
-
----
-
-# 附:文档优化轮(gemini-4-argon)
-
-用户点题:ENGINE-CAPABILITIES.md 交 sider gemini-4-argon 优化。事实冻结规则(数字/术语/语义零改动)前置声明;argon 返回后做提交者审计:
-- **事实审计脚本**:54 个关键数字/断言逐一比对原文——全部保留,无一缺失;
-- **提交者卫生修正**:①去 LaTeX 数学($..$ → 纯文本,仓库 Markdown 风格);②「对映异构镜像孪生」回退为「镜像孪生」(乙醇镜像可旋转重合,非对映异构体——argon 补的限定词过强);③「多轮 MD 梯子」回退「可多轮」(plan_verify(n) 的 n 是参数非常量);④「平底简谐」保留——经 src/optimizer/restraints.rs 头注释核实(flat-bottom harmonic terms),argon 补对了;⑤锚点链接简化为 §N(GitHub 中文锚点不稳定)。
-- 文尾留 optimized by gemini-4-argon 标记;数字零漂移;纯文档零代码。
+- **JsValue 在 non-wasm32 目标上 panic**(wasm-bindgen 0.2.106 拦截)——wasm 导出函数不能被原生单测直接调用;拆 壳(JsValue 边界)+ 内核(纯 String)双层,原生测试只调内核。所有未来新增 wasm 导出沿用此模式。
+- aligned_rmsd_over 原为 imtd 私有 fn——提升为 pub(crate) 复用(簇判定与两层去重同一 Kabsch 语义)。
+- 乙醇 MMFF94s 全局最低能实测 **-1.517**(非印象中的 -3.5)——测试常量必须跑完实测再写断言,凭记忆写必返工。
+- golden 更新走纪律:导出清单 +1 行 + 注释标 additive 版本 + 三处版本号 + STABILITY 条目,一次到位。
